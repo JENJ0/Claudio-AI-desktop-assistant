@@ -52,7 +52,8 @@ uv run python scripts/list_audio_devices.py
 ```
 
 Di' la wake word, aspetta il bip, poi il comando. Se non parli entro 4 s senti un bip basso e
-Claudio torna in attesa.
+Claudio torna in attesa. Il segnaposto `hey jarvis` è un modello inglese: detto in fretta o
+attaccato al comando spesso non scatta, quindi in v0.1.0 dillo con calma e fai una pausa.
 
 | Comando (esempi) | Cosa fa |
 |---|---|
@@ -95,9 +96,13 @@ Ogni richiesta finisce in `logs/metrics.jsonl` con:
 
 Per tarare l'ascolto ogni riga ha anche `input_dbfs` (volume medio del microfono dopo il bip) e
 `vad_max` (quanto Silero era sicuro di sentire voce, 0-1). In `logs/audio/` restano gli ultimi
-50 WAV di quello che Claudio ha sentito (1 s prima della wake word, poi tutto il resto), con il
+50 WAV di quello che Claudio ha sentito (1,5 s prima della wake word, poi tutto il resto), con il
 nome dell'esito (`ok`, `timeout`, `empty`, `error`). Restano sul PC; si spengono con
 `[logging] save_audio = false`.
+
+Anche i tentativi in cui la wake word non è scattata finiscono nel log come `near_miss`, con il
+punteggio massimo raggiunto: `benchmark_latency.py --log` li elenca per capire quanto abbassare
+la soglia.
 
 ```powershell
 uv run python scripts/benchmark_latency.py --log                      # dal vivo

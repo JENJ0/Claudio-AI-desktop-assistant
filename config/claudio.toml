@@ -21,7 +21,7 @@ beep_volume = 0.25
 #   [[wakeword.models]]  name = "claudio"      threshold = 0.6   (single word: stricter)
 [[wakeword.models]]
 name = "hey_jarvis"
-threshold = 0.5
+threshold = 0.35           # placeholder model, struggles with fast Italian speech
 
 [vad]
 threshold = 0.4            # speech probability to count a window as speech (lower = more sensitive)

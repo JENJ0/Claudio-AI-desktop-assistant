@@ -68,6 +68,9 @@ class MetricsWriter:
         row = {"ts": time.time(), **interaction.summary()}
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        if row["m2_ms"] is None:  # timeout, near miss...: nothing was said back
+            log.debug("Metriche: %s", row.get("outcome"), extra={"metrics": row})
+            return row
         log.info(
             "Latenza M1=%s ms M2=%s ms (STT %s ms, TTS prima frase %s ms)",
             row["m1_ms"],

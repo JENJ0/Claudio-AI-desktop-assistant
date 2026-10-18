@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Callable
 
 import numpy as np
@@ -14,8 +15,8 @@ from claudio.metrics import MetricsWriter
 
 
 class FakeWake:
-    def __init__(self, fire_on: set[int]) -> None:
-        self.fire_on, self.calls, self.resets = fire_on, 0, 0
+    def __init__(self, fire_on: set[int], miss_on: set[int] | None = None) -> None:
+        self.fire_on, self.miss_on, self.calls, self.resets = fire_on, miss_on or set(), 0, 0
         self.assistant: Assistant | None = None
         self.states: list[State] = []
 
@@ -24,6 +25,9 @@ class FakeWake:
         if self.assistant is not None:
             self.states.append(self.assistant.state)
         return ("hey_claudio", 0.9) if self.calls in self.fire_on else None
+
+    def pop_near_miss(self) -> tuple[str, float] | None:
+        return ("hey_claudio", 0.3) if self.calls in self.miss_on else None
 
     def reset(self) -> None:
         self.resets += 1
@@ -203,12 +207,12 @@ async def test_heard_audio_is_saved_with_its_level(fake_vad, vad_settings, make_
         saved.append((audio, outcome))
         return f"{outcome}.wav"
 
-    assistant, *_ = build(fake_vad, vad_settings, FakeStt(), {3, 20}, audio_sink=sink)
+    assistant, *_ = build(fake_vad, vad_settings, FakeStt(), {3, 25}, audio_sink=sink)
     frames = (
         make_frames("silence", 400)  # wake on frame 3
         + make_frames("speech", 1000)
         + make_frames("silence", 800)
-        + make_frames("silence", 5000)  # second wake after 1.4 s, then nothing said
+        + make_frames("silence", 5000)  # second wake after 1.8 s, then nothing said
     )
     await run_frames(assistant, frames)
 
@@ -216,7 +220,7 @@ async def test_heard_audio_is_saved_with_its_level(fake_vad, vad_settings, make_
     assert (ok["outcome"], ok["audio_file"], ok["vad_max"]) == ("ok", "ok.wav", 0.9)
     assert ok["prewake_ms"] == 240 and ok["input_dbfs"] > -20
     assert timeout["audio_file"] == "timeout.wav" and timeout["vad_max"] == 0.0
-    assert timeout["prewake_ms"] == 1000 and timeout["input_dbfs"] == -120.0
+    assert timeout["prewake_ms"] == 1500 and timeout["input_dbfs"] == -120.0
     audio, outcome = saved[0]
     assert outcome == "ok" and audio.dtype == np.float32
     assert len(audio) > 16000 * (0.24 + 1.0)  # 240 ms before the wake word + the phrase
@@ -236,6 +240,33 @@ async def test_failing_audio_sink_does_not_break_the_request(
     assert speaker.spoken == ["Apro Chrome."]
     assert assistant.history[-1]["outcome"] == "ok" and "audio_file" not in assistant.history[-1]
     assert assistant.state is State.IDLE
+
+
+async def test_near_miss_is_logged_without_waking(fake_vad, vad_settings, make_frames, tmp_path):
+    saved: list[str] = []
+
+    def sink(audio: np.ndarray, outcome: str) -> str:
+        saved.append(outcome)
+        return f"{outcome}.wav"
+
+    wake = FakeWake(set(), miss_on={20})
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        wake,
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        FakeResponder(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        audio_sink=sink,
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == [] and assistant.state is State.IDLE and assistant.history == []
+    assert saved == ["near_miss"]
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["wake_score"] == 0.3
+    assert row["audio_file"] == "near_miss.wav" and row["m2_ms"] is None
 
 
 @pytest.mark.parametrize("state", list(State))

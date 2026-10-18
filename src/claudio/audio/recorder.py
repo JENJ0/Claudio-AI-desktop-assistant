@@ -1,4 +1,4 @@
-"""Keeps a WAV of each request (1 s before the wake word, then everything heard after it),
+"""Keeps a WAV of each request (1.5 s before the wake word, then everything heard after it),
 to tune VAD and STT on real audio."""
 
 from __future__ import annotations

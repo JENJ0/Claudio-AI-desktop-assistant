@@ -34,8 +34,13 @@ def print_summary(title: str, rows: list[dict], keys: tuple[str, ...]) -> None:
 
 def from_log(path: Path) -> None:
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    misses = [r for r in rows if r.get("outcome") == "near_miss"]
+    rows = [r for r in rows if r.get("outcome") != "near_miss"]
     ok = [r for r in rows if r.get("outcome") == "ok"]
     print(f"{len(rows)} interazioni, {len(ok)} completate")
+    if misses:
+        peaks = ", ".join(f"{r['wake_score']:.2f}" for r in misses[-20:])
+        print(f"{len(misses)} wake word sotto soglia (ultimi picchi: {peaks})")
     print_summary("dal vivo", ok, ("m1_ms", "m2_ms", "vad_wait_ms", "stt_ms", "tts_first_ms"))
     print("\n== ultime richieste: esito, wake word, volume microfono, VAD, testo, audio")
     for r in rows[-20:]:

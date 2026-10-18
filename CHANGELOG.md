@@ -28,6 +28,8 @@ Prima iterazione della Fase 1: scheletro funzionante, tutto locale, nessuna chia
 - Ascolto dopo il bip più tollerante (dal primo test dal vivo): soglia VAD 0,4, 64 ms di voce per
   iniziare, 800 ms di audio tenuto prima dell'inizio, 4 s per cominciare a parlare.
 - Whisper parte senza contattare huggingface.co quando il modello è già scaricato.
+- Wake word più sensibile: soglia di `hey_jarvis` a 0,35. Le attivazioni mancate (picco sopra
+  0,15 senza superare la soglia) finiscono in `metrics.jsonl` come `near_miss`, con audio.
 - Script: `download_models.py`, `check_gpu.py`, `list_audio_devices.py`, `record_samples.py`,
   `benchmark_latency.py`, `benchmark_tts.py`; istruzioni per addestrare le wake word.
 - `uv` con `uv.lock` (risolto per Windows) ed export `requirements.txt`.

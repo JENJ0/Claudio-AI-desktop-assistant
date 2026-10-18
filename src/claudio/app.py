@@ -19,7 +19,7 @@ from claudio.protocols import Responder, Speaker, Transcriber, WakeWordDetector
 
 log = logging.getLogger(__name__)
 
-PREWAKE_S = 1.0  # audio before the wake word that goes into the saved WAV
+PREWAKE_S = 1.5  # audio before the wake word that goes into the saved WAV
 
 
 class State(enum.StrEnum):
@@ -78,6 +78,8 @@ class Assistant:
             detection = self.wake.process(frame)
             if detection is not None:
                 self._on_wake(*detection)
+            elif (miss := self.wake.pop_near_miss()) is not None:
+                self._on_near_miss(*miss)
         elif self.state == State.LISTENING:
             self._on_listen(frame)
         # While transcribing/answering/speaking the microphone is ignored (no barge-in yet).
@@ -93,6 +95,19 @@ class Assistant:
         self._recent.clear()
         self.endpointer.reset()
         self._set_state(State.LISTENING)
+
+    def _on_near_miss(self, name: str, score: float) -> None:
+        inter = Interaction(
+            clock=self.clock,
+            info={"wake_word": name, "wake_score": round(score, 3), "outcome": "near_miss"},
+        )
+        if self.audio_sink is not None:
+            try:
+                inter.info["audio_file"] = self.audio_sink(self._recent.get(), "near_miss")
+            except Exception:
+                log.exception("Impossibile salvare l'audio della wake word mancata")
+        if self.metrics is not None:
+            self.metrics.write(inter)
 
     def _on_listen(self, frame: np.ndarray) -> None:
         assert self._interaction is not None

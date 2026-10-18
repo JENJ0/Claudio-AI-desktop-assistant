@@ -15,6 +15,7 @@ from claudio.config import WakeWordSettings
 log = logging.getLogger(__name__)
 
 FEATURE_MODELS = ("melspectrogram.onnx", "embedding_model.onnx")
+NEAR_MISS_FLOOR = 0.15  # a peak between this and the threshold is logged as a missed wake word
 
 
 def find_wakeword_model(model: str, wakeword_dir: Path) -> Path:
@@ -52,19 +53,66 @@ class OpenWakeWordDetector:
         self.thresholds = {p.stem: m.threshold for p, m in zip(paths, settings.models, strict=True)}
         self.names = [m.name.replace("_", " ") for m in settings.models]
         self._silence = np.zeros(frame_size, dtype=np.int16)
+        self._near_miss = NearMissTracker(self.thresholds)
         log.info(
             "Wake word: %s", ", ".join(f"{k} (soglia {v:.2f})" for k, v in self.thresholds.items())
         )
 
     def process(self, frame: np.ndarray) -> tuple[str, float] | None:
         scores = self._model.predict(frame)
-        return best_detection(scores, self.thresholds)
+        detection = best_detection(scores, self.thresholds)
+        self._near_miss.update(scores, detection is not None)
+        return detection
+
+    def pop_near_miss(self) -> tuple[str, float] | None:
+        miss = self._near_miss.pop()
+        if miss is not None:
+            name, score = miss
+            log.info(
+                "Wake word sotto soglia: %s %.2f (soglia %.2f)", name, score, self.thresholds[name]
+            )
+        return miss
 
     def reset(self) -> None:
         """Forget the last ~2 s of audio so the same wake word cannot fire twice."""
         for _ in range(25):
             self._model.predict(self._silence)
         self._model.reset()
+        self._near_miss.reset()
+
+
+class NearMissTracker:
+    """Peak score of each burst that rose above NEAR_MISS_FLOOR but never fired.
+
+    These are the attempts the wake word did not catch: their scores tell how far to lower
+    the threshold."""
+
+    def __init__(self, thresholds: dict[str, float], floor: float = NEAR_MISS_FLOOR) -> None:
+        self.thresholds = thresholds
+        self.floor = floor
+        self.reset()
+
+    def reset(self) -> None:
+        self._peak: tuple[str, float] | None = None
+        self._ready: tuple[str, float] | None = None
+        self._fired = False
+
+    def update(self, scores: dict[str, float], fired: bool) -> None:
+        name, score = max(
+            ((n, float(scores.get(n, 0.0))) for n in self.thresholds), key=lambda item: item[1]
+        )
+        if score >= self.floor:
+            self._fired = self._fired or fired
+            if self._peak is None or score > self._peak[1]:
+                self._peak = (name, score)
+        elif self._peak is not None:  # burst over
+            if not self._fired:
+                self._ready = self._peak
+            self._peak, self._fired = None, False
+
+    def pop(self) -> tuple[str, float] | None:
+        miss, self._ready = self._ready, None
+        return miss
 
 
 def best_detection(

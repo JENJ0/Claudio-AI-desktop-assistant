@@ -13,6 +13,10 @@ class WakeWordDetector(Protocol):
         """Score one int16 frame; returns (wake word, score) when one fires."""
         ...
 
+    def pop_near_miss(self) -> tuple[str, float] | None:
+        """(wake word, peak score) of an attempt that stayed under the threshold, once."""
+        ...
+
     def reset(self) -> None: ...
 
 
