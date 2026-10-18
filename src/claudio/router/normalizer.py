@@ -6,9 +6,15 @@ import re
 import unicodedata
 
 ARTICLES = {"il", "lo", "la", "i", "gli", "le", "l", "un", "uno", "una", "un'"}
+# Wake words (and how Whisper may spell them) heard at the start of a phrase said in one breath.
+WAKE_WORDS = ("claudio", "jarvis")
+GREETINGS = {"hey", "ehi", "ei", "hei", "ehy"}
+NOT_WAKE_WORDS = {"audio", "claudia"}
 FILLERS = {
     "claudio",
+    "jarvis",
     "hey",
+    "hei",
     "ehi",
     "ei",
     "ok",
@@ -64,8 +70,31 @@ def normalize(text: str, drop_fillers: bool = True) -> str:
         return " ".join(text.split())
     for phrase in POLITE_PHRASES:
         text = re.sub(rf"\b{phrase}\b", " ", text)
-    words = [VERB_FORMS.get(w, w) for w in text.split()]
+    words = [VERB_FORMS.get(w, w) for w in strip_wake_words(text.split())]
     return " ".join(w for w in words if w not in ARTICLES and w not in FILLERS)
+
+
+def is_wake_word(word: str) -> bool:
+    """'jarvis', 'giarvis', 'clodio'...: close enough to a wake word, and not a real word."""
+    from rapidfuzz import fuzz
+
+    if word in GREETINGS or word in WAKE_WORDS:
+        return True
+    return word not in NOT_WAKE_WORDS and max(fuzz.ratio(word, w) for w in WAKE_WORDS) >= 75
+
+
+def strip_wake_words(words: list[str]) -> list[str]:
+    """Drop the wake phrase at the start ("ehi giarvis apri chrome" -> "apri chrome")."""
+    i = 0
+    while i < len(words) and is_wake_word(words[i]):
+        i += 1
+    return words[i:]
+
+
+def only_wake_words(text: str) -> bool:
+    """True when the transcript is just the wake word: the command is still to come."""
+    words = normalize(text, drop_fillers=False).split()
+    return bool(words) and not strip_wake_words(words)
 
 
 NUMBER_WORDS = {

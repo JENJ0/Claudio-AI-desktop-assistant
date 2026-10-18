@@ -162,3 +162,32 @@ async def test_pipeline_with_real_wake_word_and_vad(detector) -> None:
     heard = len(stt.audio) / SR
     command_len = np.subtract(*onset_offset(command)[::-1])
     assert command_len <= heard <= command_len + 0.9  # pre-roll + ~100 ms tail
+
+
+async def test_one_breath_request_reaches_the_transcriber_whole(detector) -> None:
+    """ "hey jarvis che ore sono" without a pause: the words said before the wake word fired
+    are kept too (the transcript drops the wake word itself)."""
+    wake = speech("hey jarvis", "en")
+    wake = wake[: int((onset_offset(wake)[1] + 0.02) * SR)]
+    command = speech("che ore sono")
+    command = command[max(int((onset_offset(command)[0] - 0.02) * SR), 0) :]
+    audio = np.concatenate((silence(1), wake, command, silence(2)))
+    stt = FakeStt()
+    assistant = Assistant(
+        detector,
+        Endpointer(SileroVad(MODELS / "vad" / "silero_vad.onnx"), SETTINGS.vad),
+        stt,
+        FakeResponder(),
+        FakeSpeaker(),
+    )
+    detector.reset()
+
+    async def frames():
+        for f in to_frames(audio):
+            yield f
+            await asyncio.sleep(0)
+
+    await assistant.run(frames())
+    assert stt.audio is not None
+    spoken = np.subtract(*onset_offset(np.concatenate((wake, command)))[::-1])
+    assert spoken <= len(stt.audio) / SR <= spoken + 0.5

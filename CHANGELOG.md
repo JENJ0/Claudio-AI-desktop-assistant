@@ -32,10 +32,14 @@ Prima iterazione della Fase 1: scheletro funzionante, tutto locale, nessuna chia
   0,15 senza superare la soglia) finiscono in `metrics.jsonl` come `near_miss`, con audio.
 - Guadagno digitale del microfono (`audio.input_gain_db`) e avviso nel log quando la voce arriva
   troppo bassa; ogni richiesta registra anche il picco della voce (`speech_dbfs`).
+- Comandi detti tutto d'un fiato ("hey jarvis che ore sono"): se la wake word scatta in
+  ritardo, le parole dette subito prima vengono aggiunte alla frase e la wake word viene tolta
+  dal testo trascritto. Se la frase contiene solo la wake word, Claudio ascolta di nuovo la
+  richiesta senza perdere quello che hai detto nel frattempo.
 - Script: `download_models.py`, `check_gpu.py`, `list_audio_devices.py`, `record_samples.py`,
   `benchmark_latency.py`, `benchmark_tts.py`; istruzioni per addestrare le wake word.
 - `uv` con `uv.lock` (risolto per Windows) ed export `requirements.txt`.
-- 170 test veloci + test sui modelli reali; CI su `windows-latest`.
+- 208 test veloci + test sui modelli reali; CI su `windows-latest`.
 
 ### Note
 - Da verificare sul PC di JenJo: CTranslate2 4.8.3 sulla RTX 5070 Ti (Blackwell) con

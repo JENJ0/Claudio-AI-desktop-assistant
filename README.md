@@ -52,8 +52,10 @@ uv run python scripts/list_audio_devices.py
 ```
 
 Di' la wake word, aspetta il bip, poi il comando. Se non parli entro 4 s senti un bip basso e
-Claudio torna in attesa. Il segnaposto `hey jarvis` è un modello inglese: detto in fretta o
-attaccato al comando spesso non scatta, quindi in v0.1.0 dillo con calma e fai una pausa.
+Claudio torna in attesa. Puoi anche dire tutto d'un fiato ("hey jarvis che ore sono"): le parole
+dette prima del bip vengono recuperate. Il segnaposto `hey jarvis` è però un modello inglese:
+detto in fretta o attaccato al comando a volte non scatta, quindi in v0.1.0 è più sicuro dirlo
+con calma e fare una breve pausa.
 
 | Comando (esempi) | Cosa fa |
 |---|---|

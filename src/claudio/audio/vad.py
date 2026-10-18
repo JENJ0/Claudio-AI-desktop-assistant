@@ -45,6 +45,10 @@ class SileroVad:
         return float(out[0, 0])
 
 
+ONE_BREATH_S = 0.3  # speech starting this soon after the wake word continues the same breath
+LEAD_IN_GAP_S = 0.25  # a pause this long separates the phrase from what was said before
+
+
 class EndpointEvent(enum.Enum):
     NONE = "none"
     START = "start"  # speech has started
@@ -64,7 +68,13 @@ class Endpointer:
         self._preroll = RingBuffer(sample_rate * settings.pre_roll_ms // 1000)
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self, lead_in: np.ndarray | None = None) -> None:
+        """Start a new phrase. `lead_in` (float32) is what was heard just before, wake word
+        included: its last stretch of speech is kept in case the phrase was said in one breath
+        ("hey claudio che ore sono") and its first words came before the wake word fired."""
+        self._lead_in = np.zeros(0, dtype=np.float32)
+        if lead_in is not None:
+            self._lead_in = self._speech_tail(lead_in)
         self.vad.reset()
         self._preroll.clear()
         self._pending = np.zeros(0, dtype=np.float32)
@@ -115,7 +125,9 @@ class Endpointer:
             if self._speech_run * 1000 >= s.min_speech_ms * self.sample_rate:
                 self._started = True
                 self._chunks = [self._preroll.get()]
-                self._utterance_len = len(self._chunks[0])
+                if self._elapsed <= ONE_BREATH_S * self.sample_rate and self._lead_in.size:
+                    self._chunks.insert(0, self._lead_in)
+                self._utterance_len = sum(len(c) for c in self._chunks)
                 return EndpointEvent.START
             if self._elapsed >= s.no_speech_timeout_s * self.sample_rate:
                 self._finished = True
@@ -132,6 +144,24 @@ class Endpointer:
             self._finished = True
             return EndpointEvent.END
         return EndpointEvent.NONE
+
+    def _speech_tail(self, audio: np.ndarray) -> np.ndarray:
+        """The speech at the end of `audio`, back to the last pause; empty if it ends in a pause."""
+        win = self._win
+        n = len(audio) // win
+        audio = audio[len(audio) - n * win :]
+        self.vad.reset()
+        quiet = [self.vad(audio[i * win : (i + 1) * win]) < self._neg_threshold for i in range(n)]
+        gap = max(1, int(LEAD_IN_GAP_S * self.sample_rate) // win)
+        start, run = 0, 0
+        for i in range(n - 1, -1, -1):
+            run = run + 1 if quiet[i] else 0
+            if run >= gap:
+                start = i + gap
+                break
+        if start >= n:
+            return audio[:0]
+        return audio[max(start - 1, 0) * win :]  # one window early: soft first sounds
 
     def listened(self) -> np.ndarray:
         """Everything heard since reset() (for diagnostics), float32."""

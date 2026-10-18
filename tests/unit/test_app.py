@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 
 import numpy as np
@@ -34,14 +35,23 @@ class FakeWake:
 
 
 class FakeStt:
-    def __init__(self, text: str = "apri chrome", error: bool = False, delay: float = 0) -> None:
-        self.text, self.error, self.delay, self.audio = text, error, delay, None
+    """Returns `text`, or the items of a list one call after another (the last one repeats)."""
+
+    def __init__(
+        self, text: str | list[str] = "apri chrome", error: bool = False, delay: float = 0
+    ) -> None:
+        self.texts = [text] if isinstance(text, str) else text
+        self.error, self.delay, self.audio = error, delay, None
+        self.heard: list[np.ndarray] = []
 
     def transcribe(self, audio: np.ndarray) -> str:
         self.audio = audio
+        self.heard.append(audio)
+        if self.delay:
+            time.sleep(self.delay)  # runs in a worker thread, like Whisper
         if self.error:
             raise RuntimeError("CUDA esplosa")
-        return self.text
+        return self.texts[min(len(self.heard), len(self.texts)) - 1]
 
 
 class FakeResponder:
@@ -282,6 +292,57 @@ async def test_quiet_microphone_is_reported_once(fake_vad, vad_settings, make_fr
     assert [r["outcome"] for r in assistant.history] == ["ok", "ok"]
     warnings = [r for r in caplog.records if "Microfono basso" in r.getMessage()]
     assert len(warnings) == 1 and "INPUT_GAIN_DB" in warnings[0].getMessage()
+
+
+async def test_one_breath_request_keeps_the_words_before_the_wake_word(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    stt = FakeStt()
+    # speech from the first frame, wake word fires on frame 10 while the request goes on
+    assistant, *_ = build(fake_vad, vad_settings, stt, {10})
+    await run_frames(assistant, make_frames("speech", 1600) + make_frames("silence", 800))
+    assert stt.audio is not None
+    # 800 ms heard before the wake word + 800 ms after it, and ~100 ms of the final silence
+    assert 1.55 < len(stt.audio) / 16000 < 1.75
+    assert assistant.history[-1]["outcome"] == "ok"
+
+
+async def test_only_the_wake_word_listens_again(fake_vad, vad_settings, make_frames) -> None:
+    # "Hey Claudio." [the beep] "apri Chrome": the request arrives while the first phrase is
+    # being transcribed, and must not be lost
+    stt = FakeStt(text=["Hey Claudio.", "apri chrome"], delay=0.2)
+    saved: list[np.ndarray] = []
+    assistant, wake, speaker, responder = build(
+        fake_vad, vad_settings, stt, {1}, audio_sink=lambda audio, _: saved.append(audio)
+    )
+    frames = (
+        make_frames("silence", 80)
+        + make_frames("speech", 400)
+        + make_frames("silence", 480)  # end of the first phrase
+        + make_frames("speech", 800)  # the request, said during the transcription
+        + make_frames("silence", 800)
+    )
+    await run_frames(assistant, frames)
+    assert len(stt.heard) == 2 and len(stt.heard[1]) / 16000 > 0.8
+    assert responder.seen == ["apri chrome"] and speaker.spoken == ["Apro Chrome."]
+    assert speaker.beeps == ["wake"]
+    (row,) = assistant.history
+    assert row["outcome"] == "ok" and row["relisten"] == "Hey Claudio."
+    assert row["text"] == "apri chrome" and row["m1_ms"] is not None
+    assert row["prewake_ms"] == 80 and len(saved[0]) / 16000 > 0.08 + 0.4 + 0.8  # both phrases
+    assert assistant.state is State.IDLE and wake.resets == 1
+
+
+async def test_wake_word_twice_then_gives_up(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt(text="Hey Claudio.")
+    assistant, _, speaker, responder = build(fake_vad, vad_settings, stt, {1})
+    phrase = make_frames("speech", 400) + make_frames("silence", 480)
+    await run_frames(
+        assistant, make_frames("silence", 80) + phrase + make_frames("silence", 80) + phrase
+    )
+    assert len(stt.heard) == 2 and responder.seen == []
+    assert speaker.beeps == ["wake", "cancel"]
+    assert assistant.history[-1]["outcome"] == "empty"
 
 
 @pytest.mark.parametrize("state", list(State))

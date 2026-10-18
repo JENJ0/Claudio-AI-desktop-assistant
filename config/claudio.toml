@@ -40,7 +40,7 @@ fallback_model = "small"
 fallback_compute_type = "int8"
 language = "it"
 beam_size = 1
-initial_prompt = "Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
+initial_prompt = "Hey Jarvis, Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
 no_speech_threshold = 0.6
 cpu_threads = 4
 

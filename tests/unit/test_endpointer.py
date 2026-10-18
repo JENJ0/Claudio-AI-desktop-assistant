@@ -2,6 +2,7 @@ import numpy as np
 
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.config import VadSettings
+from tests.conftest import frames as make
 
 
 def feed(ep: Endpointer, frames: list[np.ndarray]) -> list[EndpointEvent]:
@@ -68,3 +69,46 @@ def test_stats_and_listened_audio(fake_vad, vad_settings, make_frames) -> None:
     assert len(ep.listened()) == 16000 * 800 // 1000
     ep.reset()
     assert len(ep.listened()) == 0 and ep.stats()["vad_max"] == 0.0
+
+
+def lead_in(*parts: tuple[str, int]) -> np.ndarray:
+    """What the assistant heard before the wake word fired, float32."""
+    frames = [f for kind, ms in parts for f in make(kind, ms)]
+    return np.concatenate(frames).astype(np.float32) / 32768.0
+
+
+def phrase_len(ep: Endpointer, lead: np.ndarray | None, frames: list[np.ndarray]) -> int:
+    ep.reset(lead_in=lead)
+    assert feed(ep, frames) == [EndpointEvent.START, EndpointEvent.END]
+    return len(ep.audio())
+
+
+def test_one_breath_phrase_keeps_the_speech_before_the_wake_word(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    rest = make_frames("speech", 600) + make_frames("silence", 600)
+    alone = phrase_len(ep, None, rest)
+    # "hey claudio che ore" heard before the wake word fired, after a pause: only that is added
+    with_lead = phrase_len(ep, lead_in(("silence", 480), ("speech", 400)), rest)
+    added = (with_lead - alone) / 16000
+    assert 0.4 <= added <= 0.5  # the 400 ms of speech plus one window of margin
+
+
+def test_lead_in_is_ignored_after_a_pause(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    rest = make_frames("speech", 600) + make_frames("silence", 600)
+    alone = phrase_len(ep, None, rest)
+    # the wake word fired when the speech before it had already ended
+    assert phrase_len(ep, lead_in(("speech", 400), ("silence", 400)), rest) == alone
+    # the request starts well after the wake word: a new breath
+    late = make_frames("silence", 480) + rest
+    assert phrase_len(ep, lead_in(("speech", 800)), late) == phrase_len(ep, None, late)
+
+
+def test_lead_in_without_pauses_is_kept_whole(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    rest = make_frames("speech", 600) + make_frames("silence", 600)
+    alone = phrase_len(ep, None, rest)
+    lead = lead_in(("speech", 1440))
+    assert len(lead) - 512 < phrase_len(ep, lead, rest) - alone <= len(lead)

@@ -7,6 +7,7 @@ import asyncio
 import enum
 import logging
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -16,10 +17,12 @@ from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import Responder, Speaker, Transcriber, WakeWordDetector
+from claudio.router.normalizer import only_wake_words
 
 log = logging.getLogger(__name__)
 
-PREWAKE_S = 1.5  # audio before the wake word that goes into the saved WAV
+PREWAKE_S = 1.5  # audio kept before the wake word: one-breath phrases and the saved WAV
+HELD_FRAMES = 100  # frames kept while transcribing (~8 s), replayed if we listen again
 QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
 
 
@@ -51,8 +54,9 @@ class Assistant:
         self.metrics = metrics
         self.clock = clock
         self.audio_sink = audio_sink  # saves what was heard; returns the file name
-        self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S) if audio_sink else 0)
+        self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S))
         self._prewake = np.zeros(0, dtype=np.float32)
+        self._held: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
         self._warned_quiet = False
         self.state = State.IDLE
         self._interaction: Interaction | None = None
@@ -75,8 +79,7 @@ class Assistant:
 
     async def handle_frame(self, frame: np.ndarray) -> None:
         if self.state == State.IDLE:
-            if self.audio_sink is not None:
-                self._recent.append(frame.astype(np.float32) / 32768.0)
+            self._recent.append(frame.astype(np.float32) / 32768.0)
             detection = self.wake.process(frame)
             if detection is not None:
                 self._on_wake(*detection)
@@ -84,7 +87,9 @@ class Assistant:
                 self._on_near_miss(*miss)
         elif self.state == State.LISTENING:
             self._on_listen(frame)
-        # While transcribing/answering/speaking the microphone is ignored (no barge-in yet).
+        elif self.state == State.TRANSCRIBING:
+            self._held.append(frame)  # the request itself, if the phrase was only the wake word
+        # While answering/speaking the microphone is ignored (no barge-in yet).
 
     def _on_wake(self, name: str, score: float) -> None:
         self._interaction = Interaction(
@@ -95,7 +100,12 @@ class Assistant:
         self._beep("wake")
         self._prewake = self._recent.get()
         self._recent.clear()
-        self.endpointer.reset()
+        if self.audio_sink is not None:
+            sr = self.endpointer.sample_rate
+            self._interaction.info["prewake_ms"] = round(len(self._prewake) * 1000 / sr)
+        # The wake word may fire late, while the request has already begun ("hey claudio che
+        # ore sono" in one breath): the endpointer can prepend the speech heard just before.
+        self.endpointer.reset(lead_in=self._prewake)
         self._set_state(State.LISTENING)
 
     def _on_near_miss(self, name: str, score: float) -> None:
@@ -125,6 +135,7 @@ class Assistant:
             # The phrase really ended when the trailing silence began.
             self._interaction.marks["speech_end"] = now - self.endpointer.trailing_silence_s
             self._interaction.marks["endpoint"] = now
+            self._held.clear()
             self._set_state(State.TRANSCRIBING)
             self._task = asyncio.create_task(self._handle_utterance(self.endpointer.audio()))
 
@@ -137,7 +148,11 @@ class Assistant:
             inter.mark("stt_done")
             inter.info["text"] = text
             log.info("Trascritto: %r", text)
-            if not text:
+            if only_wake_words(text) and "relisten" not in inter.info:
+                outcome = "relisten"
+                self._relisten(inter)
+                return
+            if not text or only_wake_words(text):
                 outcome = "empty"
                 await self.speaker.beep("cancel")
                 return
@@ -154,10 +169,28 @@ class Assistant:
             except Exception:
                 log.exception("Impossibile riprodurre il segnale di errore")
         finally:
-            route = getattr(self.responder, "last_route", None)
-            if route:
-                inter.info.update(route)
-            self._finish(outcome)
+            if outcome != "relisten":
+                route = getattr(self.responder, "last_route", None)
+                if route:
+                    inter.info.update(route)
+                self._finish(outcome)
+
+    def _relisten(self, inter: Interaction) -> None:
+        """The phrase was only the wake word (said again, or its tail after an early detection):
+        listen for the request, starting from what was heard while transcribing."""
+        log.info("Solo la wake word: ascolto la richiesta")
+        inter.info["relisten"] = inter.info.pop("text")
+        for stage in ("speech_start", "speech_end", "endpoint", "stt_done"):
+            inter.marks.pop(stage, None)
+        self._prewake = np.concatenate((self._prewake, self.endpointer.listened()))  # saved WAV
+        self.endpointer.reset()
+        self._set_state(State.LISTENING)
+        held = list(self._held)
+        self._held.clear()
+        for frame in held:
+            if self.state is not State.LISTENING:  # the request already ended (or timed out)
+                break
+            self._on_listen(frame)
 
     async def _marked(self, stream: AsyncIterator[str], inter: Interaction) -> AsyncIterator[str]:
         async for chunk in stream:
@@ -176,8 +209,6 @@ class Assistant:
             inter.info.update(self.endpointer.stats())
             self._check_level(inter.info["speech_dbfs"])
             if self.audio_sink is not None:
-                sr = self.endpointer.sample_rate
-                inter.info["prewake_ms"] = round(len(self._prewake) * 1000 / sr)
                 heard = np.concatenate((self._prewake, self.endpointer.listened()))
                 try:
                     inter.info["audio_file"] = self.audio_sink(heard, outcome)
@@ -204,7 +235,8 @@ class Assistant:
         task.add_done_callback(self._beeps.discard)
 
     async def wait_idle(self) -> None:
-        if self._task is not None:
+        # A request that listened again has started a new task: wait for that one too.
+        while self._task is not None and not self._task.done():
             await asyncio.gather(self._task, return_exceptions=True)
         if self._beeps:
             await asyncio.gather(*self._beeps, return_exceptions=True)

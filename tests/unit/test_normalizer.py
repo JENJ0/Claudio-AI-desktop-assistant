@@ -1,6 +1,6 @@
 import pytest
 
-from claudio.router.normalizer import extract_number, normalize, strip_accents
+from claudio.router.normalizer import extract_number, normalize, only_wake_words, strip_accents
 
 
 @pytest.mark.parametrize(
@@ -13,6 +13,9 @@ from claudio.router.normalizer import extract_number, normalize, strip_accents
         ("Togli l'audio", "togli audio"),
         ("Potresti aprire la calcolatrice?", "apri calcolatrice"),
         ("Ehi, mi apri i Download?", "apri download"),
+        ("Hey Jarvis, che ore sono?", "che ore sono"),  # wake word said in the same breath
+        ("Ehi Giarvis apri la calcolatrice", "apri calcolatrice"),
+        ("Hey Clodio, alza il volume", "alza volume"),
         ("   ", ""),
     ],
 )
@@ -22,6 +25,22 @@ def test_normalize(text: str, expected: str) -> None:
 
 def test_normalize_keep_fillers() -> None:
     assert normalize("Grazie per la visione!", drop_fillers=False) == "grazie per la visione"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Hey Jarvis.", True),
+        ("Claudio!", True),
+        ("Ehi Giarvis", True),
+        ("Hey Jarvis, apri Chrome", False),
+        ("Audio", False),
+        ("Claudia", False),
+        ("", False),
+    ],
+)
+def test_only_wake_words(text: str, expected: bool) -> None:
+    assert only_wake_words(text) is expected
 
 
 def test_strip_accents() -> None:
