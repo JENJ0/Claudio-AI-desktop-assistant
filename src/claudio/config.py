@@ -49,11 +49,11 @@ class WakeWordSettings(BaseModel):
 
 
 class VadSettings(BaseModel):
-    threshold: float = Field(0.5, gt=0, lt=1)
-    min_speech_ms: int = Field(96, ge=0)
+    threshold: float = Field(0.4, gt=0, lt=1)
+    min_speech_ms: int = Field(64, ge=0)
     end_silence_ms: int = Field(400, gt=0)
-    pre_roll_ms: int = Field(300, ge=0)
-    no_speech_timeout_s: float = Field(3.0, gt=0)
+    pre_roll_ms: int = Field(800, ge=0)
+    no_speech_timeout_s: float = Field(4.0, gt=0)
     max_utterance_s: float = Field(8.0, gt=0)
 
 
@@ -86,6 +86,8 @@ class RouterSettings(BaseModel):
 
 class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
+    keep_audio: int = Field(50, ge=1)
 
 
 class Settings(BaseSettings):

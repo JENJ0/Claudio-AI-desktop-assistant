@@ -12,11 +12,14 @@ from typing import Any
 
 import numpy as np
 
+from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import Responder, Speaker, Transcriber, WakeWordDetector
 
 log = logging.getLogger(__name__)
+
+PREWAKE_S = 1.0  # audio before the wake word that goes into the saved WAV
 
 
 class State(enum.StrEnum):
@@ -37,6 +40,7 @@ class Assistant:
         speaker: Speaker,
         metrics: MetricsWriter | None = None,
         clock: Callable[[], float] = time.perf_counter,
+        audio_sink: Callable[[np.ndarray, str], str | None] | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -45,6 +49,9 @@ class Assistant:
         self.speaker = speaker
         self.metrics = metrics
         self.clock = clock
+        self.audio_sink = audio_sink  # saves what was heard; returns the file name
+        self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S) if audio_sink else 0)
+        self._prewake = np.zeros(0, dtype=np.float32)
         self.state = State.IDLE
         self._interaction: Interaction | None = None
         self._task: asyncio.Task[None] | None = None
@@ -66,6 +73,8 @@ class Assistant:
 
     async def handle_frame(self, frame: np.ndarray) -> None:
         if self.state == State.IDLE:
+            if self.audio_sink is not None:
+                self._recent.append(frame.astype(np.float32) / 32768.0)
             detection = self.wake.process(frame)
             if detection is not None:
                 self._on_wake(*detection)
@@ -80,6 +89,8 @@ class Assistant:
         self._interaction.mark("wake")
         log.info("Wake word rilevata: %s (%.2f)", name, score)
         self._beep("wake")
+        self._prewake = self._recent.get()
+        self._recent.clear()
         self.endpointer.reset()
         self._set_state(State.LISTENING)
 
@@ -145,6 +156,15 @@ class Assistant:
         if inter is not None:
             inter.mark("done")
             inter.info["outcome"] = outcome
+            inter.info.update(self.endpointer.stats())
+            if self.audio_sink is not None:
+                sr = self.endpointer.sample_rate
+                inter.info["prewake_ms"] = round(len(self._prewake) * 1000 / sr)
+                heard = np.concatenate((self._prewake, self.endpointer.listened()))
+                try:
+                    inter.info["audio_file"] = self.audio_sink(heard, outcome)
+                except Exception:
+                    log.exception("Impossibile salvare l'audio della richiesta")
             row = self.metrics.write(inter) if self.metrics else inter.summary()
             self.history.append(row)
         self._interaction = None

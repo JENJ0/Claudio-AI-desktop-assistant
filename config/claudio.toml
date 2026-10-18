@@ -24,11 +24,11 @@ name = "hey_jarvis"
 threshold = 0.5
 
 [vad]
-threshold = 0.5            # speech probability to count a window as speech
-min_speech_ms = 96         # speech needed to consider the phrase started
+threshold = 0.4            # speech probability to count a window as speech (lower = more sensitive)
+min_speech_ms = 64         # speech needed to consider the phrase started
 end_silence_ms = 400       # silence that closes the phrase
-pre_roll_ms = 300          # audio kept before the detected start
-no_speech_timeout_s = 3.0  # nothing said after the wake word -> back to idle
+pre_roll_ms = 800          # audio kept before the detected start (soft first words)
+no_speech_timeout_s = 4.0  # nothing said after the wake word -> back to idle
 max_utterance_s = 8.0
 
 [stt]
@@ -56,3 +56,5 @@ unknown_reply = "Questo non lo so ancora fare."
 
 [logging]
 level = "INFO"
+save_audio = true          # keep a WAV of what CLAUDIO heard after each wake word (logs/audio/)
+keep_audio = 50            # how many to keep

@@ -51,3 +51,18 @@ def test_reset_allows_new_phrase(fake_vad, vad_settings, make_frames) -> None:
         EndpointEvent.START,
         EndpointEvent.END,
     ]
+
+
+def test_stats_and_listened_audio(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    assert ep.stats() == {"vad_max": 0.0, "input_dbfs": -120.0}
+    feed(ep, make_frames("silence", 400))
+    assert ep.stats() == {"vad_max": 0.0, "input_dbfs": -120.0}
+    feed(ep, make_frames("speech", 400))
+    stats = ep.stats()
+    assert stats["vad_max"] == 0.9
+    # tone at half scale is -9.2 dBFS RMS; silent half the time -> -12.2 dBFS
+    assert -12.6 < stats["input_dbfs"] < -11.8
+    assert len(ep.listened()) == 16000 * 800 // 1000
+    ep.reset()
+    assert len(ep.listened()) == 0 and ep.stats()["vad_max"] == 0.0

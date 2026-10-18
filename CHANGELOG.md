@@ -6,9 +6,9 @@ Prima iterazione della Fase 1: scheletro funzionante, tutto locale, nessuna chia
 
 ### Aggiunto
 - Pipeline completa: microfono (sounddevice, 16 kHz, blocchi da 80 ms) → openWakeWord (ONNX)
-  → bip → Silero VAD v6 via onnxruntime (senza PyTorch) con pre-roll di 300 ms → faster-whisper
+  → bip → Silero VAD v6 via onnxruntime (senza PyTorch) con pre-roll di 800 ms → faster-whisper
   → router locale → Piper con streaming frase per frase.
-- Macchina a stati `IDLE → LISTENING → TRANSCRIBING → RESPONDING → SPEAKING`, timeout di 3 s
+- Macchina a stati `IDLE → LISTENING → TRANSCRIBING → RESPONDING → SPEAKING`, timeout di 4 s
   senza voce e 8 s di frase massima; la wake word è ignorata mentre Claudio lavora o parla.
 - Più wake word insieme, ognuna con la sua soglia (pronto per "Hey Claudio" + "Claudio");
   segnaposto `hey_jarvis` finché i modelli custom non sono addestrati.
@@ -23,6 +23,11 @@ Prima iterazione della Fase 1: scheletro funzionante, tutto locale, nessuna chia
 - Audio quasi muto non arriva a Whisper (evita "Buon appetito!" e simili sul silenzio).
 - Configurazione TOML + variabili d'ambiente con messaggi d'errore chiari (pydantic-settings).
 - Log su console e file JSON a rotazione; metriche M1/M2 per ogni richiesta in `logs/metrics.jsonl`.
+- Diagnostica dell'ascolto: per ogni richiesta volume del microfono (`input_dbfs`), sicurezza
+  massima del VAD (`vad_max`) e WAV di quello che Claudio ha sentito in `logs/audio/` (ultimi 50).
+- Ascolto dopo il bip più tollerante (dal primo test dal vivo): soglia VAD 0,4, 64 ms di voce per
+  iniziare, 800 ms di audio tenuto prima dell'inizio, 4 s per cominciare a parlare.
+- Whisper parte senza contattare huggingface.co quando il modello è già scaricato.
 - Script: `download_models.py`, `check_gpu.py`, `list_audio_devices.py`, `record_samples.py`,
   `benchmark_latency.py`, `benchmark_tts.py`; istruzioni per addestrare le wake word.
 - `uv` con `uv.lock` (risolto per Windows) ed export `requirements.txt`.

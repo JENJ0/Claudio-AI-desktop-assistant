@@ -83,7 +83,9 @@ class AudioClock:
         return self.t
 
 
-def build(fake_vad, vad_settings, stt: FakeStt, wake_frames: set[int], tmp_path=None):
+def build(
+    fake_vad, vad_settings, stt: FakeStt, wake_frames: set[int], tmp_path=None, audio_sink=None
+):
     wake = FakeWake(wake_frames)
     speaker = FakeSpeaker()
     responder = FakeResponder()
@@ -96,6 +98,7 @@ def build(fake_vad, vad_settings, stt: FakeStt, wake_frames: set[int], tmp_path=
         speaker,
         metrics,
         clock=AudioClock(),
+        audio_sink=audio_sink,
     )
     wake.assistant = assistant
     return assistant, wake, speaker, responder
@@ -191,6 +194,48 @@ async def test_wake_word_ignored_while_busy(fake_vad, vad_settings, make_frames)
     await run_frames(assistant, frames)
     assert wake.states and set(wake.states) == {State.IDLE}
     assert wake.calls < len(frames) / 4
+
+
+async def test_heard_audio_is_saved_with_its_level(fake_vad, vad_settings, make_frames) -> None:
+    saved: list[tuple[np.ndarray, str]] = []
+
+    def sink(audio: np.ndarray, outcome: str) -> str:
+        saved.append((audio, outcome))
+        return f"{outcome}.wav"
+
+    assistant, *_ = build(fake_vad, vad_settings, FakeStt(), {3, 20}, audio_sink=sink)
+    frames = (
+        make_frames("silence", 400)  # wake on frame 3
+        + make_frames("speech", 1000)
+        + make_frames("silence", 800)
+        + make_frames("silence", 5000)  # second wake after 1.4 s, then nothing said
+    )
+    await run_frames(assistant, frames)
+
+    ok, timeout = assistant.history
+    assert (ok["outcome"], ok["audio_file"], ok["vad_max"]) == ("ok", "ok.wav", 0.9)
+    assert ok["prewake_ms"] == 240 and ok["input_dbfs"] > -20
+    assert timeout["audio_file"] == "timeout.wav" and timeout["vad_max"] == 0.0
+    assert timeout["prewake_ms"] == 1000 and timeout["input_dbfs"] == -120.0
+    audio, outcome = saved[0]
+    assert outcome == "ok" and audio.dtype == np.float32
+    assert len(audio) > 16000 * (0.24 + 1.0)  # 240 ms before the wake word + the phrase
+
+
+async def test_failing_audio_sink_does_not_break_the_request(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    def sink(audio: np.ndarray, outcome: str) -> str:
+        raise OSError("disk full")
+
+    assistant, _, speaker, _ = build(fake_vad, vad_settings, FakeStt(), {1}, audio_sink=sink)
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert speaker.spoken == ["Apro Chrome."]
+    assert assistant.history[-1]["outcome"] == "ok" and "audio_file" not in assistant.history[-1]
+    assert assistant.state is State.IDLE
 
 
 @pytest.mark.parametrize("state", list(State))

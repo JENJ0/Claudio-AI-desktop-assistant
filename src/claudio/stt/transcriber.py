@@ -63,9 +63,16 @@ class WhisperTranscriber:
         self.model_name = settings.fallback_model
         self._model = self._load()
 
-    def _load(self) -> Any:
+    def _open(self, name: str, **kwargs: Any) -> Any:
         from faster_whisper import WhisperModel
 
+        root = str(self.download_root)
+        try:  # already downloaded: start offline, without contacting huggingface.co
+            return WhisperModel(name, download_root=root, local_files_only=True, **kwargs)
+        except FileNotFoundError:
+            return WhisperModel(name, download_root=root, **kwargs)
+
+    def _load(self) -> Any:
         s = self.settings
         if s.device in ("auto", "cuda"):
             try:
@@ -74,12 +81,7 @@ class WhisperTranscriber:
 
                 if ctranslate2.get_cuda_device_count() == 0:
                     raise RuntimeError("nessuna GPU CUDA trovata")
-                model = WhisperModel(
-                    s.model,
-                    device="cuda",
-                    compute_type=s.compute_type,
-                    download_root=str(self.download_root),
-                )
+                model = self._open(s.model, device="cuda", compute_type=s.compute_type)
                 self._model, self.device, self.model_name = model, "cuda", s.model
                 self._warm_up()  # CUDA kernel problems (e.g. Blackwell) show up here
                 return model
@@ -92,12 +94,11 @@ class WhisperTranscriber:
                     s.fallback_model,
                     s.fallback_compute_type,
                 )
-        model = WhisperModel(
+        model = self._open(
             s.fallback_model,
             device="cpu",
             compute_type=s.fallback_compute_type,
             cpu_threads=s.cpu_threads,
-            download_root=str(self.download_root),
         )
         self._model, self.device, self.model_name = model, "cpu", s.fallback_model
         self._warm_up()

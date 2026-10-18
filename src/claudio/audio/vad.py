@@ -75,6 +75,9 @@ class Endpointer:
         self._silence_run = 0
         self._elapsed = 0
         self._utterance_len = 0
+        self._listened: list[np.ndarray] = []
+        self._max_prob = 0.0
+        self._energy = 0.0
 
     @property
     def started(self) -> bool:
@@ -100,6 +103,9 @@ class Endpointer:
     def _on_window(self, window: np.ndarray, prob: float) -> EndpointEvent:
         s = self.settings
         self._elapsed += self._win
+        self._listened.append(window)
+        self._max_prob = max(self._max_prob, prob)
+        self._energy += float(np.dot(window, window))
         if not self._started:
             self._preroll.append(window)
             self._speech_run = self._speech_run + self._win if prob >= s.threshold else 0
@@ -123,6 +129,18 @@ class Endpointer:
             self._finished = True
             return EndpointEvent.END
         return EndpointEvent.NONE
+
+    def listened(self) -> np.ndarray:
+        """Everything heard since reset() (for diagnostics), float32."""
+        if not self._listened:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._listened)
+
+    def stats(self) -> dict[str, float]:
+        """Highest speech probability and input level (dBFS) since reset()."""
+        rms = np.sqrt(self._energy / self._elapsed) if self._elapsed else 0.0
+        level = 20 * np.log10(rms) if rms > 0 else -120.0
+        return {"vad_max": round(self._max_prob, 3), "input_dbfs": round(float(level), 1)}
 
     def audio(self) -> np.ndarray:
         """The utterance as float32, trailing silence trimmed to ~100 ms."""

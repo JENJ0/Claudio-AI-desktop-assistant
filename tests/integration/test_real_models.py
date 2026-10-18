@@ -95,11 +95,24 @@ def test_vad_finds_start_and_end_of_real_speech() -> None:
     assert captured >= true_end - true_start  # nothing cut at the start (pre-roll)
 
 
+def test_vad_keeps_soft_first_words() -> None:
+    # "apri la" 30 dB quieter than "calcolatrice", over a -60 dBFS noise floor
+    soft = speech("apri la").astype(np.float32) * 10 ** (-30 / 20)
+    loud = speech("calcolatrice").astype(np.float32)
+    audio = np.concatenate((np.zeros(int(SR * 0.4)), soft, loud, np.zeros(SR)))
+    audio += np.random.default_rng(1).standard_normal(len(audio)) * 32768 * 1e-3
+    audio = np.clip(audio, -32768, 32767).astype(np.int16)
+    ep = Endpointer(SileroVad(MODELS / "vad" / "silero_vad.onnx"), SETTINGS.vad)
+    events = [e for f in to_frames(audio) if (e := ep.process(f)) is not EndpointEvent.NONE]
+    assert events == [EndpointEvent.START, EndpointEvent.END]
+    assert len(ep.audio()) >= len(soft) + len(loud)
+
+
 def test_vad_ignores_silence_and_hum() -> None:
-    t = np.arange(SR * 3) / SR
+    t = np.arange(int(SR * (SETTINGS.vad.no_speech_timeout_s + 0.5))) / SR
     hum = (np.sin(2 * np.pi * 50 * t) * 800).astype(np.int16)
     ep = Endpointer(SileroVad(MODELS / "vad" / "silero_vad.onnx"), SETTINGS.vad)
-    events = [ep.process(f) for f in to_frames(hum + silence(3))]
+    events = [ep.process(f) for f in to_frames(hum)]
     assert EndpointEvent.START not in events
     assert EndpointEvent.TIMEOUT in events
 

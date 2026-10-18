@@ -123,3 +123,29 @@ def test_silence_never_reaches_whisper() -> None:
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     assert stt.transcribe(speech) == "Apri Chrome."
     assert stt._model.calls == 1
+
+
+def test_whisper_starts_offline_when_downloaded(monkeypatch, tmp_path) -> None:
+    import faster_whisper
+
+    from claudio.config import SttSettings
+    from claudio.stt.transcriber import WhisperTranscriber
+
+    calls: list[dict] = []
+
+    class Model:
+        def __init__(self, name, **kwargs) -> None:
+            calls.append({"name": name, **kwargs})
+            if kwargs.get("local_files_only") and name == "small":
+                raise FileNotFoundError("not downloaded")
+
+        def transcribe(self, audio, **kwargs):
+            return iter([]), None
+
+    monkeypatch.setattr(faster_whisper, "WhisperModel", Model)
+    stt = WhisperTranscriber(SttSettings(device="cpu", fallback_model="base"), tmp_path)
+    assert stt.model_name == "base"
+    assert [c.get("local_files_only") for c in calls] == [True]  # no request to the Hub
+    calls.clear()
+    WhisperTranscriber(SttSettings(device="cpu", fallback_model="small"), tmp_path)
+    assert [c.get("local_files_only") for c in calls] == [True, None]  # not cached: download

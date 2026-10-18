@@ -37,6 +37,14 @@ def from_log(path: Path) -> None:
     ok = [r for r in rows if r.get("outcome") == "ok"]
     print(f"{len(rows)} interazioni, {len(ok)} completate")
     print_summary("dal vivo", ok, ("m1_ms", "m2_ms", "vad_wait_ms", "stt_ms", "tts_first_ms"))
+    print("\n== ultime richieste: esito, wake word, volume microfono, VAD, testo, audio")
+    for r in rows[-20:]:
+        level = r.get("input_dbfs")
+        print(
+            f"  {r.get('outcome', '?'):<8} wake={r.get('wake_score', 0):.2f} "
+            f"vol={'-' if level is None else f'{level:.0f}':>4} dBFS "
+            f"vad={r.get('vad_max', '-')!s:<5} {r.get('text', '')!r} {r.get('audio_file', '')}"
+        )
 
 
 def offline(wav_dir: Path, model_names: list[str], device: str) -> None:

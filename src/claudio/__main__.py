@@ -64,6 +64,7 @@ async def run_assistant(settings: Settings) -> None:
     from claudio.app import Assistant
     from claudio.audio.capture import AudioCapture
     from claudio.audio.devices import resolve_device
+    from claudio.audio.recorder import UtteranceRecorder
     from claudio.audio.vad import Endpointer, SileroVad
     from claudio.metrics import MetricsWriter
     from claudio.stt.transcriber import WhisperTranscriber
@@ -82,13 +83,20 @@ async def run_assistant(settings: Settings) -> None:
         settings.audio.sample_rate, settings.audio.block_size, settings.audio.input_device
     )
 
+    logs = settings.resolve(settings.logs_dir)
+    recorder = (
+        UtteranceRecorder(logs / "audio", settings.logging.keep_audio, settings.audio.sample_rate)
+        if settings.logging.save_audio
+        else None
+    )
     assistant = Assistant(
         wake=wake,
         endpointer=Endpointer(vad, settings.vad, settings.audio.sample_rate),
         transcriber=transcriber,
         responder=responder,
         speaker=speaker,
-        metrics=MetricsWriter(settings.resolve(settings.logs_dir) / "metrics.jsonl"),
+        metrics=MetricsWriter(logs / "metrics.jsonl"),
+        audio_sink=recorder,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

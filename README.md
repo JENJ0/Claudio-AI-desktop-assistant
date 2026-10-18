@@ -33,6 +33,9 @@ uv run claudio --check                    # tutte le righe devono essere OK
 uv run python scripts/check_gpu.py        # verifica che Whisper giri davvero sulla RTX
 ```
 
+Se PowerShell dice che `uv` non è riconosciuto, chiudi e riapri il terminale (il PATH si
+aggiorna solo nelle finestre nuove).
+
 Chi preferisce pip: `python -m venv .venv`, attivalo, poi `pip install -r requirements.txt`
 e `pip install -e . --no-deps`.
 
@@ -44,7 +47,7 @@ uv run claudio --text "che ore sono"   # prova router + voce senza microfono
 uv run python scripts/list_audio_devices.py
 ```
 
-Di' la wake word, aspetta il bip, poi il comando. Se non parli entro 3 s senti un bip basso e
+Di' la wake word, aspetta il bip, poi il comando. Se non parli entro 4 s senti un bip basso e
 Claudio torna in attesa.
 
 | Comando (esempi) | Cosa fa |
@@ -69,6 +72,14 @@ Tutto è in [config/claudio.toml](config/claudio.toml): microfono e uscita, sogl
 VAD, modello STT, voce. Ogni valore si può sovrascrivere con una variabile d'ambiente o in `.env`,
 per esempio `CLAUDIO_STT__DEVICE=cpu`.
 
+Microfono e cuffie si scelgono per nome (basta una parte, la vedi con
+`scripts/list_audio_devices.py`); a parità di nome Claudio usa WASAPI:
+
+```
+CLAUDIO_AUDIO__INPUT_DEVICE=Wireless Stereo Head
+CLAUDIO_AUDIO__OUTPUT_DEVICE=Wireless Stereo Head
+```
+
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 
 ## Latenza
@@ -77,6 +88,12 @@ Ogni richiesta finisce in `logs/metrics.jsonl` con:
 
 - **M1** = fine del parlato → primo suono della risposta (obiettivo ≤ 1 s);
 - **M2** = wake word → primo suono.
+
+Per tarare l'ascolto ogni riga ha anche `input_dbfs` (volume medio del microfono dopo il bip) e
+`vad_max` (quanto Silero era sicuro di sentire voce, 0-1). In `logs/audio/` restano gli ultimi
+50 WAV di quello che Claudio ha sentito (1 s prima della wake word, poi tutto il resto), con il
+nome dell'esito (`ok`, `timeout`, `empty`, `error`). Restano sul PC; si spengono con
+`[logging] save_audio = false`.
 
 ```powershell
 uv run python scripts/benchmark_latency.py --log                      # dal vivo
