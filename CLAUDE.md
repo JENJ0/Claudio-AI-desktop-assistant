@@ -37,6 +37,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 - **Avvio**: Utilità di pianificazione di Windows all'accesso, icona nella system tray.
 - **Aggiornamenti**: all'avvio Claudio controlla le release sul mio repo GitHub (solo versioni taggate e passate in CI). Se ce n'è una nuova chiede conferma a voce con il riepilogo delle novità, la installa, si riavvia e, se la nuova versione non supera il controllo all'avvio, torna da solo alla precedente. Non sovrascrive mai CLAUDIO.md, i comandi personalizzati e `.env`.
 - **Server locale (fase finale)**: FastAPI per ricevere comandi dall'iPhone.
+- **Casa smart (dopo l'iPhone)**: controllo diretto dei dispositivi, non tramite Alexa, con Home Assistant in locale come hub (gratis, funziona anche senza internet); Claudio usa la sua API con un token in `.env`. Dispositivi: luci e LED Tapo (integrazione ufficiale TP-Link, locale), luci AwoX (integrazione della community via Bluetooth mesh), robot aspirapolvere Lefant (basato su Tuya, da verificare sul modello). Accendere luci e aspirapolvere è livello 1, serrature e allarmi livello 3. I timer li gestisce Claudio da solo, senza hub.
 
 ## Comandi vocali di sistema
 
@@ -69,6 +70,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 4. **Memoria**: SQLite, CLAUDIO.md, riassunti e recupero del contesto.
 5. **Sempre attivo**: avvio automatico, system tray, comandi di pausa, risveglio e spegnimento, ripresa dagli errori, aggiornamento automatico con conferma e ritorno alla versione precedente.
 6. **iPhone**: server FastAPI, accesso remoto con Tailscale, comando rapido "Hey Claudio".
+7. **Casa**: Home Assistant; accendere e spegnere luci, colore dei LED (Tapo, AwoX), aspirapolvere Lefant; timer.
 
 ## Metodo di lavoro
 
