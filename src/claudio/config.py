@@ -28,7 +28,7 @@ class AudioSettings(BaseModel):
     output_device: str | int = ""
     sample_rate: Literal[16000] = 16000
     block_ms: int = Field(80, gt=0, multiple_of=10)
-    output_sample_rate: int = Field(22050, gt=0)
+    output_sample_rate: int = Field(24000, gt=0)
     beep_volume: float = Field(0.25, ge=0, le=1)
     input_gain_db: float = Field(0.0, ge=0, le=30)  # digital boost for quiet microphones
 
@@ -72,7 +72,9 @@ class SttSettings(BaseModel):
 
 
 class TtsSettings(BaseModel):
-    voice: str = "it_IT-paola-medium"
+    engine: Literal["kokoro", "piper"] = "kokoro"
+    kokoro_voice: str = "im_nicola"
+    voice: str = "it_IT-paola-medium"  # Piper: engine "piper", and the fallback
     length_scale: float = Field(1.0, gt=0)
     noise_scale: float | None = Field(None, ge=0)  # None = the voice's own default
     noise_w_scale: float | None = Field(None, ge=0)

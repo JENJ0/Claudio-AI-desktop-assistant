@@ -5,7 +5,7 @@ comandi e voce. Nella Fase 1 non fa nessuna chiamata API, quindi il costo è zer
 
 ```
 Microfono ─► openWakeWord ("Hey Claudio" / "Claudio") ─► bip
-         └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale ─► Piper (frase per frase)
+         └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale ─► Kokoro, voce Nicola (frase per frase)
 ```
 
 Stato: **v0.1.0**, scheletro funzionante della Fase 1. La wake word è ancora il segnaposto
@@ -17,7 +17,7 @@ Stato: **v0.1.0**, scheletro funzionante della Fase 1. La wake word è ancora il
 - Windows 10/11, Python 3.12 (3.11-3.13 vanno bene), [uv](https://docs.astral.sh/uv/)
 - Per la GPU (consigliata): driver NVIDIA recente (serie 570 o successiva per la RTX 50xx).
   Le librerie CUDA 12.8+ e cuDNN 9 si installano con pip, non serve il CUDA Toolkit.
-- ~2,5 GB di disco per i modelli.
+- ~3 GB di disco per i modelli.
 
 ## Installazione
 
@@ -28,7 +28,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
 uv sync --extra gpu                       # senza GPU: uv sync
-uv run python scripts/download_models.py  # Silero, openWakeWord, Piper, Whisper turbo + small
+uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper turbo + small
 uv run claudio --check                    # tutte le righe devono essere OK
 uv run python scripts/check_gpu.py        # verifica che Whisper giri davvero sulla RTX
 ```
@@ -94,6 +94,10 @@ di `benchmark_latency.py --log`).
 
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 
+La voce è Nicola (Kokoro, maschile); `CLAUDIO_TTS__ENGINE=piper` torna a Paola (Piper), che resta
+anche come ripiego automatico. La velocità si regola per entrambe con `CLAUDIO_TTS__LENGTH_SCALE`
+(più basso = più veloce, 0.77 = +30%).
+
 ## Latenza
 
 Ogni richiesta finisce in `logs/metrics.jsonl` con:
@@ -115,7 +119,7 @@ la soglia.
 uv run python scripts/benchmark_latency.py --log                      # dal vivo
 uv run python scripts/record_samples.py commands --repeat 2           # registra i comandi
 uv run python scripts/benchmark_latency.py --wav-dir samples/commands  # turbo vs small vs base
-uv run python scripts/benchmark_tts.py                                 # voci Piper
+uv run python scripts/benchmark_tts.py                                 # voci Kokoro e Piper
 ```
 
 ## Sviluppo
@@ -127,7 +131,7 @@ uv run ruff check . ; uv run ruff format . ; uv run mypy src
 ```
 
 La CI (GitHub Actions, Windows) esegue lint, tipi, test veloci e un giro completo
-Piper → Silero → Whisper `small` (il ripiego su CPU) → router sui modelli veri.
+Kokoro e Piper → Silero → Whisper `small` (il ripiego su CPU) → router sui modelli veri.
 
 Struttura: `src/claudio/` (audio, wakeword, stt, tts, router, `app.py` con la macchina a stati),
 `config/`, `scripts/`, `tests/`. Modelli in `models/` e log in `logs/`, entrambi fuori da Git.

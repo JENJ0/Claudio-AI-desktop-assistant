@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Aggiunto
+- Voce maschile Nicola (Kokoro-82M, ONNX, in locale) come voce predefinita; Piper resta come
+  ripiego automatico se Kokoro non parte. I fonemi arrivano dall'espeak-ng già incluso in Piper,
+  quindi niente da installare in più. `tts.length_scale` regola la velocità di entrambe le voci.
+
 ## [0.1.0] - 2026-10-18
 
 Prima iterazione della Fase 1: scheletro funzionante, tutto locale, nessuna chiamata API.

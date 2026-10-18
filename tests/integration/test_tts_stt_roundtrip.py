@@ -1,6 +1,6 @@
-"""Piper speaks, Silero cuts, Whisper listens, the router understands.
+"""Piper or Kokoro speaks, Silero cuts, Whisper listens, the router understands.
 
-Needs the Piper voice and (for the round trip) a Whisper model in models/:
+Needs the voices and (for the round trip) a Whisper model in models/:
     uv run python scripts/download_models.py --whisper small
     uv run pytest -m slow
 CI runs this on Windows with Whisper `small` on CPU, the configured fallback model
@@ -8,6 +8,8 @@ CI runs this on Windows with Whisper `small` on CPU, the configured fallback mod
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import numpy as np
 import pytest
@@ -25,8 +27,7 @@ MODELS = SETTINGS.resolve(SETTINGS.models_dir)
 VOICE = MODELS / "piper" / f"{SETTINGS.tts.voice}.onnx"
 WHISPER_DIR = MODELS / "whisper"
 
-if not VOICE.is_file():
-    pytest.skip("voce Piper non scaricata", allow_module_level=True)
+KOKORO_DIR = MODELS / "kokoro"
 
 
 def whisper_model() -> str | None:
@@ -41,17 +42,27 @@ def whisper_model() -> str | None:
     return None
 
 
-@pytest.fixture(scope="module")
-def synth() -> PiperSynth:
-    # No random variation: the same audio on every run, so results are reproducible.
-    tts = SETTINGS.tts.model_copy(update={"noise_scale": 0.0, "noise_w_scale": 0.0})
-    return PiperSynth(VOICE, tts)
+@pytest.fixture(scope="module", params=["piper", "kokoro"])
+def synth(request: pytest.FixtureRequest) -> Any:
+    if request.param == "piper":
+        if not VOICE.is_file():
+            pytest.skip("voce Piper non scaricata")
+        # No random variation: the same audio on every run, so results are reproducible.
+        tts = SETTINGS.tts.model_copy(update={"noise_scale": 0.0, "noise_w_scale": 0.0})
+        return PiperSynth(VOICE, tts)
+    from claudio.tts.kokoro import KokoroSynth, kokoro_files
+
+    try:
+        kokoro_files(KOKORO_DIR)
+    except FileNotFoundError as exc:
+        pytest.skip(str(exc))
+    return KokoroSynth(KOKORO_DIR, SETTINGS.tts)  # deterministic already
 
 
-def test_piper_speaks_italian(synth: PiperSynth) -> None:
+def test_voice_speaks_italian(synth: Any) -> None:
     audio = synth.synthesize("Apro la cartella Download.")
     seconds = len(audio) / synth.sample_rate
-    assert audio.dtype == np.int16 and 0.8 < seconds < 4
+    assert audio.dtype == np.int16 and 0.6 < seconds < 4
     assert np.abs(audio).max() > 3000
 
 
@@ -65,7 +76,7 @@ PHRASES = [
 
 
 @pytest.mark.skipif(whisper_model() is None, reason="nessun modello Whisper scaricato")
-def test_roundtrip_speech_to_command(synth: PiperSynth) -> None:
+def test_roundtrip_speech_to_command(synth: Any) -> None:
     from claudio.stt.transcriber import WhisperTranscriber
 
     name = whisper_model()

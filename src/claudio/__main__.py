@@ -8,7 +8,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from claudio import __version__
 from claudio.config import ConfigError, Settings, load_settings
@@ -32,17 +32,34 @@ def build_responder(settings: Settings) -> LocalResponder:
     return LocalResponder(matcher, ActionRunner(), settings.router.unknown_reply)
 
 
-def build_speaker(settings: Settings) -> StreamingSpeaker:
-    from claudio.audio.player import AudioPlayer
-    from claudio.tts.speaker import PiperSynth, StreamingSpeaker, voice_path
+def build_synth(settings: Settings) -> tuple[Any, str]:
+    """The configured voice; Piper if Kokoro cannot start, so Claudio always speaks."""
+    from claudio.tts.speaker import PiperSynth, voice_path
 
     models = settings.resolve(settings.models_dir)
+    if settings.tts.engine == "kokoro":
+        try:
+            from claudio.tts.kokoro import KokoroSynth
+
+            return KokoroSynth(
+                models / "kokoro", settings.tts
+            ), f"Kokoro {settings.tts.kokoro_voice}"
+        except Exception as exc:
+            log.warning("Kokoro non disponibile (%s): uso Piper %s", exc, settings.tts.voice)
     synth = PiperSynth(voice_path(models / "piper", settings.tts.voice), settings.tts)
+    return synth, f"Piper {settings.tts.voice}"
+
+
+def build_speaker(settings: Settings) -> StreamingSpeaker:
+    from claudio.audio.player import AudioPlayer
+    from claudio.tts.speaker import StreamingSpeaker
+
+    synth, name = build_synth(settings)
     player = AudioPlayer(settings.audio.output_sample_rate, settings.audio.output_device)
     player.start()
     speaker = StreamingSpeaker(synth, player, settings.audio.beep_volume)
     speaker.warm_up()
-    log.info("TTS: Piper %s (%d Hz)", settings.tts.voice, synth.sample_rate)
+    log.info("TTS: %s (%d Hz)", name, synth.sample_rate)
     return speaker
 
 

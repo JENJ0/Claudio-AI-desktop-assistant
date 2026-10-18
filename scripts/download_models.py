@@ -1,4 +1,4 @@
-"""Download every model CLAUDIO needs into models/ (one-off, ~2.5 GB with both Whisper models).
+"""Download every model CLAUDIO needs into models/ (one-off, ~3 GB with both Whisper models).
 
 uv run python scripts/download_models.py
 uv run python scripts/download_models.py --skip-whisper --voices it_IT-riccardo-x_low
@@ -20,6 +20,11 @@ SILERO_URL = (
 OWW_BASE = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/"
 OWW_FILES = ("melspectrogram.onnx", "embedding_model.onnx", "hey_jarvis_v0.1.onnx")
 PIPER_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+KOKORO_BASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
+KOKORO_VOCAB = (
+    "https://raw.githubusercontent.com/thewh1teagle/kokoro-onnx/"
+    "3596b26764286a7de9d90c363e988d50578918e5/src/kokoro_onnx/config.json"
+)
 
 
 def fetch(url: str, dest: Path) -> None:
@@ -49,6 +54,7 @@ def main() -> int:
         "--whisper", nargs="*", default=[settings.stt.model, settings.stt.fallback_model]
     )
     parser.add_argument("--skip-whisper", action="store_true")
+    parser.add_argument("--skip-kokoro", action="store_true")
     parser.add_argument("--voices", nargs="*", default=[settings.tts.voice])
     args = parser.parse_args()
     models = settings.resolve(settings.models_dir)
@@ -58,6 +64,11 @@ def main() -> int:
     print("openWakeWord")
     for name in OWW_FILES:
         fetch(OWW_BASE + name, models / "wakeword" / name)
+    if not args.skip_kokoro:
+        print("Kokoro (voce Nicola, ~350 MB)")
+        for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
+            fetch(KOKORO_BASE + name, models / "kokoro" / name)
+        fetch(KOKORO_VOCAB, models / "kokoro" / "config.json")
     print("Piper")
     for voice in args.voices:
         for suffix in (".onnx", ".onnx.json"):

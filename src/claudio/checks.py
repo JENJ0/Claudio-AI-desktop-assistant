@@ -53,6 +53,10 @@ def run_checks(settings: Settings) -> bool:
         models / "piper" / f"{settings.tts.voice}.onnx",
         models / "piper" / f"{settings.tts.voice}.onnx.json",
     ]
+    if settings.tts.engine == "kokoro":
+        from claudio.tts.kokoro import KOKORO_FILES
+
+        wanted += [models / "kokoro" / name for name in KOKORO_FILES]
     wanted += [models / "wakeword" / f for f in FEATURE_MODELS]
     for path in wanted:
         report(path.is_file(), f"modello {path.relative_to(models)}")

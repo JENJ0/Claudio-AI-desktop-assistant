@@ -12,7 +12,7 @@ input_device = ""
 output_device = ""
 sample_rate = 16000        # required by openWakeWord, Silero and Whisper
 block_ms = 80              # openWakeWord works on 80 ms frames
-output_sample_rate = 22050 # Piper medium voices
+output_sample_rate = 24000 # Kokoro; Piper (22050 Hz) is resampled
 beep_volume = 0.25
 input_gain_db = 0.0        # boost a quiet microphone (e.g. 12); CLAUDIO warns in the log when needed
 
@@ -45,10 +45,12 @@ no_speech_threshold = 0.6
 cpu_threads = 4
 
 [tts]
-voice = "it_IT-paola-medium"
-length_scale = 1.0         # < 1 speaks faster
-# noise_scale / noise_w_scale: voice variation (0 = identical every time); unset = voice default
-use_cuda = false
+engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback
+kokoro_voice = "im_nicola" # Kokoro Italian voices: im_nicola, if_sara
+voice = "it_IT-paola-medium" # Piper voice
+length_scale = 0.83        # both engines: < 1 speaks faster (0.83 = about 20% faster)
+# noise_scale / noise_w_scale (Piper): voice variation (0 = identical every time); unset = default
+use_cuda = false           # Piper only
 
 [router]
 commands_file = "config/commands.toml"
