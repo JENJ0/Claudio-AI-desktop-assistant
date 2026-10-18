@@ -82,7 +82,7 @@ def _run(args: list[str]) -> None:
 
 def _open_path(path: str) -> None:
     if sys.platform == "win32":
-        os.startfile(path)  # type: ignore[attr-defined]
+        os.startfile(path)
     else:
         subprocess.Popen(["xdg-open", path])
 
@@ -90,7 +90,7 @@ def _open_path(path: str) -> None:
 def _press_key(vk: int) -> None:
     import ctypes
 
-    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    user32 = ctypes.windll.user32
     user32.keybd_event(vk, 0, 0, 0)
     user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
 

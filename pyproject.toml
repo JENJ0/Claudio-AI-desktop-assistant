@@ -67,6 +67,7 @@ addopts = "-m 'not slow'"
 [tool.mypy]
 plugins = ["pydantic.mypy"]
 python_version = "3.11"
+platform = "win32"  # CLAUDIO targets Windows; same result on any dev machine
 mypy_path = "src"
 ignore_missing_imports = true
 warn_unused_ignores = true
