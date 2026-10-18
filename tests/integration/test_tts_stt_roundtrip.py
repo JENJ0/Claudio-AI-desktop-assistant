@@ -85,9 +85,20 @@ def test_roundtrip_speech_to_command(synth: PiperSynth) -> None:
             if event is EndpointEvent.END:
                 break
         assert event is EndpointEvent.END, phrase
-        text = stt.transcribe(endpointer.audio())
+        utterance = endpointer.audio()
+        text = stt.transcribe(utterance)
         match = matcher.match(text)
         print(f"{phrase!r} -> {text!r} -> {match.command.id if match else None}")
-        hits += bool(match and match.command.id == expected)
+        ok = bool(match and match.command.id == expected)
+        hits += ok
+        if not ok:  # diagnose: VAD cut, prompt bias, or the audio itself?
+            raw = stt.transcribe(speech.astype(np.float32) / 32768)
+            stt.settings = stt_settings.model_copy(update={"initial_prompt": ""})
+            bare = stt.transcribe(utterance)
+            stt.settings = stt_settings
+            print(
+                f"   speech {len(speech) / 16000:.2f} s, utterance {len(utterance) / 16000:.2f} s,"
+                f" raw {raw!r}, no prompt {bare!r}"
+            )
     assert hits >= len(PHRASES) - 1  # `small` may miss one; large-v3-turbo should get all
     assert not stt.transcribe(np.zeros(16000 * 2, dtype=np.float32))  # silence -> nothing
