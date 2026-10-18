@@ -33,8 +33,9 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 - **Azioni sul PC**: subprocess, pyautogui e pywinauto (UI Automation). Si leggono le finestre come testo; lo screenshot, rimpicciolito, si usa solo come ultima risorsa.
 - **Text-to-speech**: Piper in locale, voce italiana, con streaming frase per frase.
 - **Memoria persistente**: SQLite locale con preferenze, fatti e riassunti delle conversazioni. A ogni richiesta si recuperano solo le parti rilevanti.
-- **CLAUDIO.md**: file di istruzioni base (personalità, tono, regole, abitudini), caricato a ogni avvio nel system prompt con prompt caching. Modificabile a mano o a voce ("ricordati che da ora in poi...").
+- **CLAUDIO.md**: file di istruzioni base (personalità, tono, regole, abitudini), caricato a ogni avvio nel system prompt con prompt caching. Modificabile a mano, a voce ("ricordati che da ora in poi...") e da Claudio stesso quando impara qualcosa su di me.
 - **Avvio**: Utilità di pianificazione di Windows all'accesso, icona nella system tray.
+- **Aggiornamenti**: all'avvio Claudio controlla le release sul mio repo GitHub (solo versioni taggate e passate in CI). Se ce n'è una nuova chiede conferma a voce con il riepilogo delle novità, la installa, si riavvia e, se la nuova versione non supera il controllo all'avvio, torna da solo alla precedente. Non sovrascrive mai CLAUDIO.md, i comandi personalizzati e `.env`.
 - **Server locale (fase finale)**: FastAPI per ricevere comandi dall'iPhone.
 
 ## Comandi vocali di sistema
@@ -66,7 +67,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 2. **Cervello**: integrazione con Claude, smistamento Haiku/Sonnet, tool use base, streaming della voce, contatore di spesa.
 3. **Controllo PC**: pywinauto, tastiera, ricerca file, livelli di sicurezza, screenshot di riserva.
 4. **Memoria**: SQLite, CLAUDIO.md, riassunti e recupero del contesto.
-5. **Sempre attivo**: avvio automatico, system tray, comandi di pausa, risveglio e spegnimento, ripresa dagli errori.
+5. **Sempre attivo**: avvio automatico, system tray, comandi di pausa, risveglio e spegnimento, ripresa dagli errori, aggiornamento automatico con conferma e ritorno alla versione precedente.
 6. **iPhone**: server FastAPI, accesso remoto con Tailscale, comando rapido "Hey Claudio".
 
 ## Metodo di lavoro
