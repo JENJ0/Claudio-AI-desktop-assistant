@@ -33,15 +33,12 @@ def build_responder(settings: Settings) -> LocalResponder:
 
 
 def build_speaker(settings: Settings) -> StreamingSpeaker:
-    from claudio.audio.devices import resolve_device
     from claudio.audio.player import AudioPlayer
     from claudio.tts.speaker import PiperSynth, StreamingSpeaker, voice_path
 
     models = settings.resolve(settings.models_dir)
     synth = PiperSynth(voice_path(models / "piper", settings.tts.voice), settings.tts)
-    player = AudioPlayer(
-        settings.audio.output_sample_rate, resolve_device(settings.audio.output_device, "output")
-    )
+    player = AudioPlayer(settings.audio.output_sample_rate, settings.audio.output_device)
     player.start()
     speaker = StreamingSpeaker(synth, player, settings.audio.beep_volume)
     speaker.warm_up()
@@ -80,8 +77,10 @@ async def run_assistant(settings: Settings) -> None:
     log.info("STT: %s su %s", transcriber.model_name, transcriber.device.upper())
     responder = build_responder(settings)
     speaker = build_speaker(settings)
-    input_device = resolve_device(settings.audio.input_device, "input")
-    capture = AudioCapture(settings.audio.sample_rate, settings.audio.block_size, input_device)
+    resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
+    capture = AudioCapture(
+        settings.audio.sample_rate, settings.audio.block_size, settings.audio.input_device
+    )
 
     assistant = Assistant(
         wake=wake,

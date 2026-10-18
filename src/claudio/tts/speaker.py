@@ -33,7 +33,11 @@ class PiperSynth:
         from piper import PiperVoice, SynthesisConfig
 
         self._voice = PiperVoice.load(model_path, use_cuda=settings.use_cuda)
-        self._config: Any = SynthesisConfig(length_scale=settings.length_scale)
+        self._config: Any = SynthesisConfig(
+            length_scale=settings.length_scale,
+            noise_scale=settings.noise_scale,
+            noise_w_scale=settings.noise_w_scale,
+        )
         self.sample_rate = int(self._voice.config.sample_rate)
 
     def synthesize(self, text: str) -> np.ndarray:

@@ -8,6 +8,8 @@ from typing import Any
 
 import numpy as np
 
+from claudio.audio.devices import describe_device, resolve_device, stream_settings
+
 log = logging.getLogger(__name__)
 
 
@@ -21,7 +23,9 @@ def resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
 
 
 class AudioPlayer:
-    def __init__(self, sample_rate: int, device: int | None = None) -> None:
+    """`device` is the configured spec (name or index), resolved again at every (re)open."""
+
+    def __init__(self, sample_rate: int, device: str | int = "") -> None:
         self.sample_rate = sample_rate
         self.device = device
         self._lock = threading.Lock()
@@ -30,15 +34,18 @@ class AudioPlayer:
     def start(self) -> None:
         import sounddevice as sd
 
+        index = resolve_device(self.device, "output")
         stream = sd.OutputStream(
             samplerate=self.sample_rate,
             channels=1,
             dtype="int16",
-            device=self.device,
+            device=index,
             latency="low",
+            extra_settings=stream_settings(index),
         )
         stream.start()
         self._stream = stream
+        log.info("Uscita audio: %s", describe_device(index, "output"))
 
     def write(self, audio: np.ndarray, sample_rate: int | None = None) -> None:
         """Blocking: returns when the audio has been queued to the device."""

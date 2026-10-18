@@ -18,6 +18,9 @@ Prima iterazione della Fase 1: scheletro funzionante, tutto locale, nessuna chia
   e confronto esatto + fuzzy (rapidfuzz); numeri per il volume ("alza il volume di 10").
 - Azioni di livello 1: Chrome, Download, Documenti (cartelle reali anche se spostate su OneDrive),
   Esplora file, Blocco note, Calcolatrice, tasti volume/muto via API Windows, ora e data a voce.
+- Dispositivi audio per nome: a parità di nome vince WASAPI (latenza più bassa, con conversione
+  di frequenza di Windows); il nome viene risolto di nuovo a ogni riapertura del microfono.
+- Audio quasi muto non arriva a Whisper (evita "Buon appetito!" e simili sul silenzio).
 - Configurazione TOML + variabili d'ambiente con messaggi d'errore chiari (pydantic-settings).
 - Log su console e file JSON a rotazione; metriche M1/M2 per ogni richiesta in `logs/metrics.jsonl`.
 - Script: `download_models.py`, `check_gpu.py`, `list_audio_devices.py`, `record_samples.py`,

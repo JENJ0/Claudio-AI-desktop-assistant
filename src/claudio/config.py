@@ -73,6 +73,8 @@ class SttSettings(BaseModel):
 class TtsSettings(BaseModel):
     voice: str = "it_IT-paola-medium"
     length_scale: float = Field(1.0, gt=0)
+    noise_scale: float | None = Field(None, ge=0)  # None = the voice's own default
+    noise_w_scale: float | None = Field(None, ge=0)
     use_cuda: bool = False
 
 

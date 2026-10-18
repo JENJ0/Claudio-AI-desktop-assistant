@@ -43,7 +43,9 @@ def whisper_model() -> str | None:
 
 @pytest.fixture(scope="module")
 def synth() -> PiperSynth:
-    return PiperSynth(VOICE, SETTINGS.tts)
+    # No random variation: the same audio on every run, so results are reproducible.
+    tts = SETTINGS.tts.model_copy(update={"noise_scale": 0.0, "noise_w_scale": 0.0})
+    return PiperSynth(VOICE, tts)
 
 
 def test_piper_speaks_italian(synth: PiperSynth) -> None:
@@ -102,3 +104,5 @@ def test_roundtrip_speech_to_command(synth: PiperSynth) -> None:
             )
     assert hits >= len(PHRASES) - 1  # `small` may miss one; large-v3-turbo should get all
     assert not stt.transcribe(np.zeros(16000 * 2, dtype=np.float32))  # silence -> nothing
+    hiss = np.random.default_rng(0).standard_normal(16000 * 2).astype(np.float32) * 0.003
+    print(f"hiss -> {stt.transcribe(hiss)!r}")  # informative: v0.1.1 tunes no_speech filters

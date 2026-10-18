@@ -80,13 +80,19 @@ def run_checks(settings: Settings) -> bool:
     except Exception as exc:
         log.warning("WARN controllo GPU fallito: %s", exc)
 
-    try:
-        import sounddevice as sd
+    from claudio.audio.devices import describe_device, resolve_device
 
-        log.info("OK   microfono predefinito: %s", sd.query_devices(kind="input")["name"])
-        log.info("OK   uscita predefinita: %s", sd.query_devices(kind="output")["name"])
-    except Exception as exc:
-        log.warning("WARN dispositivi audio: %s", exc)
+    for kind, spec, label in (
+        ("input", settings.audio.input_device, "microfono"),
+        ("output", settings.audio.output_device, "uscita audio"),
+    ):
+        try:
+            index = resolve_device(spec, kind)
+            report(True, f"{label}: {describe_device(index, kind)}")
+        except ValueError as exc:
+            report(False, f"{label}: {exc}")
+        except Exception as exc:  # no audio hardware at all (e.g. CI)
+            log.warning("WARN %s: %s", label, exc)
 
     if not ok:
         log.error(

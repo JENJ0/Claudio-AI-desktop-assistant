@@ -8,14 +8,19 @@ from collections.abc import AsyncIterator
 
 import numpy as np
 
+from claudio.audio.devices import describe_device, resolve_device, stream_settings
+
 log = logging.getLogger(__name__)
 
 
 class AudioCapture:
-    """Yields 16 kHz mono int16 frames; reopens the device if it disappears."""
+    """Yields 16 kHz mono int16 frames; reopens the device if it disappears.
+
+    `device` is the configured spec (name or index): it is resolved again at every reopen,
+    because indexes change when a USB/Bluetooth device reconnects."""
 
     def __init__(
-        self, sample_rate: int, block_size: int, device: int | None = None, queue_size: int = 64
+        self, sample_rate: int, block_size: int, device: str | int = "", queue_size: int = 64
     ) -> None:
         self.sample_rate = sample_rate
         self.block_size = block_size
@@ -42,28 +47,23 @@ class AudioCapture:
 
         while True:
             try:
+                index = resolve_device(self.device, "input")
                 with sd.InputStream(
                     samplerate=self.sample_rate,
                     blocksize=self.block_size,
                     channels=1,
                     dtype="int16",
-                    device=self.device,
+                    device=index,
                     callback=callback,
+                    extra_settings=stream_settings(index),
                 ):
-                    log.info("Microfono aperto (%s)", self._device_name(sd))
+                    log.info("Microfono: %s", describe_device(index, "input"))
                     while True:
                         # No frame for 2 s means the device stopped delivering audio.
                         yield await asyncio.wait_for(queue.get(), timeout=2.0)
-            except (sd.PortAudioError, TimeoutError) as exc:
+            except (sd.PortAudioError, TimeoutError, ValueError) as exc:
                 log.warning("Microfono non disponibile (%s): riprovo tra 1 s", exc)
                 await asyncio.sleep(1.0)
                 # Re-scan devices so a re-plugged USB microphone is found again.
                 sd._terminate()
                 sd._initialize()
-
-    def _device_name(self, sd: object) -> str:
-        try:
-            info = sd.query_devices(self.device, "input")  # type: ignore[attr-defined]
-            return str(info["name"])
-        except Exception:
-            return "predefinito"

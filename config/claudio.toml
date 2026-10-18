@@ -46,6 +46,7 @@ cpu_threads = 4
 [tts]
 voice = "it_IT-paola-medium"
 length_scale = 1.0         # < 1 speaks faster
+# noise_scale / noise_w_scale: voice variation (0 = identical every time); unset = voice default
 use_cuda = false
 
 [router]

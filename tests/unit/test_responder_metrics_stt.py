@@ -81,3 +81,45 @@ def test_prompt_echo_is_hallucination() -> None:
     prompt = "Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file."
     assert is_hallucination("apri Chrome, apri la cartella Download, Documenti", prompt)
     assert not is_hallucination("apri Chrome", prompt)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("Buon appetito!", True), ("Ciao a tutti.", True), ("Ciao a tutti, apri Chrome", False)],
+)
+def test_short_hallucinations_only_as_whole_text(text: str, expected: bool) -> None:
+    assert is_hallucination(text) is expected
+
+
+class FakeWhisper:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def transcribe(self, audio, **kwargs):
+        self.calls += 1
+        seg = type(
+            "Seg", (), {"text": " Apri Chrome.", "no_speech_prob": 0.01, "avg_logprob": -0.2}
+        )()
+        return iter([seg]), None
+
+
+def make_stt():
+    from claudio.config import SttSettings
+    from claudio.stt.transcriber import WhisperTranscriber
+
+    stt = WhisperTranscriber.__new__(WhisperTranscriber)
+    stt.settings = SttSettings()
+    stt._model = FakeWhisper()
+    return stt
+
+
+def test_silence_never_reaches_whisper() -> None:
+    import numpy as np
+
+    stt = make_stt()
+    assert stt.transcribe(np.zeros(16000, dtype=np.float32)) == ""
+    assert stt.transcribe(np.zeros(0, dtype=np.float32)) == ""
+    assert stt._model.calls == 0
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    assert stt.transcribe(speech) == "Apri Chrome."
+    assert stt._model.calls == 1

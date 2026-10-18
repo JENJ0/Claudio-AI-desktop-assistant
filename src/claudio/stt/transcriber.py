@@ -26,6 +26,9 @@ HALLUCINATIONS = (
     "iscriviti al canale",
     "amara org",
 )
+# Short ones only count when they are the whole transcription.
+HALLUCINATIONS_EXACT = {"buon appetito", "grazie a tutti", "ciao a tutti", "alla prossima"}
+MIN_RMS = 1e-3  # about -60 dBFS: below this there is nothing to transcribe
 
 
 def register_cuda_dlls() -> None:
@@ -46,7 +49,7 @@ def is_hallucination(text: str, prompt: str = "") -> bool:
     norm = normalize(text, drop_fillers=False)
     if not norm:
         return True
-    if any(h in norm for h in HALLUCINATIONS):
+    if norm in HALLUCINATIONS_EXACT or any(h in norm for h in HALLUCINATIONS):
         return True
     # Whisper sometimes echoes the initial prompt on near-silent audio.
     return bool(prompt) and len(norm.split()) >= 6 and norm in normalize(prompt, drop_fillers=False)
@@ -108,6 +111,8 @@ class WhisperTranscriber:
 
     def transcribe(self, audio: np.ndarray) -> str:
         s = self.settings
+        if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
+            return ""  # silence: Whisper would invent something ("Buon appetito!")
         segments, _info = self._model.transcribe(
             audio.astype(np.float32, copy=False),
             language=s.language,
