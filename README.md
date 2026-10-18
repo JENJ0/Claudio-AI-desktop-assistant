@@ -34,7 +34,11 @@ uv run python scripts/check_gpu.py        # verifica che Whisper giri davvero su
 ```
 
 Se PowerShell dice che `uv` non è riconosciuto, chiudi e riapri il terminale (il PATH si
-aggiorna solo nelle finestre nuove).
+aggiorna solo nelle finestre nuove). Se non basta, aggiungi la cartella di uv al PATH una volta:
+
+```powershell
+$p=[Environment]::GetEnvironmentVariable('Path','User'); if ($p -notlike "*\.local\bin*") { [Environment]::SetEnvironmentVariable('Path', "$p;$env:USERPROFILE\.local\bin", 'User') }
+```
 
 Chi preferisce pip: `python -m venv .venv`, attivalo, poi `pip install -r requirements.txt`
 e `pip install -e . --no-deps`.
