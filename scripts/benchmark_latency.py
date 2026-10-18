@@ -42,12 +42,12 @@ def from_log(path: Path) -> None:
         peaks = ", ".join(f"{r['wake_score']:.2f}" for r in misses[-20:])
         print(f"{len(misses)} wake word sotto soglia (ultimi picchi: {peaks})")
     print_summary("dal vivo", ok, ("m1_ms", "m2_ms", "vad_wait_ms", "stt_ms", "tts_first_ms"))
-    print("\n== ultime richieste: esito, wake word, volume microfono, VAD, testo, audio")
+    print("\n== ultime richieste: esito, wake word, voce (picco), VAD, testo, audio")
     for r in rows[-20:]:
-        level = r.get("input_dbfs")
+        level = r.get("speech_dbfs")
         print(
             f"  {r.get('outcome', '?'):<8} wake={r.get('wake_score', 0):.2f} "
-            f"vol={'-' if level is None else f'{level:.0f}':>4} dBFS "
+            f"voce={'-' if level is None else f'{level:.0f}':>4} dBFS "
             f"vad={r.get('vad_max', '-')!s:<5} {r.get('text', '')!r} {r.get('audio_file', '')}"
         )
 

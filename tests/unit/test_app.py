@@ -269,6 +269,21 @@ async def test_near_miss_is_logged_without_waking(fake_vad, vad_settings, make_f
     assert row["audio_file"] == "near_miss.wav" and row["m2_ms"] is None
 
 
+async def test_quiet_microphone_is_reported_once(fake_vad, vad_settings, make_frames, caplog):
+    assistant, *_ = build(fake_vad, vad_settings, FakeStt(), {1, 30})
+    stats = assistant.endpointer.stats
+    assistant.endpointer.stats = lambda: {**stats(), "speech_dbfs": -36.0}
+    utterance = make_frames("speech", 800) + make_frames("silence", 800)
+    with caplog.at_level("WARNING"):
+        await run_frames(
+            assistant,
+            make_frames("silence", 80) + utterance + make_frames("silence", 1600) + utterance,
+        )
+    assert [r["outcome"] for r in assistant.history] == ["ok", "ok"]
+    warnings = [r for r in caplog.records if "Microfono basso" in r.getMessage()]
+    assert len(warnings) == 1 and "INPUT_GAIN_DB" in warnings[0].getMessage()
+
+
 @pytest.mark.parametrize("state", list(State))
 def test_states_are_strings(state: State) -> None:
     assert isinstance(state.value, str)

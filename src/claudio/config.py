@@ -30,6 +30,7 @@ class AudioSettings(BaseModel):
     block_ms: int = Field(80, gt=0, multiple_of=10)
     output_sample_rate: int = Field(22050, gt=0)
     beep_volume: float = Field(0.25, ge=0, le=1)
+    input_gain_db: float = Field(0.0, ge=0, le=30)  # digital boost for quiet microphones
 
     @property
     def block_size(self) -> int:

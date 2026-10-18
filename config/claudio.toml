@@ -14,6 +14,7 @@ sample_rate = 16000        # required by openWakeWord, Silero and Whisper
 block_ms = 80              # openWakeWord works on 80 ms frames
 output_sample_rate = 22050 # Piper medium voices
 beep_volume = 0.25
+input_gain_db = 0.0        # boost a quiet microphone (e.g. 12); CLAUDIO warns in the log when needed
 
 # Wake words: any of the models below wakes CLAUDIO, each with its own threshold.
 # v0.1.0 placeholder: pre-trained "hey jarvis". From v0.1.1 (models trained by us):

@@ -13,6 +13,11 @@ from claudio.audio.devices import describe_device, resolve_device, stream_settin
 log = logging.getLogger(__name__)
 
 
+def apply_gain(frame: np.ndarray, gain: float) -> np.ndarray:
+    """int16 frame times a linear gain, clipped instead of wrapping around."""
+    return np.clip(frame * gain, -32768, 32767).astype(np.int16)
+
+
 class AudioCapture:
     """Yields 16 kHz mono int16 frames; reopens the device if it disappears.
 
@@ -20,12 +25,18 @@ class AudioCapture:
     because indexes change when a USB/Bluetooth device reconnects."""
 
     def __init__(
-        self, sample_rate: int, block_size: int, device: str | int = "", queue_size: int = 64
+        self,
+        sample_rate: int,
+        block_size: int,
+        device: str | int = "",
+        queue_size: int = 64,
+        gain_db: float = 0.0,
     ) -> None:
         self.sample_rate = sample_rate
         self.block_size = block_size
         self.device = device
         self.queue_size = queue_size
+        self.gain = 10 ** (gain_db / 20)
         self.overflows = 0
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
@@ -43,7 +54,9 @@ class AudioCapture:
         def callback(indata: np.ndarray, frames: int, time_info: object, status: object) -> None:
             if status:
                 log.debug("Stato audio in ingresso: %s", status)
-            loop.call_soon_threadsafe(put, indata[:, 0].copy())
+            frame = indata[:, 0]
+            frame = apply_gain(frame, self.gain) if self.gain != 1.0 else frame.copy()
+            loop.call_soon_threadsafe(put, frame)
 
         while True:
             try:
@@ -57,7 +70,11 @@ class AudioCapture:
                     callback=callback,
                     extra_settings=stream_settings(index),
                 ):
-                    log.info("Microfono: %s", describe_device(index, "input"))
+                    log.info(
+                        "Microfono: %s%s",
+                        describe_device(index, "input"),
+                        f", guadagno +{20 * np.log10(self.gain):.0f} dB" if self.gain > 1 else "",
+                    )
                     while True:
                         # No frame for 2 s means the device stopped delivering audio.
                         yield await asyncio.wait_for(queue.get(), timeout=2.0)

@@ -20,6 +20,7 @@ from claudio.protocols import Responder, Speaker, Transcriber, WakeWordDetector
 log = logging.getLogger(__name__)
 
 PREWAKE_S = 1.5  # audio before the wake word that goes into the saved WAV
+QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
 
 
 class State(enum.StrEnum):
@@ -52,6 +53,7 @@ class Assistant:
         self.audio_sink = audio_sink  # saves what was heard; returns the file name
         self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S) if audio_sink else 0)
         self._prewake = np.zeros(0, dtype=np.float32)
+        self._warned_quiet = False
         self.state = State.IDLE
         self._interaction: Interaction | None = None
         self._task: asyncio.Task[None] | None = None
@@ -172,6 +174,7 @@ class Assistant:
             inter.mark("done")
             inter.info["outcome"] = outcome
             inter.info.update(self.endpointer.stats())
+            self._check_level(inter.info["speech_dbfs"])
             if self.audio_sink is not None:
                 sr = self.endpointer.sample_rate
                 inter.info["prewake_ms"] = round(len(self._prewake) * 1000 / sr)
@@ -185,6 +188,15 @@ class Assistant:
         self._interaction = None
         self.wake.reset()
         self._set_state(State.IDLE)
+
+    def _check_level(self, speech_dbfs: float) -> None:
+        if self.endpointer.started and speech_dbfs < QUIET_SPEECH_DBFS and not self._warned_quiet:
+            self._warned_quiet = True
+            log.warning(
+                "Microfono basso: la voce arriva al massimo a %.0f dBFS (meglio tra -20 e -10). "
+                "Aumenta il guadagno, per esempio CLAUDIO_AUDIO__INPUT_GAIN_DB=12 in .env",
+                speech_dbfs,
+            )
 
     def _beep(self, kind: str) -> None:
         task = asyncio.create_task(self.speaker.beep(kind))

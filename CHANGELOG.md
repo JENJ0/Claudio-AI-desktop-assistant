@@ -30,6 +30,8 @@ Prima iterazione della Fase 1: scheletro funzionante, tutto locale, nessuna chia
 - Whisper parte senza contattare huggingface.co quando il modello è già scaricato.
 - Wake word più sensibile: soglia di `hey_jarvis` a 0,35. Le attivazioni mancate (picco sopra
   0,15 senza superare la soglia) finiscono in `metrics.jsonl` come `near_miss`, con audio.
+- Guadagno digitale del microfono (`audio.input_gain_db`) e avviso nel log quando la voce arriva
+  troppo bassa; ogni richiesta registra anche il picco della voce (`speech_dbfs`).
 - Script: `download_models.py`, `check_gpu.py`, `list_audio_devices.py`, `record_samples.py`,
   `benchmark_latency.py`, `benchmark_tts.py`; istruzioni per addestrare le wake word.
 - `uv` con `uv.lock` (risolto per Windows) ed export `requirements.txt`.

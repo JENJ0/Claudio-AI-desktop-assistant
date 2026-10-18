@@ -80,7 +80,10 @@ async def run_assistant(settings: Settings) -> None:
     speaker = build_speaker(settings)
     resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
     capture = AudioCapture(
-        settings.audio.sample_rate, settings.audio.block_size, settings.audio.input_device
+        settings.audio.sample_rate,
+        settings.audio.block_size,
+        settings.audio.input_device,
+        gain_db=settings.audio.input_gain_db,
     )
 
     logs = settings.resolve(settings.logs_dir)

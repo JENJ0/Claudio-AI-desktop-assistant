@@ -83,7 +83,12 @@ Microfono e cuffie si scelgono per nome (basta una parte, la vedi con
 ```
 CLAUDIO_AUDIO__INPUT_DEVICE=Wireless Stereo Head
 CLAUDIO_AUDIO__OUTPUT_DEVICE=Wireless Stereo Head
+CLAUDIO_AUDIO__INPUT_GAIN_DB=12
 ```
+
+`INPUT_GAIN_DB` alza un microfono che resta basso anche al 100% in Windows: se serve, Claudio lo
+scrive nel log ("Microfono basso"). La voce dovrebbe arrivare tra -20 e -10 dBFS (colonna `voce`
+di `benchmark_latency.py --log`).
 
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 

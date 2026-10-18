@@ -3,6 +3,7 @@ import logging
 
 import pytest
 
+from claudio.audio.capture import apply_gain
 from claudio.audio.devices import resolve_device
 from claudio.logging_setup import JsonFormatter, setup_logging
 
@@ -99,3 +100,13 @@ def test_wasapi_wins_when_names_tie() -> None:
 
 def test_first_match_without_wasapi() -> None:
     assert resolve_device("Wireless Stereo", "output", SAME_NAME[:2], HOSTAPIS) == 0
+
+
+def test_input_gain_boosts_and_clips_instead_of_wrapping() -> None:
+    import numpy as np
+
+    frame = np.array([0, 1000, -1000, 20000, -20000], dtype=np.int16)
+    boosted = apply_gain(frame, 10 ** (12 / 20))
+    assert boosted.dtype == np.int16
+    assert list(boosted[:3]) == [0, 3981, -3981]
+    assert list(boosted[3:]) == [32767, -32768]
