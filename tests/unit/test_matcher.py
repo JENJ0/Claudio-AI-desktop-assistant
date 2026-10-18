@@ -1,0 +1,147 @@
+"""Router table: >= 5 variants per command, typical Whisper errors, and negatives."""
+
+from pathlib import Path
+
+import pytest
+
+from claudio.router.matcher import CommandMatcher, load_commands
+
+POSITIVE = [
+    # open_chrome
+    ("Apri Chrome.", "open_chrome"),
+    ("Apri il browser", "open_chrome"),
+    ("Claudio, apri Google Chrome per favore", "open_chrome"),
+    ("Avvia Chrome", "open_chrome"),
+    ("apri crome", "open_chrome"),
+    ("Apri Krome.", "open_chrome"),
+    # open_downloads
+    ("Apri la cartella Download", "open_downloads"),
+    ("Apri i download.", "open_downloads"),
+    ("Apri la cartella dei download", "open_downloads"),
+    ("Apri la cartella Downloads", "open_downloads"),
+    ("Mostrami i download", "open_downloads"),
+    ("apri la cartella donload", "open_downloads"),
+    # open_documents
+    ("Apri Documenti", "open_documents"),
+    ("Apri la cartella Documenti.", "open_documents"),
+    ("Apri i documenti", "open_documents"),
+    ("Mostrami i documenti", "open_documents"),
+    ("Vai su Documenti", "open_documents"),
+    ("Apri documento", "open_documents"),
+    # open_explorer
+    ("Apri Esplora file", "open_explorer"),
+    ("Apri Esplora risorse.", "open_explorer"),
+    ("Apri esplora files", "open_explorer"),
+    ("Apri gestione file", "open_explorer"),
+    ("Apri il File Explorer", "open_explorer"),
+    # open_notepad
+    ("Apri il Blocco note", "open_notepad"),
+    ("Apri blocco note.", "open_notepad"),
+    ("Apri il blocco notes", "open_notepad"),
+    ("Apri Notepad", "open_notepad"),
+    ("Avvia il blocco note", "open_notepad"),
+    ("Apri il blocconote", "open_notepad"),
+    # open_calculator
+    ("Apri la calcolatrice", "open_calculator"),
+    ("Apri calcolatrice.", "open_calculator"),
+    ("Avvia la calcolatrice", "open_calculator"),
+    ("Lancia la calcolatrice", "open_calculator"),
+    ("Calcolatrice", "open_calculator"),
+    ("Apri la calcolatrici", "open_calculator"),
+    # volume_up
+    ("Alza il volume", "volume_up"),
+    ("Volume su", "volume_up"),
+    ("Aumenta il volume.", "volume_up"),
+    ("Alza il volume di 10", "volume_up"),
+    ("Alza l'audio", "volume_up"),
+    ("Alza il volum", "volume_up"),
+    # volume_down
+    ("Abbassa il volume", "volume_down"),
+    ("Volume giù", "volume_down"),
+    ("Diminuisci il volume.", "volume_down"),
+    ("Abbassa l'audio", "volume_down"),
+    ("Abbassa il volume di tre", "volume_down"),
+    ("Abbasso il volume", "volume_down"),
+    # mute
+    ("Togli l'audio", "mute"),
+    ("Muto", "mute"),
+    ("Silenzia", "mute"),
+    ("Metti in muto.", "mute"),
+    ("Disattiva l'audio", "mute"),
+    # tell_time
+    ("Che ore sono?", "tell_time"),
+    ("Che ora è?", "tell_time"),
+    ("Dimmi l'ora", "tell_time"),
+    ("Mi dici l'ora?", "tell_time"),
+    ("Claudio che ore sono", "tell_time"),
+    ("Che ore sono adesso?", "tell_time"),
+    # tell_date
+    ("Che giorno è oggi?", "tell_date"),
+    ("Che giorno è?", "tell_date"),
+    ("Quanti ne abbiamo oggi?", "tell_date"),
+    ("Dimmi la data", "tell_date"),
+    ("Che data è oggi?", "tell_date"),
+]
+
+NEGATIVE = [
+    "Prenota un volo per Roma",
+    "Apri il frigorifero",
+    "Apri Spotify",
+    "Che tempo fa domani?",
+    "Chiudi Chrome",
+    "Raccontami una barzelletta",
+    "Apri la porta",
+    "Chi è il presidente della Repubblica?",
+    "Scrivi una mail a Marco",
+    "",
+    "Sì",
+    "Grazie",
+]
+
+
+@pytest.mark.parametrize(("text", "command_id"), POSITIVE)
+def test_positive(matcher: CommandMatcher, text: str, command_id: str) -> None:
+    match = matcher.match(text)
+    assert match is not None, f"nessun comando per {text!r}"
+    assert match.command.id == command_id
+
+
+@pytest.mark.parametrize("text", NEGATIVE)
+def test_negative(matcher: CommandMatcher, text: str) -> None:
+    assert matcher.match(text) is None
+
+
+def test_every_command_has_five_variants() -> None:
+    counts: dict[str, int] = {}
+    for _, cid in POSITIVE:
+        counts[cid] = counts.get(cid, 0) + 1
+    assert all(n >= 5 for n in counts.values()), counts
+    assert len(POSITIVE) + len(NEGATIVE) >= 60
+
+
+def test_number_is_extracted(matcher: CommandMatcher) -> None:
+    match = matcher.match("Alza il volume di 10")
+    assert match is not None and match.number == 10
+
+
+def test_exact_match_scores_100(matcher: CommandMatcher) -> None:
+    match = matcher.match("Apri Chrome")
+    assert match is not None and match.score == 100
+
+
+def test_duplicate_phrase_across_commands_is_rejected(tmp_path: Path) -> None:
+    f = tmp_path / "c.toml"
+    f.write_text(
+        '[[command]]\nid="a"\nphrases=["apri x"]\naction="open_app"\n'
+        '[[command]]\nid="b"\nphrases=["Apri la X"]\naction="open_app"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="ambigua"):
+        CommandMatcher(load_commands(f))
+
+
+def test_duplicate_id_is_rejected(tmp_path: Path) -> None:
+    f = tmp_path / "c.toml"
+    f.write_text('[[command]]\nid="a"\nphrases=["x"]\naction="t"\n' * 2, encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicato"):
+        load_commands(f)

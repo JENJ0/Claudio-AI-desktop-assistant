@@ -1,0 +1,198 @@
+"""State machine with fake components: normal path, timeout, STT error, unknown command."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Callable
+
+import numpy as np
+import pytest
+
+from claudio.app import Assistant, State
+from claudio.audio.vad import Endpointer
+from claudio.metrics import MetricsWriter
+
+
+class FakeWake:
+    def __init__(self, fire_on: set[int]) -> None:
+        self.fire_on, self.calls, self.resets = fire_on, 0, 0
+        self.assistant: Assistant | None = None
+        self.states: list[State] = []
+
+    def process(self, frame: np.ndarray) -> tuple[str, float] | None:
+        self.calls += 1
+        if self.assistant is not None:
+            self.states.append(self.assistant.state)
+        return ("hey_claudio", 0.9) if self.calls in self.fire_on else None
+
+    def reset(self) -> None:
+        self.resets += 1
+
+
+class FakeStt:
+    def __init__(self, text: str = "apri chrome", error: bool = False, delay: float = 0) -> None:
+        self.text, self.error, self.delay, self.audio = text, error, delay, None
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        self.audio = audio
+        if self.error:
+            raise RuntimeError("CUDA esplosa")
+        return self.text
+
+
+class FakeResponder:
+    def __init__(self) -> None:
+        self.last_route: dict = {}
+        self.seen: list[str] = []
+
+    async def respond(self, text: str) -> AsyncIterator[str]:
+        self.seen.append(text)
+        if "chrome" in text:
+            self.last_route = {"route": "local", "command": "open_chrome"}
+            yield "Apro "
+            yield "Chrome."
+        else:
+            self.last_route = {"route": "unknown"}
+            yield "Questo non lo so ancora fare."
+
+
+class FakeSpeaker:
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+        self.beeps: list[str] = []
+
+    async def beep(self, kind: str = "wake") -> None:
+        self.beeps.append(kind)
+
+    async def speak(
+        self, text_stream: AsyncIterator[str], on_first_audio: Callable[[], None] | None = None
+    ) -> None:
+        text = "".join([c async for c in text_stream])
+        if on_first_audio:
+            on_first_audio()
+        self.spoken.append(text)
+
+
+class AudioClock:
+    """Advances 80 ms per frame, as a live microphone does."""
+
+    def __init__(self) -> None:
+        self.t = 100.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def build(fake_vad, vad_settings, stt: FakeStt, wake_frames: set[int], tmp_path=None):
+    wake = FakeWake(wake_frames)
+    speaker = FakeSpeaker()
+    responder = FakeResponder()
+    metrics = MetricsWriter(tmp_path / "metrics.jsonl") if tmp_path else None
+    assistant = Assistant(
+        wake,
+        Endpointer(fake_vad, vad_settings),
+        stt,
+        responder,
+        speaker,
+        metrics,
+        clock=AudioClock(),
+    )
+    wake.assistant = assistant
+    return assistant, wake, speaker, responder
+
+
+async def run_frames(assistant: Assistant, frames: list[np.ndarray]) -> None:
+    clock = assistant.clock
+    assert isinstance(clock, AudioClock)
+
+    async def gen():
+        for f in frames:
+            clock.t += 0.08
+            yield f
+            for _ in range(5):  # let the pipeline task progress, like real audio
+                await asyncio.sleep(0)
+
+    await assistant.run(gen())
+
+
+async def test_normal_path(fake_vad, vad_settings, make_frames, tmp_path) -> None:
+    stt = FakeStt()
+    assistant, wake, speaker, responder = build(fake_vad, vad_settings, stt, {3}, tmp_path)
+    frames = (
+        make_frames("silence", 400)
+        + make_frames("silence", 240)
+        + make_frames("speech", 1000)
+        + make_frames("silence", 800)
+    )
+    await run_frames(assistant, frames)
+
+    assert speaker.beeps == ["wake"]
+    assert speaker.spoken == ["Apro Chrome."]
+    assert responder.seen == ["apri chrome"]
+    assert stt.audio is not None and len(stt.audio) > 16000
+    assert assistant.state is State.IDLE
+    assert wake.resets == 1
+    row = assistant.history[-1]
+    assert row["outcome"] == "ok" and row["command"] == "open_chrome"
+    assert row["wake_word"] == "hey_claudio"
+    assert row["m1_ms"] is not None and row["m2_ms"] >= row["m1_ms"] >= 0
+    assert (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").count("\n") == 1
+
+
+async def test_timeout_without_speech(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt()
+    assistant, _wake, speaker, _ = build(fake_vad, vad_settings, stt, {1})
+    await run_frames(assistant, make_frames("silence", 3600))
+    assert speaker.beeps == ["wake", "cancel"]
+    assert stt.audio is None and speaker.spoken == []
+    assert assistant.history[-1]["outcome"] == "timeout"
+    assert assistant.state is State.IDLE
+
+
+async def test_stt_error_plays_error_beep_and_recovers(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt(error=True)
+    assistant, _wake, speaker, _ = build(fake_vad, vad_settings, stt, {1, 40})
+    utterance = make_frames("speech", 800) + make_frames("silence", 800)
+    # first wake (frame 1) fails in STT; second wake later works again
+    frames = make_frames("silence", 80) + utterance + make_frames("silence", 1600)
+    await run_frames(assistant, frames)
+    assert speaker.beeps[:2] == ["wake", "error"]
+    assert assistant.history[0]["outcome"] == "error"
+    assert assistant.state is State.IDLE
+
+
+async def test_unknown_command_gets_fixed_reply(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt(text="prenota un volo")
+    assistant, _, speaker, _ = build(fake_vad, vad_settings, stt, {1})
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert speaker.spoken == ["Questo non lo so ancora fare."]
+    assert assistant.history[-1]["route"] == "unknown"
+
+
+async def test_empty_transcription_cancels(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt(text="")
+    assistant, _, speaker, _ = build(fake_vad, vad_settings, stt, {1})
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert speaker.spoken == [] and speaker.beeps == ["wake", "cancel"]
+    assert assistant.history[-1]["outcome"] == "empty"
+
+
+async def test_wake_word_ignored_while_busy(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt()
+    # wake fires on every frame it sees: frames must reach it only in IDLE
+    assistant, wake, _speaker, _ = build(fake_vad, vad_settings, stt, set(range(1, 1000)))
+    frames = make_frames("speech", 800) + make_frames("silence", 800)
+    await run_frames(assistant, frames)
+    assert wake.states and set(wake.states) == {State.IDLE}
+    assert wake.calls < len(frames) / 4
+
+
+@pytest.mark.parametrize("state", list(State))
+def test_states_are_strings(state: State) -> None:
+    assert isinstance(state.value, str)

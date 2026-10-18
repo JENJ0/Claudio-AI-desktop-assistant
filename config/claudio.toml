@@ -1,0 +1,57 @@
+# CLAUDIO configuration. Every value can be overridden with an environment
+# variable or .env entry: CLAUDIO_<SECTION>__<KEY>, e.g. CLAUDIO_STT__DEVICE=cpu.
+# Relative paths are resolved from the project root.
+
+models_dir = "models"
+logs_dir = "logs"
+
+[audio]
+# Device name (or part of it) or index; empty = Windows default.
+# List devices with: uv run python scripts/list_audio_devices.py
+input_device = ""
+output_device = ""
+sample_rate = 16000        # required by openWakeWord, Silero and Whisper
+block_ms = 80              # openWakeWord works on 80 ms frames
+output_sample_rate = 22050 # Piper medium voices
+beep_volume = 0.25
+
+# Wake words: any of the models below wakes CLAUDIO, each with its own threshold.
+# v0.1.0 placeholder: pre-trained "hey jarvis". From v0.1.1 (models trained by us):
+#   [[wakeword.models]]  name = "hey_claudio"  threshold = 0.5
+#   [[wakeword.models]]  name = "claudio"      threshold = 0.6   (single word: stricter)
+[[wakeword.models]]
+name = "hey_jarvis"
+threshold = 0.5
+
+[vad]
+threshold = 0.5            # speech probability to count a window as speech
+min_speech_ms = 96         # speech needed to consider the phrase started
+end_silence_ms = 400       # silence that closes the phrase
+pre_roll_ms = 300          # audio kept before the detected start
+no_speech_timeout_s = 3.0  # nothing said after the wake word -> back to idle
+max_utterance_s = 8.0
+
+[stt]
+model = "large-v3-turbo"
+device = "auto"            # auto | cuda | cpu
+compute_type = "float16"
+fallback_model = "small"
+fallback_compute_type = "int8"
+language = "it"
+beam_size = 1
+initial_prompt = "Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
+no_speech_threshold = 0.6
+cpu_threads = 4
+
+[tts]
+voice = "it_IT-paola-medium"
+length_scale = 1.0         # < 1 speaks faster
+use_cuda = false
+
+[router]
+commands_file = "config/commands.toml"
+fuzzy_threshold = 85
+unknown_reply = "Questo non lo so ancora fare."
+
+[logging]
+level = "INFO"

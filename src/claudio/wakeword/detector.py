@@ -1,0 +1,80 @@
+"""openWakeWord detector (ONNX backend: tflite is not supported on Windows).
+
+Several wake words ("hey claudio", "claudio") share one audio front-end, so each extra
+model costs only its small classifier."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import numpy as np
+
+from claudio.config import WakeWordSettings
+
+log = logging.getLogger(__name__)
+
+FEATURE_MODELS = ("melspectrogram.onnx", "embedding_model.onnx")
+
+
+def find_wakeword_model(model: str, wakeword_dir: Path) -> Path:
+    """Accept a path, an exact file name, or a prefix like "hey_jarvis"."""
+    candidate = Path(model)
+    if candidate.is_file():
+        return candidate
+    name = model if model.endswith(".onnx") else f"{model}.onnx"
+    if (wakeword_dir / name).is_file():
+        return wakeword_dir / name
+    matches = sorted(wakeword_dir.glob(f"{model}_v*.onnx"))
+    if matches:
+        return matches[-1]  # highest version
+    raise FileNotFoundError(
+        f"Modello wake word '{model}' non trovato in {wakeword_dir}. "
+        "Esegui: uv run python scripts/download_models.py"
+    )
+
+
+class OpenWakeWordDetector:
+    def __init__(self, settings: WakeWordSettings, wakeword_dir: Path, frame_size: int = 1280):
+        from openwakeword.model import Model
+
+        paths = [find_wakeword_model(m.name, wakeword_dir) for m in settings.models]
+        for feature in FEATURE_MODELS:
+            if not (wakeword_dir / feature).is_file():
+                raise FileNotFoundError(f"Modello {feature} mancante in {wakeword_dir}")
+        self._model = Model(
+            wakeword_models=[str(p) for p in paths],
+            inference_framework="onnx",
+            melspec_model_path=str(wakeword_dir / FEATURE_MODELS[0]),
+            embedding_model_path=str(wakeword_dir / FEATURE_MODELS[1]),
+        )
+        # openWakeWord names each model after its file stem (e.g. "hey_jarvis_v0.1").
+        self.thresholds = {p.stem: m.threshold for p, m in zip(paths, settings.models, strict=True)}
+        self.names = [m.name.replace("_", " ") for m in settings.models]
+        self._silence = np.zeros(frame_size, dtype=np.int16)
+        log.info(
+            "Wake word: %s", ", ".join(f"{k} (soglia {v:.2f})" for k, v in self.thresholds.items())
+        )
+
+    def process(self, frame: np.ndarray) -> tuple[str, float] | None:
+        scores = self._model.predict(frame)
+        return best_detection(scores, self.thresholds)
+
+    def reset(self) -> None:
+        """Forget the last ~2 s of audio so the same wake word cannot fire twice."""
+        for _ in range(25):
+            self._model.predict(self._silence)
+        self._model.reset()
+
+
+def best_detection(
+    scores: dict[str, float], thresholds: dict[str, float]
+) -> tuple[str, float] | None:
+    """The model furthest above its own threshold, if any."""
+    best: tuple[str, float] | None = None
+    margin = 0.0
+    for name, threshold in thresholds.items():
+        score = float(scores.get(name, 0.0))
+        if score >= threshold and (best is None or score - threshold > margin):
+            best, margin = (name, score), score - threshold
+    return best
