@@ -1,9 +1,10 @@
 """Piper speaks, Silero cuts, Whisper listens, the router understands.
 
 Needs the Piper voice and (for the round trip) a Whisper model in models/:
-    uv run python scripts/download_models.py --whisper base
+    uv run python scripts/download_models.py --whisper small
     uv run pytest -m slow
-CI runs this on Windows with Whisper `base` on CPU.
+CI runs this on Windows with Whisper `small` on CPU, the configured fallback model
+(`base` is too weak: it heard "Alza il volume" as "A cell volume").
 """
 
 from __future__ import annotations
@@ -88,5 +89,5 @@ def test_roundtrip_speech_to_command(synth: PiperSynth) -> None:
         match = matcher.match(text)
         print(f"{phrase!r} -> {text!r} -> {match.command.id if match else None}")
         hits += bool(match and match.command.id == expected)
-    assert hits >= len(PHRASES) - 1  # `base` may miss one; large-v3-turbo should get all
+    assert hits >= len(PHRASES) - 1  # `small` may miss one; large-v3-turbo should get all
     assert not stt.transcribe(np.zeros(16000 * 2, dtype=np.float32))  # silence -> nothing

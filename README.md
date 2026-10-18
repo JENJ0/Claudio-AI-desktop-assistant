@@ -94,7 +94,7 @@ uv run ruff check . ; uv run ruff format . ; uv run mypy src
 ```
 
 La CI (GitHub Actions, Windows) esegue lint, tipi, test veloci e un giro completo
-Piper → Silero → Whisper `base` → router sui modelli veri.
+Piper → Silero → Whisper `small` (il ripiego su CPU) → router sui modelli veri.
 
 Struttura: `src/claudio/` (audio, wakeword, stt, tts, router, `app.py` con la macchina a stati),
 `config/`, `scripts/`, `tests/`. Modelli in `models/` e log in `logs/`, entrambi fuori da Git.

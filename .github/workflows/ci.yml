@@ -37,10 +37,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: models
-          key: models-${{ hashFiles('scripts/download_models.py', 'config/claudio.toml') }}-base
+          key: models-${{ hashFiles('scripts/download_models.py', 'config/claudio.toml') }}-small
 
-      - name: Download small models (VAD, wake word, Piper voice, Whisper base)
-        run: uv run python scripts/download_models.py --whisper base
+      - name: Download models (VAD, wake word, Piper voice, Whisper small = CPU fallback)
+        run: uv run python scripts/download_models.py --whisper small
 
       - name: Model checks
         run: uv run claudio --check
