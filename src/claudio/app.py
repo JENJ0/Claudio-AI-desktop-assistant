@@ -18,6 +18,7 @@ from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
 from claudio.router.normalizer import only_wake_words
+from claudio.system import SystemControl
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class Assistant:
         clock: Callable[[], float] = time.perf_counter,
         audio_sink: Callable[[np.ndarray, str], str | None] | None = None,
         level: LevelControl | None = None,
+        system: SystemControl | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -57,6 +59,7 @@ class Assistant:
         self.clock = clock
         self.audio_sink = audio_sink  # saves what was heard; returns the file name
         self.level = level  # automatic microphone gain; None = only warn when it is too quiet
+        self.system = system or SystemControl()  # pause and "spegniti", shared with the router
         self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S))
         self._prewake = np.zeros(0, dtype=np.float32)
         self._held: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
@@ -77,6 +80,9 @@ class Assistant:
         try:
             async for frame in frames:
                 await self.handle_frame(frame)
+                if self.system.stopping and self.state is State.IDLE:  # after "A presto."
+                    log.info("Spegnimento richiesto a voce: chiudo")
+                    break
         finally:
             await self.wait_idle()
 
@@ -171,6 +177,9 @@ class Assistant:
                 self._marked(self.responder.respond(text), inter),
                 on_first_audio=lambda: self._on_first_audio(inter),
             )
+            if getattr(self.responder, "last_route", {}).get("route") == "paused":
+                outcome = "paused"  # only "svegliati" and "spegniti" are answered
+                await self.speaker.beep("cancel")
         except Exception:
             outcome = "error"
             log.exception("Errore durante la richiesta")

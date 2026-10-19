@@ -163,3 +163,15 @@ def test_whisper_starts_offline_when_downloaded(monkeypatch, tmp_path) -> None:
     calls.clear()
     WhisperTranscriber(SttSettings(device="cpu", fallback_model="small"), tmp_path)
     assert [c.get("local_files_only") for c in calls] == [True, None]  # not cached: download
+
+
+async def test_paused_responder_answers_only_system_commands(matcher) -> None:
+    r = make_responder(matcher)
+    assert await collect(r.respond("Claudio, vai in pausa")) == [
+        "Vado in pausa. Per riattivarmi chiamami e di' svegliati."
+    ]
+    assert await collect(r.respond("apri chrome")) == []
+    assert r.last_route == {"route": "paused"}
+    assert await collect(r.respond("prenota un volo")) == []
+    assert await collect(r.respond("svegliati")) == ["Eccomi."]
+    assert await collect(r.respond("apri chrome")) == ["Apro Chrome."]

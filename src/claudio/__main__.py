@@ -16,12 +16,13 @@ from claudio.logging_setup import setup_logging
 
 if TYPE_CHECKING:
     from claudio.router.responder import LocalResponder
+    from claudio.system import SystemControl
     from claudio.tts.speaker import StreamingSpeaker
 
 log = logging.getLogger("claudio")
 
 
-def build_responder(settings: Settings) -> LocalResponder:
+def build_responder(settings: Settings, system: SystemControl | None = None) -> LocalResponder:
     from claudio.router.actions import ActionRunner
     from claudio.router.matcher import CommandMatcher, load_commands
     from claudio.router.responder import LocalResponder
@@ -29,7 +30,7 @@ def build_responder(settings: Settings) -> LocalResponder:
     commands = load_commands(settings.resolve(settings.router.commands_file))
     matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
     log.info("Router: %d comandi locali", len(commands))
-    return LocalResponder(matcher, ActionRunner(), settings.router.unknown_reply)
+    return LocalResponder(matcher, ActionRunner(system=system), settings.router.unknown_reply)
 
 
 def build_synth(settings: Settings) -> tuple[Any, str]:
@@ -93,6 +94,7 @@ async def run_assistant(settings: Settings) -> None:
     from claudio.audio.vad import Endpointer, SileroVad
     from claudio.metrics import MetricsWriter
     from claudio.stt.transcriber import WhisperTranscriber
+    from claudio.system import SystemControl
     from claudio.wakeword.detector import OpenWakeWordDetector
 
     models = settings.resolve(settings.models_dir)
@@ -101,7 +103,8 @@ async def run_assistant(settings: Settings) -> None:
     wake = OpenWakeWordDetector(settings.wakeword, models / "wakeword", settings.audio.block_size)
     transcriber = WhisperTranscriber(settings.stt, models / "whisper")
     log.info("STT: %s su %s", transcriber.model_name, transcriber.device.upper())
-    responder = build_responder(settings)
+    system = SystemControl()
+    responder = build_responder(settings, system)
     speaker = build_speaker(settings)
     resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
     capture = AudioCapture(
@@ -136,6 +139,7 @@ async def run_assistant(settings: Settings) -> None:
         metrics=MetricsWriter(logs / "metrics.jsonl"),
         audio_sink=recorder,
         level=level,
+        system=system,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

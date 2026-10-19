@@ -1,8 +1,9 @@
 # Local commands recognised without any LLM (zero cost).
 # Each command: phrases (examples, matched exactly and fuzzily after
-# normalisation), action, optional params and the spoken reply.
+# normalisation; exact = true turns the fuzzy match off), action, optional params and the
+# spoken reply.
 # Adding a command here needs no Python change if the action already exists.
-# Actions: open_app, open_folder, media_key, tell_time, tell_date.
+# Actions: open_app, open_folder, media_key, tell_time, tell_date, system.
 
 [[command]]
 id = "open_chrome"
@@ -78,3 +79,27 @@ id = "tell_date"
 phrases = ["che giorno e oggi", "che giorno e", "quanti ne abbiamo oggi", "dimmi la data", "che data e oggi"]
 action = "tell_date"
 reply = ""
+
+# System commands: also heard while paused (then they are the only ones answered).
+# "already" is said when there is nothing to change (pausing while already paused).
+[[command]]
+id = "pause"
+phrases = ["vai in pausa", "mettiti in pausa", "fai una pausa", "vai a dormire", "dormi", "vai a nanna"]
+action = "system"
+params = { do = "pause", already = "Sono già in pausa." }
+reply = "Vado in pausa. Per riattivarmi chiamami e di' svegliati."
+
+[[command]]
+id = "resume"
+phrases = ["svegliati", "sveglia", "torna attivo", "riattivati", "esci dalla pausa", "sei sveglio"]
+action = "system"
+params = { do = "resume", already = "Sono già sveglio." }
+reply = "Eccomi."
+
+[[command]]
+id = "shutdown"
+phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegnerti"]
+action = "system"
+exact = true  # no fuzzy match: "spegni" or "spegni la luce" must not close CLAUDIO
+params = { do = "shutdown" }
+reply = "A presto."

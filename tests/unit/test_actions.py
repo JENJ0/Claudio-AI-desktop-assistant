@@ -5,6 +5,7 @@ import pytest
 
 from claudio.router.actions import ActionContext, ActionRunner, say_date, say_time
 from claudio.router.matcher import Command, CommandMatcher, Match
+from claudio.system import SystemControl
 
 
 class Recorder:
@@ -107,3 +108,25 @@ def test_unknown_action_raises(rec) -> None:
     match = Match(Command("x", ("x",), "explode"), 100)
     with pytest.raises(ValueError, match="explode"):
         ActionRunner(rec.ctx()).execute(match)
+
+
+def test_system_commands_change_state_once(matcher, rec) -> None:
+    system = SystemControl()
+    runner = ActionRunner(rec.ctx(), system)
+
+    def say(text: str) -> str:
+        match = matcher.match(text)
+        assert match is not None
+        return runner.execute(match)
+
+    assert say("vai a dormire").startswith("Vado in pausa") and system.paused
+    assert say("vai in pausa") == "Sono già in pausa."
+    assert say("svegliati") == "Eccomi." and not system.paused
+    assert say("svegliati") == "Sono già sveglio."
+    assert say("spegniti") == "A presto." and system.stopping
+    assert rec.ran == [] and rec.keys == []  # nothing touches the PC
+
+
+def test_unknown_system_command_raises() -> None:
+    with pytest.raises(ValueError, match="reboot"):
+        SystemControl().apply("reboot")

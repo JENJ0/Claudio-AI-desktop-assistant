@@ -1,5 +1,6 @@
-"""Level-1 actions (no confirmation needed). Side effects go through ActionContext,
-so tests check what would run without launching anything."""
+"""Level-1 actions (no confirmation needed) and the system commands (pause, wake up, shut
+down). Side effects go through ActionContext, so tests check what would run without
+launching anything."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from claudio.router.matcher import Match
+from claudio.system import SystemControl
 
 log = logging.getLogger(__name__)
 
@@ -124,14 +126,18 @@ def say_date(now: datetime) -> str:
 
 
 class ActionRunner:
-    def __init__(self, ctx: ActionContext | None = None) -> None:
+    def __init__(
+        self, ctx: ActionContext | None = None, system: SystemControl | None = None
+    ) -> None:
         self.ctx = ctx or ActionContext()
+        self.system = system or SystemControl()
         self._handlers: dict[str, Callable[[dict[str, Any], Match], str | None]] = {
             "open_app": self._open_app,
             "open_folder": self._open_folder,
             "media_key": self._media_key,
             "tell_time": lambda p, m: say_time(self.ctx.now()),
             "tell_date": lambda p, m: say_date(self.ctx.now()),
+            "system": self._system,
         }
 
     def execute(self, match: Match) -> str:
@@ -166,6 +172,12 @@ class ActionRunner:
             path = self.ctx.folder_lookup(KNOWN_FOLDERS[folder])
         path = path or self.ctx.home / FALLBACK_FOLDERS.get(folder, folder)
         self.ctx.open_path(str(path))
+
+    def _system(self, params: dict[str, Any], match: Match) -> str | None:
+        """The command's reply when something changed, params["already"] when not (pausing
+        while already paused)."""
+        changed = self.system.apply(params["do"])
+        return None if changed else str(params.get("already", ""))
 
     def _media_key(self, params: dict[str, Any], match: Match) -> None:
         steps = match.number if match.number is not None else int(params.get("steps", 1))

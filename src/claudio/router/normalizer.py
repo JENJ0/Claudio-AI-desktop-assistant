@@ -54,6 +54,10 @@ VERB_FORMS = {
     "mostrami": "mostra",
     "dirmi": "dimmi",
     "silenziare": "silenzia",
+    "metterti": "mettiti",
+    "svegliarti": "svegliati",
+    "riattivarti": "riattivati",
+    "spegnerti": "spegniti",
 }
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 

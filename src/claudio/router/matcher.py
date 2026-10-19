@@ -19,6 +19,7 @@ class Command:
     action: str
     params: dict[str, Any] = field(default_factory=dict)
     reply: str = ""
+    exact: bool = False  # only an exact phrase counts: "spegni" must not shut CLAUDIO down
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ def load_commands(path: Path) -> list[Command]:
             action=raw["action"],
             params=dict(raw.get("params", {})),
             reply=raw.get("reply", ""),
+            exact=bool(raw.get("exact", False)),
         )
         if cmd.id in seen:
             raise ValueError(f"{path}: comando duplicato '{cmd.id}'")
@@ -61,7 +63,7 @@ class CommandMatcher:
                 if other and other.id != cmd.id:
                     raise ValueError(f"Frase '{phrase}' ambigua: {other.id} e {cmd.id}")
                 self._by_phrase[norm] = cmd
-        self._choices = list(self._by_phrase)
+        self._choices = [p for p, cmd in self._by_phrase.items() if not cmd.exact]
 
     def match(self, text: str) -> Match | None:
         norm, number = extract_number(normalize(text))

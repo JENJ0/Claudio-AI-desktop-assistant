@@ -13,6 +13,7 @@ import pytest
 from claudio.app import Assistant, State
 from claudio.audio.vad import Endpointer
 from claudio.metrics import MetricsWriter
+from claudio.system import SystemControl
 
 
 class FakeWake:
@@ -382,3 +383,95 @@ async def test_microphone_level_is_adjusted_after_speech_only(
 @pytest.mark.parametrize("state", list(State))
 def test_states_are_strings(state: State) -> None:
     assert isinstance(state.value, str)
+
+
+class SystemResponder(FakeResponder):
+    """The real system commands on top of the fake router: pause, resume, shut down."""
+
+    def __init__(self, system: SystemControl) -> None:
+        super().__init__()
+        self.system = system
+
+    async def respond(self, text: str) -> AsyncIterator[str]:
+        self.seen.append(text)
+        command = {"dormi": "pause", "svegliati": "resume", "spegniti": "shutdown"}.get(text)
+        if command:
+            self.system.apply(command)
+            self.last_route = {"route": "local", "command": command}
+            yield "Ok."
+        elif self.system.paused:
+            self.last_route = {"route": "paused"}
+        else:
+            async for chunk in super().respond(text):
+                yield chunk
+
+
+class OnsetWake(FakeWake):
+    """Fires at the start of every burst of speech heard while idle."""
+
+    def __init__(self) -> None:
+        super().__init__(set())
+        self._loud = False
+
+    def process(self, frame: np.ndarray) -> tuple[str, float] | None:
+        self.calls += 1
+        loud, was = bool(np.abs(frame).max() > 1000), self._loud
+        self._loud = loud
+        return ("claudio", 0.9) if loud and not was else None
+
+
+def build_system(fake_vad, vad_settings, texts: list[str]):
+    system = SystemControl()
+    wake, speaker, responder = OnsetWake(), FakeSpeaker(), SystemResponder(system)
+    assistant = Assistant(
+        wake,
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(texts),
+        responder,
+        speaker,
+        clock=AudioClock(),
+        system=system,
+    )
+    return assistant, speaker, system
+
+
+async def run_requests(assistant: Assistant, make_frames, n: int) -> None:
+    """n requests (a wake word at the start of 800 ms of speech), each sent only once the
+    previous one is over, with silence in between: no race with the STT worker thread."""
+    clock = assistant.clock
+    assert isinstance(clock, AudioClock)
+    request = make_frames("silence", 160) + make_frames("speech", 800)
+    silence = np.zeros(1280, dtype=np.int16)
+
+    async def gen():
+        for _ in range(n):
+            for f in request:
+                clock.t += 0.08
+                yield f
+                await asyncio.sleep(0)
+            for _ in range(100):  # listening ends, then the reply
+                clock.t += 0.08
+                yield silence
+                await asyncio.sleep(0.001)
+                if assistant.state is State.IDLE and assistant.endpointer.started:
+                    break
+
+    await assistant.run(gen())
+
+
+async def test_pause_ignores_requests_until_woken(fake_vad, vad_settings, make_frames) -> None:
+    texts = ["dormi", "apri chrome", "svegliati", "apri chrome"]
+    assistant, speaker, system = build_system(fake_vad, vad_settings, texts)
+    await run_requests(assistant, make_frames, 4)
+    assert speaker.spoken == ["Ok.", "", "Ok.", "Apro Chrome."]
+    assert speaker.beeps.count("cancel") == 1  # the request heard while paused
+    assert [row["outcome"] for row in assistant.history] == ["ok", "paused", "ok", "ok"]
+    assert not system.paused
+
+
+async def test_shutdown_ends_the_run_after_the_reply(fake_vad, vad_settings, make_frames) -> None:
+    assistant, speaker, system = build_system(fake_vad, vad_settings, ["spegniti", "apri chrome"])
+    await run_requests(assistant, make_frames, 3)
+    assert speaker.spoken == ["Ok."] and system.stopping
+    assert len(assistant.history) == 1  # the second wake word never came: CLAUDIO had closed
+    assert assistant.state is State.IDLE

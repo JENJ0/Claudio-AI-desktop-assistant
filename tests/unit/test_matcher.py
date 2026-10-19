@@ -81,9 +81,31 @@ POSITIVE = [
     ("Quanti ne abbiamo oggi?", "tell_date"),
     ("Dimmi la data", "tell_date"),
     ("Che data è oggi?", "tell_date"),
+    # system: pause
+    ("Claudio, vai in pausa", "pause"),
+    ("Vai a dormire", "pause"),
+    ("Mettiti in pausa.", "pause"),
+    ("Fai una pausa", "pause"),
+    ("Claudio dormi", "pause"),
+    # system: resume
+    ("Claudio, svegliati!", "resume"),
+    ("Svegliati", "resume"),
+    ("Sveglia!", "resume"),
+    ("Torna attivo", "resume"),
+    ("Sei sveglio?", "resume"),
+    # system: shutdown (exact phrases only)
+    ("Claudio, spegniti.", "shutdown"),
+    ("Spegniti pure", "shutdown"),
+    ("Puoi spegnerti, per favore?", "shutdown"),
+    ("Spengiti", "shutdown"),
+    ("Ora spegniti", "shutdown"),
 ]
 
 NEGATIVE = [
+    "Spegni",  # close to "spegniti", but shutting down needs the exact phrase
+    "Spegni la luce",
+    "Chiudi",
+    "Pausa",
     "Prenota un volo per Roma",
     "Apri il frigorifero",
     "Apri Spotify",
