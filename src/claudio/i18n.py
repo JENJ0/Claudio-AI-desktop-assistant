@@ -62,6 +62,10 @@ EN: dict[str, str] = {
     "Microfono non disponibile (%s): riprovo tra 1 s": (
         "Microphone not available (%s): retrying in 1 s"
     ),
+    "Microfono ancora non disponibile da %.0f s (%s): ricollegalo": (
+        "Microphone still not available after %.0f s (%s): plug it back in"
+    ),
+    "Microfono di nuovo disponibile dopo %.0f s": "Microphone available again after %.0f s",
     "Nessun dispositivo di {kind} contiene '{spec}'. Elencali con: "
     "uv run python scripts/list_audio_devices.py": (
         "No {kind} device contains '{spec}'. List them with: "
