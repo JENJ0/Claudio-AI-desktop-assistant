@@ -5,7 +5,15 @@
 ### Aggiunto
 - Voce maschile Nicola (Kokoro-82M, ONNX, in locale) come voce predefinita; Piper resta come
   ripiego automatico se Kokoro non parte. I fonemi arrivano dall'espeak-ng già incluso in Piper,
-  quindi niente da installare in più. `tts.length_scale` regola la velocità di entrambe le voci.
+  quindi niente da installare in più. `tts.length_scale` regola la velocità di entrambe le voci
+  (predefinita 0.77, cioè +30%).
+- Tono robotico (`tts.effect`): `ultron_estremo` predefinito (copia più grave, distorsione,
+  modulazione ad anello ed eco metallica), più `estremo`, `ultron`, `jarvis` e `none`; circa 5 ms
+  a frase.
+
+### Corretto
+- Nicola strascicava le sillabe con "c" e "g" dolci ("calcolatrice", "dieci"): ora le affricate
+  arrivano a Kokoro come un unico suono, come nel suo addestramento.
 
 ## [0.1.0] - 2026-10-18
 

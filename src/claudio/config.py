@@ -79,6 +79,7 @@ class TtsSettings(BaseModel):
     noise_scale: float | None = Field(None, ge=0)  # None = the voice's own default
     noise_w_scale: float | None = Field(None, ge=0)
     use_cuda: bool = False
+    effect: Literal["none", "estremo", "jarvis", "ultron", "ultron_estremo"] = "none"
 
 
 class RouterSettings(BaseModel):

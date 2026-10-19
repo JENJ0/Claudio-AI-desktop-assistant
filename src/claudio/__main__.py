@@ -52,14 +52,21 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
 
 def build_speaker(settings: Settings) -> StreamingSpeaker:
     from claudio.audio.player import AudioPlayer
+    from claudio.tts.effects import VoiceEffect
     from claudio.tts.speaker import StreamingSpeaker
 
     synth, name = build_synth(settings)
     player = AudioPlayer(settings.audio.output_sample_rate, settings.audio.output_device)
     player.start()
-    speaker = StreamingSpeaker(synth, player, settings.audio.beep_volume)
+    effect = VoiceEffect(settings.tts.effect) if settings.tts.effect != "none" else None
+    speaker = StreamingSpeaker(synth, player, settings.audio.beep_volume, effect)
     speaker.warm_up()
-    log.info("TTS: %s (%d Hz)", name, synth.sample_rate)
+    log.info(
+        "TTS: %s (%d Hz)%s",
+        name,
+        synth.sample_rate,
+        f", effetto {settings.tts.effect}" if effect else "",
+    )
     return speaker
 
 

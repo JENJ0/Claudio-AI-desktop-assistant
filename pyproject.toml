@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
     "rapidfuzz>=3.9",
+    "scipy>=1.11",  # voice effects (already required by openwakeword)
 ]
 
 [project.optional-dependencies]

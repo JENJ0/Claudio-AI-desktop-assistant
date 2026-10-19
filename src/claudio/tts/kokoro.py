@@ -23,6 +23,9 @@ MAX_TOKENS = 510
 # piper's espeak-ng writes the Italian tapped r as "ɾ" and adds a palatal "ʲ"; Kokoro was
 # trained on upstream espeak-ng, which writes a plain "r" and no "ʲ".
 PHONEME_FIXES = str.maketrans({"ɾ": "r", "ʲ": None})
+# Kokoro's own phonemizer ties affricates into one symbol; read as two sounds, "tʃ" drags
+# words like "calcolatrice" and "dieci".
+AFFRICATES = (("tʃ", "ʧ"), ("dʒ", "ʤ"), ("ts", "ʦ"), ("dz", "ʣ"))
 
 
 def kokoro_files(kokoro_dir: Path) -> tuple[Path, Path, Path]:
@@ -95,7 +98,10 @@ class KokoroSynth:
     def phonemes(self, text: str) -> str:
         sentences = self._phonemizer.phonemize("it", text)
         joined = " ".join(unicodedata.normalize("NFC", "".join(s)) for s in sentences)
-        return joined.translate(PHONEME_FIXES)
+        joined = joined.translate(PHONEME_FIXES)
+        for pair, tied in AFFRICATES:
+            joined = joined.replace(pair, tied)
+        return joined
 
     def synthesize(self, text: str) -> np.ndarray:
         tokens = to_tokens(self.phonemes(text), self.vocab)

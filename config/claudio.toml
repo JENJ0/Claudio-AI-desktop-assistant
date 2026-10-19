@@ -48,9 +48,10 @@ cpu_threads = 4
 engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback
 kokoro_voice = "im_nicola" # Kokoro Italian voices: im_nicola, if_sara
 voice = "it_IT-paola-medium" # Piper voice
-length_scale = 0.83        # both engines: < 1 speaks faster (0.83 = about 20% faster)
+length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% faster)
 # noise_scale / noise_w_scale (Piper): voice variation (0 = identical every time); unset = default
 use_cuda = false           # Piper only
+effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (robotic tone)
 
 [router]
 commands_file = "config/commands.toml"

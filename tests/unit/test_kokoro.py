@@ -73,6 +73,16 @@ def test_synthesize_pads_tokens_and_picks_the_style_by_length() -> None:
     assert audio.dtype == np.int16 and len(audio) < 30000  # silence trimmed
 
 
+def test_affricates_are_tied_like_kokoro_was_trained() -> None:
+    class Phonemizer:
+        def phonemize(self, voice: str, text: str) -> list[list[str]]:
+            return [list("kalkolatɾˈitʃe"), list("ˈɔdʒːɪ pˈitsːa")]
+
+    synth = KokoroSynth.__new__(KokoroSynth)
+    synth._phonemizer = Phonemizer()
+    assert synth.phonemes("Calcolatrice. Oggi pizza") == "kalkolatrˈiʧe ˈɔʤːɪ pˈiʦːa"
+
+
 def test_claudio_falls_back_to_piper_when_kokoro_is_missing(monkeypatch, tmp_path, caplog) -> None:
     import claudio.tts.speaker as speaker
     from claudio.__main__ import build_synth

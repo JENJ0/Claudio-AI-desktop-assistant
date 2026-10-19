@@ -96,7 +96,9 @@ Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e 
 
 La voce è Nicola (Kokoro, maschile); `CLAUDIO_TTS__ENGINE=piper` torna a Paola (Piper), che resta
 anche come ripiego automatico. La velocità si regola per entrambe con `CLAUDIO_TTS__LENGTH_SCALE`
-(più basso = più veloce, 0.77 = +30%).
+(più basso = più veloce, 0.77 = +30%, il valore predefinito). Il tono robotico è
+`CLAUDIO_TTS__EFFECT`: `ultron_estremo` (predefinito), `estremo`, `ultron`, `jarvis` o `none` per
+la voce pulita. L'effetto costa circa 5 ms a frase.
 
 ## Latenza
 

@@ -48,15 +48,27 @@ class PiperSynth:
 
 
 class StreamingSpeaker:
-    """Works with any synth exposing synthesize(text) -> int16 array and sample_rate."""
+    """Works with any synth exposing synthesize(text) -> int16 array and sample_rate.
+    `effect` (int16 audio, sample rate) -> int16 audio colours every sentence."""
 
-    def __init__(self, synth: Any, player: AudioPlayer, beep_volume: float = 0.25) -> None:
+    def __init__(
+        self,
+        synth: Any,
+        player: AudioPlayer,
+        beep_volume: float = 0.25,
+        effect: Callable[[np.ndarray, int], np.ndarray] | None = None,
+    ) -> None:
         self.synth = synth
         self.player = player
+        self.effect = effect
         self._earcons = make_earcons(player.sample_rate, beep_volume)
 
+    def render(self, sentence: str) -> np.ndarray:
+        audio = self.synth.synthesize(sentence)
+        return self.effect(audio, self.synth.sample_rate) if self.effect else audio
+
     def warm_up(self) -> None:
-        self.synth.synthesize("Ciao.")
+        self.render("Ciao.")
 
     async def beep(self, kind: str = "wake") -> None:
         await asyncio.to_thread(self.player.write, self._earcons[kind])
@@ -70,7 +82,7 @@ class StreamingSpeaker:
             try:
                 async for sentence in split_stream(text_stream):
                     log.debug("TTS: %s", sentence)
-                    audio = await asyncio.to_thread(self.synth.synthesize, sentence)
+                    audio = await asyncio.to_thread(self.render, sentence)
                     await queue.put(audio)
             finally:
                 await queue.put(None)

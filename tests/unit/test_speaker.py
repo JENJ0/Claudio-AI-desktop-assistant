@@ -81,3 +81,17 @@ def test_earcons_and_resample() -> None:
     audio = np.arange(1000, dtype=np.int16)
     assert len(resample(audio, 16000, 22050)) == 1378
     assert resample(audio, 22050, 22050) is audio
+
+
+async def test_effect_colours_every_sentence() -> None:
+    seen: list[int] = []
+
+    def effect(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        seen.append(sample_rate)
+        return audio + 1000
+
+    player = FakePlayer()
+    speaker = StreamingSpeaker(FakeSynth(), player, effect=effect)
+    await speaker.speak(stream("Uno. ", "Due."))
+    assert [n for n, _ in player.played] == [1001, 1002]
+    assert seen == [22050, 22050]

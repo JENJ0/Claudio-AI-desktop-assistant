@@ -291,6 +291,7 @@ scipy==1.17.1 ; python_full_version < '3.12' and sys_platform == 'win32' \
     --hash=sha256:e30bdeaa5deed6bc27b4cc490823cd0347d7dae09119b8803ae576ea0ce52e4c \
     --hash=sha256:f4115102802df98b2b0db3cce5cb9b92572633a1197c77b7553e5203f284a5b3
     # via
+    #   claudio
     #   openwakeword
     #   scikit-learn
 scipy==1.18.1 ; python_full_version >= '3.12' and sys_platform == 'win32' \
@@ -300,6 +301,7 @@ scipy==1.18.1 ; python_full_version >= '3.12' and sys_platform == 'win32' \
     --hash=sha256:cd479fc04dd9401e3b4f49e76518768ef99c4f517a98c284eb091fd725719adf \
     --hash=sha256:d65d448389b8436493abcf629cc94ad0cf32aecaf06e1acca1de53cc795f2f12
     # via
+    #   claudio
     #   openwakeword
     #   scikit-learn
 sounddevice==0.5.6 ; sys_platform == 'win32' \
