@@ -24,7 +24,7 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 #   [[wakeword.models]]  name = "claudio"      threshold = 0.6   (single word: stricter)
 [[wakeword.models]]
 name = "hey_jarvis"
-threshold = 0.35           # placeholder model, struggles with fast Italian speech
+threshold = 0.25           # placeholder model, struggles with fast Italian speech (JenJo's misses: 0.17-0.32)
 
 [vad]
 threshold = 0.4            # speech probability to count a window as speech (lower = more sensitive)
@@ -41,8 +41,8 @@ compute_type = "float16"
 fallback_model = "small"
 fallback_compute_type = "int8"
 language = "it"
-beam_size = 1
-initial_prompt = "Hey Jarvis, Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
+beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
+initial_prompt = "Hey Jarvis, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
 no_speech_threshold = 0.6
 cpu_threads = 4
 

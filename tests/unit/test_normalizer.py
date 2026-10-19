@@ -16,6 +16,10 @@ from claudio.router.normalizer import extract_number, normalize, only_wake_words
         ("Hey Jarvis, che ore sono?", "che ore sono"),  # wake word said in the same breath
         ("Ehi Giarvis apri la calcolatrice", "apri calcolatrice"),
         ("Hey Clodio, alza il volume", "alza volume"),
+        ("E il jarviso che ore sono.", "che ore sono"),  # a fast "hey jarvis", mangled
+        ("Ejci Arvis, che ore sono.", "che ore sono"),
+        ("E i Jarvis che ore sono.", "che ore sono"),
+        ("Apri la calcolatrice, Jarvis", "apri calcolatrice"),
         ("   ", ""),
     ],
 )
@@ -34,6 +38,7 @@ def test_normalize_keep_fillers() -> None:
         ("Claudio!", True),
         ("Ehi Giarvis", True),
         ("Hey Jarvis, apri Chrome", False),
+        ("E il Jarvis.", True),
         ("Audio", False),
         ("Claudia", False),
         ("", False),

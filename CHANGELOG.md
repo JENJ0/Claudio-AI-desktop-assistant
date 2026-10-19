@@ -25,8 +25,16 @@
 
 ### Cambiato
 - Microfono e uscita predefiniti passano da MME a WASAPI, che ha meno latenza.
+- Whisper con beam 5: sulle 33 registrazioni di JenJo capisce 25 comandi invece di 19, con
+  appena 2 ms in più sulla GPU (circa 106 ms).
+- Wake word più sensibile: soglia di `hey_jarvis` a 0,25 (le attivazioni mancate di JenJo
+  arrivavano a 0,17-0,32).
+- Il prompt di Whisper non contiene più "Claudio" finché la wake word è "hey jarvis": Whisper lo
+  ricopiava nel testo ("E il Jarvis, Claudio, sono").
 
 ### Corretto
+- La wake word detta in fretta e storpiata da Whisper all'inizio della frase ("E il jarviso che
+  ore sono", "Ejci Arvis, …") ora viene tolta prima di cercare il comando.
 - Whisper poteva entrare in un loop ("Ciao, ciao, ciao…" per 100 parole) sull'audio confuso: ora
   si ferma a 80 token e un testo così ripetitivo viene scartato.
 - Kokoro e Piper nello stesso processo (test, `benchmark_tts.py`, Piper di ripiego) inizializzavano

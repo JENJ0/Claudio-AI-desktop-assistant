@@ -8,7 +8,7 @@ From the live log written by `uv run claudio`:
 Again on the requests saved in logs/audio, through the live pipeline (no action is executed),
 to compare settings on your own voice:
     uv run python scripts/benchmark_latency.py --replay
-    uv run python scripts/benchmark_latency.py --replay --lead-in full --beam 5
+    uv run python scripts/benchmark_latency.py --replay --beam 1 --model large-v3
 --lead-in is how much of the audio before the wake word fired reaches Whisper: seconds,
 "full" (all of it, wake word included) or "none".
 
@@ -148,7 +148,9 @@ class ReplayWake:
         pass
 
 
-def replay(audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | None) -> None:
+def replay(
+    audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | None, model: str | None
+) -> None:
     import asyncio
 
     import claudio.app as app
@@ -168,9 +170,10 @@ def replay(audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | Non
         app.LEAD_IN_S = app.PREWAKE_S
     elif lead_in is not None:
         app.LEAD_IN_S = 0.0 if lead_in == "none" else float(lead_in)
-    stt_settings = (
-        settings.stt if beam is None else settings.stt.model_copy(update={"beam_size": beam})
-    )
+    update: dict[str, object] = {"beam_size": beam} if beam else {}
+    if model:
+        update["model"] = model
+    stt_settings = settings.stt.model_copy(update=update)
     stt = WhisperTranscriber(stt_settings, models / "whisper")
     vad = SileroVad(models / "vad" / "silero_vad.onnx")
     matcher = build_responder(settings).matcher
@@ -194,7 +197,7 @@ def replay(audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | Non
 
     beam_size = stt_settings.beam_size
     print(f"lead-in {app.LEAD_IN_S:.2f} s, beam {beam_size}, {stt.model_name} su {stt.device}")
-    same = understood = 0
+    changed = understood = 0
     stt_ms: list[float] = []
     for wav in wavs:
         row = live[wav.name]
@@ -215,12 +218,13 @@ def replay(audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | Non
         asyncio.run(assistant.run(frames()))
         got = assistant.history[0] if assistant.history else {}
         text, command = got.get("text", ""), got.get("command", "-")
-        same += text == row.get("text", "")
+        changed += text != row.get("text", "")
         understood += command != "-"
         if got.get("stt_ms") is not None:
             stt_ms.append(got["stt_ms"])
         print(f"  {wav.stem[:22]:<22} live {row.get('text', '')!r:<34} ora {text!r} -> {command}")
-    print(f"comandi riconosciuti {understood}/{len(wavs)}, testo uguale al live {same}/{len(wavs)}")
+    print(f"comandi riconosciuti {understood}/{len(wavs)}")
+    print(f"testo cambiato rispetto al live {changed}/{len(wavs)} (anche solo punto o maiuscola)")
     if stt_ms:
         print(f"STT mediana {np.median(stt_ms):.0f} ms, massimo {max(stt_ms):.0f} ms")
 
@@ -236,9 +240,10 @@ def main() -> None:
     parser.add_argument("--replay", type=Path, nargs="?", const=Path("logs/audio"))
     parser.add_argument("--lead-in", help='secondi, "full" o "none" (predefinito: come dal vivo)')
     parser.add_argument("--beam", type=int)
+    parser.add_argument("--model", dest="stt_model", help="modello Whisper per --replay")
     args = parser.parse_args()
     if args.replay:
-        replay(args.replay, Path("logs/metrics.jsonl"), args.lead_in, args.beam)
+        replay(args.replay, Path("logs/metrics.jsonl"), args.lead_in, args.beam, args.stt_model)
     elif args.log:
         from_log(args.log)
     elif args.wav_dir:

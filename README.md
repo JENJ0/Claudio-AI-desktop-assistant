@@ -135,8 +135,9 @@ uv run python scripts/benchmark_latency.py --replay                    # rifà l
 `--replay` ripassa i WAV di `logs/audio/` nella stessa pipeline dal vivo (senza eseguire azioni)
 e mostra per ognuno il testo di allora, quello di adesso e il comando riconosciuto, poi il tempo
 mediano di Whisper. Con `--lead-in 0.4` (secondi) o `--lead-in none` cambia quanto audio detto
-prima del bip arriva a Whisper (di base tutto, wake word compresa); con `--beam 5` Whisper prova
-più ipotesi.
+prima del bip arriva a Whisper (di base tutto, wake word compresa); con `--beam 1` Whisper prova
+una sola ipotesi invece di 5, con `--model large-v3` un altro modello (va prima scaricato con
+`download_models.py --whisper large-v3`).
 
 ## Sviluppo
 

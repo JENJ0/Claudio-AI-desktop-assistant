@@ -10,6 +10,7 @@ ARTICLES = {"il", "lo", "la", "i", "gli", "le", "l", "un", "uno", "una", "un'"}
 WAKE_WORDS = ("claudio", "jarvis")
 GREETINGS = {"hey", "ehi", "ei", "hei", "ehy"}
 NOT_WAKE_WORDS = {"audio", "claudia"}
+WAKE_SEARCH = 3  # Whisper writes a fast "hey" as "e", "e il", "e i": the name can be 3rd
 FILLERS = {
     "claudio",
     "jarvis",
@@ -84,11 +85,15 @@ def is_wake_word(word: str) -> bool:
 
 
 def strip_wake_words(words: list[str]) -> list[str]:
-    """Drop the wake phrase at the start ("ehi giarvis apri chrome" -> "apri chrome")."""
-    i = 0
-    while i < len(words) and is_wake_word(words[i]):
-        i += 1
-    return words[i:]
+    """Drop the wake phrase at the start ("ehi giarvis apri chrome" -> "apri chrome"), also
+    when Whisper mangled the greeting before it ("e il jarviso che ore sono")."""
+    start = 0
+    for i, word in enumerate(words[:WAKE_SEARCH]):
+        if word not in GREETINGS and is_wake_word(word):
+            start = i + 1
+    while start < len(words) and is_wake_word(words[start]):
+        start += 1
+    return words[start:]
 
 
 def only_wake_words(text: str) -> bool:
