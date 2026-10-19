@@ -1,154 +1,161 @@
 # CLAUDIO
 
-Assistente vocale per Windows, in italiano, che gira **tutto in locale**: wake word, trascrizione,
-comandi e voce. Nella Fase 1 non fa nessuna chiamata API, quindi il costo è zero.
+**English** | [Italiano](README.it.md)
+
+A voice assistant for Windows that runs **entirely on the PC**: wake word, transcription,
+commands and voice. Phase 1 makes no API calls, so it costs nothing to run. It speaks Italian;
+English is being added in v0.1.1.
 
 ```
-Microfono ─► openWakeWord ("Hey Claudio" / "Claudio") ─► bip
-         └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale ─► Kokoro, voce Nicola (frase per frase)
+Microphone ─► openWakeWord ("Hey Claudio" / "Claudio") ─► beep
+           └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router ─► Kokoro, Nicola's voice (sentence by sentence)
 ```
 
-Stato: **v0.1.0**, scheletro funzionante della Fase 1. La wake word è ancora il segnaposto
-`hey jarvis` finché non addestriamo "Hey Claudio" e "Claudio" (v0.1.1, vedi
-[scripts/wakeword/README.md](scripts/wakeword/README.md)). Specifica completa: [CLAUDE.md](CLAUDE.md).
+Status: **v0.1.0**, a working Phase 1 skeleton; v0.1.1 in progress. The wake word is still the
+`hey jarvis` placeholder until "Hey Claudio" and "Claudio" are trained (v0.1.1, see
+[scripts/wakeword/README.md](scripts/wakeword/README.md)). Full specification (in Italian):
+[CLAUDE.md](CLAUDE.md).
 
-## Requisiti
+## Requirements
 
-- Windows 10/11, Python 3.12 (3.11-3.13 vanno bene), [uv](https://docs.astral.sh/uv/)
-- Per la GPU (consigliata): driver NVIDIA recente (serie 570 o successiva per la RTX 50xx).
-  Le librerie CUDA 12.8+ e cuDNN 9 si installano con pip, non serve il CUDA Toolkit.
-- ~3 GB di disco per i modelli.
+- Windows 10/11, Python 3.12 (3.11-3.13 work), [uv](https://docs.astral.sh/uv/)
+- For the GPU (recommended): a recent NVIDIA driver (570 series or later for the RTX 50xx).
+  The CUDA 12.8+ and cuDNN 9 libraries come from pip; the CUDA Toolkit is not needed.
+- About 3 GB of disk for the models.
 
-## Installazione
+## Installation
 
 ```powershell
-# una volta sola: installa uv
+# once: install uv
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
-uv sync --extra gpu                       # senza GPU: uv sync
+uv sync --extra gpu                       # without a GPU: uv sync
 uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper turbo + small
-uv run claudio --check                    # tutte le righe devono essere OK
-uv run python scripts/check_gpu.py        # verifica che Whisper giri davvero sulla RTX
+uv run claudio --check                    # every line must say OK
+uv run python scripts/check_gpu.py        # checks that Whisper really runs on the RTX
 ```
 
-Se PowerShell dice che `uv` non è riconosciuto, chiudi e riapri il terminale (il PATH si
-aggiorna solo nelle finestre nuove). Se non basta, aggiungi la cartella di uv al PATH una volta:
+If PowerShell says `uv` is not recognised, close and reopen the terminal (PATH only updates in
+new windows). If that is not enough, add uv's folder to PATH once:
 
 ```powershell
 $p=[Environment]::GetEnvironmentVariable('Path','User'); if ($p -notlike "*\.local\bin*") { [Environment]::SetEnvironmentVariable('Path', "$p;$env:USERPROFILE\.local\bin", 'User') }
 ```
 
-Chi preferisce pip: `python -m venv .venv`, attivalo, poi `pip install -r requirements.txt`
-e `pip install -e . --no-deps`.
+With pip instead: `python -m venv .venv`, activate it, then `pip install -r requirements.txt`
+and `pip install -e . --no-deps`.
 
-## Uso
+## Usage
 
 ```powershell
-uv run claudio                         # assistente completo (Ctrl+C per uscire)
-uv run claudio --text "che ore sono"   # prova router + voce senza microfono
+uv run claudio                         # the full assistant (Ctrl+C to quit)
+uv run claudio --text "che ore sono"   # try the router and the voice without a microphone
 uv run python scripts/list_audio_devices.py
 ```
 
-Di' la wake word, aspetta il bip, poi il comando. Se non parli entro 4 s senti un bip basso e
-Claudio torna in attesa. Puoi anche dire tutto d'un fiato ("hey jarvis che ore sono"): le parole
-dette prima del bip vengono recuperate. Il segnaposto `hey jarvis` è però un modello inglese:
-detto in fretta o attaccato al comando a volte non scatta, quindi in v0.1.0 è più sicuro dirlo
-con calma e fare una breve pausa.
+Say the wake word, wait for the beep, then the command. If you say nothing within 4 s a low
+beep plays and CLAUDIO goes back to waiting. You can also say it all in one breath ("hey jarvis
+che ore sono"): the words said before the beep are recovered. The `hey jarvis` placeholder is an
+English model, though: said fast or glued to the command it sometimes misses, so in v0.1.0 it
+is safer to say it calmly and pause briefly.
 
-| Comando (esempi) | Cosa fa |
+| Command (examples) | What it does |
 |---|---|
-| "apri Chrome", "apri il browser" | avvia Chrome |
-| "apri la cartella Download" | Esplora file su Download |
-| "apri Documenti" | Esplora file su Documenti |
-| "apri Esplora file" | Esplora file |
-| "apri il Blocco note" | Blocco note |
-| "apri la calcolatrice" | Calcolatrice |
-| "alza il volume" / "alza il volume di 10" | volume su (5 scatti, o quelli detti) |
-| "abbassa il volume" | volume giù |
-| "muto", "togli l'audio" | muto / riattiva |
-| "che ore sono", "che giorno è oggi" | risponde a voce |
+| "apri Chrome", "apri il browser" | opens Chrome |
+| "apri la cartella Download" | File Explorer on Downloads |
+| "apri Documenti" | File Explorer on Documents |
+| "apri Esplora file" | File Explorer |
+| "apri il Blocco note" | Notepad |
+| "apri la calcolatrice" | Calculator |
+| "alza il volume" / "alza il volume di 10" | volume up (5 steps, or the number said) |
+| "abbassa il volume" | volume down |
+| "muto", "togli l'audio" | mute / unmute |
+| "che ore sono", "che giorno è oggi" | answers aloud |
+| "vai in pausa", "vai a dormire" | pause: until "svegliati" CLAUDIO answers nothing else |
+| "svegliati" | back from the pause |
+| "spegniti" | closes CLAUDIO |
 
-Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice.
-Tutte le altre richieste ricevono "Questo non lo so ancora fare" (in Fase 2 andranno a Claude Haiku).
+The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code.
+Every other request gets "Questo non lo so ancora fare" ("I can't do that yet"); in Phase 2 they
+will go to Claude Haiku.
 
-## Configurazione
+## Configuration
 
-Tutto è in [config/claudio.toml](config/claudio.toml): microfono e uscita, soglie della wake word,
-VAD, modello STT, voce. Ogni valore si può sovrascrivere con una variabile d'ambiente o in `.env`,
-per esempio `CLAUDIO_STT__DEVICE=cpu`.
+Everything is in [config/claudio.toml](config/claudio.toml): microphone and output, wake word
+thresholds, VAD, STT model, voice. Any value can be overridden with an environment variable or
+in `.env`, for example `CLAUDIO_STT__DEVICE=cpu`.
 
-Il microfono si sceglie per nome (basta una parte, la vedi con `scripts/list_audio_devices.py`);
-a parità di nome Claudio usa WASAPI:
+The microphone is chosen by name (part of it is enough; `scripts/list_audio_devices.py` lists
+them); when names tie, CLAUDIO uses WASAPI:
 
 ```
 CLAUDIO_AUDIO__INPUT_DEVICE=C270
 ```
 
-Senza `OUTPUT_DEVICE` Claudio parla dall'uscita che Windows sta usando in quel momento: se la cambi
-mentre è acceso (cuffie, schermo, casse), la frase dopo esce già lì. Un dispositivo collegato dopo
-l'avvio richiede un riavvio di Claudio (lo scrive nel log). Con `CLAUDIO_AUDIO__OUTPUT_DEVICE=...`
-resta invece sempre su quello.
+Without `OUTPUT_DEVICE` CLAUDIO speaks through whatever output Windows is using at that moment:
+if you switch it while CLAUDIO runs (headphones, monitor, speakers), the next sentence already
+plays there. A device plugged in after start-up needs a restart (CLAUDIO says so in the log).
+With `CLAUDIO_AUDIO__OUTPUT_DEVICE=...` it stays on that device instead.
 
-Il livello del microfono lo regola Claudio da solo: dopo ogni richiesta guarda quanto forte è
-arrivata la voce e corregge il guadagno digitale (sale di 3 dB alla volta, scende di 6 se la voce
-satura), puntando a picchi intorno a -20 dBFS. Il valore viene salvato per ogni microfono in
-`data/audio_level.json` e riusato all'avvio successivo; `INPUT_GAIN_DB` è solo il punto di
-partenza. Il livello del microfono in Windows non viene toccato. Per regolarlo a mano:
-`CLAUDIO_AUDIO__AUTO_GAIN=false` e `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. Le colonne `voce` e `guad`
-di `benchmark_latency.py --log` mostrano livello e guadagno di ogni richiesta.
+CLAUDIO sets the microphone level itself: after every request it checks how loud the voice
+arrived and corrects the digital gain (up 3 dB at a time, down 6 if the voice clips), aiming at
+peaks around -20 dBFS. The value is saved per microphone in `data/audio_level.json` and reused
+at the next start; `INPUT_GAIN_DB` is only the starting point. Windows' own microphone level is
+not touched. To set it by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and
+`CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. The `voce` and `guad` columns of `benchmark_latency.py --log`
+show the level and gain of every request.
 
-Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
+If the GPU cannot be used, CLAUDIO switches to Whisper `small` on the CPU by itself and logs it.
 
-La voce è Nicola (Kokoro, maschile); `CLAUDIO_TTS__ENGINE=piper` torna a Paola (Piper), che resta
-anche come ripiego automatico. La velocità si regola per entrambe con `CLAUDIO_TTS__LENGTH_SCALE`
-(più basso = più veloce, 0.77 = +30%, il valore predefinito). Il tono robotico è
-`CLAUDIO_TTS__EFFECT`: `ultron_estremo` (predefinito), `estremo`, `ultron`, `jarvis` o `none` per
-la voce pulita. L'effetto costa circa 5 ms a frase.
+The voice is Nicola (Kokoro, male); `CLAUDIO_TTS__ENGINE=piper` switches to Paola (Piper),
+which is also the automatic fallback. `CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
+both (lower = faster; 0.77 = +30%, the default). The robotic tone is `CLAUDIO_TTS__EFFECT`:
+`ultron_estremo` (default), `estremo`, `ultron`, `jarvis`, or `none` for the clean voice. The
+effect costs about 5 ms per sentence.
 
-## Latenza
+## Latency
 
-Ogni richiesta finisce in `logs/metrics.jsonl` con:
+Every request ends up in `logs/metrics.jsonl` with:
 
-- **M1** = fine del parlato → primo suono della risposta (obiettivo ≤ 1 s);
-- **M2** = wake word → primo suono.
+- **M1** = end of speech → first sound of the reply (target ≤ 1 s);
+- **M2** = wake word → first sound.
 
-Per tarare l'ascolto ogni riga ha anche `input_dbfs` (volume medio del microfono dopo il bip) e
-`vad_max` (quanto Silero era sicuro di sentire voce, 0-1). In `logs/audio/` restano gli ultimi
-50 WAV di quello che Claudio ha sentito (1,5 s prima della wake word, poi tutto il resto), con il
-nome dell'esito (`ok`, `timeout`, `empty`, `error`). Restano sul PC; si spengono con
-`[logging] save_audio = false`.
+To tune listening, every line also has `input_dbfs` (average microphone level after the beep)
+and `vad_max` (how sure Silero was of hearing a voice, 0-1). `logs/audio/` keeps the last 50
+WAVs of what CLAUDIO heard (1.5 s before the wake word, then everything else), named by outcome
+(`ok`, `timeout`, `empty`, `error`). They stay on the PC; `[logging] save_audio = false` turns
+them off.
 
-Anche i tentativi in cui la wake word non è scattata finiscono nel log come `near_miss`, con il
-punteggio massimo raggiunto: `benchmark_latency.py --log` li elenca per capire quanto abbassare
-la soglia.
+Attempts where the wake word did not fire are logged too, as `near_miss` with the highest score
+reached: `benchmark_latency.py --log` lists them, to see how far to lower the threshold.
 
 ```powershell
-uv run python scripts/benchmark_latency.py --log                      # dal vivo
-uv run python scripts/record_samples.py commands --repeat 2           # registra i comandi
+uv run python scripts/benchmark_latency.py --log                      # live
+uv run python scripts/record_samples.py commands --repeat 2           # record the commands
 uv run python scripts/benchmark_latency.py --wav-dir samples/commands  # turbo vs small vs base
-uv run python scripts/benchmark_tts.py                                 # voci Kokoro e Piper
-uv run python scripts/benchmark_latency.py --replay                    # rifà le richieste salvate
+uv run python scripts/benchmark_tts.py                                 # Kokoro and Piper voices
+uv run python scripts/benchmark_latency.py --replay                    # replay the saved requests
 ```
 
-`--replay` ripassa i WAV di `logs/audio/` nella stessa pipeline dal vivo (senza eseguire azioni)
-e mostra per ognuno il testo di allora, quello di adesso e il comando riconosciuto, poi il tempo
-mediano di Whisper. Con `--lead-in 0.4` (secondi) o `--lead-in none` cambia quanto audio detto
-prima del bip arriva a Whisper (di base tutto, wake word compresa); con `--beam 1` Whisper prova
-una sola ipotesi invece di 5, con `--model large-v3` un altro modello (va prima scaricato con
-`download_models.py --whisper large-v3`).
+`--replay` runs the WAVs in `logs/audio/` through the same live pipeline (without running any
+action) and shows, for each one, the text then, the text now and the command recognised, then
+Whisper's median time. `--lead-in 0.4` (seconds) or `--lead-in none` changes how much of the
+audio said before the beep reaches Whisper (by default all of it, wake word included); with
+`--beam 1` Whisper tries one hypothesis instead of 5, and `--model large-v3` uses another model
+(download it first with `download_models.py --whisper large-v3`).
 
-## Sviluppo
+## Development
 
 ```powershell
-uv run pytest                 # test veloci (senza microfono né modelli)
-uv run pytest -m slow -s      # test sui modelli reali (dopo download_models.py)
+uv run pytest                 # fast tests (no microphone or models)
+uv run pytest -m slow -s      # tests on the real models (after download_models.py)
 uv run ruff check . ; uv run ruff format . ; uv run mypy src
 ```
 
-La CI (GitHub Actions, Windows) esegue lint, tipi, test veloci e un giro completo
-Kokoro e Piper → Silero → Whisper `small` (il ripiego su CPU) → router sui modelli veri.
+CI (GitHub Actions, Windows) runs lint, types, the fast tests and a full round trip Kokoro and
+Piper → Silero → Whisper `small` (the CPU fallback) → router on the real models.
 
-Struttura: `src/claudio/` (audio, wakeword, stt, tts, router, `app.py` con la macchina a stati),
-`config/`, `scripts/`, `tests/`. Modelli in `models/` e log in `logs/`, entrambi fuori da Git.
+Layout: `src/claudio/` (audio, wakeword, stt, tts, router, `app.py` with the state machine),
+`config/`, `scripts/`, `tests/`. Models in `models/` and logs in `logs/`, both outside Git.
