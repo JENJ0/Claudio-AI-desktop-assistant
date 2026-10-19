@@ -87,6 +87,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 - Dipendenze in `requirements.txt` con versioni fissate.
 - Codice con type hints, ruff per lo stile, struttura modulare in `src/claudio/`.
 
-## Per iniziare
+## Uso dei token
 
-Leggi questo file, poi proponimi il piano della Fase 1 con struttura delle cartelle, dipendenze e test. Non scrivere codice finché non approvo.
+- Non leggere file grossi (`.wav`, `models/`, `uv.lock`, log interi): usa `grep`/`tail` o le righe precise.
+- Un thread o una sessione per compito; il contesto passa tramite i piani e la memoria.

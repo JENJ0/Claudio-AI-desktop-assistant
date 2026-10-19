@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./models/**)",
+      "Read(**/*.wav)",
+      "Read(./uv.lock)"
+    ]
+  }
+}
