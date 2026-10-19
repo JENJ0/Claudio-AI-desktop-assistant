@@ -79,18 +79,25 @@ Tutto è in [config/claudio.toml](config/claudio.toml): microfono e uscita, sogl
 VAD, modello STT, voce. Ogni valore si può sovrascrivere con una variabile d'ambiente o in `.env`,
 per esempio `CLAUDIO_STT__DEVICE=cpu`.
 
-Microfono e cuffie si scelgono per nome (basta una parte, la vedi con
-`scripts/list_audio_devices.py`); a parità di nome Claudio usa WASAPI:
+Il microfono si sceglie per nome (basta una parte, la vedi con `scripts/list_audio_devices.py`);
+a parità di nome Claudio usa WASAPI:
 
 ```
-CLAUDIO_AUDIO__INPUT_DEVICE=Wireless Stereo Head
-CLAUDIO_AUDIO__OUTPUT_DEVICE=Wireless Stereo Head
-CLAUDIO_AUDIO__INPUT_GAIN_DB=12
+CLAUDIO_AUDIO__INPUT_DEVICE=C270
 ```
 
-`INPUT_GAIN_DB` alza un microfono che resta basso anche al 100% in Windows: se serve, Claudio lo
-scrive nel log ("Microfono basso"). La voce dovrebbe arrivare tra -20 e -10 dBFS (colonna `voce`
-di `benchmark_latency.py --log`).
+Senza `OUTPUT_DEVICE` Claudio parla dall'uscita che Windows sta usando in quel momento: se la cambi
+mentre è acceso (cuffie, schermo, casse), la frase dopo esce già lì. Un dispositivo collegato dopo
+l'avvio richiede un riavvio di Claudio (lo scrive nel log). Con `CLAUDIO_AUDIO__OUTPUT_DEVICE=...`
+resta invece sempre su quello.
+
+Il livello del microfono lo regola Claudio da solo: dopo ogni richiesta guarda quanto forte è
+arrivata la voce e corregge il guadagno digitale (sale di 3 dB alla volta, scende di 6 se la voce
+satura), puntando a picchi intorno a -20 dBFS. Il valore viene salvato per ogni microfono in
+`data/audio_level.json` e riusato all'avvio successivo; `INPUT_GAIN_DB` è solo il punto di
+partenza. Il livello del microfono in Windows non viene toccato. Per regolarlo a mano:
+`CLAUDIO_AUDIO__AUTO_GAIN=false` e `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. Le colonne `voce` e `guad`
+di `benchmark_latency.py --log` mostrano livello e guadagno di ogni richiesta.
 
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 

@@ -19,6 +19,8 @@ models/*
 !models/.gitkeep
 logs/*
 !logs/.gitkeep
+data/*
+!data/.gitkeep
 samples/
 
 # Editors / OS

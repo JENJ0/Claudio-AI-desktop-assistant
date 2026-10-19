@@ -84,15 +84,28 @@ def run_checks(settings: Settings) -> bool:
     except Exception as exc:
         log.warning("WARN controllo GPU fallito: %s", exc)
 
-    from claudio.audio.devices import describe_device, resolve_device
+    from claudio.audio.devices import (
+        WindowsDefaultOutput,
+        describe_device,
+        pick_output,
+        resolve_device,
+    )
 
     for kind, spec, label in (
         ("input", settings.audio.input_device, "microfono"),
         ("output", settings.audio.output_device, "uscita audio"),
     ):
         try:
-            index = resolve_device(spec, kind)
-            report(True, f"{label}: {describe_device(index, kind)}")
+            if kind == "output":
+                index = pick_output(spec, WindowsDefaultOutput()() if spec == "" else None)
+            else:
+                index = resolve_device(spec, kind)
+            follows = (
+                " (segue l'uscita predefinita di Windows)"
+                if kind == "output" and spec == ""
+                else ""
+            )
+            report(True, f"{label}: {describe_device(index, kind)}{follows}")
         except ValueError as exc:
             report(False, f"{label}: {exc}")
         except Exception as exc:  # no audio hardware at all (e.g. CI)

@@ -88,6 +88,7 @@ async def run_assistant(settings: Settings) -> None:
     from claudio.app import Assistant
     from claudio.audio.capture import AudioCapture
     from claudio.audio.devices import resolve_device
+    from claudio.audio.level import AutoGain
     from claudio.audio.recorder import UtteranceRecorder
     from claudio.audio.vad import Endpointer, SileroVad
     from claudio.metrics import MetricsWriter
@@ -109,6 +110,16 @@ async def run_assistant(settings: Settings) -> None:
         settings.audio.input_device,
         gain_db=settings.audio.input_gain_db,
     )
+    level = (
+        AutoGain(
+            settings.audio.input_gain_db,
+            capture.set_gain_db,
+            settings.resolve(settings.data_dir) / "audio_level.json",
+            settings.audio.input_device,
+        )
+        if settings.audio.auto_gain
+        else None
+    )
 
     logs = settings.resolve(settings.logs_dir)
     recorder = (
@@ -124,6 +135,7 @@ async def run_assistant(settings: Settings) -> None:
         speaker=speaker,
         metrics=MetricsWriter(logs / "metrics.jsonl"),
         audio_sink=recorder,
+        level=level,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

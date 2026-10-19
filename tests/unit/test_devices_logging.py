@@ -110,3 +110,33 @@ def test_input_gain_boosts_and_clips_instead_of_wrapping() -> None:
     assert boosted.dtype == np.int16
     assert list(boosted[:3]) == [0, 3981, -3981]
     assert list(boosted[3:]) == [32767, -32768]
+
+
+WASAPI_DEFAULTS = [
+    {"name": "MME", "default_output_device": 0, "default_input_device": -1},
+    {"name": "Windows DirectSound", "default_output_device": 1, "default_input_device": -1},
+    {"name": "Windows WASAPI", "default_output_device": 2, "default_input_device": -1},
+]
+
+
+def test_empty_spec_means_the_wasapi_default() -> None:
+    from claudio.audio.devices import default_device
+
+    assert resolve_device("", "output", SAME_NAME, WASAPI_DEFAULTS) == 2
+    assert default_device("input", SAME_NAME, WASAPI_DEFAULTS) is None  # no default: PortAudio's
+    assert default_device("output", SAME_NAME, WASAPI_DEFAULTS[:2]) is None  # no WASAPI
+
+
+def test_windows_endpoint_name_finds_its_device() -> None:
+    from claudio.audio.devices import match_endpoint
+
+    name = "Altoparlanti (Wireless Stereo Headset)"
+    assert match_endpoint(name, "output", SAME_NAME, HOSTAPIS) == 2
+    assert match_endpoint(name, "output", SAME_NAME[:1], HOSTAPIS) == 0  # MME cuts the name
+    assert match_endpoint(name, "input", SAME_NAME, HOSTAPIS) is None
+    assert (
+        match_endpoint(
+            "Odyssey G80SD (NVIDIA High Definition Audio)", "output", SAME_NAME, HOSTAPIS
+        )
+        is None
+    )

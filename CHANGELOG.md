@@ -11,6 +11,16 @@
   modulazione ad anello ed eco metallica), più `estremo`, `ultron`, `jarvis` e `none`; circa 5 ms
   a frase.
 
+- Livello del microfono automatico (`audio.auto_gain`, attivo): dopo ogni richiesta Claudio
+  corregge il guadagno digitale verso picchi di -20 dBFS (+3 dB alla volta, -6 dB se satura),
+  tra 0 e +30 dB, e lo salva per ogni microfono in `data/audio_level.json`. Il livello misura
+  solo la voce, e ogni richiesta registra anche saturazione (`clipped`) e guadagno (`gain_db`).
+- Senza `audio.output_device` Claudio parla dall'uscita predefinita di Windows del momento
+  (letta con Core Audio a ogni frase): cambiarla con Claudio acceso non richiede più un riavvio.
+
+### Cambiato
+- Microfono e uscita predefiniti passano da MME a WASAPI, che ha meno latenza.
+
 ### Corretto
 - Nicola strascicava le sillabe con "c" e "g" dolci ("calcolatrice", "dieci"): ora le affricate
   arrivano a Kokoro come un unico suono, come nel suo addestramento.

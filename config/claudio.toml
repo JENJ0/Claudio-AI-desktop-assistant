@@ -4,17 +4,19 @@
 
 models_dir = "models"
 logs_dir = "logs"
+data_dir = "data"          # what Claudio keeps between runs (microphone level...)
 
 [audio]
 # Device name (or part of it) or index; empty = Windows default.
 # List devices with: uv run python scripts/list_audio_devices.py
-input_device = ""
-output_device = ""
+input_device = ""          # e.g. "C270"
+output_device = ""         # empty = whatever Windows is using when Claudio speaks
 sample_rate = 16000        # required by openWakeWord, Silero and Whisper
 block_ms = 80              # openWakeWord works on 80 ms frames
 output_sample_rate = 24000 # Kokoro; Piper (22050 Hz) is resampled
 beep_volume = 0.25
-input_gain_db = 0.0        # boost a quiet microphone (e.g. 12); CLAUDIO warns in the log when needed
+input_gain_db = 0.0        # digital boost of the microphone, in dB (where auto_gain starts)
+auto_gain = true           # Claudio adjusts the boost itself after every request, per microphone
 
 # Wake words: any of the models below wakes CLAUDIO, each with its own threshold.
 # v0.1.0 placeholder: pre-trained "hey jarvis". From v0.1.1 (models trained by us):

@@ -30,7 +30,8 @@ class AudioSettings(BaseModel):
     block_ms: int = Field(80, gt=0, multiple_of=10)
     output_sample_rate: int = Field(24000, gt=0)
     beep_volume: float = Field(0.25, ge=0, le=1)
-    input_gain_db: float = Field(0.0, ge=0, le=30)  # digital boost for quiet microphones
+    input_gain_db: float = Field(0.0, ge=0, le=30)  # digital boost (the start, with auto_gain)
+    auto_gain: bool = True  # Claudio adjusts input_gain_db itself after every request
 
     @property
     def block_size(self) -> int:
@@ -107,6 +108,7 @@ class Settings(BaseSettings):
 
     models_dir: Path = Path("models")
     logs_dir: Path = Path("logs")
+    data_dir: Path = Path("data")  # what Claudio learns and keeps (e.g. the microphone level)
     audio: AudioSettings = AudioSettings()
     wakeword: WakeWordSettings = WakeWordSettings()
     vad: VadSettings = VadSettings()

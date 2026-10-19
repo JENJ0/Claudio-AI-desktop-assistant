@@ -45,6 +45,7 @@ class SileroVad:
         return float(out[0, 0])
 
 
+CLIP_LEVEL = 32767 / 32768  # an int16 sample at full scale
 ONE_BREATH_S = 0.3  # speech starting this soon after the wake word continues the same breath
 LEAD_IN_GAP_S = 0.25  # a pause this long separates the phrase from what was said before
 
@@ -88,7 +89,9 @@ class Endpointer:
         self._listened: list[np.ndarray] = []
         self._max_prob = 0.0
         self._energy = 0.0
-        self._loudest = 0.0  # mean square of the loudest window
+        self._loudest = 0.0  # mean square of the loudest window of speech
+        self._speech_samples = 0
+        self._clipped = 0  # samples of speech at full scale
 
     @property
     def started(self) -> bool:
@@ -118,7 +121,10 @@ class Endpointer:
         self._max_prob = max(self._max_prob, prob)
         energy = float(np.dot(window, window))
         self._energy += energy
-        self._loudest = max(self._loudest, energy / len(window))
+        if prob >= s.threshold:  # speech only: a beep or a bump does not count as the voice level
+            self._loudest = max(self._loudest, energy / len(window))
+            self._speech_samples += len(window)
+            self._clipped += int(np.count_nonzero(np.abs(window) >= CLIP_LEVEL))
         if not self._started:
             self._preroll.append(window)
             self._speech_run = self._speech_run + self._win if prob >= s.threshold else 0
@@ -170,12 +176,15 @@ class Endpointer:
         return np.concatenate(self._listened)
 
     def stats(self) -> dict[str, float]:
-        """Highest speech probability, average level and loudest 32 ms (dBFS) since reset()."""
+        """Since reset(): highest speech probability, average level, loudest 32 ms of speech
+        (dBFS) and the share of speech samples at full scale (clipping)."""
         mean_square = self._energy / self._elapsed if self._elapsed else 0.0
+        clipped = self._clipped / self._speech_samples if self._speech_samples else 0.0
         return {
             "vad_max": round(self._max_prob, 3),
             "input_dbfs": dbfs(mean_square),
             "speech_dbfs": dbfs(self._loudest),
+            "clipped": round(clipped, 4),
         }
 
     def audio(self) -> np.ndarray:

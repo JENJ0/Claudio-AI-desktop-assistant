@@ -36,8 +36,13 @@ class AudioCapture:
         self.block_size = block_size
         self.device = device
         self.queue_size = queue_size
-        self.gain = 10 ** (gain_db / 20)
+        self.gain = 1.0
+        self.set_gain_db(gain_db)
         self.overflows = 0
+
+    def set_gain_db(self, gain_db: float) -> None:
+        """Takes effect from the next frame (the callback reads it every time)."""
+        self.gain = 10 ** (gain_db / 20)
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
         import sounddevice as sd
@@ -58,9 +63,12 @@ class AudioCapture:
             frame = apply_gain(frame, self.gain) if self.gain != 1.0 else frame.copy()
             loop.call_soon_threadsafe(put, frame)
 
+        portaudio_default = False  # the WASAPI default failed once: use PortAudio's (MME)
         while True:
+            index = None
             try:
-                index = resolve_device(self.device, "input")
+                if not portaudio_default:
+                    index = resolve_device(self.device, "input")
                 with sd.InputStream(
                     samplerate=self.sample_rate,
                     blocksize=self.block_size,
@@ -80,6 +88,8 @@ class AudioCapture:
                         yield await asyncio.wait_for(queue.get(), timeout=2.0)
             except (sd.PortAudioError, TimeoutError, ValueError) as exc:
                 log.warning("Microfono non disponibile (%s): riprovo tra 1 s", exc)
+                if self.device == "" and index is not None and isinstance(exc, sd.PortAudioError):
+                    portaudio_default = True
                 await asyncio.sleep(1.0)
                 # Re-scan devices so a re-plugged USB microphone is found again.
                 sd._terminate()

@@ -345,6 +345,40 @@ async def test_wake_word_twice_then_gives_up(fake_vad, vad_settings, make_frames
     assert assistant.history[-1]["outcome"] == "empty"
 
 
+async def test_microphone_level_is_adjusted_after_speech_only(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    class Level:
+        gain_db = 6.0
+
+        def __init__(self) -> None:
+            self.seen: list[dict] = []
+
+        def observe(self, stats) -> None:
+            self.seen.append(dict(stats))
+            self.gain_db += 3
+
+    level = Level()
+    wake = FakeWake({1, 30})
+    assistant = Assistant(
+        wake,
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        FakeResponder(),
+        FakeSpeaker(),
+        clock=AudioClock(),
+        level=level,
+    )
+    utterance = make_frames("speech", 800) + make_frames("silence", 800)
+    # a request, then a wake word followed by nothing (timeout): only the first one counts
+    await run_frames(
+        assistant, make_frames("silence", 80) + utterance + make_frames("silence", 6000)
+    )
+    assert [r["outcome"] for r in assistant.history] == ["ok", "timeout"]
+    assert len(level.seen) == 1 and level.seen[0]["speech_dbfs"] > -12
+    assert [r["gain_db"] for r in assistant.history] == [6.0, 9.0]
+
+
 @pytest.mark.parametrize("state", list(State))
 def test_states_are_strings(state: State) -> None:
     assert isinstance(state.value, str)

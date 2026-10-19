@@ -56,7 +56,7 @@ def test_reset_allows_new_phrase(fake_vad, vad_settings, make_frames) -> None:
 
 def test_stats_and_listened_audio(fake_vad, vad_settings, make_frames) -> None:
     ep = Endpointer(fake_vad, vad_settings)
-    silent = {"vad_max": 0.0, "input_dbfs": -120.0, "speech_dbfs": -120.0}
+    silent = {"vad_max": 0.0, "input_dbfs": -120.0, "speech_dbfs": -120.0, "clipped": 0.0}
     assert ep.stats() == silent
     feed(ep, make_frames("silence", 400))
     assert ep.stats() == silent
@@ -112,3 +112,14 @@ def test_lead_in_without_pauses_is_kept_whole(fake_vad, vad_settings, make_frame
     alone = phrase_len(ep, None, rest)
     lead = lead_in(("speech", 1440))
     assert len(lead) - 512 < phrase_len(ep, lead, rest) - alone <= len(lead)
+
+
+def test_level_counts_speech_only_and_spots_clipping(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    quiet_bump = np.full(1280, 3000, dtype=np.int16)  # audible, but under FakeVad's 0.1
+    clipped = make_frames("speech", 400)
+    clipped[0] = np.clip(clipped[0].astype(np.int32) * 4, -32768, 32767).astype(np.int16)
+    feed(ep, [quiet_bump, *clipped])
+    stats = ep.stats()
+    assert -9.6 < stats["speech_dbfs"] < 0  # the tone, not the bump
+    assert 0.05 < stats["clipped"] < 0.2  # one frame of five, mostly at full scale

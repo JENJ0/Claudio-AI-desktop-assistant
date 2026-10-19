@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Protocol
 
 import numpy as np
@@ -39,6 +39,14 @@ class Transcriber(Protocol):
 class Responder(Protocol):
     def respond(self, text: str) -> AsyncIterator[str]:
         """Stream the reply text. Phase 1: one chunk. Phase 2: Haiku tokens."""
+        ...
+
+
+class LevelControl(Protocol):
+    gain_db: float
+
+    def observe(self, stats: Mapping[str, float]) -> None:
+        """Level stats of a request in which speech was heard; may adjust the input gain."""
         ...
 
 

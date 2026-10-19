@@ -16,7 +16,7 @@ import numpy as np
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.metrics import Interaction, MetricsWriter
-from claudio.protocols import Responder, Speaker, Transcriber, WakeWordDetector
+from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
 from claudio.router.normalizer import only_wake_words
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ class Assistant:
         metrics: MetricsWriter | None = None,
         clock: Callable[[], float] = time.perf_counter,
         audio_sink: Callable[[np.ndarray, str], str | None] | None = None,
+        level: LevelControl | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -54,6 +55,7 @@ class Assistant:
         self.metrics = metrics
         self.clock = clock
         self.audio_sink = audio_sink  # saves what was heard; returns the file name
+        self.level = level  # automatic microphone gain; None = only warn when it is too quiet
         self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S))
         self._prewake = np.zeros(0, dtype=np.float32)
         self._held: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
@@ -206,8 +208,15 @@ class Assistant:
         if inter is not None:
             inter.mark("done")
             inter.info["outcome"] = outcome
-            inter.info.update(self.endpointer.stats())
-            self._check_level(inter.info["speech_dbfs"])
+            stats = self.endpointer.stats()
+            inter.info.update(stats)
+            if self.level is not None:
+                inter.info["gain_db"] = self.level.gain_db
+            if self.endpointer.started:
+                if self.level is not None:
+                    self.level.observe(stats)
+                else:
+                    self._check_level(stats["speech_dbfs"])
             if self.audio_sink is not None:
                 heard = np.concatenate((self._prewake, self.endpointer.listened()))
                 try:
@@ -221,7 +230,7 @@ class Assistant:
         self._set_state(State.IDLE)
 
     def _check_level(self, speech_dbfs: float) -> None:
-        if self.endpointer.started and speech_dbfs < QUIET_SPEECH_DBFS and not self._warned_quiet:
+        if speech_dbfs < QUIET_SPEECH_DBFS and not self._warned_quiet:
             self._warned_quiet = True
             log.warning(
                 "Microfono basso: la voce arriva al massimo a %.0f dBFS (meglio tra -20 e -10). "
