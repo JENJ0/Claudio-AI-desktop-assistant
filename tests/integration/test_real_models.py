@@ -18,13 +18,16 @@ import soundfile as sf
 from claudio.app import Assistant
 from claudio.audio.player import resample
 from claudio.audio.vad import Endpointer, EndpointEvent, SileroVad
-from claudio.config import load_settings
+from claudio.config import WakeWordModel, WakeWordSettings, load_settings
 from tests.unit.test_app import FakeResponder, FakeSpeaker, FakeStt
 
 pytestmark = pytest.mark.slow
 
 SETTINGS = load_settings()
 MODELS = SETTINGS.resolve(SETTINGS.models_dir)
+# The pre-trained model that download_models.py fetches: the tests say "hey jarvis" with
+# espeak-ng, whatever wake word config/claudio.toml uses (our own model is not in Git).
+WAKEWORD = WakeWordSettings(models=[WakeWordModel(name="hey_jarvis", threshold=0.22)])
 SR = 16000
 BLOCK = 1280
 
@@ -61,7 +64,7 @@ def onset_offset(audio: np.ndarray) -> tuple[float, float]:
 def detector():
     from claudio.wakeword.detector import OpenWakeWordDetector
 
-    return OpenWakeWordDetector(SETTINGS.wakeword, MODELS / "wakeword", BLOCK)
+    return OpenWakeWordDetector(WAKEWORD, MODELS / "wakeword", BLOCK)
 
 
 def max_score(detector, audio: np.ndarray) -> float:
