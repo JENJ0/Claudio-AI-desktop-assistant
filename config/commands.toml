@@ -6,7 +6,7 @@
 # the phrase it recognised; a missing reply_xx falls back to the Italian one (reply and
 # voice). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
-# Actions: open_app, open_folder, media_key, tell_time, tell_date, system.
+# Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, system.
 
 [[command]]
 id = "open_chrome"
@@ -104,6 +104,16 @@ phrases = ["che giorno e oggi", "che giorno e", "quanti ne abbiamo oggi", "dimmi
 phrases_en = ["what day is it today", "what day is it", "what's the date", "what's the date today", "tell me the date", "what's today's date"]
 keywords_en = ["date", "day"]  # "what's the weather today" is close to "what's the date today"
 action = "tell_date"
+reply = ""
+reply_en = ""
+
+[[command]]
+id = "tell_spend"
+phrases = ["quanto ho speso oggi", "quanto ho speso", "quanto abbiamo speso oggi", "dimmi la spesa di oggi", "quanto costa oggi"]
+phrases_en = ["how much did i spend today", "how much have i spent", "what did i spend today", "tell me today's spending"]
+keywords = ["speso", "spesa", "costa"]
+keywords_en = ["spend", "spent", "spending"]
+action = "tell_spend"
 reply = ""
 reply_en = ""
 

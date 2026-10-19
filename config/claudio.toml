@@ -79,6 +79,12 @@ fuzzy_threshold = 85
 unknown_reply = { it = "Questo non lo so ancora fare.", en = "I can't do that yet." }
 error_reply = { it = "Non ci sono riuscito.", en = "I couldn't do it." }
 
+[cost]
+pricing_file = "config/pricing.toml"  # prices per model and cache multipliers (never in the code)
+db_file = "data/spend.db"             # SQLite ledger of every Claude call (tokens, cache, cost)
+daily_budget = 1.0                    # USD per day: warning at warn_at, Claude blocked at 100 %
+warn_at = 0.8                         # local commands keep working when the budget is spent
+
 [logging]
 level = "INFO"
 save_audio = true          # keep a WAV of what CLAUDIO heard after each wake word (logs/audio/)

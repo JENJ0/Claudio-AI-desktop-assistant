@@ -170,3 +170,27 @@ def test_say_time_english(h, m, text) -> None:
 )
 def test_say_date_english(day, text) -> None:
     assert say_date(datetime(2026, 11, day), "en") == f"Today is {text}, 2026."
+
+
+def test_tell_spend_without_and_with_a_counter(matcher, rec) -> None:
+    from claudio.config import PROJECT_ROOT
+    from claudio.cost.ledger import SpendLedger
+    from claudio.cost.pricing import Usage, load_pricing
+    from claudio.cost.tracker import CostTracker
+
+    match = matcher.match("quanto ho speso oggi")
+    assert match is not None and match.command.id == "tell_spend"
+    assert ActionRunner(rec.ctx()).execute(match) == "Oggi non hai speso nulla."
+
+    tracker = CostTracker(
+        load_pricing(PROJECT_ROOT / "config" / "pricing.toml"),
+        SpendLedger(":memory:"),
+        1.0,
+        now=lambda: datetime(2026, 10, 18, 14, 5),
+    )
+    tracker.record("claude-haiku-5-5", Usage(output_tokens=500_000))  # $0.25
+    runner = ActionRunner(rec.ctx(), tracker=tracker)
+    assert runner.execute(match) == "Oggi hai speso 0,25 dollari, il 25 per cento del budget."
+    en = matcher.match("how much did I spend today")
+    assert en is not None
+    assert runner.execute(en, "en") == "Today you spent 0.25 dollars, 25 percent of the budget."

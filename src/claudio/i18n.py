@@ -155,6 +155,13 @@ EN: dict[str, str] = {
     # system
     "Sistema: %s": "System: %s",
     "Comando di sistema sconosciuto '{command}'": "Unknown system command '{command}'",
+    # cost
+    "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
+        "No price for model '{model}' in config/pricing.toml"
+    ),
+    "File dei prezzi non trovato: {path}": "Prices file not found: {path}",
+    "Budget giornaliero: %d%% speso": "Daily budget: %d%% spent",
+    "Costo chiamata %s: %.5f %s": "Call cost %s: %.5f %s",
     # tts
     "Effetto voce '{name}' sconosciuto (disponibili: {known})": (
         "Unknown voice effect '{name}' (available: {known})"

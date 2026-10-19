@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from claudio.config import DEFAULT_LANGUAGE
+from claudio.cost.tracker import CostTracker
 from claudio.i18n import tr
 from claudio.router.matcher import Match
 from claudio.system import SystemControl
@@ -154,15 +155,31 @@ def say_date(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
     return f"Oggi è {WEEKDAYS[now.weekday()]} {day} {MONTHS[now.month - 1]} {now.year}."
 
 
+def say_spend(spent: float, budget: float, calls: int, language: str = DEFAULT_LANGUAGE) -> str:
+    percent = round(spent / budget * 100) if budget > 0 else 0
+    if language == "en":
+        if calls == 0:
+            return "You haven't spent anything today."
+        return f"Today you spent {spent:.2f} dollars, {percent} percent of the budget."
+    if calls == 0:
+        return "Oggi non hai speso nulla."
+    amount = f"{spent:.2f}".replace(".", ",")
+    return f"Oggi hai speso {amount} dollari, il {percent} per cento del budget."
+
+
 Handler = Callable[[Match, str], "str | None"]
 
 
 class ActionRunner:
     def __init__(
-        self, ctx: ActionContext | None = None, system: SystemControl | None = None
+        self,
+        ctx: ActionContext | None = None,
+        system: SystemControl | None = None,
+        tracker: CostTracker | None = None,
     ) -> None:
         self.ctx = ctx or ActionContext()
         self.system = system or SystemControl()
+        self.tracker = tracker  # the spending counter ("quanto ho speso oggi")
         self._handlers: dict[str, Handler] = {
             "open_app": self._open_app,
             "open_folder": self._open_folder,
@@ -170,6 +187,7 @@ class ActionRunner:
             "tell_time": lambda m, lang: say_time(self.ctx.now(), lang),
             "tell_date": lambda m, lang: say_date(self.ctx.now(), lang),
             "system": self._system,
+            "tell_spend": self._tell_spend,
         }
 
     def execute(self, match: Match, language: str = DEFAULT_LANGUAGE) -> str:
@@ -216,6 +234,16 @@ class ActionRunner:
         while already paused)."""
         changed = self.system.apply(match.command.params["do"])
         return None if changed else str(match.command.param_in("already", language) or "")
+
+    def _tell_spend(self, match: Match, language: str) -> str:
+        if self.tracker is None:
+            return say_spend(0.0, 1.0, 0, language)
+        return say_spend(
+            self.tracker.spent_today(),
+            self.tracker.daily_budget,
+            self.tracker.calls_today(),
+            language,
+        )
 
     def _media_key(self, match: Match, language: str) -> None:
         params = match.command.params

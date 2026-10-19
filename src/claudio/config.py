@@ -184,6 +184,13 @@ class RouterSettings(BaseModel):
         return _json_or(value, lambda text: {**ERROR_REPLY, DEFAULT_LANGUAGE: text})
 
 
+class CostSettings(BaseModel):
+    pricing_file: Path = Path("config/pricing.toml")  # prices and cache multipliers
+    db_file: Path = Path("data/spend.db")  # the ledger: one row per Claude call
+    daily_budget: float = Field(1.0, gt=0)  # in the currency of the prices file (USD)
+    warn_at: float = Field(0.8, gt=0, lt=1)  # share of the budget that is announced aloud
+
+
 class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
@@ -211,6 +218,7 @@ class Settings(BaseSettings):
     stt: SttSettings = SttSettings()
     tts: TtsSettings = TtsSettings()
     router: RouterSettings = RouterSettings()
+    cost: CostSettings = CostSettings()
     logging: LoggingSettings = LoggingSettings()
 
     @classmethod
