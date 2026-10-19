@@ -39,6 +39,21 @@
 - `stt.language` is now `stt.languages` (`language` still fixes a single one), and Whisper's
   prompt is per language in `[stt.prompts]`. `router.unknown_reply` and the new
   `router.error_reply` take one text per language (a plain string still sets the Italian one).
+- A command said before the name is understood: "Svegliati, Claudio", "Apri Chrome, Claudio",
+  "Wake up, Claudio" (before, the name was taken as the start of the request and the command
+  was lost).
+- `keywords_xx` in `commands.toml`: words a fuzzy match must contain, so "What's the weather
+  today?" is no longer answered with the date.
+
+### Fixed
+- An unsure language detection falls back to the language of the last real request, never to
+  that of the start-up warm-up, a lone wake word or a dropped hallucination.
+- "Shut down the..." (a pause mid-sentence) and "shut down by ten" no longer close CLAUDIO:
+  a command with `exact = true` must be all that was said.
+- "Turn the volume on" turned the volume down; it now turns it up.
+- A reply without its English text, or a language without its own voice, is said in Italian
+  with the Italian voice instead of mixing them. `--text` starts from the first of
+  `stt.languages`, like the live assistant.
 
 ## [0.1.0] - 2026-10-19
 

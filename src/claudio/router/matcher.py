@@ -2,7 +2,9 @@
 
 Each command has its phrases and reply in Italian (`phrases`, `reply`) and optionally in
 other languages (`phrases_en`, `reply_en`...). The language Whisper heard is tried first,
-then the others, so a request still works when the language was misjudged."""
+then the others, so a request still works when the language was misjudged. `keywords_xx`
+are words a fuzzy match in that language must contain ("what's the weather" is close to
+"what's the date" but has no "date")."""
 
 from __future__ import annotations
 
@@ -17,8 +19,9 @@ from rapidfuzz import fuzz, process
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.i18n import tr
 from claudio.router.normalizer import extract_number, normalize
+from claudio.router.normalizer import language as language_rules
 
-_TRANSLATED = re.compile(r"^(phrases|reply)_([a-z]{2})$")
+_TRANSLATED = re.compile(r"^(phrases|reply|keywords)_([a-z]{2})$")
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,7 @@ class Command:
     exact: bool = False  # only an exact phrase counts: "spegni" must not shut CLAUDIO down
     other_phrases: dict[str, tuple[str, ...]] = field(default_factory=dict)
     other_replies: dict[str, str] = field(default_factory=dict)
+    keywords: dict[str, frozenset[str]] = field(default_factory=dict)  # per language
 
     @property
     def languages(self) -> tuple[str, ...]:
@@ -44,6 +48,9 @@ class Command:
     def reply_in(self, language: str) -> str:
         """The reply in `language`, else the Italian one."""
         return self.other_replies.get(language, self.reply)
+
+    def has_reply_in(self, language: str) -> bool:
+        return language == DEFAULT_LANGUAGE or language in self.other_replies
 
     def param_in(self, name: str, language: str) -> Any:
         """params["<name>_<language>"], else params["<name>"]."""
@@ -66,12 +73,18 @@ def load_commands(path: Path) -> list[Command]:
     for raw in data.get("command", []):
         other_phrases: dict[str, tuple[str, ...]] = {}
         other_replies: dict[str, str] = {}
+        keywords: dict[str, frozenset[str]] = {}
+        if "keywords" in raw:
+            keywords[DEFAULT_LANGUAGE] = _keywords(raw["keywords"], DEFAULT_LANGUAGE)
         for key, value in raw.items():
             if m := _TRANSLATED.match(key):
-                if m.group(1) == "phrases":
-                    other_phrases[m.group(2)] = tuple(value)
+                kind, lang = m.groups()
+                if kind == "phrases":
+                    other_phrases[lang] = tuple(value)
+                elif kind == "reply":
+                    other_replies[lang] = str(value)
                 else:
-                    other_replies[m.group(2)] = str(value)
+                    keywords[lang] = _keywords(value, lang)
         cmd = Command(
             id=raw["id"],
             phrases=tuple(raw["phrases"]),
@@ -81,6 +94,7 @@ def load_commands(path: Path) -> list[Command]:
             exact=bool(raw.get("exact", False)),
             other_phrases=other_phrases,
             other_replies=other_replies,
+            keywords=keywords,
         )
         if cmd.id in seen:
             raise ValueError(tr("{path}: comando duplicato '{command}'", path=path, command=cmd.id))
@@ -91,6 +105,10 @@ def load_commands(path: Path) -> list[Command]:
         seen.add(cmd.id)
         commands.append(cmd)
     return commands
+
+
+def _keywords(words: list[str], lang: str) -> frozenset[str]:
+    return frozenset(normalize(w, drop_fillers=False, lang=lang) for w in words)
 
 
 class CommandMatcher:
@@ -125,18 +143,29 @@ class CommandMatcher:
     def match(self, text: str, language: str = DEFAULT_LANGUAGE) -> Match | None:
         order = [language, *(lang for lang in self._by_phrase if lang != language)]
         texts = {lang: extract_number(normalize(text, lang=lang), lang) for lang in order}
+        raw = normalize(text, drop_fillers=False).split()
         for lang in order:  # an exact phrase in any language beats a fuzzy one
             norm, number = texts[lang]
-            if norm and norm in self._by_phrase.get(lang, {}):
-                return Match(self._by_phrase[lang][norm], 100.0, number, lang)
+            cmd = self._by_phrase.get(lang, {}).get(norm) if norm else None
+            if cmd is None:
+                continue
+            # An exact-only command ("shut down") must be all that was said: not cut off
+            # on an article ("shut down the...") nor followed by a number ("by ten").
+            if cmd.exact and (
+                number is not None or (raw and raw[-1] in language_rules(lang).articles)
+            ):
+                continue
+            return Match(cmd, 100.0, number, lang)
         for lang in order:
             norm, number = texts[lang]
             if not norm or not self._choices.get(lang):
                 continue
-            best = process.extractOne(
-                norm, self._choices[lang], scorer=fuzz.ratio, score_cutoff=self.threshold
-            )
-            if best is not None:
-                phrase, score, _ = best
-                return Match(self._by_phrase[lang][phrase], float(score), number, lang)
+            words = set(norm.split())
+            for phrase, score, _ in process.extract(
+                norm, self._choices[lang], scorer=fuzz.ratio, score_cutoff=self.threshold, limit=5
+            ):
+                cmd = self._by_phrase[lang][phrase]
+                needed = cmd.keywords.get(lang)
+                if needed is None or words & needed:
+                    return Match(cmd, float(score), number, lang)
         return None

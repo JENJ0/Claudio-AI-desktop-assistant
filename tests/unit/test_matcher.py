@@ -103,6 +103,7 @@ POSITIVE = [
 
 NEGATIVE = [
     "Spegni",  # close to "spegniti", but shutting down needs the exact phrase
+    "Spegniti il...",
     "Spegni la luce",
     "Chiudi",
     "Pausa",
@@ -240,10 +241,21 @@ POSITIVE_EN = [
     ("Turn yourself off, please", "shutdown"),
     ("Switch yourself off", "shutdown"),
     ("Shut down", "shutdown"),
+    ("Turn the volume on", "volume_up"),
+    ("Volume on", "volume_up"),
+    ("Turn the volume off", "mute"),
+    ("Wake up, Claudio.", "resume"),  # the name after the command
+    ("Mute, Claudio", "mute"),
 ]
 
 NEGATIVE_EN = [
     "Shut down the computer",  # shutting CLAUDIO down needs the exact phrase
+    "Shut down the...",  # a pause after "the": the rest of the sentence is still to come
+    "Shut down by ten",
+    "What's the weather today?",  # close to "what's the date today", but no "date"
+    "What's the rate today?",
+    "What's the tide?",
+    "What's the title?",
     "Turn off the lights",
     "Shut the door",
     "Open Spotify",
@@ -298,3 +310,19 @@ def test_translations_are_loaded(tmp_path: Path) -> None:
     assert cmd.languages == ("it", "en") and cmd.phrases_in("en") == ("open x",)
     assert cmd.reply_in("en") == "Opening X." and cmd.reply_in("de") == "Apro X."
     assert cmd.param_in("already", "en") == "Done." and cmd.param_in("already", "it") == "Già."
+
+
+def test_keywords_gate_fuzzy_matches(tmp_path: Path) -> None:
+    f = tmp_path / "c.toml"
+    f.write_text(
+        '[[command]]\nid="t"\nphrases=["che ore sono"]\nphrases_en=["what s the time"]\n'
+        'keywords=["ore"]\nkeywords_en=["Time"]\naction="tell_time"\n',
+        encoding="utf-8",
+    )
+    (cmd,) = load_commands(f)
+    assert cmd.keywords == {"it": frozenset({"ore"}), "en": frozenset({"time"})}
+    matcher = CommandMatcher([cmd])
+    assert matcher.match("what's the tide", "en") is None
+    match = matcher.match("what's the time?", "en")
+    assert match is not None and match.score == 100.0
+    assert matcher.match("what is the time", "en") is not None  # fuzzy, with the keyword

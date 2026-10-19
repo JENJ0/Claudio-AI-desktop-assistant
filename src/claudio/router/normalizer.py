@@ -89,6 +89,8 @@ LANGUAGES: dict[str, Language] = {
                 "grazie",
                 "prego",
                 "subito",
+                "scusa",
+                "scusami",
             }
         ),
         polite=("per favore", "per piacere", "per cortesia", "se puoi", "gentilmente"),
@@ -139,6 +141,8 @@ LANGUAGES: dict[str, Language] = {
                 "will",
                 "you",
                 "thanks",
+                "sorry",
+                "excuse",
             }
         ),
         polite=("for me", "if you can", "thank you", "would you mind"),
@@ -149,6 +153,7 @@ LANGUAGES: dict[str, Language] = {
 }
 DEFAULT = "it"
 _NON_WORD = re.compile(r"[^a-z0-9]+")
+_FILLERS = frozenset().union(*(rules.fillers for rules in LANGUAGES.values()))
 
 
 def language(code: str) -> Language:
@@ -183,12 +188,25 @@ def is_wake_word(word: str) -> bool:
     return word not in NOT_WAKE_WORDS and max(fuzz.ratio(word, w) for w in WAKE_WORDS) >= 75
 
 
+def _before_wake_word(word: str) -> bool:
+    """What may come before the wake word: a greeting, what Whisper makes of a fast "hey"
+    ("e", "il", "hai", "ejci") or a courtesy word ("ok", "allora", "scusa", "please")."""
+    from rapidfuzz.distance import Levenshtein
+
+    if word in GREETINGS or len(word) <= 3 or word in _FILLERS:
+        return True
+    return min(Levenshtein.distance(word, greeting) for greeting in GREETINGS) <= 2
+
+
 def strip_wake_words(words: list[str]) -> list[str]:
     """Drop the wake phrase at the start ("ehi giarvis apri chrome" -> "apri chrome"), also
-    when Whisper mangled the greeting before it ("e il jarviso che ore sono")."""
+    when Whisper mangled the greeting before it ("e il jarviso che ore sono"). After a
+    command the name is not a start: "svegliati claudio" keeps "svegliati"."""
     start = 0
     for i, word in enumerate(words[:WAKE_SEARCH]):
-        if word not in GREETINGS and is_wake_word(word):
+        if word in GREETINGS or not is_wake_word(word):
+            continue
+        if all(_before_wake_word(w) for w in words[start:i]):
             start = i + 1
     while start < len(words) and is_wake_word(words[start]):
         start += 1

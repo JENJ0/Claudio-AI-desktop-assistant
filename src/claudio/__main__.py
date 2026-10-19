@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from claudio import __version__
-from claudio.config import ConfigError, Settings, load_settings
+from claudio.config import DEFAULT_LANGUAGE, ConfigError, Settings, load_settings
 from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
@@ -60,7 +60,6 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
 def build_voices(settings: Settings, synth: Any) -> dict[str, tuple[Any, str]]:
     """A voice for every other language Whisper listens for, same engine as `synth`. A voice
     that cannot load is skipped: that language is read by the main voice."""
-    from claudio.config import DEFAULT_LANGUAGE
     from claudio.tts.kokoro import KokoroSynth
     from claudio.tts.speaker import PiperSynth, voice_path
 
@@ -114,10 +113,11 @@ async def run_text(settings: Settings, text: str) -> None:
     """Router + TTS on typed text: tests the reply path without microphone or STT."""
     responder = build_responder(settings)
     speaker = build_speaker(settings)
+    responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}
     start = time.perf_counter()
     first: list[float] = []
     await speaker.speak(
-        responder.respond(text),
+        responder.respond(text, settings.stt.languages[0]),  # as if Whisper heard it
         on_first_audio=lambda: first.append(time.perf_counter()),
         language=lambda: responder.language,
     )
@@ -152,6 +152,7 @@ async def run_assistant(settings: Settings) -> None:
     system = SystemControl()
     responder = build_responder(settings, system)
     speaker = build_speaker(settings)
+    responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}  # no English text in Italian voice
     resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
     capture = AudioCapture(
         settings.audio.sample_rate,

@@ -4,7 +4,7 @@ the same streaming interface."""
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Collection
 from typing import Any
 
 from claudio.config import DEFAULT_LANGUAGE, ERROR_REPLY, UNKNOWN_REPLY, in_language
@@ -21,19 +21,32 @@ class LocalResponder:
         actions: ActionRunner,
         unknown_reply: dict[str, str] | None = None,
         error_reply: dict[str, str] | None = None,
+        voiced: Collection[str] | None = None,
     ) -> None:
         self.matcher = matcher
         self.actions = actions
         self.unknown_reply = unknown_reply or UNKNOWN_REPLY
         self.error_reply = error_reply or ERROR_REPLY
+        self.voiced = voiced  # languages with their own voice (None: all of them)
         self.last_route: dict[str, Any] = {}
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
+
+    def _reply_language(self, language: str, has_text: bool) -> str:
+        """`language` when there is a reply and a voice for it, else Italian: the text and
+        the voice reading it always agree."""
+        voiced = self.voiced is None or language in self.voiced
+        return language if has_text and voiced else DEFAULT_LANGUAGE
 
     async def respond(self, text: str, language: str = DEFAULT_LANGUAGE) -> AsyncIterator[str]:
         """Reply in the language of the command's phrase (`language` when none matched):
         "open chrome" gets an English reply even if Whisper thought it was Italian."""
         match = self.matcher.match(text, language)
-        self.language = match.language if match else language
+        if match:
+            self.language = self._reply_language(
+                match.language, match.command.has_reply_in(match.language)
+            )
+        else:
+            self.language = self._reply_language(language, bool(self.unknown_reply.get(language)))
         if self.actions.system.paused and not _is_system(match):
             self.last_route = {"route": "paused"}
             log.info("In pausa, ignoro: %r", text, extra={"route": "paused"})
@@ -54,6 +67,9 @@ class LocalResponder:
         except Exception:
             log.exception("Errore eseguendo %s", match.command.id)
             self.last_route["error"] = True
+            self.language = self._reply_language(
+                self.language, bool(self.error_reply.get(self.language))
+            )
             yield in_language(self.error_reply, self.language)
             return
         if reply:

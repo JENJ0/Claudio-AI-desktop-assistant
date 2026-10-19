@@ -20,6 +20,9 @@ from claudio.router.normalizer import extract_number, normalize, only_wake_words
         ("Ejci Arvis, che ore sono.", "che ore sono"),
         ("E i Jarvis che ore sono.", "che ore sono"),
         ("Apri la calcolatrice, Jarvis", "apri calcolatrice"),
+        ("Svegliati, Claudio.", "svegliati"),  # a command before the name is kept
+        ("Apri Chrome, Claudio", "apri chrome"),
+        ("Scusa Claudio, apri la calcolatrice", "apri calcolatrice"),
         ("   ", ""),
     ],
 )
@@ -39,6 +42,9 @@ def test_normalize_keep_fillers() -> None:
         ("Ehi Giarvis", True),
         ("Hey Jarvis, apri Chrome", False),
         ("E il Jarvis.", True),
+        ("Okay Claudio", True),
+        ("Ejci Arvis.", True),
+        ("Svegliati, Claudio.", False),
         ("Audio", False),
         ("Claudia", False),
         ("", False),

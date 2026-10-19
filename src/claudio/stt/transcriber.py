@@ -15,7 +15,7 @@ import numpy as np
 
 from claudio.config import SttSettings
 from claudio.i18n import tr
-from claudio.router.normalizer import normalize
+from claudio.router.normalizer import normalize, only_wake_words
 
 log = logging.getLogger(__name__)
 
@@ -90,11 +90,16 @@ class WhisperTranscriber:
         self.download_root = download_root
         self.device = "cpu"
         self.model_name = settings.fallback_model
-        self.language = settings.languages[0]  # of the last request
+        self.language = settings.languages[0]  # heard in the last audio
         self.language_confidence = 1.0
+        # What an unsure detection falls back to: the language of the last real request,
+        # never that of the warm-up noise, a lone wake word or a dropped hallucination.
+        self.last_language = settings.languages[0]
         self._encoded: tuple[np.ndarray, Any] | None = None
         self._reused = 0  # encoder passes saved, for the tests
         self._model = self._load()
+        self.language, self.language_confidence = settings.languages[0], 1.0
+        self.last_language = settings.languages[0]
 
     def _open(self, name: str, **kwargs: Any) -> Any:
         from faster_whisper import WhisperModel
@@ -159,7 +164,7 @@ class WhisperTranscriber:
         encoded = model.encode(segment)
         probs = {token[2:-2]: prob for token, prob in model.model.detect_language(encoded)[0]}
         self.language, self.language_confidence = pick_language(
-            probs, s.languages, self.language, s.language_confidence
+            probs, s.languages, self.last_language, s.language_confidence
         )
         self._encoded = (segment, encoded)
         log.debug("Lingua: %s (%.2f)", self.language, self.language_confidence)
@@ -213,4 +218,6 @@ class WhisperTranscriber:
         if text and is_hallucination(text, prompt):
             log.info("Trascrizione scartata (allucinazione nota): %r", text)
             return ""
+        if text and not only_wake_words(text):
+            self.last_language = language
         return text

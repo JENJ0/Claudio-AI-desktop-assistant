@@ -46,6 +46,27 @@ async def test_responder_answers_in_the_language_of_the_phrase(matcher) -> None:
     assert r.language == "it"
 
 
+async def test_reply_text_and_voice_agree(matcher, tmp_path) -> None:
+    """No Italian text read by the English voice, nor English text by the Italian one."""
+    from claudio.router.matcher import CommandMatcher, load_commands
+
+    f = tmp_path / "c.toml"
+    f.write_text(
+        '[[command]]\nid="s"\nphrases=["apri spotify"]\nphrases_en=["open spotify"]\n'
+        'action="open_app"\nparams={ app="notepad" }\nreply="Apro Spotify."\n',
+        encoding="utf-8",
+    )
+    ctx = ActionContext(run=lambda a: None, open_path=lambda p: None, press_key=lambda k: None)
+    r = LocalResponder(CommandMatcher(load_commands(f)), ActionRunner(ctx))
+    assert await collect(r.respond("open spotify", "en")) == ["Apro Spotify."]
+    assert r.language == "it"  # no reply_en: the Italian reply, with the Italian voice
+    r = LocalResponder(matcher, ActionRunner(ctx), unknown_reply={"it": "Non so."})
+    assert await collect(r.respond("book a flight", "en")) == ["Non so."] and r.language == "it"
+    r = LocalResponder(matcher, ActionRunner(ctx), voiced={"it"})  # no English voice
+    assert await collect(r.respond("open chrome", "en")) == ["Apro Chrome."]
+    assert r.language == "it"
+
+
 def test_interaction_metrics(tmp_path) -> None:
     times = iter([0.0, 0.5, 2.0, 2.4, 2.7, 2.72, 2.85])
     inter = Interaction(clock=lambda: next(times))
@@ -125,6 +146,7 @@ def make_stt():
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings()
     stt.language, stt.language_confidence, stt._encoded, stt._reused = "it", 1.0, None, 0
+    stt.last_language = "it"
     stt._model = FakeWhisper()
     return stt
 
@@ -258,6 +280,40 @@ def test_language_detection_reuses_the_encoder_pass() -> None:
     stt._model.model = type("Ct2", (), {"detect_language": lambda s, e: [[("<|it|>", 0.5)]]})()
     stt._model.text = " Apri Chrome."
     assert stt.transcribe(speech) == "Apri Chrome." and stt.language == "it"
+
+
+def test_only_real_requests_set_the_fallback_language() -> None:
+    """An unsure detection keeps the last request's language: a lone wake word or a dropped
+    hallucination (English for everyone) must not become that language."""
+    import numpy as np
+
+    from claudio.config import SttSettings
+
+    stt = make_stt()
+    stt.settings = SttSettings(languages=["it", "en"])
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    for heard in (" Hey Jarvis.", " Thanks for watching!"):
+        stt._model = FakeMultilingualWhisper([("<|en|>", 0.9)], text=heard)
+        stt.transcribe(speech)
+        assert stt.language == "en" and stt.last_language == "it"
+    stt._model = FakeMultilingualWhisper([("<|it|>", 0.40), ("<|en|>", 0.35)], text=" Muto.")
+    assert stt.transcribe(speech) == "Muto." and stt._model.kwargs["language"] == "it"
+    stt._model = FakeMultilingualWhisper([("<|en|>", 0.9)], text=" Open Chrome.")
+    stt.transcribe(speech)
+    assert stt.last_language == "en"
+
+
+def test_the_warm_up_does_not_choose_the_language(monkeypatch) -> None:
+    from pathlib import Path
+
+    from claudio.config import SttSettings
+    from claudio.stt.transcriber import WhisperTranscriber
+
+    fake = FakeMultilingualWhisper([("<|en|>", 0.9)])  # Whisper hears English in the hiss
+    monkeypatch.setattr(WhisperTranscriber, "_open", lambda self, name, **kwargs: fake)
+    stt = WhisperTranscriber(SttSettings(device="cpu", languages=["it", "en"]), Path("."))
+    assert fake.calls == 1  # the warm-up ran
+    assert stt.language == stt.last_language == "it"
 
 
 def test_one_language_skips_the_detection() -> None:
