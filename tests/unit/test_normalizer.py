@@ -17,6 +17,10 @@ from claudio.router.normalizer import (
         ("Che giorno è oggi?", "che giorno e oggi"),
         ("Volume giù", "volume giu"),
         ("Togli l'audio", "togli audio"),
+        (
+            "Claudia, apri Chrome",
+            "apri chrome",
+        ),  # the models may wake on it: not part of the command
         ("Potresti aprire la calcolatrice?", "apri calcolatrice"),
         ("Ehi, mi apri i Download?", "apri download"),
         ("Hey Jarvis, che ore sono?", "che ore sono"),  # wake word said in the same breath
@@ -52,7 +56,7 @@ def test_normalize_keep_fillers() -> None:
         ("Ejci Arvis.", True),
         ("Svegliati, Claudio.", False),
         ("Audio", False),
-        ("Claudia", False),
+        ("Claudia", True),
         ("", False),
     ],
 )
@@ -114,7 +118,7 @@ def test_unknown_language_uses_the_italian_rules() -> None:
         ("e il giarvis", True),
         ("Ehi.", False),
         ("Hey", False),
-        ("Claudia, mi apri la porta?", False),
+        ("Claudia, mi apri la porta?", True),  # the wake word models may wake on it, so may Whisper
         ("alza l'audio", False),
         ("il gatto dorme sul divano", False),
         ("", False),

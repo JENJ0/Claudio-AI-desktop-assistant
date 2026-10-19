@@ -2,7 +2,7 @@
 
 Trains CLAUDIO's two wake word models, `hey_claudio.onnx` ("Hey Claudio") and `claudio.onnx`
 ("Claudio"), for [openWakeWord](https://github.com/dscripka/openWakeWord). It runs for free on
-Google Colab (2-4 hours, CPU runtime) or on any Linux PC.
+Google Colab (4-6 hours, CPU runtime) or on any Linux PC.
 
 | File | What it does |
 |---|---|
@@ -28,7 +28,12 @@ uv run python scripts/record_samples.py pack
   saying it: normal, fast, slow, quiet, loud, from 2 m, "Ehi" instead of "Hey", with a missing
   letter, absent-minded, followed by a command. Takes followed by a command are only used to
   measure the model, never to train it.
-- `negatives`: 38 ordinary sentences without the wake word (about 3 minutes).
+  `--styles veloce,distratto` records only those ways of speaking (and `--count` takes in all,
+  shared among them): the training report says which ones the model misses.
+- `negatives`: 38 ordinary sentences without the wake word (about 3 minutes). The script writes
+  `prompts.json` next to the takes, saying which sentence each one is. A take of a sentence with
+  "Claudia" (the first version of the script asked for two) is left out of `pack` and of the
+  benchmark, however it was recorded.
 - `noise`: one minute of the quiet room and one with the TV or music on, nobody speaking.
 - `pack`: writes `samples/claudio_training.zip` with the recordings and these scripts.
 
@@ -44,9 +49,13 @@ microphone is the one CLAUDIO uses (`audio.input_device`).
 2. **Runtime → Run all**. When the upload button appears, choose `claudio_training.zip`.
 3. Keep the tab open. At the end the browser downloads `claudio_wakeword.zip`.
 
-If a step fails, Run all stops there with the reason in red. After a disconnect, Run all again
-picks up where it stopped, finished models included. To train on new recordings in the same
-session, tick `new_recordings` in the upload cell before Run all.
+The upload cell checks that the zip holds the recordings and the scripts before it touches
+anything, and prints the version of the scripts (they travel inside the zip: run `pack` again
+after every update of the project). If a step fails, Run all stops there with the reason in
+red. After a disconnect, Run all again picks up where it stopped: finished models, and the
+variants already trained, are kept. To train on new recordings in the same session, tick
+`new_recordings` in the upload cell before Run all; tick `force` to train again models that
+are finished.
 
 ## 3. Install the models
 
@@ -57,7 +66,11 @@ validation audio causes, plus the recommended threshold. The report also says ho
 takes it learned from it hears (if it misses those, the training failed; if it hears only
 those, it does not generalise) and which of your ordinary sentences wake it. Put the
 threshold in
-`config/claudio.toml`, in place of the `hey_jarvis` placeholder:
+`config/claudio.toml`, in place of the `hey_jarvis` placeholder. The held-out takes also pick
+the checkpoint, the variant and the threshold, so the table is a little rosier than a new take
+will be: `scripts/benchmark_wakeword.py` shows the takes the model never learned from apart
+(`mai imparate`), and speaking to CLAUDIO is the real test. `healthy: false` (and `problems`)
+in the report means the training failed even if the table looks fine:
 
 ```toml
 [[wakeword.models]]
@@ -86,10 +99,12 @@ python wakeword/train_wakeword.py train --model claudio --workers 8
 ```
 
 Every stage keeps its output in `work/` (the models in `output/`) and is skipped when it is
-already there and was made from the same recordings: the same command resumes after an
-interruption, and new or redone takes are picked up. `train` checks that `download` got
-everything before it starts; `--force` trains a finished model again. `--help` lists the
-options (number of clips, steps, target false wakes per hour).
+already there and was made from the same recordings, noise, options and scripts: the same
+command resumes after an interruption (a variant already trained included), and new or redone
+takes, or an edit of the scripts, are picked up. `train` checks that `download` got everything
+before it starts; `--force` trains a finished model again. `python train_wakeword.py version`
+prints the version of the scripts. `--help` lists the options (number of clips, steps, target
+false wakes per hour).
 
 ## How it works
 
@@ -109,13 +124,16 @@ options (number of clips, steps, target false wakes per hour).
   `--real-copies`): drawn evenly, the few real windows were lost among the synthetic ones and
   the model learned the synthetic voices instead of the word. The checkpoint kept is the one
   that hears the most of your held-out takes (and the synthetic ones) at no more than 1 false
-  wake per hour on the validation audio (`--target-fph`).
+  wake per hour on the validation audio (`--target-fph`): every checkpoint is judged at its
+  best threshold, as the report does, not at a fixed 0.5, and one that hears nothing never wins
+  by being quiet.
 - **Variants**: each model is trained with three settings (`--variants`: the base network, a
   wider one, a wider one with the negatives weighing less) and the one that hears most of your
   held-out takes within the false wake limit is kept. The report says which and shows all.
 - **Report**: your held-out takes go through the real streaming detector, as in CLAUDIO.
-- **Older work folders**: scratch made by an older recipe (`RECIPE` in `train_wakeword.py`)
-  is made again, and a model made by an older recipe is trained again.
+- **Older work folders**: clips and features carry the version of the scripts they come from
+  (`RECIPE` and a fingerprint of `phrases.py`, `augment.py`, `generate_clips.py`): made by other
+  scripts, they are made again, and a model made by other scripts or options is trained again.
 
 The training data has its own licences (openWakeWord features CC BY-NC-SA 4.0, ESC-50
 CC BY-NC 3.0, AudioSet CC BY 4.0): the resulting models are for personal, non-commercial use.

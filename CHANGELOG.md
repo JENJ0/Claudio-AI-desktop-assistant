@@ -43,14 +43,29 @@
 - Wake word training, second round, after the first models heard JenJo's own voice badly
   ("Hey Claudio" 31 takes in 50, "Claudio" alone none): two fifths of every batch of positives
   now come from his takes (each repeated 60 times with different noise) instead of being lost
-  among thousands of synthetic windows; the checkpoint kept is chosen on his held-out takes,
-  not only on synthetic ones; each model tries three settings and keeps the best; "Claudia" is
-  no longer a negative (it differs from "Claudio" by one vowel and refusing it taught the
-  single-word model to refuse the real word); the false wake limit is one per validation hour
-  instead of one every two. The report now also says how many of the takes it learned from it
-  hears and which ordinary sentences wake it. Work folders and models made by the first recipe
-  are made again.
-- The 38 ordinary sentences to record no longer include the two with "Claudia".
+  among thousands of synthetic windows; each checkpoint is judged at its best threshold within
+  the false wake limit, on his held-out takes as well as the synthetic ones (before, at a fixed
+  0.5, where a model that was quiet and deaf could win); each model tries three settings and
+  keeps the best; "Claudia" is no longer a negative (it differs from "Claudio" by one vowel and
+  refusing it taught the single-word model to refuse the real word); the false wake limit is
+  one per validation hour instead of one every two. The report also says how many of the takes
+  it learned from it hears, which ordinary sentences wake it (with the sentence said), whether
+  the model works at all (`healthy`, `problems`) and which variant and settings won.
+- The training keeps what it made and says what it was made from: every variant trained is
+  saved as soon as it ends (a disconnect costs only the one in progress, and a variant that
+  fails does not stop the others), and clips, features and models are made again by themselves
+  when the recordings, the noise recordings, the options (`--steps`, `--real-copies`,
+  `--target-fph`...) or the scripts change, not only when someone remembers to bump a number.
+  Options that cannot work are refused before the hours of synthesis. The notebook checks the
+  zip before touching the session, prints the version of the scripts, and has a `force` box.
+- The ordinary sentences to record are 38: the two with "Claudia" are out. A take of a sentence
+  with "Claudia" is left out of the zip and of the benchmark, however it was recorded: the
+  script now writes what each take says (`prompts.json`; the first version's takes are
+  recognised by their number). `record_samples.py wakeword --styles veloce,distratto` records
+  only some ways of speaking.
+- "Claudia" is no longer refused by the router: after a wake it is dropped like any other
+  spelling of the name ("Claudia, apri Chrome" opens Chrome).
+- The tests ignore the `.env` of the PC they run on.
 - README in English, with the Italian version in `README.it.md`; CHANGELOG in English.
 - `stt.language` is now `stt.languages` (`language` still fixes a single one), and Whisper's
   prompt is per language in `[stt.prompts]`. `router.unknown_reply` and the new

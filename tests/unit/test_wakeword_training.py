@@ -242,6 +242,13 @@ def training_args(tmp_path: Path, **extra: object) -> argparse.Namespace:
         "n_negative": 10,
         "workers": 1,
         "variants": "base",
+        "steps": 100,
+        "layer": 32,
+        "lr": 1e-4,
+        "seed": 0,
+        "real_fraction": 0.4,
+        "real_copies": 60,
+        "target_fph": 1.0,
     }
     values.update(extra)
     return argparse.Namespace(**values)
@@ -255,6 +262,26 @@ def test_training_stops_before_synthesis_when_data_is_missing(tmp_path: Path) ->
 def test_an_unknown_variant_is_refused_before_any_work(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="gentel"):
         train_wakeword.run_training(with_training_data(tmp_path, variants="base,gentel"))
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"variants": " , "}, {"real_fraction": 1.5}, {"real_copies": 0}, {"steps": 3}],
+)
+def test_options_that_cannot_work_are_refused_before_any_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict[str, object]
+) -> None:
+    def synthesize(*_: object) -> None:
+        raise AssertionError("troppo tardi")
+
+    monkeypatch.setattr(train_wakeword, "synthesize", synthesize)
+    with pytest.raises(SystemExit):
+        train_wakeword.run_training(with_training_data(tmp_path, **options))
+
+
+def test_the_same_variant_twice_is_trained_once() -> None:
+    args = training_args(Path("."), variants="base, wide,base")
+    assert train_wakeword.check_options(args) == ["base", "wide"]
 
 
 def test_download_fails_without_the_feature_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,13 +299,13 @@ def with_training_data(tmp_path: Path, **extra: object) -> argparse.Namespace:
     for name in train_wakeword.REQUIRED:
         (args.data / name).parent.mkdir(parents=True, exist_ok=True)
         (args.data / name).write_bytes(b"x")
-    (args.data / "piper").mkdir()
+    (args.data / "piper").mkdir(exist_ok=True)
     for suffix in (".onnx", ".onnx.json"):
         (args.data / "piper" / f"it_IT-paola-medium{suffix}").write_bytes(b"x")
     return args
 
 
-def test_a_finished_model_is_skipped_until_the_recordings_change(
+def test_a_finished_model_is_skipped_until_anything_it_was_made_from_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     args = with_training_data(tmp_path)
@@ -288,23 +315,102 @@ def test_a_finished_model_is_skipped_until_the_recordings_change(
     recordings = train_wakeword.fingerprint([takes / "claudio_000_normale.wav"])
     args.out.mkdir()
     (args.out / "claudio.onnx").write_bytes(b"x")
-    old = {"recordings": recordings, "recipe": train_wakeword.RECIPE}
-    (args.out / "claudio_report.json").write_text(json.dumps(old))
+    report = args.out / "claudio_report.json"
+    stamp = train_wakeword.model_stamp(args, recordings, ["base"])
+    report.write_text(json.dumps({"stamp": stamp}))
 
     def synthesize(*_: object) -> None:
         raise AssertionError("ricomincia da capo")
 
     monkeypatch.setattr(train_wakeword, "synthesize", synthesize)
     train_wakeword.run_training(args)  # nothing to do
+    for change in (
+        {"steps": 200},  # an option
+        {"target_fph": 0.5},
+        {"variants": "base,wide"},
+    ):
+        with pytest.raises(AssertionError, match="ricomincia"):
+            train_wakeword.run_training(with_training_data(tmp_path, **change))
     augment.write_wav(takes / "claudio_001_veloce.wav", tone(0.4))
     with pytest.raises(AssertionError, match="ricomincia"):
         train_wakeword.run_training(args)  # a new take: train again
     (takes / "claudio_001_veloce.wav").unlink()
     with pytest.raises(AssertionError, match="ricomincia"):
         train_wakeword.run_training(training_args(tmp_path, force=True))
-    (args.out / "claudio_report.json").write_text(json.dumps({"recordings": recordings}))
+    monkeypatch.setattr(train_wakeword, "code_id", lambda names: "other-scripts")
     with pytest.raises(AssertionError, match="ricomincia"):
-        train_wakeword.run_training(args)  # made by an older recipe: train again
+        train_wakeword.run_training(args)  # other scripts: train again
+    monkeypatch.undo()
+    monkeypatch.setattr(train_wakeword, "synthesize", synthesize)
+    report.write_text(json.dumps({"stamp": stamp, "failed_variants": {"wide": "boom"}}))
+    with pytest.raises(AssertionError, match="ricomincia"):
+        train_wakeword.run_training(args)  # a variant failed: try it again
+    report.write_text(json.dumps({"recordings": recordings}))
+    with pytest.raises(AssertionError, match="ricomincia"):
+        train_wakeword.run_training(args)  # made before stamps existed: train again
+
+
+def stub_the_heavy_stages(monkeypatch: pytest.MonkeyPatch, failing: set[int]) -> list[int]:
+    """run_training with no synthesis, features or torch: train() just records the network
+    width it was asked for (and raises for the widths in `failing`)."""
+    asked: list[int] = []
+
+    def train(work: Path, data: Path, model: str, steps: int, layer: int, *_: object) -> dict:
+        asked.append(layer)
+        if layer in failing:
+            raise RuntimeError("boom")
+        return {"net": None, "best": {"step": 1}}
+
+    def report(*_: object) -> dict[str, object]:
+        row = {"threshold": 0.5, "jenjo": 3, "synthetic": 0.9, "false_per_hour": 0.1}
+        return {
+            "recommended_threshold": 0.5,
+            "meets_target": True,
+            "healthy": True,
+            "table": [row],
+            "learned_heard_at_recommended": 0,
+        }
+
+    monkeypatch.setattr(train_wakeword, "synthesize", lambda *_: None)
+    monkeypatch.setattr(train_wakeword, "featurize", lambda *_: None)
+    monkeypatch.setattr(train_wakeword, "train", train)
+    monkeypatch.setattr(train_wakeword, "export", lambda _net, path: path.write_bytes(b"onnx"))
+    monkeypatch.setattr(train_wakeword, "report", report)
+    return asked
+
+
+def test_a_variant_already_trained_is_kept_and_a_failing_one_does_not_stop_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = with_training_data(tmp_path, variants="base,wide")
+    asked = stub_the_heavy_stages(monkeypatch, failing={64})
+    train_wakeword.run_training(args)
+    assert asked == [32, 64]  # "wide" failed, "base" gave the model
+    saved = json.loads((args.out / "claudio_report.json").read_text())
+    assert saved["variant"] == "base" and list(saved["failed_variants"]) == ["wide"]
+    assert saved["variants"]["base"]["settings"]["layer"] == "32"
+    assert (args.out / "claudio.onnx").is_file()
+    # a disconnect or a failure costs only what was not finished
+    asked = stub_the_heavy_stages(monkeypatch, failing=set())  # nothing fails now
+    train_wakeword.run_training(args)
+    assert asked == [64]
+    saved = json.loads((args.out / "claudio_report.json").read_text())
+    assert saved["failed_variants"] == {} and set(saved["variants"]) == {"base", "wide"}
+    assert saved["variants"]["wide"]["settings"]["layer"] == "64"  # the winner's is not copied
+    asked.clear()
+    train_wakeword.run_training(args)  # finished, nothing failed: skipped
+    assert asked == []
+    train_wakeword.run_training(with_training_data(tmp_path, variants="base,wide", steps=300))
+    assert asked == [32, 64]  # other options: every variant again
+
+
+def test_training_stops_when_every_variant_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub_the_heavy_stages(monkeypatch, failing={32})
+    with pytest.raises(SystemExit, match="boom"):
+        train_wakeword.run_training(with_training_data(tmp_path, variants="base"))
+    assert not (tmp_path / "output" / "claudio.onnx").exists()
 
 
 def test_old_scratch_is_cleared_before_the_first_synthesis(
@@ -313,41 +419,49 @@ def test_old_scratch_is_cleared_before_the_first_synthesis(
     """Clips and features of an older recipe (no recipe marker) must be gone before anything
     new is made: kept, the "Claudia" negatives would be trained on again."""
     args = with_training_data(tmp_path)
-    old_clip = args.work / "shared" / "synthetic" / "negative_train" / "old.wav"
-    old_feats = args.work / "claudio" / "features" / "positive_train.npy"
-    kept_clip = args.work / "claudio" / "synthetic" / "positive_train" / "kept.wav"
-    for path in (old_clip, old_feats, kept_clip):
+    old = [
+        args.work / "shared" / "synthetic" / "negative_train" / "old.wav",
+        args.work / "claudio" / "features" / "positive_train.npy",
+        args.work / "claudio" / "synthetic" / "positive_train" / "old.wav",
+    ]
+    for path in old:
         path.parent.mkdir(parents=True)
         path.write_bytes(b"old")
     seen: list[bool] = []
 
     def synthesize(*_: object) -> None:
-        seen.append(old_clip.exists() or old_feats.exists())
+        seen.append(any(path.exists() for path in old))
         raise AssertionError("stop here")
 
     monkeypatch.setattr(train_wakeword, "synthesize", synthesize)
     with pytest.raises(AssertionError, match="stop here"):
         train_wakeword.run_training(args)
     assert seen == [False]
-    assert kept_clip.exists()  # positive voices do not depend on the negatives: kept
 
 
-def test_features_are_made_again_for_new_recordings(
+def test_features_are_made_again_when_what_they_come_from_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     out = tmp_path / "positive_train.npy"
     np.save(out, np.zeros((1, 16, 96), dtype=np.float32))
-    out.with_suffix(".recordings").write_text("abc")
+    out.with_suffix(".stamp").write_text("abc")
 
     def embedder(_: Path) -> None:
         raise AssertionError("rifatte")
 
     monkeypatch.setattr(train_wakeword, "embedder", embedder)
     featurize = train_wakeword.featurize
-    featurize(out, [], True, tmp_path, [], [], 1, 0, "abc")  # same takes: kept
-    featurize(out, [], True, tmp_path, [], [], 1, 0)  # synthetic only: kept
+    featurize(out, [], True, tmp_path, [], [], 1, 0, "abc")  # same takes, sounds, copies: kept
     with pytest.raises(AssertionError, match="rifatte"):
         featurize(out, [], True, tmp_path, [], [], 1, 0, "def")
+    out.with_suffix(".stamp").unlink()  # made before stamps existed
+    with pytest.raises(AssertionError, match="rifatte"):
+        featurize(out, [], True, tmp_path, [], [], 1, 0, "abc")
+
+
+def test_a_new_noise_recording_or_copy_count_changes_the_stamps() -> None:
+    assert train_wakeword.stamp_of("a", 1) == train_wakeword.stamp_of("a", 1)
+    assert train_wakeword.stamp_of("a", 60) != train_wakeword.stamp_of("a", 3)
 
 
 def test_fingerprint_follows_names_and_contents(tmp_path: Path) -> None:
@@ -380,15 +494,43 @@ def test_threshold_pick_prefers_recall_within_the_false_wake_target() -> None:
     assert train_wakeword.pick_threshold(deaf, 0.5)["threshold"] == 0.9
 
 
-def test_claudia_may_wake_claudio_and_the_recorded_sentences_are_the_kept_ones() -> None:
+def test_claudia_may_wake_claudio_and_no_synthetic_negative_says_it() -> None:
     """JenJo does not mind "Claudia" waking CLAUDIO, and refusing it taught the single-word
     model to refuse "Claudio" in his own voice too."""
     texts = [*phrases.NEGATIVE_PROMPTS]
     for lang in phrases.ADVERSARIAL:
         texts += phrases.ADVERSARIAL[lang] + phrases.SENTENCES[lang]
-    assert not [t for t in texts if "claudia" in t.lower()]
-    assert len(phrases.NEGATIVE_PROMPTS) == 38
-    assert phrases.NEGATIVE_PROMPTS[7] == "il mio amico paolo arriva domani"
+    assert not [t for t in texts if phrases.mentions_claudia(t)]
+
+
+def test_the_sentences_to_record_are_the_first_forty_without_the_two_with_claudia() -> None:
+    legacy = phrases.LEGACY_NEGATIVE_PROMPTS
+    assert len(legacy) == 40 and len(phrases.NEGATIVE_PROMPTS) == 38
+    assert legacy[7] == "ho parlato con claudia ieri sera"  # row 8 of 40
+    assert legacy[30] == "Claudia, mi apri la porta?"  # row 31 of 40
+    assert [t for t in legacy if not phrases.mentions_claudia(t)] == phrases.NEGATIVE_PROMPTS
+    assert phrases.NEGATIVE_PROMPTS[7] == "il mio amico paolo arriva domani"  # neg_008 on disk
+    assert not phrases.mentions_claudia("audio") and phrases.mentions_claudia("CLAUDIA, vieni")
+
+
+def test_a_take_of_a_sentence_with_claudia_is_left_out_however_it_was_recorded(
+    tmp_path: Path,
+) -> None:
+    for i in (6, 7, 8, 30, 39):  # the first version's folder: numbers follow its list
+        augment.write_wav(tmp_path / f"neg_{i:03d}.wav", tone(0.1))
+    kept, left_out = phrases.usable_negatives(tmp_path)
+    assert [p.stem for p in left_out] == ["neg_007", "neg_030"]
+    assert [p.stem for p in kept] == ["neg_006", "neg_008", "neg_039"]
+    # the script writes what each take says: that decides, not the number
+    phrases.remember_text(tmp_path, "neg_040", "ciao Claudia")
+    phrases.remember_text(tmp_path, "neg_041", "Apri Chrome")
+    for i in (40, 41):
+        augment.write_wav(tmp_path / f"neg_{i:03d}.wav", tone(0.1))
+    texts = phrases.negative_texts(tmp_path)
+    assert texts["neg_040"] == "ciao Claudia" and texts["neg_006"] == "fa freddo qui dentro"
+    _, left_out = phrases.usable_negatives(tmp_path)
+    assert [p.stem for p in left_out] == ["neg_007", "neg_030", "neg_040"]
+    assert phrases.usable_negatives(tmp_path / "missing") == ([], [])
 
 
 def test_positive_batch_takes_a_share_from_his_own_takes() -> None:
@@ -414,11 +556,36 @@ def test_stale_scratch_is_rebuilt_only_when_made_by_another_recipe(tmp_path: Pat
     (folder / "negative_train.npy").write_bytes(b"new")
     train_wakeword.reset_stale(folder)  # same recipe: kept
     assert (folder / "negative_train.npy").read_bytes() == b"new"
+    (folder / "recipe.txt").write_text("1-abcdef01")  # made by another recipe or other scripts
+    train_wakeword.reset_stale(folder)
+    assert not (folder / "negative_train.npy").exists()
+    assert (folder / "recipe.txt").read_text() == train_wakeword.recipe_id()
 
 
-def variant(meets: bool, heard: int, synthetic: float, fph: float) -> dict[str, object]:
+def test_the_recipe_follows_the_scripts_the_clips_come_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in train_wakeword.DATA_SCRIPTS:
+        (tmp_path / name).write_bytes(b"a = 1\r\n")
+    monkeypatch.setattr(train_wakeword, "SCRIPTS", tmp_path)
+    first = train_wakeword.recipe_id()
+    (tmp_path / "phrases.py").write_bytes(b"a = 1\n")  # Windows line endings: the same code
+    assert train_wakeword.recipe_id() == first
+    (tmp_path / "phrases.py").write_bytes(b"a = 2\n")
+    assert train_wakeword.recipe_id() != first
+    assert first.startswith(f"{train_wakeword.RECIPE}-")
+
+
+def variant(
+    meets: bool, heard: int, synthetic: float, fph: float, healthy: bool = True
+) -> dict[str, object]:
     row = {"threshold": 0.5, "jenjo": heard, "synthetic": synthetic, "false_per_hour": fph}
-    return {"recommended_threshold": 0.5, "meets_target": meets, "table": [row]}
+    return {
+        "recommended_threshold": 0.5,
+        "meets_target": meets,
+        "healthy": healthy,
+        "table": [row],
+    }
 
 
 def test_variant_rank_prefers_the_target_then_the_takes_he_is_heard_on() -> None:
@@ -429,38 +596,121 @@ def test_variant_rank_prefers_the_target_then_the_takes_he_is_heard_on() -> None
     assert rank(variant(True, 8, 0.9, 0.1)) > rank(variant(True, 8, 0.9, 0.9))
 
 
-def test_report_tells_learned_takes_from_held_out_ones(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    takes = {
-        "eval": [tmp_path / "c_e1.wav", tmp_path / "c_e2.wav"],
-        "train": [tmp_path / "c_t1.wav", tmp_path / "c_t2.wav", tmp_path / "c_t3.wav"],
-        "negatives": [tmp_path / "n1.wav", tmp_path / "n2.wav"],
-    }
-    synth = [tmp_path / "s1.wav", tmp_path / "s2.wav"]
-    peaks = {"c_e1": 0.9, "c_e2": 0.3, "c_t1": 0.9, "c_t2": 0.05, "c_t3": 0.8, "n1": 0.7}
-    monkeypatch.setattr(
-        train_wakeword,
-        "stream_scores",
-        lambda _o, _w, clips: [peaks.get(c.stem, 0.05) for c in clips],
-    )
-    monkeypatch.setattr(train_wakeword, "scores", lambda *_: np.zeros(100, dtype=np.float32))
-    trained = {
+def test_variant_rank_with_none_within_the_target_prefers_the_quietest() -> None:
+    rank = train_wakeword.variant_rank
+    assert rank(variant(False, 7, 0.9, 0.4)) > rank(variant(False, 12, 0.9, 6.0))
+    assert rank(variant(False, 12, 0.9, 0.4)) > rank(variant(False, 7, 0.9, 0.4))
+
+
+def test_a_model_that_works_beats_a_silent_one_however_quiet() -> None:
+    rank = train_wakeword.variant_rank
+    assert rank(variant(False, 5, 0.9, 20.0)) > rank(variant(True, 0, 0.0, 0.0, healthy=False))
+
+
+def noisy_validation() -> np.ndarray:
+    """An hour of stream: four bursts at 0.6, far enough apart to be four false wakes."""
+    val = np.zeros(200, dtype=np.float32)
+    val[[10, 60, 110, 160]] = 0.6
+    return val
+
+
+def test_checkpoint_is_judged_at_its_best_threshold_not_at_a_fixed_one() -> None:
+    value = train_wakeword.checkpoint_value
+    hears = np.full(10, 0.9, dtype=np.float32)
+    got = value(noisy_validation(), 1.0, hears, hears, 1.0)
+    # 4 false wakes an hour up to 0.6, none above: it hears everything from 0.65
+    assert got["ok"] and got["threshold"] == 0.65 and got["value"] == pytest.approx(1.0)
+    deaf = np.zeros(10, dtype=np.float32)
+    assert (got["ok"], got["value"]) > (value(np.zeros(200), 1.0, deaf, deaf, 1.0)["ok"], 0.0)
+
+
+def test_a_checkpoint_that_hears_nothing_loses_to_one_that_hears_but_is_noisy() -> None:
+    value = train_wakeword.checkpoint_value
+    loud = np.full(200, 0.99, dtype=np.float32)
+    loud[::30] = 0.0  # a false wake every other stretch, at every threshold
+    hears = np.full(10, 0.99, dtype=np.float32)
+    noisy = value(loud, 1.0, hears, hears, 1.0)
+    quiet = np.zeros(10, dtype=np.float32)
+    silent = value(np.zeros(200, dtype=np.float32), 1.0, quiet, quiet, 1.0)
+    assert not noisy["within"] and not silent["ok"]
+    assert (noisy["ok"], noisy["value"]) > (silent["ok"], silent["value"])
+
+
+def test_a_checkpoint_hearing_him_beats_one_hearing_only_synthetic_voices() -> None:
+    value = train_wakeword.checkpoint_value
+    val = np.zeros(200, dtype=np.float32)
+    synth = np.full(10, 0.9, dtype=np.float32)
+    mine = np.full(10, 0.9, dtype=np.float32)
+    deaf_to_him = np.zeros(10, dtype=np.float32)
+    both = value(val, 1.0, synth, mine, 1.0)
+    only_synth = value(val, 1.0, synth, deaf_to_him, 1.0)
+    assert both["value"] > only_synth["value"] and only_synth["value"] == pytest.approx(0.3)
+    no_real = value(val, 1.0, synth, np.zeros(0, dtype=np.float32), 1.0)
+    assert no_real["real_recall"] is None and no_real["value"] == pytest.approx(1.0)
+
+
+def fake_trained(tmp_path: Path) -> dict[str, object]:
+    return {
         "net": None,
         "device": "cpu",
         "val_hours": 1.0,
         "val_windows": np.zeros((100, 16, 96)),
         "best": {"step": 7},
     }
-    result = train_wakeword.report(
-        "claudio", tmp_path / "m.onnx", trained, tmp_path, takes, synth, 1.0
+
+
+def run_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, peaks: dict[str, float]
+) -> dict[str, object]:
+    takes = {
+        "eval": [tmp_path / "c_e1.wav", tmp_path / "c_e2.wav"],
+        "train": [tmp_path / "c_t1.wav", tmp_path / "c_t2.wav", tmp_path / "c_t3.wav"],
+        "negatives": [tmp_path / "n1.wav", tmp_path / "n2.wav"],
+    }
+    synth = [tmp_path / "s1.wav", tmp_path / "s2.wav"]
+    monkeypatch.setattr(
+        train_wakeword,
+        "stream_scores",
+        lambda _o, _w, clips: [peaks.get(c.stem, 0.05) for c in clips],
     )
+    val = np.zeros(100, dtype=np.float32)
+    val[[10, 50, 90]] = 0.6  # three false wakes in the hour, up to threshold 0.6
+    monkeypatch.setattr(train_wakeword, "scores", lambda *_: val)
+    said = {"n1": "una frase normale"}
+    return train_wakeword.report(
+        "claudio", tmp_path / "m.onnx", fake_trained(tmp_path), tmp_path, takes, synth, 1.0, said
+    )
+
+
+def test_report_tells_learned_takes_from_held_out_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    peaks = {"c_e1": 0.9, "c_e2": 0.3, "c_t1": 0.9, "c_t2": 0.05, "c_t3": 0.8, "n1": 0.7}
+    peaks |= {"s1": 0.9, "s2": 0.7}
+    result = run_report(tmp_path, monkeypatch, peaks)
     assert result["learned_takes"] == 3 and result["learned_heard_at_recommended"] == 2
     assert result["sentences_waking_at_recommended"] == 1
-    assert result["loudest_sentences"][0] == ("n1.wav", 0.7)
+    assert result["loudest_sentences"][0] == {
+        "file": "n1.wav",
+        "said": "una frase normale",
+        "peak": 0.7,
+    }
     assert result["peaks"] == {"c_e1.wav": 0.9, "c_e2.wav": 0.3}
-    assert result["recommended_threshold"] <= 0.3 and result["meets_target"]
+    # three false wakes an hour at 0.6 and below, over the limit of one: the first threshold
+    # within it is 0.65, which still hears one of his two held-out takes
+    assert result["recommended_threshold"] == 0.65 and result["meets_target"]
+    assert result["healthy"] and result["problems"] == []
     json.dumps(result)  # it is saved as JSON
+
+
+def test_report_says_when_the_model_hears_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result = run_report(tmp_path, monkeypatch, {})  # every clip scores 0.05
+    assert not result["healthy"] and len(result["problems"]) == 3
+    assert "l'addestramento non è riuscito" in capsys.readouterr().out
+    quiet = train_wakeword.variant_rank(result)
+    assert quiet[0] is False  # a working variant always beats it
 
 
 def test_windows_and_acav_batches() -> None:
@@ -533,6 +783,50 @@ def test_pack_lays_out_what_the_notebook_expects(tmp_path: Path) -> None:
     assert "samples/hey_claudio/hey_claudio_000.wav" in names
     assert {"wakeword/train_wakeword.py", "wakeword/phrases.py"} <= set(names)
     assert "wakeword/train_claudio.ipynb" in names
+
+
+def test_pack_leaves_out_the_takes_of_sentences_with_claudia_and_says_what_each_says(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    samples = tmp_path / "samples"
+    (samples / "negatives").mkdir(parents=True)
+    for i in (6, 7, 8, 30):  # the first version's numbering: 7 and 30 say "Claudia"
+        augment.write_wav(samples / "negatives" / f"neg_{i:03d}.wav", tone(0.1))
+    zip_path = samples / "claudio_training.zip"
+    counts = record_samples.pack(samples, PROJECT_ROOT / "scripts" / "wakeword", zip_path)
+    assert counts["negatives"] == 2
+    zf = zipfile.ZipFile(zip_path)
+    wavs = [n for n in zf.namelist() if n.startswith("samples/negatives/") and n.endswith(".wav")]
+    assert sorted(wavs) == [f"samples/negatives/neg_{i:03d}.wav" for i in (6, 8)]
+    said = json.loads(zf.read("samples/negatives/prompts.json"))
+    assert said == {
+        "neg_006": "fa freddo qui dentro",
+        "neg_008": "il mio amico paolo arriva domani",
+    }
+    out = capsys.readouterr().out
+    assert "neg_007.wav" in out and "neg_030.wav" in out and "Claudia" in out
+
+
+def test_each_negative_take_remembers_its_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replies = iter(["", ""])
+    monkeypatch.setattr("builtins.input", lambda _="": next(replies))
+    monkeypatch.setattr(
+        record_samples, "record", lambda seconds, device: np.full(SR // 10, 8000, np.int16)
+    )
+    prompts = record_samples.negative_prompts(40)[:2]
+    labels = record_samples.negative_labels(40)
+    record_samples.session(prompts[:1], tmp_path, None, labels)
+    assert phrases.negative_texts(tmp_path)["neg_040"] == phrases.NEGATIVE_PROMPTS[0]
+    assert (tmp_path / phrases.PROMPTS_FILE).is_file()
+
+
+def test_recording_only_some_styles() -> None:
+    plan = phrases.recording_plan("hey_claudio", 8, ("veloce", "ehi"))
+    assert [slug for slug, _, _ in plan] == ["veloce"] * 4 + ["ehi"] * 4
+    prompts = record_samples.wakeword_prompts("Claudio", 6, 10, ("distratto",))
+    assert [p[2] for p in prompts] == [f"claudio_{10 + i:03d}_distratto" for i in range(6)]
 
 
 def run_session(

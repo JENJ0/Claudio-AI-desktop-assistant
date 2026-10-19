@@ -5,7 +5,9 @@ wake on things that are not the wake word? Runs the real streaming detector, as 
     uv run python scripts/benchmark_wakeword.py --models hey_claudio --thresholds 0.3,0.4,0.5
 
 Reads samples/<model>/ (made by record_samples.py wakeword), samples/negatives/ (ordinary
-sentences) and samples/noise/ (the quiet room and the TV). Per threshold it prints the takes
+sentences, not the two with "Claudia") and samples/noise/ (the quiet room and the TV). The takes
+include the ones the model learned from: the ones kept out of training are the "tue
+registrazioni" of the training report. Per threshold it prints the takes
 heard (all of them, then by way of speaking), the sentences that wake the model and the false
 wakes per hour in the room noise, then the threshold it would pick.
 """
@@ -19,6 +21,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "wakeword"))
+
+import phrases  # scripts/wakeword/phrases.py: which sentence each take is
 
 REFRACTORY_S = 2.0  # the runtime ignores 2 s after a detection (detector.reset())
 FRAME = 1280  # 80 ms at 16 kHz
@@ -106,7 +112,8 @@ def benchmark(
     max_fph: float,
 ) -> None:
     takes = sorted((samples / model).glob("*.wav"))
-    sentences = sorted((samples / "negatives").glob("*.wav"))
+    sentences, _ = phrases.usable_negatives(samples / "negatives")  # not the "Claudia" ones
+    said = phrases.negative_texts(samples / "negatives")
     noise = sorted((samples / "noise").glob("*.wav"))
     if not takes:
         print(f"{model}: nessuna registrazione in {samples / model}")
@@ -119,16 +126,18 @@ def benchmark(
         f"\n== {model}: {len(takes)} registrazioni, {len(sentences)} frasi, "
         f"{hours * 60:.1f} min di rumore"
     )
-    print(" soglia | sentite | frasi che scattano | falsi/ora nel rumore")
+    new_takes = [p.name for p in takes if phrases.is_held_out(p.stem)]
+    print(" soglia | sentite | mai imparate | frasi che scattano | falsi/ora nel rumore")
     rows = []
     for t in thresholds:
         heard = sum(peak >= t for _, peak in peaks.values())
         woken = sum(wakes(series[p], t) > 0 for p in sentences)
         fph = sum(wakes(series[p], t) for p in noise) / hours if hours else 0.0
+        fresh = sum(peaks[n][1] >= t for n in new_takes)
         rows.append({"threshold": t, "heard": heard, "sentences": woken, "noise_per_hour": fph})
         print(
-            f"  {t:.2f}  | {heard:3d}/{len(takes):<3d} | "
-            f"{woken:3d}/{len(sentences):<3d}            | {fph:6.1f}"
+            f"  {t:.2f}  | {heard:3d}/{len(takes):<3d} | {fresh:3d}/{len(new_takes):<3d}      "
+            f" | {woken:3d}/{len(sentences):<3d}            | {fph:6.1f}"
         )
     pick = suggest(rows, max_fph)
     if pick is None:
@@ -143,8 +152,11 @@ def benchmark(
     print(f" Per stile alla soglia {pick['threshold']:.2f}:")
     for style, (heard, total) in heard_by_style(peaks, pick["threshold"]).items():
         print(f"   {style:12s} {heard}/{total}")
-    loud = sorted(((max(series[p]), p.name) for p in sentences), reverse=True)[:3]
-    print(" Frasi normali più vicine a scattare: " + ", ".join(f"{n} ({s:.2f})" for s, n in loud))
+    loud = sorted(((max(series[p]), p.stem) for p in sentences), reverse=True)[:3]
+    print(
+        " Frasi normali più vicine a scattare: "
+        + ", ".join(f'"{said.get(n, n)}" ({s:.2f})' for s, n in loud)
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

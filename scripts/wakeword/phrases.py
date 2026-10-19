@@ -3,6 +3,11 @@ prompts for JenJo's own recordings (scripts/record_samples.py)."""
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+from pathlib import Path
+
 # (text, weight) per espeak-ng language. Italian pronunciation first; the English one
 # ("Hey Clow-dee-oh") because Claudio understands English too. Light mispronunciations are
 # positives on purpose: a missed letter must still wake Claudio.
@@ -221,7 +226,35 @@ RECORDING_STYLES: dict[str, list[tuple[str, str, str]]] = {  # (slug, how, what 
 
 # JenJo's own voice saying everything but the wake word (record_samples.py negatives).
 NEGATIVE_PROMPTS: list[str] = [
-    *SENTENCES["it"][7:36],
+    "oggi pomeriggio vado a fare la spesa",
+    "hai visto le chiavi della macchina",
+    "domani mattina devo alzarmi presto",
+    "stasera guardiamo un film",
+    "la riunione è spostata alle tre",
+    "mi passi il caricabatterie",
+    "fa freddo qui dentro",
+    "il mio amico paolo arriva domani",
+    "chiudi la finestra per favore",
+    "ascolto la radio in macchina",
+    "lo studio è al secondo piano",
+    "che caldo che fa oggi",
+    "ci vediamo dopo cena",
+    "non trovo più il telecomando",
+    "accendi la luce in cucina",
+    "quanto costa questo",
+    "devo finire il progetto entro venerdì",
+    "andiamo a fare una passeggiata",
+    "il treno è in ritardo di dieci minuti",
+    "ho fame, cosa mangiamo",
+    "la partita inizia alle nove",
+    "ricordami di chiamare la mamma",
+    "questo computer è un po' lento",
+    "metti la canzone di prima",
+    "buongiorno a tutti",
+    "grazie mille, sei gentilissimo",
+    "a che ora chiude il negozio",
+    "scrivi un messaggio a giulia",
+    "il gatto dorme sul divano",
     "Alza l'audio della televisione",
     "Hey, ciao, come stai?",
     "Ehi, guarda qui",
@@ -233,17 +266,62 @@ NEGATIVE_PROMPTS: list[str] = [
     "What time is it?",
 ]
 
+# The 40 sentences the first version of record_samples.py asked for: neg_000 ... neg_039 of a
+# folder recorded then (two of them, "Claudia", were taken out afterwards: "Claudia" differs
+# from "Claudio" by one vowel and refusing it taught the models to refuse the real word).
+LEGACY_NEGATIVE_PROMPTS: list[str] = [
+    *NEGATIVE_PROMPTS[:7],
+    "ho parlato con claudia ieri sera",
+    *NEGATIVE_PROMPTS[7:29],
+    "Claudia, mi apri la porta?",
+    *NEGATIVE_PROMPTS[29:],
+]
+PROMPTS_FILE = "prompts.json"  # next to the takes: {"neg_007": "the sentence said", ...}
+
+
+def negative_texts(directory: Path) -> dict[str, str]:
+    """The sentence said in each take of `directory` (stem -> text): what record_samples.py
+    wrote in prompts.json, else the first version's list for neg_000 ... neg_039."""
+    texts = {f"neg_{i:03d}": t for i, t in enumerate(LEGACY_NEGATIVE_PROMPTS)}
+    file = directory / PROMPTS_FILE
+    if file.is_file():
+        texts |= json.loads(file.read_text(encoding="utf-8"))
+    return texts
+
+
+def remember_text(directory: Path, stem: str, text: str) -> None:
+    """Note the sentence of a take (record_samples.py), so it is never taken for another."""
+    file = directory / PROMPTS_FILE
+    known = json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {}
+    file.write_text(json.dumps(known | {stem: text}, indent=1, ensure_ascii=False), "utf-8")
+
+
+def mentions_claudia(text: str) -> bool:
+    return re.search(r"\bclaudia\b", text, re.IGNORECASE) is not None
+
+
+def usable_negatives(directory: Path) -> tuple[list[Path], list[Path]]:
+    """(takes to use, takes left out) of the ordinary sentences: a sentence with "Claudia" is
+    left out, however it was recorded."""
+    texts = negative_texts(directory)
+    takes = sorted(directory.glob("*.wav")) if directory.is_dir() else []
+    out = [p for p in takes if mentions_claudia(texts.get(p.stem, ""))]
+    return [p for p in takes if p not in out], out
+
 
 def weighted(phrases: list[tuple[str, int]]) -> list[str]:
     """Each phrase repeated by its weight, so a uniform pick follows the weights."""
     return [text for text, weight in phrases for _ in range(weight)]
 
 
-def recording_plan(model: str, count: int) -> list[tuple[str, str, str]]:
+def recording_plan(
+    model: str, count: int, only: tuple[str, ...] = ()
+) -> list[tuple[str, str, str]]:
     """(slug, how, what to say) for each of `count` takes: the styles in order, the same number
     of takes each (the first styles get one more when count does not divide), so JenJo
-    changes the way of speaking, or walks 2 m away, only once per style."""
-    styles = RECORDING_STYLES[model]
+    changes the way of speaking, or walks 2 m away, only once per style. `only` keeps just
+    those styles."""
+    styles = [s for s in RECORDING_STYLES[model] if not only or s[0] in only]
     per, extra = divmod(count, len(styles))
     return [style for i, style in enumerate(styles) for _ in range(per + (i < extra))]
 
@@ -251,3 +329,10 @@ def recording_plan(model: str, count: int) -> list[tuple[str, str, str]]:
 def is_eval_only(path_stem: str) -> bool:
     """Takes with a command glued after the wake word measure the model, never train it."""
     return path_stem.endswith("_cmd")
+
+
+def is_held_out(path_stem: str) -> bool:
+    """JenJo's takes kept out of training to measure the model: every fifth (by name, so the
+    split never changes) and every take with a command after the wake word."""
+    digest = int(hashlib.md5(path_stem.encode()).hexdigest(), 16)
+    return is_eval_only(path_stem) or digest % 5 == 0

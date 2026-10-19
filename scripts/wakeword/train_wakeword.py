@@ -4,8 +4,9 @@
     python wakeword/train_wakeword.py train --model hey_claudio --data data --samples samples
 
 Each stage keeps its output (in --work, the models in --out) and is skipped when already
-there and made from the same recordings, so running the same command again after a
-disconnect carries on where it stopped. What the model learns:
+there and made from the same recordings, scripts and options, so running the same command
+again after a disconnect carries on where it stopped (a variant already trained included).
+What the model learns:
 - yes: synthetic voices saying the wake word (generate_clips.py) and JenJo's recordings;
 - no: similar words and ordinary speech (synthetic and JenJo's), ~2000 hours of varied
   audio (openWakeWord's ACAV100M features), JenJo's room noise.
@@ -39,9 +40,13 @@ FRAMES = 16
 FRAME_S = 0.08  # one embedding frame every 80 ms
 REFRACTORY = 25  # frames (2 s) the runtime ignores after a detection (detector.reset())
 THRESHOLDS = [round(t, 2) for t in np.arange(0.1, 0.96, 0.05)]
-# Bumped when the clips or features change meaning: older ones in a kept work folder are
-# made again, and a model made by an older recipe is trained again.
+# How much a checkpoint's synthetic and its held-out real windows count in its recall.
+RECALL_WEIGHTS = (0.3, 0.7)
+# The version of the clips, features and training; with a fingerprint of the scripts that make
+# them (recipe_id), so older ones in a kept work folder are made again by themselves.
 RECIPE = 2
+SCRIPTS = Path(__file__).resolve().parent
+DATA_SCRIPTS = ("phrases.py", "augment.py", "generate_clips.py")  # what the clips come from
 # The first model trained with the "base" settings heard JenJo's own voice badly, so each run
 # also tries these and keeps the one that hears most of his held-out takes. A variant is
 # openWakeWord's two rounds with another network width and another weight on the negatives.
@@ -192,10 +197,7 @@ def download(data: Path) -> dict[str, bool]:
 
 
 def is_eval(path: Path) -> bool:
-    """JenJo's takes kept out of training to measure the model: every fifth (by name, so
-    the split never changes) and every take with a command after the wake word."""
-    digest = int(hashlib.md5(path.stem.encode()).hexdigest(), 16)
-    return phrases.is_eval_only(path.stem) or digest % 5 == 0
+    return phrases.is_held_out(path.stem)
 
 
 def split_recordings(directory: Path) -> tuple[list[Path], list[Path]]:
@@ -211,6 +213,54 @@ def fingerprint(files: list[Path]) -> str:
         digest.update(f"{f.parent.name}/{f.name}\n".encode())
         digest.update(f.read_bytes())
     return digest.hexdigest()[:16]
+
+
+def stamp_of(*parts: object) -> str:
+    return hashlib.sha1("|".join(str(p) for p in parts).encode()).hexdigest()[:16]
+
+
+def code_id(names: tuple[str, ...]) -> str:
+    """Fingerprint of scripts (line endings aside: the zip is made on Windows)."""
+    digest = hashlib.sha1()
+    for name in names:
+        digest.update((SCRIPTS / name).read_bytes().replace(b"\r\n", b"\n"))
+    return digest.hexdigest()[:8]
+
+
+def recipe_id() -> str:
+    """What the clips and features depend on: RECIPE and the scripts that make them. Changed
+    by itself when phrases, augmentation or the voices change."""
+    return f"{RECIPE}-{code_id(DATA_SCRIPTS)}"
+
+
+def model_stamp(
+    args: argparse.Namespace, recordings: str, names: list[str], variant: str | None = None
+) -> dict[str, Any]:
+    """Everything a finished model (or one variant of it) was made from: when any of it
+    differs, it is trained again."""
+    stamp: dict[str, Any] = {
+        "recordings": recordings,
+        "recipe": recipe_id(),
+        "code": code_id((*DATA_SCRIPTS, "train_wakeword.py")),
+    }
+    for key in (
+        "steps",
+        "layer",
+        "lr",
+        "seed",
+        "real_fraction",
+        "real_copies",
+        "target_fph",
+        "n_positive",
+        "n_negative",
+    ):
+        stamp[key] = getattr(args, key, None)
+    if variant is None:
+        stamp["variants"] = names
+    else:
+        stamp["variant"] = variant
+        stamp["settings"] = {k: str(v) for k, v in VARIANTS[variant].items()}
+    return json.loads(json.dumps(stamp))  # as read back from a file
 
 
 def synth_phrases(model: str, positive: bool) -> dict[str, list[str]]:
@@ -282,16 +332,17 @@ def featurize(
     tail_files: list[Path],
     workers: int,
     seed: int,
-    recordings: str = "",
+    made_from: str,
 ) -> None:
     """Augmented windows of the clips (each repeated `copies` times) -> (N, 16, 96) features.
-    `recordings` is the fingerprint of the real takes among the clips, saved next to them."""
-    stamp = out.with_suffix(".recordings")
+    `made_from` stands for everything they depend on (the clips and takes, the copies, the
+    background sounds): saved next to them, they are made again when it changes."""
+    stamp = out.with_suffix(".stamp")
     if out.is_file():
-        if not recordings or (stamp.is_file() and stamp.read_text() == recordings):
+        if stamp.is_file() and stamp.read_text() == made_from:
             print(f"  {out.name}: già pronte")
             return
-        print(f"  {out.name}: registrazioni cambiate, le rifaccio")
+        print(f"  {out.name}: sono cambiate le registrazioni, i clip o le opzioni: le rifaccio")
     tasks = [
         (str(p), positive, seed * 7919 + i)
         for i, (p, _) in enumerate(c for c in clips for _ in range(c[1]))
@@ -317,7 +368,7 @@ def featurize(
     tmp = out.with_suffix(".tmp.npy")
     np.save(tmp, result)
     tmp.replace(out)
-    stamp.write_text(recordings)
+    stamp.write_text(made_from)
     print(f"  {out.name}: {len(tasks)} finestre in {time.time() - t0:.0f} s")
 
 
@@ -392,11 +443,11 @@ def acav_batches(acav: np.ndarray, n: int, rng: np.random.Generator) -> Iterator
 def reset_stale(folder: Path) -> None:
     """Scratch made by an older recipe is deleted (only `folder`, never anything above it)."""
     marker = folder / "recipe.txt"
-    if folder.is_dir() and (not marker.is_file() or marker.read_text() != str(RECIPE)):
+    if folder.is_dir() and (not marker.is_file() or marker.read_text() != recipe_id()):
         print(f"  {folder.parent.name}/{folder.name}: fatto con una versione vecchia, lo rifaccio")
         shutil.rmtree(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    marker.write_text(str(RECIPE))
+    marker.write_text(recipe_id())
 
 
 def positive_batch(
@@ -414,6 +465,40 @@ def positive_batch(
     if n_real:
         parts.append(real[rng.integers(len(real), size=n_real)])
     return np.concatenate(parts)
+
+
+def checkpoint_value(
+    val: np.ndarray, val_hours: float, synth: np.ndarray, real: np.ndarray, target_fph: float
+) -> dict[str, Any]:
+    """How good a checkpoint is, judged like pick_threshold judges the final model: at the
+    best threshold, not at a fixed 0.5. Within the false wake target the best threshold hears
+    the most (synthetic windows and his held-out ones, `RECALL_WEIGHTS`); a checkpoint with no
+    threshold within the target is worth its recall cut down by how far over it is, so one that
+    hears nothing never wins by being quiet. `val`, `synth`, `real`: window scores."""
+    best: dict[str, Any] = {}
+    for t in THRESHOLDS:
+        fph = false_wakes(val, t) / val_hours
+        synth_recall = float(np.mean(synth >= t)) if len(synth) else 0.0
+        real_recall = float(np.mean(real >= t)) if len(real) else None
+        recall = (
+            synth_recall
+            if real_recall is None
+            else RECALL_WEIGHTS[0] * synth_recall + RECALL_WEIGHTS[1] * real_recall
+        )
+        within = fph <= target_fph
+        ok = within and recall > 0  # a checkpoint that hears nothing is no good, however quiet
+        value = recall if within else recall * target_fph / fph
+        if not best or (ok, value) > (best["ok"], best["value"]):  # a tie keeps the lowest t
+            best = {
+                "ok": ok,
+                "within": within,
+                "value": value,
+                "threshold": t,
+                "fph": fph,
+                "synth_recall": synth_recall,
+                "real_recall": real_recall,
+            }
+    return best
 
 
 def load_windows(path: Path) -> np.ndarray:
@@ -461,36 +546,32 @@ def train(
 
     def evaluate(step: int) -> None:
         net.eval()
-        synth_recall = float(np.mean(scores(net, pos_test, device) >= 0.5))
         # The checkpoint kept must hear JenJo, not only the synthetic voices: his held-out
         # takes weigh most when there are any.
-        real_recall = (
-            float(np.mean(scores(net, real_test, device) >= 0.5)) if len(real_test) else None
+        now = checkpoint_value(
+            scores(net, val_windows, device),
+            val_hours,
+            scores(net, pos_test, device),
+            scores(net, real_test, device) if len(real_test) else np.zeros(0),
+            target_fph,
         )
-        recall = synth_recall if real_recall is None else 0.3 * synth_recall + 0.7 * real_recall
-        neg_fp = float(np.mean(scores(net, neg_test, device) >= 0.5))
-        fph = false_wakes(scores(net, val_windows, device), 0.5) / val_hours
+        neg_fp = float(np.mean(scores(net, neg_test, device) >= now["threshold"]))
         net.train()
-        ok = fph <= target_fph
-        better = (
-            not best
-            or (ok and (not best["ok"] or recall > best["recall"]))
-            or (not ok and not best["ok"] and fph < best["fph"])
+        better = not best or (now["ok"], now["value"]) > (best["ok"], best["value"])
+        heard = (
+            "" if now["real_recall"] is None else f", tue registrazioni {now['real_recall']:.3f}"
         )
-        heard = "" if real_recall is None else f", tue registrazioni {real_recall:.3f}"
         print(
-            f"  passo {step}: richiamo sintetico {synth_recall:.3f}{heard}, falsi/ora {fph:.2f}, "
-            f"negativi simili {neg_fp:.3f}{'  <- migliore' if better else ''}",
+            f"  passo {step}: soglia {now['threshold']:.2f}, richiamo sintetico "
+            f"{now['synth_recall']:.3f}{heard}, falsi/ora {now['fph']:.2f}"
+            f"{'' if now['within'] else ' (sopra il limite)'}, negativi simili {neg_fp:.3f}"
+            f"{'  <- migliore' if better else ''}",
             flush=True,
         )
         if better:
             best.update(
+                now,
                 step=step,
-                recall=recall,
-                synth_recall=synth_recall,
-                real_recall=real_recall,
-                fph=fph,
-                ok=ok,
                 state={k: v.detach().clone() for k, v in net.state_dict().items()},
             )
 
@@ -602,9 +683,12 @@ def report(
     takes: dict[str, list[Path]],
     synth_test: list[Path],
     target_fph: float,
+    said: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """`takes` holds JenJo's recordings by role: "eval" (kept out of training, what the table
-    counts), "train" (what the model learned from) and "negatives" (his ordinary sentences)."""
+    counts), "train" (what the model learned from) and "negatives" (his ordinary sentences,
+    `said`: the sentence of each by file stem). The held-out takes also choose the checkpoint,
+    the variant and the threshold, so the table is a little rosier than a new take will be."""
     val = scores(trained["net"], trained["val_windows"], trained["device"])
     clips = [*takes["eval"], *takes["train"], *takes["negatives"], *synth_test]
     peaks = stream_scores(onnx_path, oww_dir, clips)
@@ -626,11 +710,22 @@ def report(
     missed = [
         (name, round(float(s), 3)) for name, s in zip(names["eval"], real, strict=True) if s < cut
     ]
-    loud = sorted(zip(names["negatives"], spoken, strict=True), key=lambda x: -x[1])[:5]
+    said = said or {}
+    loud = sorted(zip(takes["negatives"], spoken, strict=True), key=lambda x: -x[1])[:5]
+    problems = []
+    if len(real) and pick["jenjo"] == 0:
+        problems.append("non sente nessuna delle tue registrazioni di prova")
+    if len(synth) and pick["synthetic"] < 0.5:
+        problems.append("sente meno della metà delle voci sintetiche di prova")
+    learned_heard = int(np.sum(learned >= cut))
+    if len(learned) and learned_heard < len(learned) / 2:
+        problems.append("non riconosce nemmeno la metà delle registrazioni da cui ha imparato")
     result = {
         "model": model,
         "recommended_threshold": cut,
         "meets_target": pick["false_per_hour"] <= target_fph,
+        "healthy": not problems,
+        "problems": problems,
         "jenjo_takes": len(takes["eval"]),
         "best_step": trained["best"]["step"],
         "table": rows,
@@ -639,19 +734,22 @@ def report(
         # Told apart on purpose: takes it learned from but does not hear mean the training
         # failed; takes it hears only after learning them mean it does not generalise.
         "learned_takes": len(takes["train"]),
-        "learned_heard_at_recommended": int(np.sum(learned >= cut)),
+        "learned_heard_at_recommended": learned_heard,
         "learned_peaks": {
             n: round(float(s), 3) for n, s in zip(names["train"], learned, strict=True)
         },
         "sentences_waking_at_recommended": int(np.sum(spoken >= cut)),
-        "loudest_sentences": [(n, round(float(s), 3)) for n, s in loud],
+        "loudest_sentences": [
+            {"file": p.name, "said": said.get(p.stem, ""), "peak": round(float(s), 3)}
+            for p, s in loud
+        ],
     }
     print(f"\n{model}: soglia consigliata {cut} (falsi allarmi/ora al massimo {target_fph})")
-    print(" soglia | tue registrazioni | sintetiche | falsi/ora")
+    print(" soglia | tue registrazioni di prova | sintetiche | falsi/ora")
     for r in rows:
         mark = "  <-" if r is pick else ""
         print(
-            f"  {r['threshold']:.2f} | {r['jenjo']:3d}/{len(takes['eval']):<3d}           | "
+            f"  {r['threshold']:.2f} | {r['jenjo']:3d}/{len(takes['eval']):<3d}                  | "
             f"{r['synthetic']:.3f}      | {r['false_per_hour']:.2f}{mark}"
         )
     print(
@@ -662,7 +760,9 @@ def report(
         print(
             f" frasi normali che scattano alla soglia: {result['sentences_waking_at_recommended']}"
             f"/{len(takes['negatives'])}; le più alte: "
-            + ", ".join(f"{n} ({s})" for n, s in result["loudest_sentences"][:3])
+            + ", ".join(
+                f'"{x["said"] or x["file"]}" ({x["peak"]})' for x in result["loudest_sentences"][:3]
+            )
         )
     if missed:
         print(" mancate alla soglia consigliata: " + ", ".join(f"{n} ({s})" for n, s in missed))
@@ -672,14 +772,25 @@ def report(
             " meno rumorosa che sente ancora la maggior parte delle registrazioni. Mandami il"
             " report: serve un altro giro di addestramento."
         )
+    for problem in problems:
+        print(f" ATTENZIONE: il modello {problem}: l'addestramento non è riuscito.")
     return result
 
 
-def variant_rank(result: dict[str, Any]) -> tuple[bool, int, float, float]:
-    """Which variant is better: within the false wake target first, then the most of JenJo's
-    held-out takes heard at its own recommended threshold, then the synthetic ones."""
-    row = next(r for r in result["table"] if r["threshold"] == result["recommended_threshold"])
-    return (result["meets_target"], row["jenjo"], row["synthetic"], -row["false_per_hour"])
+def recommended_row(result: dict[str, Any]) -> dict[str, Any]:
+    return next(r for r in result["table"] if r["threshold"] == result["recommended_threshold"])
+
+
+def variant_rank(result: dict[str, Any]) -> tuple[bool, bool, float, float, float]:
+    """Which variant is better: one that works first, then one within the false wake target
+    (the most of JenJo's held-out takes heard at its own recommended threshold, then the
+    synthetic ones); when none is within it, the fewest false wakes, then the takes heard."""
+    row = recommended_row(result)
+    if result["meets_target"]:
+        quality = (row["jenjo"], row["synthetic"], -row["false_per_hour"])
+    else:
+        quality = (-row["false_per_hour"], row["jenjo"], row["synthetic"])
+    return (result["healthy"], result["meets_target"], *quality)
 
 
 def pick_threshold(rows: list[dict[str, Any]], target_fph: float) -> dict[str, Any]:
@@ -707,6 +818,24 @@ REQUIRED = (
 )
 
 
+def check_options(args: argparse.Namespace) -> list[str]:
+    """The variants to train, from --variants; any option that cannot work stops the run here,
+    before hours of synthesis."""
+    names = list(dict.fromkeys(v.strip() for v in args.variants.split(",") if v.strip()))
+    if not names:
+        raise SystemExit(f"--variants è vuoto (ci sono {', '.join(VARIANTS)})")
+    unknown = [v for v in names if v not in VARIANTS]
+    if unknown:
+        raise SystemExit(
+            f"Varianti sconosciute: {', '.join(unknown)} (ci sono {', '.join(VARIANTS)})"
+        )
+    if not 0 <= args.real_fraction <= 1:
+        raise SystemExit("--real-fraction va da 0 a 1")
+    if args.real_copies < 1 or args.steps < 10 or args.target_fph < 0:
+        raise SystemExit("--real-copies, --steps e --target-fph non possono essere così")
+    return names
+
+
 def run_training(args: argparse.Namespace) -> None:
     data, work, samples, model = args.data, args.work, args.samples, args.model
     missing = [name for name in REQUIRED if not (data / name).is_file()]
@@ -715,27 +844,25 @@ def run_training(args: argparse.Namespace) -> None:
     paths = generate_clips.engine_paths(data)
     if not paths:
         raise SystemExit("Nessuna voce in data/piper o data/kokoro: esegui prima 'download'")
-    names = [v.strip() for v in args.variants.split(",") if v.strip()]
-    unknown = [v for v in names if v not in VARIANTS]
-    if unknown:
-        raise SystemExit(
-            f"Varianti sconosciute: {', '.join(unknown)} (ci sono {', '.join(VARIANTS)})"
-        )
+    names = check_options(args)
     real_train, real_eval = split_recordings(samples / model)
-    negatives = sorted((samples / "negatives").glob("*.wav"))
+    negatives, _ = phrases.usable_negatives(samples / "negatives")  # not the "Claudia" ones
+    said = phrases.negative_texts(samples / "negatives")
     noise = sorted((samples / "noise").glob("*.wav"))
     recordings = fingerprint(real_train + real_eval + negatives + noise)
+    stamp = model_stamp(args, recordings, names)
     report_path = args.out / f"{model}_report.json"
-    if not args.force and (args.out / f"{model}.onnx").is_file() and report_path.is_file():
-        done = json.loads(report_path.read_text())
-        if done.get("recordings") == recordings and done.get("recipe") == RECIPE:
-            print(f"== {model}: modello già pronto in {args.out} (--force per rifarlo)")
-            return
+    done = json.loads(report_path.read_text()) if report_path.is_file() else {}
+    finished = (args.out / f"{model}.onnx").is_file() and done.get("stamp") == stamp
+    if not args.force and finished and not done.get("failed_variants"):
+        print(f"== {model}: modello già pronto in {args.out} (--force per rifarlo)")
+        return
     oww_dir = data / "oww"
-    # Before any synthesis: the shared negatives and every model's features come from phrases
-    # and takes an older recipe chose differently.
+    # Before any synthesis: the clips and features an older recipe made chose phrases and takes
+    # differently.
     reset_stale(work / "shared")
     reset_stale(work / model / "features")
+    reset_stale(work / model / "synthetic")
     print(f"== {model}: voci sintetiche ({', '.join(paths)})")
     synth = work / model / "synthetic"
     shared = work / "shared" / "synthetic"
@@ -787,15 +914,22 @@ def run_training(args: argparse.Namespace) -> None:
     for name, wanted in (("positive_real_train", real_train), ("positive_real_test", real_windows)):
         if not wanted:
             (feats / f"{name}.npy").unlink(missing_ok=True)
+    # What every file of windows depends on besides its own clips: the background sounds
+    # (the downloaded ones and his noise recordings), the command tails, the scripts.
+    sounds = stamp_of(recipe_id(), len(bg_files), fingerprint(noise))
+    with_tails = stamp_of(sounds, len(tails))
+    pos_train, pos_test = clips(synth / "positive_train", 1), clips(synth / "positive_test", 1)
+    neg_train, neg_test = clips(shared / "negative_train", 1), clips(shared / "negative_test", 1)
     featurize(
         feats / "positive_synth_train.npy",
-        clips(synth / "positive_train", 1),
+        pos_train,
         True,
         oww_dir,
         bg_files,
         tails,
         args.workers,
         11,
+        stamp_of(with_tails, len(pos_train)),
     )
     if real_train:
         featurize(
@@ -807,17 +941,18 @@ def run_training(args: argparse.Namespace) -> None:
             tails,
             args.workers,
             16,
-            fingerprint(real_train),
+            stamp_of(with_tails, fingerprint(real_train), args.real_copies),
         )
     featurize(
         feats / "positive_test.npy",
-        clips(synth / "positive_test", 1),
+        pos_test,
         True,
         oww_dir,
         bg_files,
         tails,
         args.workers,
         12,
+        stamp_of(with_tails, len(pos_test)),
     )
     if real_windows:
         featurize(
@@ -829,30 +964,29 @@ def run_training(args: argparse.Namespace) -> None:
             tails,
             args.workers,
             15,
-            fingerprint(real_windows),
+            stamp_of(with_tails, fingerprint(real_windows), 8),
         )
     featurize(
         work / "shared" / "negative_train.npy",
-        clips(shared / "negative_train", 1)
-        + [(p, 10) for p in negatives]
-        + [(p, 100) for p in noise],
+        neg_train + [(p, 10) for p in negatives] + [(p, 100) for p in noise],
         False,
         oww_dir,
         bg_files,
         [],
         args.workers,
         13,
-        fingerprint(negatives + noise),
+        stamp_of(sounds, len(neg_train), fingerprint(negatives + noise)),
     )
     featurize(
         work / "shared" / "negative_test.npy",
-        clips(shared / "negative_test", 1),
+        neg_test,
         False,
         oww_dir,
         bg_files,
         [],
         args.workers,
         14,
+        stamp_of(sounds, len(neg_test)),
     )
 
     synth_test = sorted((synth / "positive_test").glob("*.wav"))[:300]
@@ -860,30 +994,47 @@ def run_training(args: argparse.Namespace) -> None:
     candidates = work / model / "candidates"
     candidates.mkdir(parents=True, exist_ok=True)
     results: dict[str, dict[str, Any]] = {}
+    failed: dict[str, str] = {}
     for name in names:
         settings = {"layer": args.layer, "max_weights": (1500.0, 3000.0)} | VARIANTS[name]
+        onnx_path, saved = candidates / f"{model}.{name}.onnx", candidates / f"{model}.{name}.json"
+        made_from = model_stamp(args, recordings, names, name)
+        if onnx_path.is_file() and saved.is_file():  # a disconnect cost no finished variant
+            kept = json.loads(saved.read_text())
+            if kept.get("stamp") == made_from:
+                print(f'== "{name}": già addestrata, la riprendo')
+                results[name] = kept["result"]
+                continue
         print(f'== addestramento "{name}" ({args.steps} passi, rete {settings["layer"]})')
-        trained = train(
-            work,
-            data,
-            model,
-            args.steps,
-            settings["layer"],
-            args.target_fph,
-            args.seed,
-            args.lr,
-            args.real_fraction,
-            settings["max_weights"],
-        )
-        onnx_path = candidates / f"{model}.{name}.onnx"
-        export(trained["net"], onnx_path)
-        results[name] = report(
-            model, onnx_path, trained, oww_dir, takes, synth_test, args.target_fph
-        )
-        results[name]["settings"] = {k: str(v) for k, v in settings.items()}
-    best = max(names, key=lambda n: variant_rank(results[n]))
-    if len(names) > 1:
-        print(f'\n== scelta: "{best}" (più tue registrazioni sentite entro il limite di falsi)')
+        try:
+            trained = train(
+                work,
+                data,
+                model,
+                args.steps,
+                settings["layer"],
+                args.target_fph,
+                args.seed,
+                args.lr,
+                args.real_fraction,
+                settings["max_weights"],
+            )
+            export(trained["net"], onnx_path)
+            result = report(
+                model, onnx_path, trained, oww_dir, takes, synth_test, args.target_fph, said
+            )
+        except Exception as error:  # the other variants may still give a model
+            failed[name] = f"{type(error).__name__}: {error}"
+            print(f'== "{name}" non è riuscita: {failed[name]}')
+            continue
+        result["settings"] = {k: str(v) for k, v in settings.items()}
+        results[name] = result
+        saved.write_text(json.dumps({"stamp": made_from, "result": result}, indent=1))
+    if not results:
+        raise SystemExit("Nessuna variante è arrivata in fondo: " + "; ".join(failed.values()))
+    best = max(results, key=lambda n: variant_rank(results[n]))
+    if len(results) > 1:
+        print(f'\n== scelta: "{best}" (la migliore sulle tue registrazioni di prova)')
     out = args.out / f"{model}.onnx"
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(candidates / f"{model}.{best}.onnx", out)
@@ -894,14 +1045,18 @@ def run_training(args: argparse.Namespace) -> None:
         n: {
             "recommended_threshold": r["recommended_threshold"],
             "meets_target": r["meets_target"],
-            "jenjo_heard": r["table"][THRESHOLDS.index(r["recommended_threshold"])]["jenjo"],
+            "healthy": r["healthy"],
+            "jenjo_heard": recommended_row(r)["jenjo"],
             "learned_heard": r["learned_heard_at_recommended"],
+            "settings": r["settings"],
         }
         for n, r in results.items()
     }
-    result["settings"] = {k: str(v) for k, v in vars(args).items()}
+    result["failed_variants"] = failed
+    result["args"] = {k: str(v) for k, v in vars(args).items()}
     result["recordings"] = recordings
-    result["recipe"] = RECIPE
+    result["recipe"] = recipe_id()
+    result["stamp"] = stamp
     report_path.write_text(json.dumps(result, indent=2))
 
 
@@ -912,6 +1067,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     dl = sub.add_parser("download", help="scarica dati, voci e modelli")
     dl.add_argument("--data", type=Path, default=Path("data"))
+    sub.add_parser("version", help="la versione di questi script (cambia se cambiano)")
     tr = sub.add_parser("train", help="addestra un modello")
     tr.add_argument("--model", choices=sorted(phrases.POSITIVES), required=True)
     tr.add_argument("--data", type=Path, default=Path("data"))
@@ -945,7 +1101,10 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--seed", type=int, default=0)
     tr.add_argument("--force", action="store_true", help="rifà anche un modello già pronto")
     args = parser.parse_args(argv)
-    if args.command == "download":
+    if args.command == "version":
+        every = (*DATA_SCRIPTS, "train_wakeword.py")
+        print(f"Script di addestramento: ricetta {recipe_id()}, codice {code_id(every)}")
+    elif args.command == "download":
         ok = download(args.data)
         print("Scaricati: " + ", ".join(f"{k} {'OK' if v else 'NO'}" for k, v in ok.items()))
         needed = ("acav", "validation", "melspectrogram.onnx", "embedding_model.onnx")

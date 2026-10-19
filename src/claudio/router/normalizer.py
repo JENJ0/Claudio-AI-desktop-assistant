@@ -9,7 +9,10 @@ from dataclasses import dataclass, field
 # Wake words (and how Whisper may spell them) heard at the start of a phrase said in one breath.
 WAKE_WORDS = ("claudio", "jarvis")
 GREETINGS = {"hey", "ehi", "ei", "hei", "ehy", "hi"}
-NOT_WAKE_WORDS = {"audio", "claudia"}
+# Close to "claudio" and still not it. "Claudia" is not here on purpose: the wake word models no
+# longer refuse it (refusing it taught them to refuse "Claudio" too), so the router drops it
+# like any other spelling.
+NOT_WAKE_WORDS = {"audio"}
 WAKE_SEARCH = 3  # Whisper writes a fast "hey" as "e", "e il", "e i": the name can be 3rd
 
 
@@ -221,7 +224,7 @@ def only_wake_words(text: str) -> bool:
 
 def heard_wake_word(text: str) -> bool:
     """True when the transcript has the wake word itself, anywhere ("hey claudio", "ok
-    claudio che ore sono"); a lone greeting, "audio" or "claudia" is not it."""
+    claudio che ore sono"); a lone greeting or "audio" is not it."""
     words = normalize(text, drop_fillers=False).split()
     return any(w not in GREETINGS and is_wake_word(w) for w in words)
 

@@ -12,12 +12,16 @@ Commands (the first phrase of every command, x2, for benchmark_latency.py), in I
     uv run python scripts/record_samples.py commands --repeat 2
     uv run python scripts/record_samples.py commands --repeat 2 --language en
 
+Only some ways of speaking (a few takes of each, in a few minutes):
+    uv run python scripts/record_samples.py wakeword --phrase "Claudio" --styles veloce,distratto
+
 Running a mode again adds new takes after the ones already there: nothing is overwritten.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import time
@@ -55,12 +59,14 @@ def next_index(directory: Path, prefix: str) -> int:
     return max(numbers, default=-1) + 1
 
 
-def wakeword_prompts(phrase: str, count: int, start: int) -> list[tuple[str, str, str, float]]:
+def wakeword_prompts(
+    phrase: str, count: int, start: int, only: tuple[str, ...] = ()
+) -> list[tuple[str, str, str, float]]:
     """(header, text, file stem, seconds) per take. A known wake word gets the styles of
-    phrases.RECORDING_STYLES; any other phrase is recorded plainly."""
+    phrases.RECORDING_STYLES (`only`: just those); any other phrase is recorded plainly."""
     model = slug(phrase)
     if model in phrases.RECORDING_STYLES:
-        plan = phrases.recording_plan(model, count)
+        plan = phrases.recording_plan(model, count, only)
     else:
         plan = [("normale", "normale", phrase)] * count
     return [
@@ -81,6 +87,11 @@ def negative_prompts(start: int) -> list[tuple[str, str, str, float]]:
     ]
 
 
+def negative_labels(start: int) -> dict[str, str]:
+    """The sentence of every take negative_prompts(start) asks for, by file stem."""
+    return {f"neg_{start + i:03d}": text for i, text in enumerate(phrases.NEGATIVE_PROMPTS)}
+
+
 def noise_prompts(start: int, seconds: float) -> list[tuple[str, str, str, float]]:
     return [
         (
@@ -95,12 +106,26 @@ def noise_prompts(start: int, seconds: float) -> list[tuple[str, str, str, float
 
 def pack(samples: Path, scripts: Path, out: Path) -> dict[str, int]:
     """Zip the recordings and the training scripts, laid out the way the notebook expects:
-    samples/<kind>/*.wav and wakeword/*.py."""
+    samples/<kind>/*.wav and wakeword/*.py. The ordinary sentences with "Claudia" stay out
+    (and the zip says which sentence each take is, for the training report)."""
     counts = {}
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         for kind in PACK_DIRS:
-            files = sorted((samples / kind).glob("*.wav"))
+            if kind == "negatives":
+                files, left_out = phrases.usable_negatives(samples / kind)
+                texts = phrases.negative_texts(samples / kind)
+                zf.writestr(
+                    f"samples/{kind}/{phrases.PROMPTS_FILE}",
+                    json.dumps({f.stem: texts.get(f.stem, "") for f in files}, ensure_ascii=False),
+                )
+                if left_out:
+                    print(
+                        "Lasciate fuori le frasi con Claudia: "
+                        + ", ".join(f'{f.name} ("{texts[f.stem]}")' for f in left_out)
+                    )
+            else:
+                files = sorted((samples / kind).glob("*.wav"))
             counts[kind] = len(files)
             for f in files:
                 zf.write(f, f"samples/{kind}/{f.name}")
@@ -146,8 +171,15 @@ def min_peak_for(stem: str) -> float:
     return 0.015 if stem.endswith(("_piano", "_lontano")) else 0.05
 
 
-def session(prompts: list[tuple[str, str, str, float]], out: Path, device: int | None) -> int:
-    """Records the prompts in order; returns how many different clips were saved."""
+def session(
+    prompts: list[tuple[str, str, str, float]],
+    out: Path,
+    device: int | None,
+    labels: dict[str, str] | None = None,
+) -> int:
+    """Records the prompts in order; returns how many different clips were saved. `labels`
+    (file stem -> sentence) is written next to the takes, so a take is never taken for
+    another sentence when the list of prompts changes."""
     import soundfile as sf
 
     out.mkdir(parents=True, exist_ok=True)
@@ -183,6 +215,8 @@ def session(prompts: list[tuple[str, str, str, float]], out: Path, device: int |
             print()
         audio = record(seconds, device)
         sf.write(out / f"{stem}.wav", audio, SR, subtype="PCM_16")
+        if labels and stem in labels:
+            phrases.remember_text(out, stem, labels[stem])
         saved.add(stem)
         print(f"   salvato, {check(audio, min_peak_for(stem))}")
         i += 1
@@ -217,6 +251,11 @@ def main() -> None:
     parser.add_argument("mode", choices=["wakeword", "negatives", "noise", "commands", "pack"])
     parser.add_argument("--phrase", default="Hey Claudio")
     parser.add_argument("--count", type=int, default=50)
+    parser.add_argument(
+        "--styles",
+        default="",
+        help="wakeword: solo questi modi di parlare, separati da virgola (es. veloce,distratto)",
+    )
     parser.add_argument("--repeat", type=int, default=2)
     parser.add_argument("--seconds", type=float, default=None)
     parser.add_argument("--out", type=Path, default=PROJECT_ROOT / "samples")
@@ -232,14 +271,22 @@ def main() -> None:
             print("Attenzione: mancano registrazioni della wake word, il modello sarà meno preciso")
         return
 
+    labels: dict[str, str] | None = None
     settings = load_settings()
     device = resolve_device(settings.audio.input_device, "input")  # as CLAUDIO opens it
     if args.mode == "wakeword":
         out = args.out / slug(args.phrase)
-        prompts = wakeword_prompts(args.phrase, args.count, next_index(out, slug(args.phrase)))
+        only = tuple(s.strip() for s in args.styles.split(",") if s.strip())
+        known = [s[0] for s in phrases.RECORDING_STYLES.get(slug(args.phrase), [])]
+        if unknown := [s for s in only if s not in known]:
+            parser.error(f"stili sconosciuti: {', '.join(unknown)} (ci sono {', '.join(known)})")
+        start = next_index(out, slug(args.phrase))
+        prompts = wakeword_prompts(args.phrase, args.count, start, only)
     elif args.mode == "negatives":
         out = args.out / "negatives"
-        prompts = negative_prompts(next_index(out, "neg"))
+        start = next_index(out, "neg")
+        prompts = negative_prompts(start)
+        labels = negative_labels(start)
     elif args.mode == "noise":
         out = args.out / "noise"
         prompts = noise_prompts(next_index(out, "noise"), args.seconds or 60.0)
@@ -249,7 +296,7 @@ def main() -> None:
         prompts = command_prompts(commands, args.language, args.repeat, args.seconds or 3.5, out)
     if args.seconds and args.mode in ("wakeword", "negatives"):
         prompts = [(h, t, s, args.seconds) for h, t, s, _ in prompts]
-    saved = session(prompts, out, device)
+    saved = session(prompts, out, device, labels)
     print(f"\nFatto: {saved} clip salvate in {out}")
 
 
