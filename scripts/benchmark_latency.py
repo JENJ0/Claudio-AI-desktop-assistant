@@ -5,6 +5,12 @@ From recorded commands (see record_samples.py), offline, per STT model:
         --models large-v3-turbo small base
 From the live log written by `uv run claudio`:
     uv run python scripts/benchmark_latency.py --log logs/metrics.jsonl
+Again on the requests saved in logs/audio, through the live pipeline (no action is executed),
+to compare settings on your own voice:
+    uv run python scripts/benchmark_latency.py --replay
+    uv run python scripts/benchmark_latency.py --replay --lead-in full --beam 5
+--lead-in is how much of the audio before the wake word fired reaches Whisper: seconds,
+"full" (all of it, wake word included) or "none".
 
 Offline M1 = VAD silence wait + STT + router + Piper first sentence (playback start ≈ +30-60 ms).
 """
@@ -125,6 +131,95 @@ def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
         print_summary(name, rows, ("m1_ms", "stt_ms", "route_ms", "tts_first_ms"))
 
 
+class ReplayWake:
+    """Fires on the frame where the wake word fired live."""
+
+    def __init__(self, fire_at: int) -> None:
+        self.fire_at, self.frames = fire_at, 0
+
+    def process(self, frame: np.ndarray):
+        self.frames += 1
+        return ("replay", 1.0) if self.frames == self.fire_at else None
+
+    def pop_near_miss(self):
+        return None
+
+    def reset(self) -> None:
+        pass
+
+
+def replay(audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | None) -> None:
+    import asyncio
+
+    import claudio.app as app
+    from claudio.__main__ import build_responder
+    from claudio.audio.vad import Endpointer, SileroVad
+    from claudio.stt.transcriber import WhisperTranscriber
+
+    settings = load_settings()
+    models = settings.resolve(settings.models_dir)
+    block = settings.audio.block_size
+    rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+    live = {r["audio_file"]: r for r in rows if r.get("audio_file") and "prewake_ms" in r}
+    wavs = [w for w in sorted(audio_dir.glob("*.wav")) if w.name in live]
+    if not wavs:
+        raise SystemExit(f"Nessuna richiesta salvata in {audio_dir} con le sue metriche")
+    if lead_in == "full":
+        app.LEAD_IN_S = app.PREWAKE_S
+    elif lead_in is not None:
+        app.LEAD_IN_S = 0.0 if lead_in == "none" else float(lead_in)
+    stt_settings = (
+        settings.stt if beam is None else settings.stt.model_copy(update={"beam_size": beam})
+    )
+    stt = WhisperTranscriber(stt_settings, models / "whisper")
+    vad = SileroVad(models / "vad" / "silero_vad.onnx")
+    matcher = build_responder(settings).matcher
+
+    class DryResponder:  # routes, never executes
+        def __init__(self) -> None:
+            self.last_route: dict[str, str] = {}
+
+        async def respond(self, text: str):
+            match = matcher.match(text)
+            self.last_route = {"command": match.command.id if match else "-"}
+            yield "ok"
+
+    class Silent:
+        async def speak(self, text_stream, on_first_audio=None) -> None:
+            async for _ in text_stream:
+                pass
+
+        async def beep(self, kind: str = "wake") -> None:
+            pass
+
+    beam_size = stt_settings.beam_size
+    print(f"lead-in {app.LEAD_IN_S:.2f} s, beam {beam_size}, {stt.model_name} su {stt.device}")
+    same = understood = 0
+    for wav in wavs:
+        row = live[wav.name]
+        audio, sr = sf.read(wav, dtype="int16")
+        prewake = round(row["prewake_ms"] * sr / 1000)
+        pad = (-prewake) % block  # the detection falls on a frame boundary, as it did live
+        audio = np.concatenate((np.zeros(pad, np.int16), audio, np.zeros(2 * sr, np.int16)))
+        wake = ReplayWake((pad + prewake) // block)
+        assistant = app.Assistant(
+            wake, Endpointer(vad, settings.vad), stt, DryResponder(), Silent()
+        )
+
+        async def frames(audio=audio):
+            for i in range(0, len(audio) - block + 1, block):
+                yield audio[i : i + block]
+                await asyncio.sleep(0)
+
+        asyncio.run(assistant.run(frames()))
+        got = assistant.history[0] if assistant.history else {}
+        text, command = got.get("text", ""), got.get("command", "-")
+        same += text == row.get("text", "")
+        understood += command != "-"
+        print(f"  {wav.stem[:22]:<22} live {row.get('text', '')!r:<34} ora {text!r} -> {command}")
+    print(f"comandi riconosciuti {understood}/{len(wavs)}, testo uguale al live {same}/{len(wavs)}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -133,8 +228,13 @@ def main() -> None:
     parser.add_argument("--wav-dir", type=Path)
     parser.add_argument("--models", nargs="+", default=["large-v3-turbo", "small", "base"])
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
+    parser.add_argument("--replay", type=Path, nargs="?", const=Path("logs/audio"))
+    parser.add_argument("--lead-in", help='secondi, "full" o "none" (predefinito: come dal vivo)')
+    parser.add_argument("--beam", type=int)
     args = parser.parse_args()
-    if args.log:
+    if args.replay:
+        replay(args.replay, Path("logs/metrics.jsonl"), args.lead_in, args.beam)
+    elif args.log:
         from_log(args.log)
     elif args.wav_dir:
         offline(args.wav_dir, args.models, args.device)

@@ -53,9 +53,10 @@ uv run python scripts/list_audio_devices.py
 
 Di' la wake word, aspetta il bip, poi il comando. Se non parli entro 4 s senti un bip basso e
 Claudio torna in attesa. Puoi anche dire tutto d'un fiato ("hey jarvis che ore sono"): le parole
-dette prima del bip vengono recuperate. Il segnaposto `hey jarvis` è però un modello inglese:
-detto in fretta o attaccato al comando a volte non scatta, quindi in v0.1.0 è più sicuro dirlo
-con calma e fare una breve pausa.
+dette prima del bip vengono recuperate, senza la wake word (Whisper la sentirebbe come italiano e
+sbaglierebbe anche il resto). Il segnaposto `hey jarvis` è però un modello inglese: detto in
+fretta o attaccato al comando a volte non scatta, quindi in v0.1.0 è più sicuro dirlo con calma e
+fare una breve pausa.
 
 | Comando (esempi) | Cosa fa |
 |---|---|
@@ -129,7 +130,13 @@ uv run python scripts/benchmark_latency.py --log                      # dal vivo
 uv run python scripts/record_samples.py commands --repeat 2           # registra i comandi
 uv run python scripts/benchmark_latency.py --wav-dir samples/commands  # turbo vs small vs base
 uv run python scripts/benchmark_tts.py                                 # voci Kokoro e Piper
+uv run python scripts/benchmark_latency.py --replay                    # rifà le richieste salvate
 ```
+
+`--replay` ripassa i WAV di `logs/audio/` nella stessa pipeline dal vivo (senza eseguire azioni)
+e mostra per ognuno il testo di allora, quello di adesso e il comando riconosciuto. Con
+`--lead-in 0.4`, `--lead-in full` (wake word compresa) o `--lead-in none` cambia quanto audio
+detto prima del bip arriva a Whisper; con `--beam 5` Whisper prova più ipotesi.
 
 ## Sviluppo
 

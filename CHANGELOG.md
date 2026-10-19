@@ -17,11 +17,18 @@
   solo la voce, e ogni richiesta registra anche saturazione (`clipped`) e guadagno (`gain_db`).
 - Senza `audio.output_device` Claudio parla dall'uscita predefinita di Windows del momento
   (letta con Core Audio a ogni frase): cambiarla con Claudio acceso non richiede più un riavvio.
+- `benchmark_latency.py --replay` fa ripassare le richieste salvate in `logs/audio` per la
+  pipeline vera (senza eseguire azioni), per confrontare sulla propria voce quanto audio prima
+  della wake word dare a Whisper (`--lead-in`) e il beam (`--beam`).
 
 ### Cambiato
 - Microfono e uscita predefiniti passano da MME a WASAPI, che ha meno latenza.
 
 ### Corretto
+- Comandi detti d'un fiato: la wake word non arriva più a Whisper insieme al comando. Prima
+  Whisper sentiva "Hey Jarvis" come italiano e storpiava anche il resto ("görü soni" al posto di
+  "che ore sono"); ora riceve solo gli ultimi 0,25 s prima dello scatto, e il prompt di Whisper
+  non contiene più "Hey Jarvis".
 - Nicola strascicava le sillabe con "c" e "g" dolci ("calcolatrice", "dieci"): ora le affricate
   arrivano a Kokoro come un unico suono, come nel suo addestramento.
 

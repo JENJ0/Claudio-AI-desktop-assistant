@@ -302,8 +302,9 @@ async def test_one_breath_request_keeps_the_words_before_the_wake_word(
     assistant, *_ = build(fake_vad, vad_settings, stt, {10})
     await run_frames(assistant, make_frames("speech", 1600) + make_frames("silence", 800))
     assert stt.audio is not None
-    # 800 ms heard before the wake word + 800 ms after it, and ~100 ms of the final silence
-    assert 1.55 < len(stt.audio) / 16000 < 1.75
+    # of the 800 ms before the detection only the last 0.25 s (after the wake word) is kept,
+    # then 800 ms after it and ~100 ms of the final silence
+    assert 1.1 < len(stt.audio) / 16000 < 1.2
     assert assistant.history[-1]["outcome"] == "ok"
 
 
