@@ -189,6 +189,14 @@ class RouterSettings(BaseModel):
         return _json_or(value, lambda text: {**ERROR_REPLY, DEFAULT_LANGUAGE: text})
 
 
+class ConversationSettings(BaseModel):
+    # After a reply CLAUDIO keeps listening this long without the wake word (0 = off).
+    window_s: float = Field(6.0, ge=0, le=30)
+    # Listen while speaking: "basta" / "stop" cuts the reply short (best with headphones).
+    barge_in: bool = True
+    barge_in_max_s: float = Field(2.0, gt=0, le=8)  # longer speech is checked in slices this long
+
+
 class CostSettings(BaseModel):
     pricing_file: Path = Path("config/pricing.toml")  # prices and cache multipliers
     db_file: Path = Path("data/spend.db")  # the ledger: one row per Claude call
@@ -223,6 +231,7 @@ class Settings(BaseSettings):
     stt: SttSettings = SttSettings()
     tts: TtsSettings = TtsSettings()
     router: RouterSettings = RouterSettings()
+    conversation: ConversationSettings = ConversationSettings()
     cost: CostSettings = CostSettings()
     logging: LoggingSettings = LoggingSettings()
 

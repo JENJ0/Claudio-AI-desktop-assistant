@@ -15,6 +15,19 @@
   the action, while a no, silence or anything unclear cancels it. `level = 3` accepts only an
   explicit "confermo" / "I confirm". Every question and answer is logged. "chiudi la finestra"
   (Alt+F4 on the window in front) is the level-2 test command.
+- Conversation window: after a reply CLAUDIO listens for 6 s more without the wake word
+  (`[conversation] window_s`, 0 = off). It closes on silence, on "basta", or on anything no
+  command understands (no "Questo non lo so fare" for the TV).
+- Barge-in: while speaking, a second Silero VAD and a quick Whisper pass listen for "basta" /
+  "stop" / "zitto" and cut the reply short (the audio is queued in 0.1 s slices). An
+  interrupted confirmation question cancels its action. `[conversation] barge_in`.
+- "ripeti" / "non ho capito" says the last reply again, in its language and voice.
+- Media keys: play/pause, next and previous track ("metti in pausa la musica", "canzone
+  successiva", "salta 3 canzoni", "canzone precedente").
+
+### Fixed
+- A reply stopped before its end (an error in the audio output) could hang the speaker forever
+  while the next sentences were queued.
 
 ### Changed
 - Fast Italian heard as English (live test of 19/10: "cue the calculator", "come with me"):

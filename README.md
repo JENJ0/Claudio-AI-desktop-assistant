@@ -77,6 +77,9 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "spegniti" | closes CLAUDIO |
 | "quanto ho speso oggi" | today's Claude spending and the share of the daily budget |
 | "chiudi la finestra" | closes the window in front, after "Confermi?" and a "sì" |
+| "metti in pausa la musica", "canzone successiva", "canzone precedente" | media keys: play/pause, next, previous (Spotify, YouTube...) |
+| "ripeti", "non ho capito" | says the last reply again |
+| "basta", "stop" | ends the conversation; said while CLAUDIO speaks, cuts it short |
 
 Every command works in English too: "open Chrome", "open my downloads", "turn up the volume by
 10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Whisper
@@ -92,6 +95,13 @@ Actions have a safety level (`level` in `commands.toml`). Level 1 runs at once. 
 "va bene" (or "yes") run it, anything else (a "no", silence, a word it does not get) cancels.
 Level 3 reads a summary of what will happen and only "confermo" / "I confirm" runs it. Every
 question and answer goes to the log.
+
+After a reply CLAUDIO keeps listening for 6 seconds without the wake word (a beep says so):
+another command needs no "Hey Claudio". The window closes on silence, on "basta", or on
+anything that is not a command (the TV, someone else talking), with a low beep and no reply.
+While it speaks, CLAUDIO also listens for "basta" / "stop" and stops at once: with speakers its
+own voice reaches the microphone too, so headphones work best. Both are in `[conversation]`
+(`window_s = 0` turns the window off, `barge_in = false` the listening while speaking).
 
 ## Configuration
 

@@ -19,6 +19,8 @@ from claudio.audio.devices import (
 
 log = logging.getLogger(__name__)
 
+CHUNK_S = 0.1  # audio is queued in slices this long, so that a sentence can be cut short
+
 
 def resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     """Linear resampling; good enough for speech and beeps."""
@@ -100,21 +102,37 @@ class AudioPlayer:
             self.close()
             self._open(index)
 
-    def write(self, audio: np.ndarray, sample_rate: int | None = None) -> None:
-        """Blocking: returns when the audio has been queued to the device."""
+    def write(
+        self,
+        audio: np.ndarray,
+        sample_rate: int | None = None,
+        cancel: threading.Event | None = None,
+    ) -> bool:
+        """Blocking: returns when the audio has been queued to the device. With `cancel`,
+        it is queued in CHUNK_S slices and stops as soon as the event is set ("basta");
+        returns False when it was cut short."""
         audio = resample(audio, sample_rate or self.sample_rate, self.sample_rate)
+        data = np.ascontiguousarray(audio, dtype=np.int16)
+        step = max(1, int(self.sample_rate * CHUNK_S)) if cancel is not None else len(data)
         with self._lock:
             if self.windows_default is not None:
                 self._follow_default()
             if self._stream is None:
                 self.start()
-            try:
-                self._stream.write(np.ascontiguousarray(audio, dtype=np.int16))
-            except Exception as exc:  # device unplugged: reopen once and retry
-                log.warning("Uscita audio non disponibile (%s): riapro il dispositivo", exc)
-                self.close()
-                self.start()
-                self._stream.write(np.ascontiguousarray(audio, dtype=np.int16))
+            for start in range(0, max(len(data), 1), max(step, 1)):
+                if cancel is not None and cancel.is_set():
+                    return False
+                self._write(data[start : start + step])
+        return True
+
+    def _write(self, data: np.ndarray) -> None:
+        try:
+            self._stream.write(data)
+        except Exception as exc:  # device unplugged: reopen once and retry
+            log.warning("Uscita audio non disponibile (%s): riapro il dispositivo", exc)
+            self.close()
+            self.start()
+            self._stream.write(data)
 
     def close(self) -> None:
         if self._stream is not None:

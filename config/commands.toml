@@ -6,7 +6,8 @@
 # the phrase it recognised; a missing reply_xx falls back to the Italian one (reply and
 # voice). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
-# Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system.
+# Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system,
+# repeat, stop.
 
 [[command]]
 id = "open_chrome"
@@ -89,6 +90,41 @@ params = { key = "mute", steps = 1 }
 reply = ""
 reply_en = ""
 
+# Media keys: the player in use (Spotify, YouTube...) gets them even in the background.
+# "salta 3 canzoni" presses the key 3 times.
+[[command]]
+id = "media_play_pause"
+phrases = ["metti in pausa la musica", "pausa la musica", "ferma la musica", "riprendi la musica", "fai ripartire la musica", "metti play", "play", "fai partire la musica", "metti in pausa il video", "riprendi il video"]
+phrases_en = ["pause the music", "stop the music", "resume the music", "play the music", "play music", "play", "pause the video", "resume the video"]
+keywords = ["musica", "video", "play", "canzone", "brano"]
+keywords_en = ["music", "video", "play", "song"]
+action = "media_key"
+params = { key = "play_pause", steps = 1 }
+reply = ""
+reply_en = ""
+
+[[command]]
+id = "media_next"
+phrases = ["canzone successiva", "prossima canzone", "brano successivo", "traccia successiva", "salta la canzone", "salta canzone", "passa alla prossima", "metti la prossima", "video successivo"]
+phrases_en = ["next song", "next track", "skip the song", "skip this song", "skip", "next video"]
+keywords = ["successiva", "successivo", "prossima", "prossimo", "salta"]
+keywords_en = ["next", "skip"]
+action = "media_key"
+params = { key = "next_track", steps = 1 }
+reply = ""
+reply_en = ""
+
+[[command]]
+id = "media_previous"
+phrases = ["canzone precedente", "brano precedente", "traccia precedente", "torna alla canzone di prima", "metti la canzone di prima", "video precedente"]
+phrases_en = ["previous song", "previous track", "go back a song", "last song", "previous video"]
+keywords = ["precedente", "prima"]
+keywords_en = ["previous", "back", "last"]
+action = "media_key"
+params = { key = "previous_track", steps = 1 }
+reply = ""
+reply_en = ""
+
 [[command]]
 id = "tell_time"
 phrases = ["che ore sono", "che ora e", "dimmi l ora", "mi dici l ora", "sai che ore sono"]
@@ -130,6 +166,29 @@ confirm = "Chiudo la finestra in primo piano. Confermi?"
 confirm_en = "I'll close the window in front. Do you confirm?"
 reply = "Fatto."
 reply_en = "Done."
+
+# Conversation: "ripeti" says the last reply again; "basta" ends the conversation (CLAUDIO
+# stops listening without the wake word) and, said while CLAUDIO speaks, interrupts it.
+# exact = true: "basta" must be all that was said, so a longer request is never cut short.
+[[command]]
+id = "repeat"
+phrases = ["ripeti", "puoi ripetere", "ripeti per favore", "ripetilo", "ridillo", "cosa hai detto", "come hai detto", "non ho capito", "me lo ripeti"]
+phrases_en = ["repeat", "repeat that", "say that again", "can you repeat", "what did you say", "come again", "pardon", "i didn't get that"]
+keywords = ["ripeti", "ripetere", "ripetilo", "ridillo", "detto", "capito"]
+keywords_en = ["repeat", "again", "say", "pardon"]
+action = "repeat"
+params = { empty = "Non ho ancora detto niente.", empty_en = "I haven't said anything yet." }
+reply = ""
+reply_en = ""
+
+[[command]]
+id = "stop"
+phrases = ["basta", "basta cosi", "stop", "zitto", "stai zitto", "fermati", "silenzio", "smettila", "ho finito", "lascia stare", "niente"]
+phrases_en = ["stop", "enough", "that's enough", "shut up", "be quiet", "quiet", "never mind", "i'm done", "nothing"]
+action = "stop"
+exact = true
+reply = ""
+reply_en = ""
 
 # System commands: also heard while paused (then they are the only ones answered).
 # "already" is said when there is nothing to change (pausing while already paused).
