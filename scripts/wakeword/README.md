@@ -33,7 +33,9 @@ uv run python scripts/record_samples.py pack
 - `pack`: writes `samples/claudio_training.zip` with the recordings and these scripts.
 
 Each mode adds new takes after the existing ones, so running it again never overwrites. Type
-`r` + Enter to redo the previous take, `q` + Enter to stop.
+`r` + Enter to redo the previous take (after the last one the script asks once more), `q` +
+Enter to stop. The "● parla" cue appears only once the microphone is recording, and the
+microphone is the one CLAUDIO uses (`audio.input_device`).
 
 ## 2. Train on Colab
 
@@ -41,6 +43,10 @@ Each mode adds new takes after the existing ones, so running it again never over
    `scripts/wakeword/train_claudio.ipynb`.
 2. **Runtime → Run all**. When the upload button appears, choose `claudio_training.zip`.
 3. Keep the tab open. At the end the browser downloads `claudio_wakeword.zip`.
+
+If a step fails, Run all stops there with the reason in red. After a disconnect, Run all again
+picks up where it stopped, finished models included. To train on new recordings in the same
+session, tick `new_recordings` in the upload cell before Run all.
 
 ## 3. Install the models
 
@@ -76,18 +82,21 @@ python wakeword/train_wakeword.py train --model hey_claudio --workers 8
 python wakeword/train_wakeword.py train --model claudio --workers 8
 ```
 
-Every stage keeps its output in `work/` and is skipped when it is already there, so the same
-command resumes after an interruption. `--help` lists the options (number of clips, steps,
-target false wakes per hour).
+Every stage keeps its output in `work/` (the models in `output/`) and is skipped when it is
+already there and was made from the same recordings: the same command resumes after an
+interruption, and new or redone takes are picked up. `train` checks that `download` got
+everything before it starts; `--force` trains a finished model again. `--help` lists the
+options (number of clips, steps, target false wakes per hour).
 
 ## How it works
 
 - **Positives**: 6000 synthetic clips per model, from very slow to very fast speech, with light
-  mispronunciations ("hey cladio", "claudi"), plus your takes repeated with different noise.
+  mispronunciations ("hey cladio", "clodio"), plus your takes repeated with different noise.
 - **Negatives**: similar words ("Claudia", "audio", "chiudi", "hey Claude"), ordinary Italian
   and English sentences, your own sentences and room noise, and about 2000 hours of varied
   audio (openWakeWord's precomputed ACAV100M features).
-- **Augmentation**: speed 0.85-1.25x, synthetic room echo, microphone filters, AudioSet and
+- **Augmentation**: silence and room noise trimmed around the voice, speed 0.85-1.25x,
+  synthetic room echo from desk-dry to across the room, microphone filters, AudioSet and
   ESC-50 background sounds at 0-20 dB SNR; the wake word ends near the end of each 2 s window,
   sometimes followed by the start of a command, as the detector hears it while streaming.
 - **Training**: openWakeWord's small network (16 frames x 96 features), two rounds with

@@ -4,6 +4,8 @@ installed (Colab, a Linux training PC)."""
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 import zipfile
 from pathlib import Path
@@ -49,6 +51,20 @@ def test_negatives_never_contain_the_wake_word() -> None:
     assert not [t for t in texts if "claudio" in t.lower()]
 
 
+def test_no_positive_is_the_start_of_a_negative() -> None:
+    """'claudi' was a positive and 'claudia' (and the English 'cloudy') negatives: the same
+    sounds with both labels teach the model nothing but confusion."""
+
+    def letters(text: str) -> str:
+        return "".join(ch for ch in text.lower() if ch.isalpha() or ch == " ").strip()
+
+    negatives = [letters(t) for lang in phrases.ADVERSARIAL for t in phrases.ADVERSARIAL[lang]]
+    for model in phrases.POSITIVES:
+        for items in phrases.POSITIVES[model].values():
+            for text, _ in items:
+                assert not [n for n in negatives if n.startswith(letters(text))], text
+
+
 def test_weighted_repeats_by_weight() -> None:
     assert phrases.weighted([("a", 2), ("b", 1)]) == ["a", "a", "b"]
 
@@ -71,6 +87,17 @@ def test_trim_drops_silence_but_keeps_a_margin() -> None:
     trimmed = augment.trim(clip)
     assert 0.5 * SR <= len(trimmed) <= 0.5 * SR + 2 * 0.08 * SR + 2 * SR // 100
     assert len(augment.trim(np.zeros(SR, dtype=np.float32))) == 0
+
+
+def test_trim_finds_a_quiet_take_above_the_room_noise() -> None:
+    """A quiet or far take: the room noise is within 35 dB of the voice, so a threshold
+    relative to the peak alone kept the whole 3 s and the wake word was cut later."""
+    rng = np.random.default_rng(0)
+    noise = rng.standard_normal(3 * SR).astype(np.float32) * 10 ** (-60 / 20)
+    take = noise.copy()
+    take[int(0.4 * SR) : int(1.3 * SR)] += tone(0.9, amp=10 ** (-30 / 20))
+    trimmed = augment.trim(take)
+    assert 0.9 * SR <= len(trimmed) < 1.2 * SR
 
 
 def test_change_speed_and_resample_lengths() -> None:
@@ -117,6 +144,20 @@ def test_augment_returns_a_full_int16_window() -> None:
     assert len(silent) == 2 * SR
 
 
+def test_reverb_ranges_from_desk_to_across_the_room() -> None:
+    rng = np.random.default_rng(4)
+    drr = []
+    for _ in range(200):
+        rir = augment.synthetic_rir(rng)
+        drr.append(10 * np.log10(rir[0] ** 2 / float(np.sum(rir[1:] ** 2))))
+    assert min(drr) > -10.1 and 5 < max(drr) < 12.1  # some as dry as a desk mic
+
+
+def test_write_wav_leaves_no_partial_file(tmp_path: Path) -> None:
+    augment.write_wav(tmp_path / "a.wav", tone(0.1))
+    assert [p.name for p in tmp_path.iterdir()] == ["a.wav"]
+
+
 def test_backgrounds_read_wav_segments(tmp_path: Path) -> None:
     path = tmp_path / "bg.wav"
     augment.write_wav(path, tone(3.0, amp=0.1))
@@ -140,15 +181,38 @@ def test_plan_follows_languages_and_engine_shares(tmp_path: Path) -> None:
     assert [(j.text, j.engine, j.seed) for j in jobs] == [(j.text, j.engine, j.seed) for j in again]
 
 
-def test_engine_paths_finds_downloaded_voices(tmp_path: Path) -> None:
-    (tmp_path / "piper").mkdir()
-    (tmp_path / "piper" / "it_IT-paola-medium.onnx").write_bytes(b"x")
+def test_engine_paths_finds_only_complete_voices(tmp_path: Path) -> None:
+    piper = tmp_path / "piper"
+    piper.mkdir()
+    (piper / "it_IT-paola-medium.onnx").write_bytes(b"x")
+    assert generate_clips.engine_paths(tmp_path) == {}  # its .onnx.json is missing
+    (piper / "it_IT-paola-medium.onnx.json").write_text("{}")
     assert generate_clips.engine_paths(tmp_path) == {
-        "piper:it_IT-paola-medium": tmp_path / "piper" / "it_IT-paola-medium.onnx"
+        "piper:it_IT-paola-medium": piper / "it_IT-paola-medium.onnx"
     }
-    (tmp_path / "kokoro").mkdir()
-    (tmp_path / "kokoro" / "voices-v1.0.bin").write_bytes(b"x")
+    kokoro = tmp_path / "kokoro"
+    kokoro.mkdir()
+    for name in ("voices-v1.0.bin", "kokoro-v1.0.int8.onnx"):
+        (kokoro / name).write_bytes(b"x")
+    assert "kokoro" not in generate_clips.engine_paths(tmp_path)  # no config.json yet
+    (kokoro / "config.json").write_text("{}")
     assert "kokoro" in generate_clips.engine_paths(tmp_path)
+
+
+def test_a_voice_that_fails_to_load_is_not_loaded_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    loads = []
+
+    def broken(path: Path) -> None:
+        loads.append(path)
+        raise OSError("file mancante")
+
+    monkeypatch.setattr(generate_clips, "PiperEngine", broken)
+    monkeypatch.setattr(generate_clips, "_PATHS", {"piper:x": Path("x.onnx")})
+    monkeypatch.setattr(generate_clips, "_BROKEN", {})
+    for _ in range(3):
+        with pytest.raises(Exception, match="file mancante"):
+            generate_clips._engine("piper:x")
+    assert len(loads) == 1
 
 
 # --- train_wakeword --------------------------------------------------------------------
@@ -164,6 +228,96 @@ def test_eval_split_keeps_command_takes_and_a_fifth_out(tmp_path: Path) -> None:
     _, evaluate = train_wakeword.split_recordings(tmp_path)
     assert Path(tmp_path / "a_002_comando_cmd.wav") in evaluate
     assert train_wakeword.split_recordings(tmp_path / "missing") == ([], [])
+
+
+def training_args(tmp_path: Path, **extra: object) -> argparse.Namespace:
+    values = {
+        "data": tmp_path / "data",
+        "work": tmp_path / "work",
+        "samples": tmp_path / "samples",
+        "out": tmp_path / "output",
+        "model": "claudio",
+        "force": False,
+        "n_positive": 10,
+        "n_negative": 10,
+        "workers": 1,
+    }
+    values.update(extra)
+    return argparse.Namespace(**values)
+
+
+def test_training_stops_before_synthesis_when_data_is_missing(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match=r"oww/embedding_model\.onnx"):
+        train_wakeword.run_training(training_args(tmp_path))
+
+
+def test_download_fails_without_the_feature_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    ok = {"acav": True, "validation": True, "melspectrogram.onnx": True}
+    monkeypatch.setattr(
+        train_wakeword, "download", lambda data: ok | {"embedding_model.onnx": False}
+    )
+    with pytest.raises(SystemExit):
+        train_wakeword.main(["download"])
+
+
+def test_a_finished_model_is_skipped_until_the_recordings_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = training_args(tmp_path)
+    for name in train_wakeword.REQUIRED:
+        (args.data / name).parent.mkdir(parents=True, exist_ok=True)
+        (args.data / name).write_bytes(b"x")
+    (args.data / "piper").mkdir()
+    for suffix in (".onnx", ".onnx.json"):
+        (args.data / "piper" / f"it_IT-paola-medium{suffix}").write_bytes(b"x")
+    takes = args.samples / "claudio"
+    takes.mkdir(parents=True)
+    augment.write_wav(takes / "claudio_000_normale.wav", tone(0.5))
+    recordings = train_wakeword.fingerprint([takes / "claudio_000_normale.wav"])
+    args.out.mkdir()
+    (args.out / "claudio.onnx").write_bytes(b"x")
+    (args.out / "claudio_report.json").write_text(json.dumps({"recordings": recordings}))
+
+    def synthesize(*_: object) -> None:
+        raise AssertionError("ricomincia da capo")
+
+    monkeypatch.setattr(train_wakeword, "synthesize", synthesize)
+    train_wakeword.run_training(args)  # nothing to do
+    augment.write_wav(takes / "claudio_001_veloce.wav", tone(0.4))
+    with pytest.raises(AssertionError, match="ricomincia"):
+        train_wakeword.run_training(args)  # a new take: train again
+    (takes / "claudio_001_veloce.wav").unlink()
+    with pytest.raises(AssertionError, match="ricomincia"):
+        train_wakeword.run_training(training_args(tmp_path, force=True))
+
+
+def test_features_are_made_again_for_new_recordings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "positive_train.npy"
+    np.save(out, np.zeros((1, 16, 96), dtype=np.float32))
+    out.with_suffix(".recordings").write_text("abc")
+
+    def embedder(_: Path) -> None:
+        raise AssertionError("rifatte")
+
+    monkeypatch.setattr(train_wakeword, "embedder", embedder)
+    featurize = train_wakeword.featurize
+    featurize(out, [], True, tmp_path, [], [], 1, 0, "abc")  # same takes: kept
+    featurize(out, [], True, tmp_path, [], [], 1, 0)  # synthetic only: kept
+    with pytest.raises(AssertionError, match="rifatte"):
+        featurize(out, [], True, tmp_path, [], [], 1, 0, "def")
+
+
+def test_fingerprint_follows_names_and_contents(tmp_path: Path) -> None:
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    augment.write_wav(a, tone(0.1))
+    augment.write_wav(b, tone(0.1))
+    first = train_wakeword.fingerprint([a, b])
+    assert train_wakeword.fingerprint([b, a]) == first
+    augment.write_wav(b, tone(0.1, freq=300))  # a redone take: same name and size
+    assert train_wakeword.fingerprint([a, b]) != first
+    assert train_wakeword.fingerprint([a]) != first
 
 
 def test_false_wakes_counts_like_the_runtime() -> None:
@@ -213,8 +367,10 @@ def test_network_exports_to_the_runtime_shape(tmp_path: Path) -> None:
     pytest.importorskip("onnx")
     net = train_wakeword.build_net(32)
     assert net(torch.zeros(3, 16, 96)).shape == (3, 1)
+    before = next(net.parameters())
     train_wakeword.export(net, tmp_path / "m.onnx")  # checks onnxruntime agrees, shape (1, 1)
     assert (tmp_path / "m.onnx").stat().st_size > 0
+    assert next(net.parameters()) is before  # exported from a copy: the net stays put
 
 
 # --- record_samples --------------------------------------------------------------------
@@ -253,3 +409,47 @@ def test_pack_lays_out_what_the_notebook_expects(tmp_path: Path) -> None:
     assert "samples/hey_claudio/hey_claudio_000.wav" in names
     assert {"wakeword/train_wakeword.py", "wakeword/phrases.py"} <= set(names)
     assert "wakeword/train_claudio.ipynb" in names
+
+
+def run_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, answers: list[str], count: int = 2
+) -> tuple[int, list[str]]:
+    replies = iter(answers)
+    monkeypatch.setattr("builtins.input", lambda _="": next(replies))
+    monkeypatch.setattr(
+        record_samples, "record", lambda seconds, device: np.full(SR // 10, 8000, np.int16)
+    )
+    prompts = [("prova", f"frase {i}", f"neg_{i:03d}", 0.1) for i in range(count)]
+    saved = record_samples.session(prompts, tmp_path, None)
+    return saved, sorted(p.stem for p in tmp_path.glob("*.wav"))
+
+
+def test_session_can_redo_the_last_take(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # r on the first prompt (nothing to redo), two takes, redo the last one, done.
+    saved, files = run_session(monkeypatch, tmp_path, ["r", "", "", "r", ""])
+    assert saved == 2 and files == ["neg_000", "neg_001"]  # a redo is not a new clip
+
+
+def test_session_stops_on_q(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, files = run_session(monkeypatch, tmp_path, ["", "q"], count=3)
+    assert saved == 1 and files == ["neg_000"]
+
+
+def test_command_takes_never_overwrite(tmp_path: Path) -> None:
+    class Command:
+        def __init__(self, id_: str, phrase: str) -> None:
+            self.id, self.phrase = id_, phrase
+
+        def phrases_in(self, language: str) -> list[str]:
+            return [self.phrase] if language == "it" else []
+
+    commands = [Command("open_chrome", "apri chrome"), Command("mute", "muto")]
+    (tmp_path / "open_chrome__apri_chrome__1.wav").write_bytes(b"")
+    prompts = record_samples.command_prompts(commands, "it", 2, 3.5, tmp_path)
+    assert [p[2] for p in prompts] == [
+        "open_chrome__apri_chrome__2",
+        "open_chrome__apri_chrome__3",
+        "mute__muto__0",
+        "mute__muto__1",
+    ]
+    assert record_samples.command_prompts(commands, "en", 2, 3.5, tmp_path) == []

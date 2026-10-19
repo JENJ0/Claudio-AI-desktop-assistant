@@ -23,6 +23,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -111,11 +112,21 @@ def pack(samples: Path, scripts: Path, out: Path) -> dict[str, int]:
     return counts
 
 
-def record(seconds: float, device: int | str | None) -> np.ndarray:
+def record(seconds: float, device: int | None) -> np.ndarray:
+    """The "speak" cue comes only once the microphone is running, so no word is lost."""
     import sounddevice as sd
 
-    audio = sd.rec(int(seconds * SR), samplerate=SR, channels=1, dtype="int16", device=device)
-    sd.wait()
+    from claudio.audio.devices import stream_settings
+
+    with sd.InputStream(
+        samplerate=SR,
+        channels=1,
+        dtype="int16",
+        device=device,
+        extra_settings=stream_settings(device),
+    ) as stream:
+        print("   ● parla", flush=True)
+        audio, _ = stream.read(int(seconds * SR))
     return np.asarray(audio[:, 0])
 
 
@@ -135,40 +146,68 @@ def min_peak_for(stem: str) -> float:
     return 0.015 if stem.endswith(("_piano", "_lontano")) else 0.05
 
 
-def session(prompts: list[tuple[str, str, str, float]], out: Path, device: int | str | None) -> int:
+def session(prompts: list[tuple[str, str, str, float]], out: Path, device: int | None) -> int:
+    """Records the prompts in order; returns how many different clips were saved."""
     import soundfile as sf
 
     out.mkdir(parents=True, exist_ok=True)
     print(f"Registro {len(prompts)} clip in {out}")
     print("Invio = registra   r + Invio = rifai la precedente   q + Invio = basta così\n")
-    i, header, saved = 0, "", 0
-    while i < len(prompts):
-        title, text, stem, seconds = prompts[i]
-        if title != header:
-            header = title
-            print(f"--- Ora: {title}")
-        answer = input(f"[{i + 1}/{len(prompts)}] Invio, poi {text} ").strip().lower()
-        if answer == "q":
-            break
-        if answer == "r" and i > 0:
+    i, header, saved = 0, "", set()
+    while True:
+        if i == len(prompts):  # after the last take, one more chance to redo it
+            again = input("r + Invio = rifai l'ultima   Invio = fine ") if prompts else ""
+            if again.strip().lower() != "r":
+                break
             i -= 1
-            title, text, stem, seconds = prompts[i]
-            print(f"   rifai: {text}")
+            print(f"   rifai: {prompts[i][1]}")
+        else:
+            title, text, _, _ = prompts[i]
+            if title != header:
+                header = title
+                print(f"--- Ora: {title}")
+            answer = input(f"[{i + 1}/{len(prompts)}] Invio, poi {text} ").strip().lower()
+            if answer == "q":
+                break
+            if answer == "r":
+                if i == 0:
+                    print("   niente da rifare")
+                    continue
+                i -= 1
+                print(f"   rifai: {prompts[i][1]}")
+        _, _, stem, seconds = prompts[i]
         if stem.endswith("_lontano"):
             for s in range(FAR_DELAY_S, 0, -1):
                 print(f"   {s}...", end=" ", flush=True)
                 time.sleep(1)
             print()
-        print("   ● parla", flush=True)
         audio = record(seconds, device)
         sf.write(out / f"{stem}.wav", audio, SR, subtype="PCM_16")
-        saved += 1
+        saved.add(stem)
         print(f"   salvato, {check(audio, min_peak_for(stem))}")
         i += 1
-    return saved
+    return len(saved)
+
+
+def command_prompts(
+    commands: list[Any], language: str, repeat: int, seconds: float, out: Path
+) -> list[tuple[str, str, str, float]]:
+    """The first phrase of every command, `repeat` times, numbered after the takes already
+    in `out` (benchmark_latency.py reads the command id before the first "__")."""
+    prompts = []
+    for c in commands:
+        if not c.phrases_in(language):
+            continue
+        phrase = c.phrases_in(language)[0]
+        prefix = f"{c.id}__{slug(phrase)}"
+        start = next_index(out, f"{prefix}_")
+        for r in range(repeat):
+            prompts.append(("comandi", f'di\': "{phrase}"', f"{prefix}__{start + r}", seconds))
+    return prompts
 
 
 def main() -> None:
+    from claudio.audio.devices import resolve_device
     from claudio.config import PROJECT_ROOT, load_settings
     from claudio.router.matcher import load_commands
 
@@ -194,7 +233,7 @@ def main() -> None:
         return
 
     settings = load_settings()
-    device = settings.audio.input_device or None
+    device = resolve_device(settings.audio.input_device, "input")  # as CLAUDIO opens it
     if args.mode == "wakeword":
         out = args.out / slug(args.phrase)
         prompts = wakeword_prompts(args.phrase, args.count, next_index(out, slug(args.phrase)))
@@ -207,17 +246,7 @@ def main() -> None:
     else:
         out = args.out / "commands"
         commands = load_commands(settings.resolve(settings.router.commands_file))
-        prompts = [
-            (
-                "comandi",
-                f'di\': "{c.phrases_in(args.language)[0]}"',
-                f"{c.id}__{slug(c.phrases_in(args.language)[0])}__{r}",
-                args.seconds or 3.5,
-            )
-            for c in commands
-            if c.phrases_in(args.language)
-            for r in range(args.repeat)
-        ]
+        prompts = command_prompts(commands, args.language, args.repeat, args.seconds or 3.5, out)
     if args.seconds and args.mode in ("wakeword", "negatives"):
         prompts = [(h, t, s, args.seconds) for h, t, s, _ in prompts]
     saved = session(prompts, out, device)

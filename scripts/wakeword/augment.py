@@ -7,6 +7,7 @@ fixed window the way the detector sees it while streaming."""
 
 from __future__ import annotations
 
+import os
 from fractions import Fraction
 from pathlib import Path
 
@@ -37,7 +38,11 @@ def read_wav(path: Path) -> np.ndarray:
 
 
 def write_wav(path: Path, audio: np.ndarray) -> None:
-    wavfile.write(path, SR, to_int16(audio) if audio.dtype != np.int16 else audio)
+    """Written under a temporary name, then renamed: an interrupted run never leaves a
+    half-written WAV that a later run would count as done and fail to read."""
+    tmp = path.with_name(f"{path.stem}.part")
+    wavfile.write(tmp, SR, to_int16(audio) if audio.dtype != np.int16 else audio)
+    os.replace(tmp, path)
 
 
 def resample(audio: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
@@ -47,16 +52,23 @@ def resample(audio: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
     return signal.resample_poly(audio, ratio.numerator, ratio.denominator).astype(np.float32)
 
 
-def trim(audio: np.ndarray, top_db: float = 35.0, pad_s: float = 0.08) -> np.ndarray:
-    """The loud part of a clip (10 ms frames within top_db of the loudest), plus a margin."""
+def trim(
+    audio: np.ndarray, top_db: float = 35.0, pad_s: float = 0.08, floor_db: float = 10.0
+) -> np.ndarray:
+    """The loud part of a clip, plus a margin: 10 ms frames within top_db of the loudest
+    and at least floor_db above the quietest tenth (the room's noise). Without the floor a
+    quiet or far take, where the room noise is within top_db of the voice, is not trimmed."""
     frame = SR // 100
     n = len(audio) // frame
     if n == 0:
         return audio
     rms = np.sqrt(np.mean(audio[: n * frame].reshape(n, frame) ** 2, axis=1))
-    if rms.max() <= 0:
+    peak = float(rms.max())
+    if peak <= 0:
         return audio[:0]
-    loud = np.flatnonzero(rms >= rms.max() * 10 ** (-top_db / 20))
+    floor = float(np.percentile(rms, 10)) * 10 ** (floor_db / 20)
+    threshold = min(max(peak * 10 ** (-top_db / 20), floor), peak * 10 ** (-6 / 20))
+    loud = np.flatnonzero(rms >= threshold)
     pad = int(pad_s * SR)
     start = max(int(loud[0]) * frame - pad, 0)
     end = min((int(loud[-1]) + 1) * frame + pad, len(audio))
@@ -83,7 +95,9 @@ def synthetic_rir(rng: np.random.Generator, rt60: float | None = None) -> np.nda
     delay = int(rng.uniform(0.002, 0.02) * SR)  # first reflection
     rir = np.zeros(n + delay, dtype=np.float32)
     rir[0] = 1.0
-    rir[delay:] += tail * float(rng.uniform(0.1, 0.5))
+    # Direct-to-reverberant ratio from a desk (+12 dB) to across the room (-10 dB).
+    drr_db = float(rng.uniform(-10, 12))
+    rir[delay:] += tail * np.sqrt(10 ** (-drr_db / 10) / float(np.sum(tail**2)))
     return rir / np.sqrt(np.sum(rir**2))
 
 

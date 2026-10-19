@@ -3,8 +3,9 @@
     python wakeword/train_wakeword.py download --data data
     python wakeword/train_wakeword.py train --model hey_claudio --data data --samples samples
 
-Each stage keeps its output in --work and is skipped when already there, so running the
-same command again after a disconnect carries on where it stopped. What the model learns:
+Each stage keeps its output (in --work, the models in --out) and is skipped when already
+there and made from the same recordings, so running the same command again after a
+disconnect carries on where it stopped. What the model learns:
 - yes: synthetic voices saying the wake word (generate_clips.py) and JenJo's recordings;
 - no: similar words and ordinary speech (synthetic and JenJo's), ~2000 hours of varied
   audio (openWakeWord's ACAV100M features), JenJo's room noise.
@@ -14,6 +15,7 @@ Claudio and how many false wakes per hour the 11 hours of validation audio cause
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import shutil
@@ -190,6 +192,16 @@ def split_recordings(directory: Path) -> tuple[list[Path], list[Path]]:
     return [p for p in takes if not is_eval(p)], [p for p in takes if is_eval(p)]
 
 
+def fingerprint(files: list[Path]) -> str:
+    """Names and contents of JenJo's recordings (a redone take has the same name and size):
+    when they change, the features and the model made from the old ones are made again."""
+    digest = hashlib.sha1()
+    for f in sorted(files):
+        digest.update(f"{f.parent.name}/{f.name}\n".encode())
+        digest.update(f.read_bytes())
+    return digest.hexdigest()[:16]
+
+
 def synth_phrases(model: str, positive: bool) -> dict[str, list[str]]:
     if positive:
         return {lang: phrases.weighted(items) for lang, items in phrases.POSITIVES[model].items()}
@@ -259,11 +271,16 @@ def featurize(
     tail_files: list[Path],
     workers: int,
     seed: int,
+    recordings: str = "",
 ) -> None:
-    """Augmented windows of the clips (each repeated `copies` times) -> (N, 16, 96) features."""
+    """Augmented windows of the clips (each repeated `copies` times) -> (N, 16, 96) features.
+    `recordings` is the fingerprint of the real takes among the clips, saved next to them."""
+    stamp = out.with_suffix(".recordings")
     if out.is_file():
-        print(f"  {out.name}: già pronte")
-        return
+        if not recordings or (stamp.is_file() and stamp.read_text() == recordings):
+            print(f"  {out.name}: già pronte")
+            return
+        print(f"  {out.name}: registrazioni cambiate, le rifaccio")
     tasks = [
         (str(p), positive, seed * 7919 + i)
         for i, (p, _) in enumerate(c for c in clips for _ in range(c[1]))
@@ -289,6 +306,7 @@ def featurize(
     tmp = out.with_suffix(".tmp.npy")
     np.save(tmp, result)
     tmp.replace(out)
+    stamp.write_text(recordings)
     print(f"  {out.name}: {len(tasks)} finestre in {time.time() - t0:.0f} s")
 
 
@@ -483,7 +501,7 @@ def export(net: Any, path: Path) -> None:
     import onnxruntime as ort
     import torch
 
-    net = net.to("cpu").eval()
+    net = copy.deepcopy(net).to("cpu").eval()  # the caller's copy stays on its device
     dummy = torch.rand(1, FRAMES, 96)
     kwargs: dict[str, Any] = {"opset_version": 13, "input_names": ["x"], "output_names": ["score"]}
     try:
@@ -598,11 +616,32 @@ def pick_threshold(rows: list[dict[str, Any]], target_fph: float) -> dict[str, A
 # --- the whole run -----------------------------------------------------------------------
 
 
+REQUIRED = (
+    "features/acav.npy",
+    "features/validation.npy",
+    "oww/melspectrogram.onnx",
+    "oww/embedding_model.onnx",
+)
+
+
 def run_training(args: argparse.Namespace) -> None:
     data, work, samples, model = args.data, args.work, args.samples, args.model
+    missing = [name for name in REQUIRED if not (data / name).is_file()]
+    if missing:
+        raise SystemExit(f"Mancano {', '.join(missing)} in {data}: esegui prima 'download'")
     paths = generate_clips.engine_paths(data)
     if not paths:
         raise SystemExit("Nessuna voce in data/piper o data/kokoro: esegui prima 'download'")
+    real_train, real_eval = split_recordings(samples / model)
+    negatives = sorted((samples / "negatives").glob("*.wav"))
+    noise = sorted((samples / "noise").glob("*.wav"))
+    recordings = fingerprint(real_train + real_eval + negatives + noise)
+    report_path = args.out / f"{model}_report.json"
+    if not args.force and (args.out / f"{model}.onnx").is_file() and report_path.is_file():
+        done = json.loads(report_path.read_text())
+        if done.get("recordings") == recordings:
+            print(f"== {model}: modello già pronto in {args.out} (--force per rifarlo)")
+            return
     oww_dir = data / "oww"
     print(f"== {model}: voci sintetiche ({', '.join(paths)})")
     synth = work / model / "synthetic"
@@ -640,9 +679,6 @@ def run_training(args: argparse.Namespace) -> None:
         args.workers,
     )
 
-    real_train, real_eval = split_recordings(samples / model)
-    negatives = sorted((samples / "negatives").glob("*.wav"))
-    noise = sorted((samples / "noise").glob("*.wav"))
     print(
         f"== tue registrazioni: {len(real_train)} per imparare, {len(real_eval)} per misurare, "
         f"{len(negatives)} frasi normali, {len(noise)} di rumore"
@@ -663,6 +699,7 @@ def run_training(args: argparse.Namespace) -> None:
         tails,
         args.workers,
         11,
+        fingerprint(real_train),
     )
     featurize(
         feats / "positive_test.npy",
@@ -685,6 +722,7 @@ def run_training(args: argparse.Namespace) -> None:
         [],
         args.workers,
         13,
+        fingerprint(negatives + noise),
     )
     featurize(
         work / "shared" / "negative_test.npy",
@@ -706,7 +744,8 @@ def run_training(args: argparse.Namespace) -> None:
     synth_test = sorted((synth / "positive_test").glob("*.wav"))[:300]
     result = report(model, out, trained, oww_dir, real_eval, synth_test, args.target_fph)
     result["settings"] = {k: str(v) for k, v in vars(args).items()}
-    (args.out / f"{model}_report.json").write_text(json.dumps(result, indent=2))
+    result["recordings"] = recordings
+    report_path.write_text(json.dumps(result, indent=2))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -736,12 +775,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     tr.add_argument("--workers", type=int, default=2)
     tr.add_argument("--seed", type=int, default=0)
+    tr.add_argument("--force", action="store_true", help="rifà anche un modello già pronto")
     args = parser.parse_args(argv)
     if args.command == "download":
         ok = download(args.data)
         print("Scaricati: " + ", ".join(f"{k} {'OK' if v else 'NO'}" for k, v in ok.items()))
-        if not (ok["acav"] and ok["validation"]):
-            raise SystemExit("Mancano le feature di openWakeWord: senza non si può addestrare")
+        needed = ("acav", "validation", "melspectrogram.onnx", "embedding_model.onnx")
+        if not all(ok[name] for name in needed):
+            raise SystemExit("Mancano i dati di openWakeWord (righe NO): così non si addestra")
     else:
         run_training(args)
 

@@ -9,11 +9,13 @@
   negatives ("Claudia", "audio", "chiudi", "hey Claude"), augmentation with numpy and scipy only,
   openWakeWord's network trained in two rounds, checkpoint chosen for the best recall at no more
   than 0.5 false wakes per hour, and a per-threshold report on JenJo's held-out takes through the
-  real streaming detector. A Colab notebook (`train_claudio.ipynb`, CPU runtime) runs it all.
+  real streaming detector. A Colab notebook (`train_claudio.ipynb`, CPU runtime) runs it all,
+  stops at the first failed step, and after a disconnect resumes where it stopped; new or redone
+  takes are picked up without starting again from scratch.
 - `record_samples.py` guides the recordings: a different way of speaking every five takes
   (fast, quiet, from 2 m, "Ehi", a missing letter, followed by a command), ordinary sentences
   without the wake word, room noise with and without the TV, and `pack` for the Colab zip. New
-  takes never overwrite old ones; `r` redoes the previous take.
+  takes never overwrite old ones; `r` redoes the previous take, the last one included.
 - System voice commands, local and free: "vai in pausa" or "vai a dormire" (CLAUDIO then
   answers only "svegliati" and "spegniti", and every other request gets a low beep), "svegliati",
   and "spegniti", which closes CLAUDIO cleanly after saying "A presto.". Shutting down needs one

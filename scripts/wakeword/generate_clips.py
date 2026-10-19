@@ -137,6 +137,7 @@ def plan(
 
 
 _ENGINES: dict[str, Callable[[str, str, np.random.Generator], np.ndarray]] = {}
+_BROKEN: dict[str, str] = {}  # engines that failed to load: not loaded again for every job
 _PATHS: dict[str, Path] = {}
 
 
@@ -145,11 +146,17 @@ def _init(paths: dict[str, Path]) -> None:
 
 
 def _engine(name: str) -> Callable[[str, str, np.random.Generator], np.ndarray]:
+    if name in _BROKEN:
+        raise RuntimeError(_BROKEN[name])
     if name not in _ENGINES:
-        if name == "kokoro":
-            _ENGINES[name] = KokoroEngine(_PATHS["kokoro"])
-        else:
-            _ENGINES[name] = PiperEngine(_PATHS[name])
+        try:
+            if name == "kokoro":
+                _ENGINES[name] = KokoroEngine(_PATHS["kokoro"])
+            else:
+                _ENGINES[name] = PiperEngine(_PATHS[name])
+        except Exception as exc:
+            _BROKEN[name] = f"voce non caricabile: {exc}"
+            raise
     return _ENGINES[name]
 
 
@@ -182,10 +189,18 @@ def run(jobs: list[Job], paths: dict[str, Path], workers: int) -> int:
 
 
 def engine_paths(data: Path) -> dict[str, Path]:
-    """The engines whose files are in data/ (piper/*.onnx and kokoro/)."""
-    paths = {f"piper:{p.stem}": p for p in sorted((data / "piper").glob("*.onnx"))}
-    if (data / "kokoro" / "voices-v1.0.bin").is_file():
-        paths["kokoro"] = data / "kokoro"
+    """The engines whose files are all in data/: a Piper voice needs its .onnx.json, Kokoro
+    its model, voices and vocabulary. A half-downloaded voice would fail every one of its
+    jobs and leave its share of the clips missing."""
+    paths = {
+        f"piper:{p.stem}": p
+        for p in sorted((data / "piper").glob("*.onnx"))
+        if p.with_suffix(".onnx.json").is_file()
+    }
+    kokoro = data / "kokoro"
+    model = any((kokoro / m).is_file() for m in ("kokoro-v1.0.int8.onnx", "kokoro-v1.0.onnx"))
+    if model and all((kokoro / f).is_file() for f in ("voices-v1.0.bin", "config.json")):
+        paths["kokoro"] = kokoro
     return paths
 
 
