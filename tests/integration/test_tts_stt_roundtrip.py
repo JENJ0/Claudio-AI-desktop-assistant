@@ -42,13 +42,18 @@ def whisper_model() -> str | None:
     return None
 
 
+# The voice stands in for a person giving commands, so it talks at a natural pace: Claudio's
+# own +30% (length_scale 0.77) is too fast for Whisper `small` ("Alza il volume" -> "Atel volume").
+NATURAL = SETTINGS.tts.model_copy(update={"length_scale": 1.0})
+
+
 @pytest.fixture(scope="module", params=["piper", "kokoro"])
 def synth(request: pytest.FixtureRequest) -> Any:
     if request.param == "piper":
         if not VOICE.is_file():
             pytest.skip("voce Piper non scaricata")
         # No random variation: the same audio on every run, so results are reproducible.
-        tts = SETTINGS.tts.model_copy(update={"noise_scale": 0.0, "noise_w_scale": 0.0})
+        tts = NATURAL.model_copy(update={"noise_scale": 0.0, "noise_w_scale": 0.0})
         return PiperSynth(VOICE, tts)
     from claudio.tts.kokoro import KokoroSynth, kokoro_files
 
@@ -56,7 +61,7 @@ def synth(request: pytest.FixtureRequest) -> Any:
         kokoro_files(KOKORO_DIR)
     except FileNotFoundError as exc:
         pytest.skip(str(exc))
-    return KokoroSynth(KOKORO_DIR, SETTINGS.tts)  # deterministic already
+    return KokoroSynth(KOKORO_DIR, NATURAL)  # deterministic already
 
 
 def test_voice_speaks_italian(synth: Any) -> None:
