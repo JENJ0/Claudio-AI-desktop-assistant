@@ -29,6 +29,8 @@ HALLUCINATIONS = (
 # Short ones only count when they are the whole transcription.
 HALLUCINATIONS_EXACT = {"buon appetito", "grazie a tutti", "ciao a tutti", "alla prossima"}
 MIN_RMS = 1e-3  # about -60 dBFS: below this there is nothing to transcribe
+MAX_NEW_TOKENS = 80  # an 8 s request is about 50 tokens; a repetition loop stops here
+LOOP_RATIO = 2.4  # gzip ratio above which a text is a loop ("Ciao, ciao, ciao..."), as in Whisper
 
 
 def register_cuda_dlls() -> None:
@@ -123,10 +125,14 @@ class WhisperTranscriber:
             condition_on_previous_text=False,
             without_timestamps=True,
             temperature=0.0,
+            max_new_tokens=MAX_NEW_TOKENS,
         )
         parts = []
         for seg in segments:
             if seg.no_speech_prob > s.no_speech_threshold and seg.avg_logprob < -1.0:
+                continue
+            if seg.compression_ratio > LOOP_RATIO:
+                log.info("Trascrizione scartata (ripetizione): %r", seg.text[:80])
                 continue
             parts.append(seg.text.strip())
         text = " ".join(p for p in parts if p).strip()

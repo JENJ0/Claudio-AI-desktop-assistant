@@ -195,6 +195,7 @@ def replay(audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | Non
     beam_size = stt_settings.beam_size
     print(f"lead-in {app.LEAD_IN_S:.2f} s, beam {beam_size}, {stt.model_name} su {stt.device}")
     same = understood = 0
+    stt_ms: list[float] = []
     for wav in wavs:
         row = live[wav.name]
         audio, sr = sf.read(wav, dtype="int16")
@@ -216,8 +217,12 @@ def replay(audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | Non
         text, command = got.get("text", ""), got.get("command", "-")
         same += text == row.get("text", "")
         understood += command != "-"
+        if got.get("stt_ms") is not None:
+            stt_ms.append(got["stt_ms"])
         print(f"  {wav.stem[:22]:<22} live {row.get('text', '')!r:<34} ora {text!r} -> {command}")
     print(f"comandi riconosciuti {understood}/{len(wavs)}, testo uguale al live {same}/{len(wavs)}")
+    if stt_ms:
+        print(f"STT mediana {np.median(stt_ms):.0f} ms, massimo {max(stt_ms):.0f} ms")
 
 
 def main() -> None:

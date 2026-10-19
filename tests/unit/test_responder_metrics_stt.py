@@ -92,14 +92,16 @@ def test_short_hallucinations_only_as_whole_text(text: str, expected: bool) -> N
 
 
 class FakeWhisper:
-    def __init__(self) -> None:
-        self.calls = 0
+    def __init__(self, text: str = " Apri Chrome.") -> None:
+        self.calls, self.text = 0, text
 
     def transcribe(self, audio, **kwargs):
+        from faster_whisper.transcribe import get_compression_ratio
+
         self.calls += 1
-        seg = type(
-            "Seg", (), {"text": " Apri Chrome.", "no_speech_prob": 0.01, "avg_logprob": -0.2}
-        )()
+        self.kwargs = kwargs
+        fields = {"text": self.text, "no_speech_prob": 0.01, "avg_logprob": -0.2}
+        seg = type("Seg", (), {**fields, "compression_ratio": get_compression_ratio(self.text)})()
         return iter([seg]), None
 
 
@@ -123,6 +125,18 @@ def test_silence_never_reaches_whisper() -> None:
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     assert stt.transcribe(speech) == "Apri Chrome."
     assert stt._model.calls == 1
+
+
+def test_repetition_loops_are_dropped() -> None:
+    import numpy as np
+
+    stt = make_stt()
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    stt._model.text = " " + ", ".join(["Ciao"] * 40)
+    assert stt.transcribe(speech) == ""
+    assert stt._model.kwargs["max_new_tokens"] <= 100  # a loop stops early anyway
+    stt._model.text = " No, no, no, apri Chrome."  # a few repeats are fine
+    assert stt.transcribe(speech) == "No, no, no, apri Chrome."
 
 
 def test_whisper_starts_offline_when_downloaded(monkeypatch, tmp_path) -> None:

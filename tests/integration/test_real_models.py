@@ -164,9 +164,9 @@ async def test_pipeline_with_real_wake_word_and_vad(detector) -> None:
     assert command_len <= heard <= command_len + 0.9  # pre-roll + ~100 ms tail
 
 
-async def test_one_breath_request_reaches_the_transcriber_without_the_wake_word(detector) -> None:
+async def test_one_breath_request_reaches_the_transcriber_whole(detector) -> None:
     """ "hey jarvis che ore sono" without a pause: the words said before the wake word fired
-    are kept, the wake word itself mostly is not."""
+    are kept too (the transcript drops the wake word itself)."""
     wake = speech("hey jarvis", "en")
     wake = wake[: int((onset_offset(wake)[1] + 0.02) * SR)]
     command = speech("che ore sono")
@@ -189,6 +189,5 @@ async def test_one_breath_request_reaches_the_transcriber_without_the_wake_word(
 
     await assistant.run(frames())
     assert stt.audio is not None
-    said = np.subtract(*onset_offset(command)[::-1])
-    heard = len(stt.audio) / SR
-    assert said - 0.15 <= heard <= said + 0.45  # start within ~0.15 s, ~100 ms tail
+    spoken = np.subtract(*onset_offset(np.concatenate((wake, command)))[::-1])
+    assert spoken <= len(stt.audio) / SR <= spoken + 0.5

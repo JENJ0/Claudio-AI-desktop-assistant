@@ -19,16 +19,16 @@
   (letta con Core Audio a ogni frase): cambiarla con Claudio acceso non richiede più un riavvio.
 - `benchmark_latency.py --replay` fa ripassare le richieste salvate in `logs/audio` per la
   pipeline vera (senza eseguire azioni), per confrontare sulla propria voce quanto audio prima
-  della wake word dare a Whisper (`--lead-in`) e il beam (`--beam`).
+  della wake word dare a Whisper (`--lead-in`) e il beam (`--beam`). Sulle prime 22 registrazioni
+  di JenJo togliere la wake word dall'audio peggiorava (10 comandi capiti invece di 13), perché
+  il comando le è attaccato: resta quindi tutto, e il prompt di Whisper scrive "Hey Jarvis".
 
 ### Cambiato
 - Microfono e uscita predefiniti passano da MME a WASAPI, che ha meno latenza.
 
 ### Corretto
-- Comandi detti d'un fiato: la wake word non arriva più a Whisper insieme al comando. Prima
-  Whisper sentiva "Hey Jarvis" come italiano e storpiava anche il resto ("görü soni" al posto di
-  "che ore sono"); ora riceve solo gli ultimi 0,25 s prima dello scatto, e il prompt di Whisper
-  non contiene più "Hey Jarvis".
+- Whisper poteva entrare in un loop ("Ciao, ciao, ciao…" per 100 parole) sull'audio confuso: ora
+  si ferma a 80 token e un testo così ripetitivo viene scartato.
 - Kokoro e Piper nello stesso processo (test, `benchmark_tts.py`, Piper di ripiego) inizializzavano
   espeak-ng due volte: su Windows la seconda volta ne rovinava le tabelle dei fonemi, ed entrambe
   le voci dicevano parole senza senso (o il programma si chiudeva). Ora Kokoro usa lo stesso

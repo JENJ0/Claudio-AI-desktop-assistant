@@ -23,9 +23,7 @@ log = logging.getLogger(__name__)
 
 PREWAKE_S = 1.5  # audio kept before the wake word: one-breath phrases and the saved WAV
 HELD_FRAMES = 100  # frames kept while transcribing (~8 s), replayed if we listen again
-LEAD_IN_S = (
-    0.25  # one breath: audio before the detection kept for Whisper (the wake word ends ~here)
-)
+LEAD_IN_S = PREWAKE_S  # one breath: how much of the audio before the detection Whisper gets
 QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
 
 
@@ -109,15 +107,14 @@ class Assistant:
             sr = self.endpointer.sample_rate
             self._interaction.info["prewake_ms"] = round(len(self._prewake) * 1000 / sr)
         # The wake word may fire late, while the request has already begun ("hey claudio che
-        # ore sono" in one breath): the endpointer can prepend what was said after the wake word.
-        self.endpointer.reset(lead_in=self._after_wake_word())
+        # ore sono" in one breath): the endpointer can prepend the speech heard just before.
+        self.endpointer.reset(lead_in=self._lead_in())
         self._set_state(State.LISTENING)
 
-    def _after_wake_word(self) -> np.ndarray:
-        """The last LEAD_IN_S before the detection: openWakeWord fires 0.1-0.4 s after the wake
-        word ends, so this is what was said after it. The wake word itself would only confuse
-        Whisper, which hears it as Italian ("E i Jarvis"); a clipped first syllable ("ri Chrome")
-        still reaches the right command, a leftover "vis" often does not."""
+    def _lead_in(self) -> np.ndarray:
+        """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
+        out was worse on JenJo's 22 recordings (10 commands understood instead of 13): the
+        command is glued to it, so its start went too; Whisper's prompt spells "Hey Jarvis"."""
         keep = int(LEAD_IN_S * self.endpointer.sample_rate)
         return self._prewake[-keep:] if keep else self._prewake[:0]
 
