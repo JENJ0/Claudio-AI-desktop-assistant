@@ -27,8 +27,8 @@
 - Microfono e uscita predefiniti passano da MME a WASAPI, che ha meno latenza.
 - Whisper con beam 5: sulle 33 registrazioni di JenJo capisce 25 comandi invece di 19, con
   appena 2 ms in più sulla GPU (circa 106 ms).
-- Wake word più sensibile: soglia di `hey_jarvis` a 0,25 (le attivazioni mancate di JenJo
-  arrivavano a 0,17-0,32).
+- Wake word più sensibile: soglia di `hey_jarvis` a 0,22. Nell'ultima prova di JenJo i tentativi
+  non riconosciuti arrivavano a 0,23-0,31 e lui li aveva dovuti ripetere.
 - Il prompt di Whisper non contiene più "Claudio" finché la wake word è "hey jarvis": Whisper lo
   ricopiava nel testo ("E il Jarvis, Claudio, sono").
 
