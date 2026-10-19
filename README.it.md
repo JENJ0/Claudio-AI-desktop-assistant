@@ -7,14 +7,14 @@ voce. Nella Fase 1 non fa nessuna chiamata API, quindi il costo è zero. Capisce
 e risponde nella lingua in cui gli parli.
 
 ```
-Microfono ─► openWakeWord ("Hey Claudio" / "Claudio") ─► bip
+Microfono ─► openWakeWord ("Hey Claudio") ─► bip
          └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale ─► Kokoro, voce Nicola (frase per frase)
 ```
 
-Stato: **v0.1.0**, scheletro funzionante della Fase 1; v0.1.1 in corso. La wake word è ancora il
-segnaposto `hey jarvis` finché non addestriamo "Hey Claudio" e "Claudio" (v0.1.1, vedi
-[scripts/wakeword/README.md](scripts/wakeword/README.md), in inglese). Specifica completa:
-[CLAUDE.md](CLAUDE.md).
+Stato: **v0.1.1**, Fase 1, seconda iterazione. La wake word è il nostro "Hey Claudio", addestrato
+sulla voce del proprietario (vedi [scripts/wakeword/README.md](scripts/wakeword/README.md), in
+inglese; il file del modello non è su Git). Anche "Claudio" da solo è addestrato ma non è ancora
+abbastanza affidabile, quindi è spento. Specifica completa: [CLAUDE.md](CLAUDE.md).
 
 ## Requisiti
 
@@ -56,10 +56,9 @@ uv run python scripts/list_audio_devices.py
 ```
 
 Di' la wake word, aspetta il bip, poi il comando. Se non parli entro 4 s senti un bip basso e
-Claudio torna in attesa. Puoi anche dire tutto d'un fiato ("hey jarvis che ore sono"): le parole
-dette prima del bip vengono recuperate. Il segnaposto `hey jarvis` è però un modello inglese:
-detto in fretta o attaccato al comando a volte non scatta, quindi in v0.1.0 è più sicuro dirlo
-con calma e fare una breve pausa.
+Claudio torna in attesa. Puoi anche dire tutto d'un fiato ("hey claudio che ore sono"): le parole
+dette prima del bip vengono recuperate. Se il modello manca di poco, Whisper ha una seconda
+possibilità di sentire il nome (vedi `wakeword.second_chance`).
 
 | Comando (esempi) | Cosa fa |
 |---|---|

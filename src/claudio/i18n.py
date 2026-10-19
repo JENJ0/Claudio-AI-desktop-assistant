@@ -173,9 +173,11 @@ EN: dict[str, str] = {
     ),
     "TTS (%s): %s": "TTS (%s): %s",
     # wake word
-    "Modello wake word '{model}' non trovato in {folder}. Esegui: "
+    "Modello wake word '{model}' non trovato in {folder}. Se lo hai addestrato tu, "
+    "copialo lì (scripts/wakeword/README.md); altrimenti esegui: "
     "uv run python scripts/download_models.py": (
-        "Wake word model '{model}' not found in {folder}. Run: "
+        "Wake word model '{model}' not found in {folder}. If you trained it yourself, "
+        "copy it there (scripts/wakeword/README.md); otherwise run: "
         "uv run python scripts/download_models.py"
     ),
     "Modello {name} mancante in {folder}": "Model {name} missing in {folder}",

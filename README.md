@@ -7,14 +7,14 @@ commands and voice. Phase 1 makes no API calls, so it costs nothing to run. It u
 Italian and English and answers in the language you spoke.
 
 ```
-Microphone ─► openWakeWord ("Hey Claudio" / "Claudio") ─► beep
+Microphone ─► openWakeWord ("Hey Claudio") ─► beep
            └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router ─► Kokoro, Nicola's voice (sentence by sentence)
 ```
 
-Status: **v0.1.0**, a working Phase 1 skeleton; v0.1.1 in progress. The wake word is still the
-`hey jarvis` placeholder until "Hey Claudio" and "Claudio" are trained (v0.1.1, see
-[scripts/wakeword/README.md](scripts/wakeword/README.md)). Full specification (in Italian):
-[CLAUDE.md](CLAUDE.md).
+Status: **v0.1.1**, Phase 1, second iteration. The wake word is our own "Hey Claudio", trained
+on the owner's voice (see [scripts/wakeword/README.md](scripts/wakeword/README.md); the model
+file is not in Git). "Claudio" alone is trained too but not reliable enough yet, so it is off.
+Full specification (in Italian): [CLAUDE.md](CLAUDE.md).
 
 ## Requirements
 
@@ -56,10 +56,9 @@ uv run python scripts/list_audio_devices.py
 ```
 
 Say the wake word, wait for the beep, then the command. If you say nothing within 4 s a low
-beep plays and CLAUDIO goes back to waiting. You can also say it all in one breath ("hey jarvis
-che ore sono"): the words said before the beep are recovered. The `hey jarvis` placeholder is an
-English model, though: said fast or glued to the command it sometimes misses, so in v0.1.0 it
-is safer to say it calmly and pause briefly.
+beep plays and CLAUDIO goes back to waiting. You can also say it all in one breath ("hey claudio
+che ore sono"): the words said before the beep are recovered. If the model just misses, Whisper
+gets a second chance to hear the name (see `wakeword.second_chance`).
 
 | Command (examples) | What it does |
 |---|---|

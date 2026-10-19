@@ -32,7 +32,8 @@ def find_wakeword_model(model: str, wakeword_dir: Path) -> Path:
         return matches[-1]  # highest version
     raise FileNotFoundError(
         tr(
-            "Modello wake word '{model}' non trovato in {folder}. Esegui: "
+            "Modello wake word '{model}' non trovato in {folder}. Se lo hai addestrato tu, "
+            "copialo lì (scripts/wakeword/README.md); altrimenti esegui: "
             "uv run python scripts/download_models.py",
             model=model,
             folder=wakeword_dir,

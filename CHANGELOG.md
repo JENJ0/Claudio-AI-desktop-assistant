@@ -48,6 +48,8 @@
   config. Known: "Hey, ciao, come stai?" wakes it (0.98), it starts like the wake word. The
   training ran without AudioSet's sounds (its download fails) and with ESC-50 and JenJo's noise.
   Whisper's prompt spells "Hey Claudio" again.
+- The message for a missing wake word model now says to copy a model you trained into
+  `models/wakeword/` (it used to point only at `download_models.py`, which cannot fetch it).
 - Wake word training, second round, after the first models heard JenJo's own voice badly
   ("Hey Claudio" 31 takes in 50, "Claudio" alone none): two fifths of every batch of positives
   now come from his takes (each repeated 60 times with different noise) instead of being lost
