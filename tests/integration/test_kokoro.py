@@ -44,6 +44,20 @@ def test_nicola_speaks_a_short_sentence(synth: KokoroSynth) -> None:
     assert lead > 300
 
 
+def test_phonemes_stay_right_next_to_piper(synth: KokoroSynth) -> None:
+    """Kokoro and Piper (its fallback) in one process: setting up espeak-ng twice garbled
+    every phoneme of both voices on Windows."""
+    from claudio.tts.speaker import PiperSynth, voice_path
+
+    try:
+        path = voice_path(MODELS / "piper", SETTINGS.tts.voice)
+    except FileNotFoundError as exc:
+        pytest.skip(str(exc))
+    expected = synth.phonemes("Che ore sono?")
+    PiperSynth(path, SETTINGS.tts).synthesize("Apro la calcolatrice.")
+    assert synth.phonemes("Che ore sono?") == expected == "ke ˈore sˈono?"
+
+
 def test_silero_hears_nicola_from_start_to_end(synth: KokoroSynth) -> None:
     speech = resample(synth.synthesize("Che ore sono?"), synth.sample_rate, 16000)
     audio = np.concatenate((np.zeros(8000, np.int16), speech, np.zeros(16000, np.int16)))

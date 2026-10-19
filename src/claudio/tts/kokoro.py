@@ -69,6 +69,19 @@ def trim_silence(
     return audio[start:end]
 
 
+def piper_phonemizer() -> Any:
+    """The espeak-ng phonemizer piper keeps for the whole process. espeak-ng must be set up
+    only once: every EspeakPhonemizer() sets it up again, and on Windows the second time
+    corrupts its phoneme tables (both voices speak gibberish, then an access violation)."""
+    import piper.voice as piper_voice
+    from piper.phonemize_espeak import EspeakPhonemizer
+
+    with piper_voice._ESPEAK_PHONEMIZER_LOCK:
+        if piper_voice._ESPEAK_PHONEMIZER is None:
+            piper_voice._ESPEAK_PHONEMIZER = EspeakPhonemizer()
+        return piper_voice._ESPEAK_PHONEMIZER
+
+
 def kokoro_speed(length_scale: float) -> float:
     """One knob for both engines: Piper's length_scale 0.8 is Kokoro's speed 1.25."""
     return float(np.clip(1 / length_scale, 0.5, 2.0))
@@ -79,7 +92,6 @@ class KokoroSynth:
 
     def __init__(self, kokoro_dir: Path, settings: TtsSettings) -> None:
         import onnxruntime as ort
-        from piper.phonemize_espeak import EspeakPhonemizer
 
         model, voices, config = kokoro_files(kokoro_dir)
         self.vocab: dict[str, int] = json.loads(config.read_text(encoding="utf-8"))["vocab"]
@@ -93,10 +105,13 @@ class KokoroSynth:
         self._styles = styles[settings.kokoro_voice]  # one style per phoneme count
         self.speed = kokoro_speed(settings.length_scale)
         self._session: Any = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
-        self._phonemizer = EspeakPhonemizer()
+        self._phonemizer = piper_phonemizer()
 
     def phonemes(self, text: str) -> str:
-        sentences = self._phonemizer.phonemize("it", text)
+        import piper.voice as piper_voice
+
+        with piper_voice._ESPEAK_PHONEMIZER_LOCK:  # one espeak-ng, also used by Piper's thread
+            sentences = self._phonemizer.phonemize("it", text)
         joined = " ".join(unicodedata.normalize("NFC", "".join(s)) for s in sentences)
         joined = joined.translate(PHONEME_FIXES)
         for pair, tied in AFFRICATES:

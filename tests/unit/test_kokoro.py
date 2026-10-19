@@ -95,3 +95,12 @@ def test_claudio_falls_back_to_piper_when_kokoro_is_missing(monkeypatch, tmp_pat
         synth, name = build_synth(settings)
     assert synth == ("piper", "it_IT-paola-medium") and name == "Piper it_IT-paola-medium"
     assert "Kokoro non disponibile" in caplog.text
+
+
+def test_kokoro_and_piper_share_one_espeak() -> None:
+    import piper.voice as piper_voice
+
+    from claudio.tts.kokoro import piper_phonemizer
+
+    shared = piper_phonemizer()
+    assert piper_phonemizer() is shared and piper_voice._ESPEAK_PHONEMIZER is shared

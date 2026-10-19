@@ -29,6 +29,10 @@
   Whisper sentiva "Hey Jarvis" come italiano e storpiava anche il resto ("görü soni" al posto di
   "che ore sono"); ora riceve solo gli ultimi 0,25 s prima dello scatto, e il prompt di Whisper
   non contiene più "Hey Jarvis".
+- Kokoro e Piper nello stesso processo (test, `benchmark_tts.py`, Piper di ripiego) inizializzavano
+  espeak-ng due volte: su Windows la seconda volta ne rovinava le tabelle dei fonemi, ed entrambe
+  le voci dicevano parole senza senso (o il programma si chiudeva). Ora Kokoro usa lo stesso
+  espeak-ng di Piper.
 - Nicola strascicava le sillabe con "c" e "g" dolci ("calcolatrice", "dieci"): ora le affricate
   arrivano a Kokoro come un unico suono, come nel suo addestramento.
 
