@@ -62,3 +62,32 @@ def test_strip_accents() -> None:
 )
 def test_extract_number(text: str, rest: str, number: int | None) -> None:
     assert extract_number(text) == (rest, number)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Hey Claudio, could you open the calculator, please?", "open calculator"),
+        ("What's the time?", "what s time"),
+        ("Can you turn the volume up for me?", "turn volume up"),
+        ("Hi Claudio, mute", "mute"),
+    ],
+)
+def test_normalize_english(text: str, expected: str) -> None:
+    assert normalize(text, lang="en") == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "rest", "number"),
+    [
+        ("turn up volume by 10", "turn up volume", 10),
+        ("lower volume three times", "lower volume", 3),
+        ("turn down volume", "turn down volume", None),
+    ],
+)
+def test_extract_number_english(text: str, rest: str, number: int | None) -> None:
+    assert extract_number(text, "en") == (rest, number)
+
+
+def test_unknown_language_uses_the_italian_rules() -> None:
+    assert normalize("Apri il blocco note", lang="de") == "apri blocco note"

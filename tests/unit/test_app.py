@@ -39,10 +39,14 @@ class FakeStt:
     """Returns `text`, or the items of a list one call after another (the last one repeats)."""
 
     def __init__(
-        self, text: str | list[str] = "apri chrome", error: bool = False, delay: float = 0
+        self,
+        text: str | list[str] = "apri chrome",
+        error: bool = False,
+        delay: float = 0,
+        language: str = "it",
     ) -> None:
         self.texts = [text] if isinstance(text, str) else text
-        self.error, self.delay, self.audio = error, delay, None
+        self.error, self.delay, self.audio, self.language = error, delay, None, language
         self.heard: list[np.ndarray] = []
 
     def transcribe(self, audio: np.ndarray) -> str:
@@ -59,33 +63,42 @@ class FakeResponder:
     def __init__(self) -> None:
         self.last_route: dict = {}
         self.seen: list[str] = []
+        self.language = "it"
 
-    async def respond(self, text: str) -> AsyncIterator[str]:
+    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
         self.seen.append(text)
+        self.language = "en" if "open" in text else language  # the language of the phrase
         if "chrome" in text:
             self.last_route = {"route": "local", "command": "open_chrome"}
-            yield "Apro "
+            yield "Opening " if self.language == "en" else "Apro "
             yield "Chrome."
         else:
             self.last_route = {"route": "unknown"}
-            yield "Questo non lo so ancora fare."
+            yield (
+                "I can't do that yet." if self.language == "en" else "Questo non lo so ancora fare."
+            )
 
 
 class FakeSpeaker:
     def __init__(self) -> None:
         self.spoken: list[str] = []
+        self.languages: list[str] = []
         self.beeps: list[str] = []
 
     async def beep(self, kind: str = "wake") -> None:
         self.beeps.append(kind)
 
     async def speak(
-        self, text_stream: AsyncIterator[str], on_first_audio: Callable[[], None] | None = None
+        self,
+        text_stream: AsyncIterator[str],
+        on_first_audio: Callable[[], None] | None = None,
+        language: str | Callable[[], str] = "it",
     ) -> None:
         text = "".join([c async for c in text_stream])
         if on_first_audio:
             on_first_audio()
         self.spoken.append(text)
+        self.languages.append(language() if callable(language) else language)
 
 
 class AudioClock:
@@ -392,7 +405,7 @@ class SystemResponder(FakeResponder):
         super().__init__()
         self.system = system
 
-    async def respond(self, text: str) -> AsyncIterator[str]:
+    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
         self.seen.append(text)
         command = {"dormi": "pause", "svegliati": "resume", "spegniti": "shutdown"}.get(text)
         if command:
@@ -475,3 +488,19 @@ async def test_shutdown_ends_the_run_after_the_reply(fake_vad, vad_settings, mak
     assert speaker.spoken == ["Ok."] and system.stopping
     assert len(assistant.history) == 1  # the second wake word never came: CLAUDIO had closed
     assert assistant.state is State.IDLE
+
+
+async def test_reply_is_spoken_in_the_language_heard(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    for heard, text, spoken, voice in [
+        ("en", "close the door", "I can't do that yet.", "en"),
+        ("it", "open chrome", "Opening Chrome.", "en"),  # the phrase is English
+        ("it", "apri chrome", "Apro Chrome.", "it"),
+    ]:
+        stt = FakeStt(text, language=heard)
+        assistant, _, speaker, _ = build(fake_vad, vad_settings, stt, {3}, tmp_path)
+        frames = make_frames("silence", 640) + make_frames("speech", 1000)
+        await run_frames(assistant, frames + make_frames("silence", 800))
+        assert speaker.spoken == [spoken] and speaker.languages == [voice]
+        assert assistant.history[-1]["stt_language"] == heard

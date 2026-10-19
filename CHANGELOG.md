@@ -20,8 +20,23 @@
   of its exact phrases (`exact = true` in `commands.toml`), so "spegni" or "spegni la luce" never
   close it.
 
+- English next to Italian. Whisper picks the language of every request among
+  `stt.languages` (`["it", "en"]`), reusing the encoder pass of the transcription, so it costs
+  almost nothing; below `stt.language_confidence` (0.6) the previous request's language stays.
+  Every command has English phrases and replies (`phrases_en`, `reply_en` in `commands.toml`),
+  time and date are said in English too, and the reply follows the language of the phrase
+  recognised ("open chrome" is answered in English even if Whisper guessed Italian). English
+  replies have their own voice with the same effect: Kokoro `am_michael` (one model in memory for
+  both languages) or Piper `en_US-ryan-low`, downloaded by `download_models.py`. Whisper's known
+  English hallucinations ("Thanks for watching!") are dropped like the Italian ones.
+- CLAUDIO's own messages (console, log files, `--check`, errors) in Italian or English with the
+  `language` setting; a test checks that every message has its English version.
+
 ### Changed
 - README in English, with the Italian version in `README.it.md`; CHANGELOG in English.
+- `stt.language` is now `stt.languages` (`language` still fixes a single one), and Whisper's
+  prompt is per language in `[stt.prompts]`. `router.unknown_reply` and the new
+  `router.error_reply` take one text per language (a plain string still sets the Italian one).
 
 ## [0.1.0] - 2026-10-19
 

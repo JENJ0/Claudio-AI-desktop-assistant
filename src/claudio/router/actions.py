@@ -12,8 +12,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
+from claudio.config import DEFAULT_LANGUAGE
+from claudio.i18n import tr
 from claudio.router.matcher import Match
 from claudio.system import SystemControl
 
@@ -107,8 +108,31 @@ class ActionContext:
     home: Path = field(default_factory=Path.home)
 
 
-def say_time(now: datetime) -> str:
+EN_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+EN_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def say_time(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
     h, m = now.hour, now.minute
+    if language == "en":  # "It's 2 oh 5 p.m.": digits with a colon are read "two zero five"
+        h12 = h % 12 or 12
+        suffix = "a.m." if h < 12 else "p.m."
+        if m == 0:
+            return f"It's {h12} o'clock." if h not in (0, 12) else f"It's 12 {suffix}"
+        return f"It's {h12} {'oh ' if m < 10 else ''}{m} {suffix}"
     if h == 1:
         head = "È l'una"
     elif h == 0:
@@ -120,9 +144,17 @@ def say_time(now: datetime) -> str:
     return f"{head} e {m}."
 
 
-def say_date(now: datetime) -> str:
+def say_date(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
+    if language == "en":
+        d = now.day
+        suffix = "th" if 10 < d % 100 < 14 else {1: "st", 2: "nd", 3: "rd"}.get(d % 10, "th")
+        weekday, month = EN_WEEKDAYS[now.weekday()], EN_MONTHS[now.month - 1]
+        return f"Today is {weekday}, {month} {d}{suffix}, {now.year}."
     day = "primo" if now.day == 1 else str(now.day)
     return f"Oggi è {WEEKDAYS[now.weekday()]} {day} {MONTHS[now.month - 1]} {now.year}."
+
+
+Handler = Callable[[Match, str], "str | None"]
 
 
 class ActionRunner:
@@ -131,22 +163,28 @@ class ActionRunner:
     ) -> None:
         self.ctx = ctx or ActionContext()
         self.system = system or SystemControl()
-        self._handlers: dict[str, Callable[[dict[str, Any], Match], str | None]] = {
+        self._handlers: dict[str, Handler] = {
             "open_app": self._open_app,
             "open_folder": self._open_folder,
             "media_key": self._media_key,
-            "tell_time": lambda p, m: say_time(self.ctx.now()),
-            "tell_date": lambda p, m: say_date(self.ctx.now()),
+            "tell_time": lambda m, lang: say_time(self.ctx.now(), lang),
+            "tell_date": lambda m, lang: say_date(self.ctx.now(), lang),
             "system": self._system,
         }
 
-    def execute(self, match: Match) -> str:
-        """Run the command's action; return the text to speak."""
+    def execute(self, match: Match, language: str = DEFAULT_LANGUAGE) -> str:
+        """Run the command's action; return the text to speak, in `language`."""
         cmd = match.command
         handler = self._handlers.get(cmd.action)
         if handler is None:
-            raise ValueError(f"Azione sconosciuta '{cmd.action}' nel comando '{cmd.id}'")
-        spoken = handler(cmd.params, match)
+            raise ValueError(
+                tr(
+                    "Azione sconosciuta '{action}' nel comando '{command}'",
+                    action=cmd.action,
+                    command=cmd.id,
+                )
+            )
+        spoken = handler(match, language)
         log.info(
             "Azione eseguita: %s",
             cmd.id,
@@ -157,13 +195,13 @@ class ActionRunner:
                 "score": match.score,
             },
         )
-        return spoken if spoken is not None else cmd.reply
+        return spoken if spoken is not None else cmd.reply_in(language)
 
-    def _open_app(self, params: dict[str, Any], match: Match) -> None:
-        self.ctx.run(APPS[params["app"]])
+    def _open_app(self, match: Match, language: str) -> None:
+        self.ctx.run(APPS[match.command.params["app"]])
 
-    def _open_folder(self, params: dict[str, Any], match: Match) -> None:
-        folder = params["folder"]
+    def _open_folder(self, match: Match, language: str) -> None:
+        folder = match.command.params["folder"]
         if folder == "explorer":
             self.ctx.run(["explorer.exe"])
             return
@@ -173,13 +211,14 @@ class ActionRunner:
         path = path or self.ctx.home / FALLBACK_FOLDERS.get(folder, folder)
         self.ctx.open_path(str(path))
 
-    def _system(self, params: dict[str, Any], match: Match) -> str | None:
+    def _system(self, match: Match, language: str) -> str | None:
         """The command's reply when something changed, params["already"] when not (pausing
         while already paused)."""
-        changed = self.system.apply(params["do"])
-        return None if changed else str(params.get("already", ""))
+        changed = self.system.apply(match.command.params["do"])
+        return None if changed else str(match.command.param_in("already", language) or "")
 
-    def _media_key(self, params: dict[str, Any], match: Match) -> None:
+    def _media_key(self, match: Match, language: str) -> None:
+        params = match.command.params
         steps = match.number if match.number is not None else int(params.get("steps", 1))
         steps = max(1, min(steps, 50))  # one press = 2% on Windows
         vk = MEDIA_KEYS[params["key"]]

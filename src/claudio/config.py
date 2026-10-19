@@ -7,7 +7,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -15,8 +15,11 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
+from claudio.i18n import tr
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "claudio.toml"
+DEFAULT_LANGUAGE = "it"  # commands.toml's plain `phrases` and `reply`, the first fallback
 
 
 class ConfigError(Exception):
@@ -65,28 +68,85 @@ class SttSettings(BaseModel):
     compute_type: str = "float16"
     fallback_model: str = "small"
     fallback_compute_type: str = "int8"
-    language: str = "it"
+    # Whisper picks the language of every request among these; a single one is fixed.
+    languages: list[str] = Field(default_factory=lambda: [DEFAULT_LANGUAGE], min_length=1)
+    language: str = ""  # one fixed language (overrides `languages`)
+    language_confidence: float = Field(0.6, ge=0, le=1)  # below this: the last language spoken
     beam_size: int = Field(1, ge=1)
-    initial_prompt: str = ""
+    initial_prompt: str = ""  # the prompt of the first language (prompts.<lang> wins)
+    prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
     no_speech_threshold: float = Field(0.6, ge=0, le=1)
     cpu_threads: int = Field(4, ge=1)
+
+    @model_validator(mode="after")
+    def _fixed_language(self) -> SttSettings:
+        if self.language:
+            self.languages = [self.language]
+        return self
+
+    def prompt(self, language: str) -> str:
+        if language in self.prompts:
+            return self.prompts[language]
+        return self.initial_prompt if language == self.languages[0] else ""
+
+
+class VoiceSettings(BaseModel):
+    """The voices of one language; empty = the main (Italian) voice."""
+
+    kokoro_voice: str = ""
+    voice: str = ""  # Piper
 
 
 class TtsSettings(BaseModel):
     engine: Literal["kokoro", "piper"] = "kokoro"
     kokoro_voice: str = "im_nicola"
     voice: str = "it_IT-paola-medium"  # Piper: engine "piper", and the fallback
+    # Other languages' voices, by the language Whisper detects.
+    voices: dict[str, VoiceSettings] = Field(
+        default_factory=lambda: {
+            "en": VoiceSettings(kokoro_voice="am_michael", voice="en_US-ryan-low")
+        }
+    )
     length_scale: float = Field(1.0, gt=0)
     noise_scale: float | None = Field(None, ge=0)  # None = the voice's own default
     noise_w_scale: float | None = Field(None, ge=0)
     use_cuda: bool = False
     effect: Literal["none", "estremo", "jarvis", "ultron", "ultron_estremo"] = "none"
 
+    def kokoro_voice_for(self, language: str) -> str:
+        other = self.voices.get(language)
+        return other.kokoro_voice if other and other.kokoro_voice else self.kokoro_voice
+
+    def piper_voice_for(self, language: str) -> str:
+        other = self.voices.get(language)
+        return other.voice if other and other.voice else self.voice
+
+
+UNKNOWN_REPLY = {"it": "Questo non lo so ancora fare.", "en": "I can't do that yet."}
+ERROR_REPLY = {"it": "Non ci sono riuscito.", "en": "I couldn't do it."}
+
+
+def in_language(texts: dict[str, str], language: str) -> str:
+    """The text in `language`, else the Italian one."""
+    return texts.get(language) or texts.get(DEFAULT_LANGUAGE, "")
+
 
 class RouterSettings(BaseModel):
     commands_file: Path = Path("config/commands.toml")
     fuzzy_threshold: float = Field(85, ge=0, le=100)
-    unknown_reply: str = "Questo non lo so ancora fare."
+    # Per language; a plain string replaces the Italian one.
+    unknown_reply: dict[str, str] = Field(default_factory=lambda: dict(UNKNOWN_REPLY))
+    error_reply: dict[str, str] = Field(default_factory=lambda: dict(ERROR_REPLY))
+
+    @field_validator("unknown_reply", mode="before")
+    @classmethod
+    def _unknown_reply(cls, value: Any) -> Any:
+        return {**UNKNOWN_REPLY, DEFAULT_LANGUAGE: value} if isinstance(value, str) else value
+
+    @field_validator("error_reply", mode="before")
+    @classmethod
+    def _error_reply(cls, value: Any) -> Any:
+        return {**ERROR_REPLY, DEFAULT_LANGUAGE: value} if isinstance(value, str) else value
 
 
 class LoggingSettings(BaseModel):
@@ -106,6 +166,7 @@ class Settings(BaseSettings):
     # Set by load_settings() before instantiation.
     _toml_path: ClassVar[Path] = DEFAULT_CONFIG
 
+    language: Literal["it", "en"] = "it"  # the program's own messages (console, --check)
     models_dir: Path = Path("models")
     logs_dir: Path = Path("logs")
     data_dir: Path = Path("data")  # what Claudio learns and keeps (e.g. the microphone level)
@@ -138,14 +199,16 @@ def load_settings(path: Path | None = None, **overrides: Any) -> Settings:
     """Load settings; raise ConfigError with a readable message on problems."""
     path = path or Path(os.environ.get("CLAUDIO_CONFIG", DEFAULT_CONFIG))
     if not path.is_file():
-        raise ConfigError(f"File di configurazione non trovato: {path}")
+        raise ConfigError(tr("File di configurazione non trovato: {path}", path=path))
     Settings._toml_path = path
     try:
         return Settings(**overrides)
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"{path}: TOML non valido ({exc})") from exc
+        raise ConfigError(tr("{path}: TOML non valido ({error})", path=path, error=exc)) from exc
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in exc.errors()
         )
-        raise ConfigError(f"{path}: valori non validi -> {problems}") from exc
+        raise ConfigError(
+            tr("{path}: valori non validi -> {problems}", path=path, problems=problems)
+        ) from exc

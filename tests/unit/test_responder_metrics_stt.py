@@ -15,7 +15,7 @@ def make_responder(matcher, fail=False) -> LocalResponder:
     ctx = ActionContext(
         run=boom if fail else (lambda a: None), open_path=lambda p: None, press_key=lambda k: None
     )
-    return LocalResponder(matcher, ActionRunner(ctx), "Questo non lo so ancora fare.")
+    return LocalResponder(matcher, ActionRunner(ctx))
 
 
 async def collect(stream) -> list[str]:
@@ -27,10 +27,23 @@ async def test_responder_known_unknown_and_error(matcher) -> None:
     assert await collect(r.respond("Apri Chrome.")) == ["Apro Chrome."]
     assert r.last_route["command"] == "open_chrome"
     assert await collect(r.respond("prenota un volo")) == ["Questo non lo so ancora fare."]
-    assert r.last_route == {"route": "unknown"}
+    assert r.last_route == {"route": "unknown", "language": "it"}
     r = make_responder(matcher, fail=True)
     assert await collect(r.respond("apri chrome")) == ["Non ci sono riuscito."]
     assert r.last_route["error"] is True
+    assert await collect(r.respond("open chrome", "en")) == ["I couldn't do it."]
+
+
+async def test_responder_answers_in_the_language_of_the_phrase(matcher) -> None:
+    r = make_responder(matcher)
+    assert await collect(r.respond("Open Chrome, please.", "en")) == ["Opening Chrome."]
+    assert r.language == "en" and r.last_route["language"] == "en"
+    # Whisper thought it was Italian, but the phrase is English: the reply follows the phrase
+    assert await collect(r.respond("open the calculator", "it")) == ["Opening the calculator."]
+    assert r.language == "en"
+    assert await collect(r.respond("book a flight", "en")) == ["I can't do that yet."]
+    assert await collect(r.respond("apri la calcolatrice", "en")) == ["Apro la calcolatrice."]
+    assert r.language == "it"
 
 
 def test_interaction_metrics(tmp_path) -> None:
@@ -111,6 +124,7 @@ def make_stt():
 
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings()
+    stt.language, stt.language_confidence, stt._encoded, stt._reused = "it", 1.0, None, 0
     stt._model = FakeWhisper()
     return stt
 
@@ -175,3 +189,90 @@ async def test_paused_responder_answers_only_system_commands(matcher) -> None:
     assert await collect(r.respond("prenota un volo")) == []
     assert await collect(r.respond("svegliati")) == ["Eccomi."]
     assert await collect(r.respond("apri chrome")) == ["Apro Chrome."]
+
+
+@pytest.mark.parametrize(
+    ("probs", "last", "expected"),
+    [
+        ({"it": 0.7, "en": 0.2, "es": 0.1}, "it", "it"),
+        ({"en": 0.8, "it": 0.1}, "it", "en"),
+        ({"es": 0.9, "it": 0.08, "en": 0.02}, "en", "it"),  # Spanish is not a choice
+        ({"it": 0.45, "en": 0.4}, "en", "en"),  # 53%: unsure, keep the last language
+        ({"fr": 1.0}, "en", "en"),
+    ],
+)
+def test_language_is_picked_among_the_configured_ones(probs, last, expected) -> None:
+    from claudio.stt.transcriber import pick_language
+
+    assert pick_language(probs, ["it", "en"], last, 0.6)[0] == expected
+
+
+class FakeFeatures:
+    nb_max_frames = 3000
+
+    def __call__(self, audio):
+        import numpy as np
+
+        frames = len(audio) // 160 + 1
+        return np.tile(np.arange(frames, dtype=np.float32), (2, 1))
+
+
+class FakeMultilingualWhisper(FakeWhisper):
+    """Encodes and detects the language like faster-whisper: transcribe() encodes the first
+    30 s window through self.encode."""
+
+    def __init__(self, probs: list[tuple[str, float]], text: str = " Open Chrome.") -> None:
+        super().__init__(text)
+        self.feature_extractor = FakeFeatures()
+        self.encoded = 0
+        self.model = type("Ct2", (), {"detect_language": lambda _self, enc: [probs]})()
+
+    def encode(self, features):
+        self.encoded += 1
+        return ("encoded", features.shape)
+
+    def transcribe(self, audio, **kwargs):
+        from faster_whisper.audio import pad_or_trim
+
+        features = self.feature_extractor(audio)
+        self.encode(pad_or_trim(features[:, : features.shape[-1] - 1]))
+        return super().transcribe(audio, **kwargs)
+
+
+def test_language_detection_reuses_the_encoder_pass() -> None:
+    import numpy as np
+
+    from claudio.config import SttSettings
+
+    stt = make_stt()
+    stt.settings = SttSettings(
+        languages=["it", "en"], prompts={"it": "Apri Chrome.", "en": "Open Chrome."}
+    )
+    stt._model = FakeMultilingualWhisper([("<|en|>", 0.8), ("<|it|>", 0.15), ("<|de|>", 0.05)])
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    assert stt.transcribe(speech) == "Open Chrome."
+    assert stt.language == "en" and stt._model.kwargs["language"] == "en"
+    assert stt._model.kwargs["initial_prompt"] == "Open Chrome."
+    assert stt._model.encoded == 1 and stt._reused == 1  # one encoder pass, not two
+    assert "encode" not in vars(stt._model)  # Whisper's own encoder is back
+    stt._model.model = type("Ct2", (), {"detect_language": lambda s, e: [[("<|it|>", 0.5)]]})()
+    stt._model.text = " Apri Chrome."
+    assert stt.transcribe(speech) == "Apri Chrome." and stt.language == "it"
+
+
+def test_one_language_skips_the_detection() -> None:
+    import numpy as np
+
+    stt = make_stt()
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    assert stt.transcribe(speech) == "Apri Chrome."
+    assert stt._model.kwargs["language"] == "it" and stt._reused == 0
+
+
+def test_stt_languages_and_prompts() -> None:
+    from claudio.config import SttSettings
+
+    s = SttSettings(languages=["it", "en"], initial_prompt="Apri Chrome.", prompts={"en": "Hi."})
+    assert s.prompt("it") == "Apri Chrome." and s.prompt("en") == "Hi."
+    assert SttSettings(languages=["it", "en"], language="en").languages == ["en"]
+    assert is_hallucination("Thanks for watching!") and is_hallucination("you")

@@ -7,6 +7,8 @@ from typing import Protocol
 
 import numpy as np
 
+from claudio.config import DEFAULT_LANGUAGE
+
 
 class WakeWordDetector(Protocol):
     def process(self, frame: np.ndarray) -> tuple[str, float] | None:
@@ -31,14 +33,19 @@ class SpeechProbability(Protocol):
 
 
 class Transcriber(Protocol):
+    language: str  # of the last transcription
+
     def transcribe(self, audio: np.ndarray) -> str:
         """Transcribe 16 kHz float32 mono audio; returns "" when nothing was said."""
         ...
 
 
 class Responder(Protocol):
-    def respond(self, text: str) -> AsyncIterator[str]:
-        """Stream the reply text. Phase 1: one chunk. Phase 2: Haiku tokens."""
+    language: str  # of the reply being streamed, known by its first chunk
+
+    def respond(self, text: str, language: str = DEFAULT_LANGUAGE) -> AsyncIterator[str]:
+        """Stream the reply to `text`, heard in `language`. Phase 1: one chunk. Phase 2:
+        Haiku tokens."""
         ...
 
 
@@ -52,7 +59,10 @@ class LevelControl(Protocol):
 
 class Speaker(Protocol):
     async def speak(
-        self, text_stream: AsyncIterator[str], on_first_audio: Callable[[], None] | None = None
+        self,
+        text_stream: AsyncIterator[str],
+        on_first_audio: Callable[[], None] | None = None,
+        language: str | Callable[[], str] = DEFAULT_LANGUAGE,
     ) -> None: ...
 
     async def beep(self, kind: str = "wake") -> None: ...

@@ -9,6 +9,7 @@ Again on the requests saved in logs/audio, through the live pipeline (no action 
 to compare settings on your own voice:
     uv run python scripts/benchmark_latency.py --replay
     uv run python scripts/benchmark_latency.py --replay --beam 1 --model large-v3
+    uv run python scripts/benchmark_latency.py --replay --languages it   # without detection
 --lead-in is how much of the audio before the wake word fired reaches Whisper: seconds,
 "full" (all of it, wake word included) or "none".
 
@@ -25,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from claudio.config import load_settings
+from claudio.config import in_language, load_settings
 from claudio.metrics import summarize
 
 
@@ -111,9 +112,12 @@ def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
             t2 = time.perf_counter()
 
             # Route only (actions are not executed in the benchmark).
-            match = responder.matcher.match(text)
+            match = responder.matcher.match(text, stt.language)
             t3 = time.perf_counter()
-            reply = match.command.reply if match else settings.router.unknown_reply
+            if match:
+                reply = match.command.reply_in(match.language)
+            else:
+                reply = in_language(settings.router.unknown_reply, stt.language)
             tts_ms = 0.0
             if synth and reply:
                 t4 = time.perf_counter()
@@ -126,7 +130,10 @@ def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
             row["m1_ms"] = vad_wait + row["stt_ms"] + row["route_ms"] + tts_ms
             rows.append(row)
             flag = "ok " if got == expected else "ERR"
-            print(f"  {flag} {wav.stem[:40]:<40} {row['stt_ms']:6.0f} ms  {text!r} -> {got}")
+            print(
+                f"  {flag} {wav.stem[:40]:<40} {row['stt_ms']:6.0f} ms  {stt.language} "
+                f"{text!r} -> {got}"
+            )
         print(f"  riconosciuti {correct}/{len(clips)}")
         print_summary(name, rows, ("m1_ms", "stt_ms", "route_ms", "tts_first_ms"))
 
@@ -149,7 +156,12 @@ class ReplayWake:
 
 
 def replay(
-    audio_dir: Path, log_path: Path, lead_in: str | None, beam: int | None, model: str | None
+    audio_dir: Path,
+    log_path: Path,
+    lead_in: str | None,
+    beam: int | None,
+    model: str | None,
+    languages: list[str] | None = None,
 ) -> None:
     import asyncio
 
@@ -173,6 +185,8 @@ def replay(
     update: dict[str, object] = {"beam_size": beam} if beam else {}
     if model:
         update["model"] = model
+    if languages:
+        update.update(languages=languages, language="")
     stt_settings = settings.stt.model_copy(update=update)
     stt = WhisperTranscriber(stt_settings, models / "whisper")
     vad = SileroVad(models / "vad" / "silero_vad.onnx")
@@ -181,14 +195,16 @@ def replay(
     class DryResponder:  # routes, never executes
         def __init__(self) -> None:
             self.last_route: dict[str, str] = {}
+            self.language = "it"
 
-        async def respond(self, text: str):
-            match = matcher.match(text)
+        async def respond(self, text: str, language: str = "it"):
+            match = matcher.match(text, language)
+            self.language = match.language if match else language
             self.last_route = {"command": match.command.id if match else "-"}
             yield "ok"
 
     class Silent:
-        async def speak(self, text_stream, on_first_audio=None) -> None:
+        async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
             async for _ in text_stream:
                 pass
 
@@ -196,7 +212,10 @@ def replay(
             pass
 
     beam_size = stt_settings.beam_size
-    print(f"lead-in {app.LEAD_IN_S:.2f} s, beam {beam_size}, {stt.model_name} su {stt.device}")
+    print(
+        f"lead-in {app.LEAD_IN_S:.2f} s, beam {beam_size}, {stt.model_name} su {stt.device}, "
+        f"lingue {', '.join(stt_settings.languages)}"
+    )
     changed = understood = 0
     stt_ms: list[float] = []
     for wav in wavs:
@@ -218,11 +237,15 @@ def replay(
         asyncio.run(assistant.run(frames()))
         got = assistant.history[0] if assistant.history else {}
         text, command = got.get("text", ""), got.get("command", "-")
+        language = got.get("stt_language", "")
         changed += text != row.get("text", "")
         understood += command != "-"
         if got.get("stt_ms") is not None:
             stt_ms.append(got["stt_ms"])
-        print(f"  {wav.stem[:22]:<22} live {row.get('text', '')!r:<34} ora {text!r} -> {command}")
+        print(
+            f"  {wav.stem[:22]:<22} live {row.get('text', '')!r:<34} ora {language} {text!r} "
+            f"-> {command}"
+        )
     print(f"comandi riconosciuti {understood}/{len(wavs)}")
     print(f"testo cambiato rispetto al live {changed}/{len(wavs)} (anche solo punto o maiuscola)")
     if stt_ms:
@@ -241,9 +264,17 @@ def main() -> None:
     parser.add_argument("--lead-in", help='secondi, "full" o "none" (predefinito: come dal vivo)')
     parser.add_argument("--beam", type=int)
     parser.add_argument("--model", dest="stt_model", help="modello Whisper per --replay")
+    parser.add_argument("--languages", nargs="+", help="lingue tra cui scegliere, per --replay")
     args = parser.parse_args()
     if args.replay:
-        replay(args.replay, Path("logs/metrics.jsonl"), args.lead_in, args.beam, args.stt_model)
+        replay(
+            args.replay,
+            Path("logs/metrics.jsonl"),
+            args.lead_in,
+            args.beam,
+            args.stt_model,
+            args.languages,
+        )
     elif args.log:
         from_log(args.log)
     elif args.wav_dir:

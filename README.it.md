@@ -2,8 +2,9 @@
 
 [English](README.md) | **Italiano**
 
-Assistente vocale per Windows, in italiano, che gira **tutto in locale**: wake word, trascrizione,
-comandi e voce. Nella Fase 1 non fa nessuna chiamata API, quindi il costo è zero.
+Assistente vocale per Windows che gira **tutto in locale**: wake word, trascrizione, comandi e
+voce. Nella Fase 1 non fa nessuna chiamata API, quindi il costo è zero. Capisce italiano e inglese
+e risponde nella lingua in cui gli parli.
 
 ```
 Microfono ─► openWakeWord ("Hey Claudio" / "Claudio") ─► bip
@@ -76,8 +77,14 @@ con calma e fare una breve pausa.
 | "svegliati" | esce dalla pausa |
 | "spegniti" | chiude CLAUDIO |
 
-Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice.
-Tutte le altre richieste ricevono "Questo non lo so ancora fare" (in Fase 2 andranno a Claude Haiku).
+Ogni comando funziona anche in inglese: "open Chrome", "open my downloads", "turn up the volume by
+10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Per ogni
+richiesta Whisper decide se è italiano o inglese, e Claudio risponde in quella lingua con una voce
+inglese.
+
+Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice
+(`phrases_en` e `reply_en` sono quelle inglesi). Tutte le altre richieste ricevono "Questo non lo
+so ancora fare" o "I can't do that yet" (in Fase 2 andranno a Claude Haiku).
 
 ## Configurazione
 
@@ -107,8 +114,17 @@ di `benchmark_latency.py --log` mostrano livello e guadagno di ogni richiesta.
 
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 
+Lingue: `[stt] languages = ["it", "en"]` sono quelle tra cui Whisper sceglie. Il riconoscimento
+riusa il passaggio dell'encoder della trascrizione, quindi non costa quasi nulla; quando Whisper è
+incerto (sotto `language_confidence`, 0.6) Claudio tiene la lingua della richiesta precedente. Con
+una lingua sola (`CLAUDIO_STT__LANGUAGES=["it"]`) il riconoscimento non c'è proprio. Il prompt di
+Whisper è per lingua, in `[stt.prompts]`. I messaggi del programma (console, log, `--check`) sono
+in italiano; con `language = "en"` (o `CLAUDIO_LANGUAGE=en`) passano all'inglese.
+
 La voce è Nicola (Kokoro, maschile); `CLAUDIO_TTS__ENGINE=piper` torna a Paola (Piper), che resta
-anche come ripiego automatico. La velocità si regola per entrambe con `CLAUDIO_TTS__LENGTH_SCALE`
+anche come ripiego automatico (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` per Riccardo, maschile e
+la più veloce). Le risposte in inglese usano Michael con Kokoro e Ryan (`en_US-ryan-low`) con
+Piper, impostate in `[tts.voices.en]`, con lo stesso effetto. La velocità si regola per entrambe con `CLAUDIO_TTS__LENGTH_SCALE`
 (più basso = più veloce, 0.77 = +30%, il valore predefinito). Il tono robotico è
 `CLAUDIO_TTS__EFFECT`: `ultron_estremo` (predefinito), `estremo`, `ultron`, `jarvis` o `none` per
 la voce pulita. L'effetto costa circa 5 ms a frase.

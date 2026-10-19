@@ -10,6 +10,8 @@ from collections.abc import Callable
 
 import numpy as np
 
+from claudio.i18n import tr
+
 TAIL_S = 0.15  # silence added after each sentence so echoes and reverb can fade out
 PEAK = 0.8
 
@@ -115,7 +117,11 @@ class VoiceEffect:
     def __init__(self, name: str) -> None:
         if name not in PRESETS:
             raise ValueError(
-                f"Effetto voce '{name}' sconosciuto (disponibili: {', '.join(PRESETS)})"
+                tr(
+                    "Effetto voce '{name}' sconosciuto (disponibili: {known})",
+                    name=name,
+                    known=", ".join(PRESETS),
+                )
             )
         self.name = name
         self._fx = PRESETS[name]

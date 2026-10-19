@@ -2,6 +2,7 @@
 # variable or .env entry: CLAUDIO_<SECTION>__<KEY>, e.g. CLAUDIO_STT__DEVICE=cpu.
 # Relative paths are resolved from the project root.
 
+language = "it"            # it | en: CLAUDIO's own messages (console, --check)
 models_dir = "models"
 logs_dir = "logs"
 data_dir = "data"          # what Claudio keeps between runs (microphone level...)
@@ -40,11 +41,18 @@ device = "auto"            # auto | cuda | cpu
 compute_type = "float16"
 fallback_model = "small"
 fallback_compute_type = "int8"
-language = "it"
+# Whisper picks the language of every request among these (the encoder pass is shared, so
+# it costs almost nothing); when it is unsure (< language_confidence) it keeps the last one.
+# A single language (languages = ["it"]) skips the detection.
+languages = ["it", "en"]
+language_confidence = 0.6
 beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
-initial_prompt = "Hey Jarvis, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
 no_speech_threshold = 0.6
 cpu_threads = 4
+
+[stt.prompts]              # Whisper's prompt per language: names it would otherwise misspell
+it = "Hey Jarvis, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
+en = "Hey Jarvis, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it."
 
 [tts]
 engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback
@@ -55,10 +63,15 @@ length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% f
 use_cuda = false           # Piper only
 effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (robotic tone)
 
+[tts.voices.en]            # the voices for English replies (same engine, same effect)
+kokoro_voice = "am_michael"
+voice = "en_US-ryan-low"
+
 [router]
 commands_file = "config/commands.toml"
 fuzzy_threshold = 85
-unknown_reply = "Questo non lo so ancora fare."
+unknown_reply = { it = "Questo non lo so ancora fare.", en = "I can't do that yet." }
+error_reply = { it = "Non ci sono riuscito.", en = "I couldn't do it." }
 
 [logging]
 level = "INFO"

@@ -8,8 +8,9 @@ Ordinary sentences without the wake word (about 3 minutes), and the room's own n
     uv run python scripts/record_samples.py noise
 The zip to upload to Colab (recordings + training scripts):
     uv run python scripts/record_samples.py pack
-Commands (the first phrase of every command, x2, for benchmark_latency.py):
+Commands (the first phrase of every command, x2, for benchmark_latency.py), in Italian or English:
     uv run python scripts/record_samples.py commands --repeat 2
+    uv run python scripts/record_samples.py commands --repeat 2 --language en
 
 Running a mode again adds new takes after the ones already there: nothing is overwritten.
 """
@@ -180,6 +181,7 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=2)
     parser.add_argument("--seconds", type=float, default=None)
     parser.add_argument("--out", type=Path, default=PROJECT_ROOT / "samples")
+    parser.add_argument("--language", default="it", help="commands: lingua delle frasi (it, en)")
     args = parser.parse_args()
 
     if args.mode == "pack":
@@ -208,11 +210,12 @@ def main() -> None:
         prompts = [
             (
                 "comandi",
-                f'di\': "{c.phrases[0]}"',
-                f"{c.id}__{slug(c.phrases[0])}__{r}",
+                f'di\': "{c.phrases_in(args.language)[0]}"',
+                f"{c.id}__{slug(c.phrases_in(args.language)[0])}__{r}",
                 args.seconds or 3.5,
             )
             for c in commands
+            if c.phrases_in(args.language)
             for r in range(args.repeat)
         ]
     if args.seconds and args.mode in ("wakeword", "negatives"):

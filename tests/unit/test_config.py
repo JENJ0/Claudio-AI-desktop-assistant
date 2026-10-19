@@ -58,3 +58,21 @@ def test_missing_file(tmp_path: Path) -> None:
 def test_resolve_relative_to_project_root() -> None:
     s = load_settings(DEFAULT_CONFIG)
     assert s.resolve(Path("models")).is_absolute()
+
+
+def test_languages_voices_and_replies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    s = load_settings(DEFAULT_CONFIG)
+    assert s.stt.languages == ["it", "en"] and s.language == "it"
+    assert "Hey Jarvis" in s.stt.prompt("it") and "open Chrome" in s.stt.prompt("en")
+    assert s.tts.piper_voice_for("en") == "en_US-ryan-low"
+    assert s.tts.piper_voice_for("it") == s.tts.voice == s.tts.piper_voice_for("de")
+    assert s.tts.kokoro_voice_for("en") == "am_michael"
+    assert s.router.unknown_reply["en"] == "I can't do that yet."
+    f = tmp_path / "c.toml"
+    f.write_text('[router]\nunknown_reply = "Non lo so."\n', encoding="utf-8")
+    replies = load_settings(f).router.unknown_reply
+    assert replies["it"] == "Non lo so." and replies["en"] == "I can't do that yet."
+    monkeypatch.setenv("CLAUDIO_STT__LANGUAGES", '["en"]')
+    assert load_settings(f).stt.languages == ["en"]
+    monkeypatch.setenv("CLAUDIO_STT__LANGUAGE", "it")  # one fixed language wins
+    assert load_settings(f).stt.languages == ["it"]

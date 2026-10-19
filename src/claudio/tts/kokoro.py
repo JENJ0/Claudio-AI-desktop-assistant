@@ -1,10 +1,11 @@
-"""Kokoro-82M (ONNX) Italian voices: Nicola (male, the default) and Sara.
+"""Kokoro-82M (ONNX) voices: Nicola (Italian, male, the default), Sara, and Michael for English.
 
 Phonemes come from the espeak-ng bundled with piper-tts, so nothing else to install; the
 model, the voice styles and the phoneme vocabulary are fetched by scripts/download_models.py."""
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import unicodedata
@@ -13,7 +14,8 @@ from typing import Any
 
 import numpy as np
 
-from claudio.config import TtsSettings
+from claudio.config import DEFAULT_LANGUAGE, TtsSettings
+from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -23,9 +25,14 @@ MAX_TOKENS = 510
 # piper's espeak-ng writes the Italian tapped r as "ɾ" and adds a palatal "ʲ"; Kokoro was
 # trained on upstream espeak-ng, which writes a plain "r" and no "ʲ".
 PHONEME_FIXES = str.maketrans({"ɾ": "r", "ʲ": None})
+EN_PHONEME_FIXES = str.maketrans({"ʲ": None})  # "p.m.": pˌiːʲˈɛm
 # Kokoro's own phonemizer ties affricates into one symbol; read as two sounds, "tʃ" drags
 # words like "calcolatrice" and "dieci".
 AFFRICATES = (("tʃ", "ʧ"), ("dʒ", "ʤ"), ("ts", "ʦ"), ("dz", "ʣ"))
+# English keeps "ts" ("cats") and the flap "ɾ" ("better"): Kokoro's English has both.
+EN_AFFRICATES = AFFRICATES[:2]
+ESPEAK_VOICES = {"it": "it", "en": "en-us"}
+VOICE_PREFIXES = {"it": ("if_", "im_"), "en": ("af_", "am_", "bf_", "bm_")}
 
 
 def kokoro_files(kokoro_dir: Path) -> tuple[Path, Path, Path]:
@@ -33,8 +40,12 @@ def kokoro_files(kokoro_dir: Path) -> tuple[Path, Path, Path]:
     missing = [p.name for p in (model, voices, config) if not p.is_file()]
     if missing:
         raise FileNotFoundError(
-            f"Kokoro: mancano {', '.join(missing)} in {kokoro_dir}. "
-            "Esegui: uv run python scripts/download_models.py"
+            tr(
+                "Kokoro: mancano {files} in {folder}. Esegui: "
+                "uv run python scripts/download_models.py",
+                files=", ".join(missing),
+                folder=kokoro_dir,
+            )
         )
     return model, voices, config
 
@@ -89,32 +100,54 @@ def kokoro_speed(length_scale: float) -> float:
 
 class KokoroSynth:
     sample_rate = SAMPLE_RATE
+    language = DEFAULT_LANGUAGE
 
-    def __init__(self, kokoro_dir: Path, settings: TtsSettings) -> None:
+    def __init__(
+        self, kokoro_dir: Path, settings: TtsSettings, language: str = DEFAULT_LANGUAGE
+    ) -> None:
         import onnxruntime as ort
 
         model, voices, config = kokoro_files(kokoro_dir)
         self.vocab: dict[str, int] = json.loads(config.read_text(encoding="utf-8"))["vocab"]
-        styles = np.load(voices)
-        if settings.kokoro_voice not in styles.files:
-            italian = ", ".join(sorted(v for v in styles.files if v.startswith(("if_", "im_"))))
-            raise ValueError(
-                f"Voce Kokoro '{settings.kokoro_voice}' sconosciuta (italiane: {italian})"
-            )
-        self.voice = settings.kokoro_voice
-        self._styles = styles[settings.kokoro_voice]  # one style per phoneme count
+        self._voices = np.load(voices)
+        self._settings = settings
+        self._use_voice(language)
         self.speed = kokoro_speed(settings.length_scale)
         self._session: Any = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
         self._phonemizer = piper_phonemizer()
+
+    def _use_voice(self, language: str) -> None:
+        voice = self._settings.kokoro_voice_for(language)
+        if voice not in self._voices.files:
+            prefixes = VOICE_PREFIXES.get(language, ("",))
+            known = ", ".join(sorted(v for v in self._voices.files if v.startswith(prefixes)))
+            raise ValueError(
+                tr(
+                    "Voce Kokoro '{voice}' sconosciuta (disponibili: {known})",
+                    voice=voice,
+                    known=known,
+                )
+            )
+        self.language, self.voice = language, voice
+        self._styles = self._voices[voice]  # one style per phoneme count
+
+    def for_language(self, language: str) -> KokoroSynth:
+        """The same model speaking `language` with its voice, without loading it twice."""
+        other = copy.copy(self)
+        other._use_voice(language)
+        return other
 
     def phonemes(self, text: str) -> str:
         import piper.voice as piper_voice
 
         with piper_voice._ESPEAK_PHONEMIZER_LOCK:  # one espeak-ng, also used by Piper's thread
-            sentences = self._phonemizer.phonemize("it", text)
+            sentences = self._phonemizer.phonemize(
+                ESPEAK_VOICES.get(self.language, self.language), text
+            )
         joined = " ".join(unicodedata.normalize("NFC", "".join(s)) for s in sentences)
-        joined = joined.translate(PHONEME_FIXES)
-        for pair, tied in AFFRICATES:
+        italian = self.language == "it"
+        joined = joined.translate(PHONEME_FIXES if italian else EN_PHONEME_FIXES)
+        for pair, tied in AFFRICATES if italian else EN_AFFRICATES:
             joined = joined.replace(pair, tied)
         return joined
 

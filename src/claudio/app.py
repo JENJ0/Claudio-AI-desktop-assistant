@@ -161,9 +161,11 @@ class Assistant:
         outcome = "ok"
         try:
             text = await asyncio.to_thread(self.transcriber.transcribe, audio)
+            heard = self.transcriber.language
             inter.mark("stt_done")
             inter.info["text"] = text
-            log.info("Trascritto: %r", text)
+            inter.info["stt_language"] = heard
+            log.info("Trascritto (%s): %r", heard, text)
             if only_wake_words(text) and "relisten" not in inter.info:
                 outcome = "relisten"
                 self._relisten(inter)
@@ -174,8 +176,9 @@ class Assistant:
                 return
             self._set_state(State.RESPONDING)
             await self.speaker.speak(
-                self._marked(self.responder.respond(text), inter),
+                self._marked(self.responder.respond(text, heard), inter),
                 on_first_audio=lambda: self._on_first_audio(inter),
+                language=lambda: self.responder.language,
             )
             if getattr(self.responder, "last_route", {}).get("route") == "paused":
                 outcome = "paused"  # only "svegliati" and "spegniti" are answered

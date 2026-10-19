@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from claudio import __version__
 from claudio.config import ConfigError, Settings, load_settings
+from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
 if TYPE_CHECKING:
@@ -29,8 +30,13 @@ def build_responder(settings: Settings, system: SystemControl | None = None) -> 
 
     commands = load_commands(settings.resolve(settings.router.commands_file))
     matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
-    log.info("Router: %d comandi locali", len(commands))
-    return LocalResponder(matcher, ActionRunner(system=system), settings.router.unknown_reply)
+    log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
+    return LocalResponder(
+        matcher,
+        ActionRunner(system=system),
+        settings.router.unknown_reply,
+        settings.router.error_reply,
+    )
 
 
 def build_synth(settings: Settings) -> tuple[Any, str]:
@@ -51,22 +57,55 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
     return synth, f"Piper {settings.tts.voice}"
 
 
+def build_voices(settings: Settings, synth: Any) -> dict[str, tuple[Any, str]]:
+    """A voice for every other language Whisper listens for, same engine as `synth`. A voice
+    that cannot load is skipped: that language is read by the main voice."""
+    from claudio.config import DEFAULT_LANGUAGE
+    from claudio.tts.kokoro import KokoroSynth
+    from claudio.tts.speaker import PiperSynth, voice_path
+
+    piper_dir = settings.resolve(settings.models_dir) / "piper"
+    voices: dict[str, tuple[Any, str]] = {}
+    for language in settings.stt.languages:
+        if language == DEFAULT_LANGUAGE:
+            continue
+        try:
+            if isinstance(synth, KokoroSynth):
+                other = synth.for_language(language)
+                voices[language] = other, f"Kokoro {other.voice}"
+            else:
+                name = settings.tts.piper_voice_for(language)
+                voices[language] = PiperSynth(voice_path(piper_dir, name), settings.tts), name
+        except (FileNotFoundError, ValueError) as exc:
+            log.warning("Voce per '%s' non disponibile (%s): uso quella principale", language, exc)
+    return voices
+
+
 def build_speaker(settings: Settings) -> StreamingSpeaker:
     from claudio.audio.player import AudioPlayer
     from claudio.tts.effects import VoiceEffect
     from claudio.tts.speaker import StreamingSpeaker
 
     synth, name = build_synth(settings)
+    voices = build_voices(settings, synth)
     player = AudioPlayer(settings.audio.output_sample_rate, settings.audio.output_device)
     player.start()
     effect = VoiceEffect(settings.tts.effect) if settings.tts.effect != "none" else None
-    speaker = StreamingSpeaker(synth, player, settings.audio.beep_volume, effect)
+    speaker = StreamingSpeaker(
+        synth,
+        player,
+        settings.audio.beep_volume,
+        effect,
+        {language: voice for language, (voice, _) in voices.items()},
+    )
     speaker.warm_up()
+    others = "".join(f", {lang}: {label}" for lang, (_, label) in voices.items())
     log.info(
-        "TTS: %s (%d Hz)%s",
+        "TTS: %s (%d Hz)%s%s",
         name,
         synth.sample_rate,
-        f", effetto {settings.tts.effect}" if effect else "",
+        others,
+        tr(", effetto {effect}", effect=settings.tts.effect) if effect else "",
     )
     return speaker
 
@@ -78,7 +117,9 @@ async def run_text(settings: Settings, text: str) -> None:
     start = time.perf_counter()
     first: list[float] = []
     await speaker.speak(
-        responder.respond(text), on_first_audio=lambda: first.append(time.perf_counter())
+        responder.respond(text),
+        on_first_audio=lambda: first.append(time.perf_counter()),
+        language=lambda: responder.language,
     )
     if first:
         log.info("Prima parola dopo %.0f ms (router + TTS)", (first[0] - start) * 1000)
@@ -102,7 +143,12 @@ async def run_assistant(settings: Settings) -> None:
     vad = SileroVad(models / "vad" / "silero_vad.onnx", settings.audio.sample_rate)
     wake = OpenWakeWordDetector(settings.wakeword, models / "wakeword", settings.audio.block_size)
     transcriber = WhisperTranscriber(settings.stt, models / "whisper")
-    log.info("STT: %s su %s", transcriber.model_name, transcriber.device.upper())
+    log.info(
+        "STT: %s su %s, lingue %s",
+        transcriber.model_name,
+        transcriber.device.upper(),
+        ", ".join(settings.stt.languages),
+    )
     system = SystemControl()
     responder = build_responder(settings, system)
     speaker = build_speaker(settings)
@@ -144,7 +190,7 @@ async def run_assistant(settings: Settings) -> None:
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',
         time.perf_counter() - t0,
-        '" o "'.join(wake.names),
+        tr('" o "').join(wake.names),
     )
     try:
         await assistant.run(capture.frames())
@@ -165,8 +211,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = load_settings(args.config)
     except ConfigError as exc:
-        print(f"Errore di configurazione: {exc}", file=sys.stderr)
+        print(tr("Errore di configurazione: {error}", error=exc), file=sys.stderr)
         return 2
+    set_language(settings.language)
     setup_logging(settings.resolve(settings.logs_dir), settings.logging.level)
     log.info("CLAUDIO %s", __version__)
 

@@ -3,8 +3,8 @@
 **English** | [Italiano](README.it.md)
 
 A voice assistant for Windows that runs **entirely on the PC**: wake word, transcription,
-commands and voice. Phase 1 makes no API calls, so it costs nothing to run. It speaks Italian;
-English is being added in v0.1.1.
+commands and voice. Phase 1 makes no API calls, so it costs nothing to run. It understands
+Italian and English and answers in the language you spoke.
 
 ```
 Microphone ─► openWakeWord ("Hey Claudio" / "Claudio") ─► beep
@@ -77,9 +77,14 @@ is safer to say it calmly and pause briefly.
 | "svegliati" | back from the pause |
 | "spegniti" | closes CLAUDIO |
 
-The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code.
-Every other request gets "Questo non lo so ancora fare" ("I can't do that yet"); in Phase 2 they
-will go to Claude Haiku.
+Every command works in English too: "open Chrome", "open my downloads", "turn up the volume by
+10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Whisper
+decides for each request whether it is Italian or English, and CLAUDIO answers in that language
+with an English voice.
+
+The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code
+(`phrases_en` and `reply_en` are the English ones). Every other request gets "Questo non lo so
+ancora fare" or "I can't do that yet"; in Phase 2 they will go to Claude Haiku.
 
 ## Configuration
 
@@ -109,8 +114,17 @@ show the level and gain of every request.
 
 If the GPU cannot be used, CLAUDIO switches to Whisper `small` on the CPU by itself and logs it.
 
+Languages: `[stt] languages = ["it", "en"]` are the ones Whisper chooses from. Detection reuses
+the encoder pass of the transcription, so it costs almost nothing; when Whisper is unsure (below
+`language_confidence`, 0.6) CLAUDIO keeps the language of the previous request. With one language
+(`CLAUDIO_STT__LANGUAGES=["it"]`) there is no detection at all. Whisper's prompt is per language,
+in `[stt.prompts]`. CLAUDIO's own messages (console, log, `--check`) are Italian by default;
+`language = "en"` (or `CLAUDIO_LANGUAGE=en`) switches them to English.
+
 The voice is Nicola (Kokoro, male); `CLAUDIO_TTS__ENGINE=piper` switches to Paola (Piper),
-which is also the automatic fallback. `CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
+which is also the automatic fallback (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` for Riccardo,
+male and the fastest). English replies use Michael with Kokoro and Ryan (`en_US-ryan-low`) with
+Piper, set in `[tts.voices.en]`, with the same effect. `CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
 both (lower = faster; 0.77 = +30%, the default). The robotic tone is `CLAUDIO_TTS__EFFECT`:
 `ultron_estremo` (default), `estremo`, `ultron`, `jarvis`, or `none` for the clean voice. The
 effect costs about 5 ms per sentence.

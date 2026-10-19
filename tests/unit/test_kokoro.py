@@ -104,3 +104,53 @@ def test_kokoro_and_piper_share_one_espeak() -> None:
 
     shared = piper_phonemizer()
     assert piper_phonemizer() is shared and piper_voice._ESPEAK_PHONEMIZER is shared
+
+
+def test_english_keeps_its_own_sounds() -> None:
+    class Phonemizer:
+        def phonemize(self, voice: str, text: str) -> list[list[str]]:
+            assert voice == "en-us"
+            return [list("bˈɛɾɚ kˈæts tʃˈiːz pˌiːʲˈɛm")]
+
+    synth = KokoroSynth.__new__(KokoroSynth)
+    synth._phonemizer, synth.language = Phonemizer(), "en"
+    assert synth.phonemes("Better cats cheese p.m.") == "bˈɛɾɚ kˈæts ʧˈiːz pˌiːˈɛm"
+
+
+def test_one_kokoro_model_speaks_every_language() -> None:
+    from claudio.config import TtsSettings
+
+    synth = KokoroSynth.__new__(KokoroSynth)
+    synth._settings = TtsSettings()
+    synth._voices = type("Npz", (), {"files": ["im_nicola", "am_michael"], "__getitem__": str})()
+    synth._session = object()
+    synth._use_voice("it")
+    english = synth.for_language("en")
+    assert (synth.voice, synth.language) == ("im_nicola", "it")
+    assert (english.voice, english.language) == ("am_michael", "en")
+    assert english._session is synth._session  # one model in memory
+    with pytest.raises(ValueError, match="am_michael"):
+        synth._settings = TtsSettings(voices={"en": {"kokoro_voice": "am_nobody"}})
+        synth.for_language("en")
+
+
+def test_every_language_gets_a_voice_or_falls_back(monkeypatch, tmp_path, caplog) -> None:
+    import claudio.tts.speaker as speaker
+    from claudio.__main__ import build_voices
+    from claudio.config import load_settings
+
+    def piper(path, tts):
+        if "ryan" not in path.name:
+            raise FileNotFoundError(path.name)
+        return ("piper", path.name)
+
+    monkeypatch.setattr(speaker, "voice_path", lambda folder, voice: folder / voice)
+    monkeypatch.setattr(speaker, "PiperSynth", piper)
+    settings = load_settings(models_dir=tmp_path)
+    assert build_voices(settings, object()) == {
+        "en": (("piper", "en_US-ryan-low"), "en_US-ryan-low")
+    }
+    settings.tts.voices["en"].voice = "en_US-missing-low"
+    with caplog.at_level("WARNING"):
+        assert build_voices(settings, object()) == {}
+    assert "uso quella principale" in caplog.text
