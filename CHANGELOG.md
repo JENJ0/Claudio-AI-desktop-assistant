@@ -40,6 +40,14 @@
   `language` setting; a test checks that every message has its English version.
 
 ### Changed
+- The wake word is now our own "Hey Claudio" (`hey_claudio`, threshold 0.30), trained on JenJo's
+  voice: on his 50 takes it hears 44 (the first training heard 31), 13 of 14 that it never
+  learned from, and wakes 0 times in the room noise; the weakest ways of speaking (fast,
+  distracted, "Ehi", a missing letter, quiet) are heard 4 times in 5. "Claudio" alone is trained
+  too but hears 9 takes in 50 and wakes 60 times an hour in the noise, so it is left out of the
+  config. Known: "Hey, ciao, come stai?" wakes it (0.98), it starts like the wake word. The
+  training ran without AudioSet's sounds (its download fails) and with ESC-50 and JenJo's noise.
+  Whisper's prompt spells "Hey Claudio" again.
 - Wake word training, second round, after the first models heard JenJo's own voice badly
   ("Hey Claudio" 31 takes in 50, "Claudio" alone none): two fifths of every batch of positives
   now come from his takes (each repeated 60 times with different noise) instead of being lost

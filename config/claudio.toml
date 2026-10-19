@@ -20,16 +20,18 @@ input_gain_db = 0.0        # digital boost of the microphone, in dB (where auto_
 auto_gain = true           # Claudio adjusts the boost itself after every request, per microphone
 
 # Wake words: any of the models below wakes CLAUDIO, each with its own threshold.
-# v0.1.0 placeholder: pre-trained "hey jarvis". From v0.1.1 (models trained by us):
-#   [[wakeword.models]]  name = "hey_claudio"  threshold = 0.5
-#   [[wakeword.models]]  name = "claudio"      threshold = 0.6   (single word: stricter)
+# "hey_claudio" is trained on JenJo's voice (scripts/wakeword/, models/wakeword/hey_claudio.onnx,
+# not in Git). Its threshold comes from scripts/benchmark_wakeword.py. "claudio" alone is trained
+# too but hears only 9 takes in 50 and wakes 60 times an hour in the room noise: it stays out
+# (add it with its own [[wakeword.models]] block) until it is retrained. v0.1.0 used the
+# pre-trained "hey_jarvis" (threshold 0.22).
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
 second_chance = true       # after one, Whisper listens to the last 1.5 s (~130 ms) and wakes CLAUDIO if it hears the name
 
 [[wakeword.models]]
-name = "hey_jarvis"
-threshold = 0.22           # placeholder model, struggles with fast Italian speech (JenJo's misses: 0.23-0.32)
+name = "hey_claudio"
+threshold = 0.30           # benchmark on JenJo's 50 takes: 44 heard, 0 false wakes in the room noise
 
 [vad]
 threshold = 0.4            # speech probability to count a window as speech (lower = more sensitive)
@@ -55,8 +57,8 @@ no_speech_threshold = 0.6
 cpu_threads = 4
 
 [stt.prompts]              # Whisper's prompt per language: names it would otherwise misspell
-it = "Hey Jarvis, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
-en = "Hey Jarvis, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it."
+it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
+en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it."
 
 [tts]
 engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback

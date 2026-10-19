@@ -11,7 +11,8 @@ def test_project_config_loads() -> None:
     assert s.stt.fallback_model == "small"
     assert s.tts.voice == "it_IT-paola-medium"
     assert s.audio.block_size == 1280
-    assert s.wakeword.models[0].name == "hey_jarvis"
+    assert s.wakeword.models[0].name == "hey_claudio"
+    assert s.wakeword.models[0].threshold == 0.30
 
 
 def test_defaults_when_sections_missing(tmp_path: Path) -> None:
@@ -63,7 +64,7 @@ def test_resolve_relative_to_project_root() -> None:
 def test_languages_voices_and_replies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     s = load_settings(DEFAULT_CONFIG)
     assert s.stt.languages == ["it", "en"] and s.language == "it"
-    assert "Hey Jarvis" in s.stt.prompt("it") and "open Chrome" in s.stt.prompt("en")
+    assert "Hey Claudio" in s.stt.prompt("it") and "open Chrome" in s.stt.prompt("en")
     assert s.tts.piper_voice_for("en") == "en_US-ryan-low"
     assert s.tts.piper_voice_for("it") == s.tts.voice == s.tts.piper_voice_for("de")
     assert s.tts.kokoro_voice_for("en") == "am_michael"
