@@ -10,6 +10,7 @@ from typing import Any
 from claudio.config import DEFAULT_LANGUAGE, ERROR_REPLY, UNKNOWN_REPLY, in_language
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import CommandMatcher, Match
+from claudio.router.normalizer import normalize
 from claudio.safety.confirmation import (
     CANCELLED,
     LEVEL_SAFE,
@@ -40,10 +41,23 @@ class LocalResponder:
         self.last_route: dict[str, Any] = {}
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
+        self._last_reply: tuple[str, str] | None = None  # (text, language) for "ripeti"
 
     def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
         """A local command matches `text` (the assistant retries in Italian when not)."""
         return self.matcher.match(text, language) is not None
+
+    def is_stop(self, text: str) -> bool:
+        """`text` is only "basta" / "stop" (in any language): said while CLAUDIO speaks, it
+        interrupts. Repeated words count once ("basta, basta")."""
+        words = normalize(text, drop_fillers=False).split()
+        deduped = " ".join(w for i, w in enumerate(words) if i == 0 or w != words[i - 1])
+        for candidate in {text, deduped}:
+            for language in self.matcher.languages:
+                match = self.matcher.match(candidate, language)
+                if match is not None and match.command.action == "stop":
+                    return True
+        return False
 
     @property
     def awaiting(self) -> bool:
@@ -69,7 +83,17 @@ class LocalResponder:
     async def respond(self, text: str, language: str = DEFAULT_LANGUAGE) -> AsyncIterator[str]:
         """Reply in the language of the command's phrase (`language` when none matched):
         "open chrome" gets an English reply even if Whisper thought it was Italian.
-        Right after a confirmation question, `text` is its answer."""
+        Right after a confirmation question, `text` is its answer. The reply is kept for
+        "ripeti"."""
+        parts: list[str] = []
+        async for chunk in self._respond(text, language):
+            parts.append(chunk)
+            yield chunk
+        reply = "".join(parts).strip()
+        if reply and self.last_route.get("command") != "repeat":
+            self._last_reply = (reply, self.language)
+
+    async def _respond(self, text: str, language: str) -> AsyncIterator[str]:
         if self._pending is not None:
             async for chunk in self._answer(text):
                 yield chunk
@@ -96,6 +120,13 @@ class LocalResponder:
             "score": round(match.score, 1),
             "language": self.language,
         }
+        if match.command.action == "repeat":
+            async for chunk in self._repeat(match):
+                yield chunk
+            return
+        if match.command.action == "stop":
+            log.info("Basta: fine della conversazione", extra={"route": "local"})
+            return  # nothing to say: the assistant beeps and stops listening
         if match.command.level > LEVEL_SAFE:
             self._pending = Pending(match, self.language)
             self.last_route.update(route="confirm", level=match.command.level)
@@ -109,6 +140,15 @@ class LocalResponder:
             return
         async for chunk in self._execute(match):
             yield chunk
+
+    async def _repeat(self, match: Match) -> AsyncIterator[str]:
+        if self._last_reply is None:
+            yield str(match.command.param_in("empty", self.language) or "")
+            return
+        text, self.language = self._last_reply  # same words, same voice
+        self.last_route["language"] = self.language
+        log.info("Ripeto: %r", text, extra={"route": "local"})
+        yield text
 
     async def _answer(self, text: str) -> AsyncIterator[str]:
         pending, self._pending = self._pending, None

@@ -32,7 +32,7 @@ class FakePlayer:
         self.played: list[tuple[int, float]] = []
         self.lock = threading.Lock()
 
-    def write(self, audio: np.ndarray, sample_rate: int | None = None) -> None:
+    def write(self, audio: np.ndarray, sample_rate: int | None = None, cancel=None) -> None:
         with self.lock:
             self.played.append((int(audio[0]), time.perf_counter()))
         time.sleep(0.05)
@@ -104,7 +104,7 @@ async def test_each_language_speaks_with_its_voice() -> None:
             self.sample_rate = rate
 
     class RatePlayer(FakePlayer):
-        def write(self, audio: np.ndarray, sample_rate: int | None = None) -> None:
+        def write(self, audio: np.ndarray, sample_rate: int | None = None, cancel=None) -> None:
             self.played.append((sample_rate or 0, 0.0))
 
     italian, english, player = Voice(22050), Voice(16000), RatePlayer()

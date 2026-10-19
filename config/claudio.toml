@@ -59,8 +59,8 @@ no_speech_threshold = 0.6
 cpu_threads = 4
 
 [stt.prompts]              # Whisper's prompt per language: names it would otherwise misspell
-it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
-en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it."
+it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi, metti in pausa la musica, canzone successiva, ripeti, basta."
+en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it, pause the music, next song, repeat, stop."
 
 [tts]
 engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback
@@ -80,6 +80,11 @@ commands_file = "config/commands.toml"
 fuzzy_threshold = 85
 unknown_reply = { it = "Questo non lo so ancora fare.", en = "I can't do that yet." }
 error_reply = { it = "Non ci sono riuscito.", en = "I couldn't do it." }
+
+[conversation]
+window_s = 6.0             # after a reply, listen this long without the wake word (0 = off)
+barge_in = true            # "basta" / "stop" while CLAUDIO speaks interrupts it (best with headphones)
+barge_in_max_s = 2.0       # speech heard while speaking is checked in slices this long
 
 [cost]
 pricing_file = "config/pricing.toml"  # prices per model and cache multipliers (never in the code)

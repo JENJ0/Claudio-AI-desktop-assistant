@@ -77,6 +77,9 @@ possibilità di sentire il nome (vedi `wakeword.second_chance`).
 | "spegniti" | chiude CLAUDIO |
 | "quanto ho speso oggi" | la spesa di oggi per Claude e la quota del budget giornaliero |
 | "chiudi la finestra" | chiude la finestra in primo piano, dopo "Confermi?" e un "sì" |
+| "metti in pausa la musica", "canzone successiva", "canzone precedente" | tasti media: play/pausa, successivo, precedente (Spotify, YouTube...) |
+| "ripeti", "non ho capito" | ripete l'ultima risposta |
+| "basta", "stop" | chiude la conversazione; detto mentre Claudio parla, lo interrompe |
 
 Ogni comando funziona anche in inglese: "open Chrome", "open my downloads", "turn up the volume by
 10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Per ogni
@@ -92,6 +95,14 @@ Il livello 2 chiede "Confermi?" e Claudio ascolta subito la risposta, senza wake
 "ok", "va bene" (o "yes") la eseguono, tutto il resto (un "no", il silenzio, una parola che non
 capisce) la annulla. Il livello 3 legge un riepilogo di cosa succederà e solo "confermo" / "I
 confirm" la esegue. Ogni domanda e risposta finisce nel log.
+
+Dopo una risposta Claudio resta in ascolto per 6 secondi senza wake word (lo dice un bip): un
+altro comando non richiede "Hey Claudio". La finestra si chiude con il silenzio, con "basta" o
+con qualcosa che non è un comando (la TV, qualcun altro che parla), con un bip basso e nessuna
+risposta. Mentre parla, Claudio ascolta anche "basta" / "stop" e si ferma subito: con le casse
+la sua stessa voce arriva al microfono, quindi con le cuffie funziona meglio. Entrambe le cose
+stanno in `[conversation]` (`window_s = 0` spegne la finestra, `barge_in = false` l'ascolto
+mentre parla).
 
 ## Configurazione
 

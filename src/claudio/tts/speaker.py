@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,11 @@ class StreamingSpeaker:
         self.player = player
         self.effect = effect
         self._earcons = make_earcons(player.sample_rate, beep_volume)
+        self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
+
+    def interrupt(self) -> None:
+        """Stop the reply being spoken ("basta" heard while speaking)."""
+        self._cancel.set()
 
     def voice(self, language: str) -> Any:
         return self.voices.get(language, self.synth)
@@ -97,6 +103,7 @@ class StreamingSpeaker:
     ) -> None:
         """`language` may be a callable, read at every sentence: the responder only knows the
         language of its reply once it has matched the request."""
+        self._cancel.clear()
         queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=2)
 
         async def produce() -> None:
@@ -115,10 +122,17 @@ class StreamingSpeaker:
                 if first and on_first_audio is not None:
                     on_first_audio()
                 first = False
-                await asyncio.to_thread(self.player.write, *item)
+                done = await asyncio.to_thread(self.player.write, *item, self._cancel)
+                if done is False or self._cancel.is_set():
+                    log.info("Risposta interrotta")
+                    break
         finally:
             if not producer.done():
                 producer.cancel()
+            while not producer.done():  # it ends by queueing None: make room for it
+                while not queue.empty():
+                    queue.get_nowait()
+                await asyncio.sleep(0)
             (result,) = await asyncio.gather(producer, return_exceptions=True)
         if isinstance(result, Exception):
             raise result

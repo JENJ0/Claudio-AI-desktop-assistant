@@ -170,6 +170,18 @@ EN: dict[str, str] = {
         "Confirmation unclear (level %d): %s not run"
     ),
     "Conferma scaduta: %s non eseguito": "Confirmation expired: %s not run",
+    "Basta: fine della conversazione": "Stop: end of the conversation",
+    "Ripeto: %r": "Repeating: %r",
+    "Fine della conversazione: torno in attesa della wake word": (
+        "End of the conversation: waiting for the wake word again"
+    ),
+    "Non è una richiesta, fine della conversazione: %r": (
+        "Not a request, end of the conversation: %r"
+    ),
+    "Ascolto durante la risposta non riuscito": "Listening while speaking failed",
+    "Sentito mentre parlo: %r": "Heard while speaking: %r",
+    "Interrotto a voce: %r": "Interrupted by voice: %r",
+    "Risposta interrotta": "Reply interrupted",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"

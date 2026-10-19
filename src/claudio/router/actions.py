@@ -21,8 +21,16 @@ from claudio.system import SystemControl
 
 log = logging.getLogger(__name__)
 
-# Windows virtual-key codes for the media keys.
-MEDIA_KEYS = {"volume_up": 0xAF, "volume_down": 0xAE, "mute": 0xAD}
+# Windows virtual-key codes for the media keys: they reach whatever is playing (Spotify,
+# YouTube in the browser...), even in the background.
+MEDIA_KEYS = {
+    "volume_up": 0xAF,
+    "volume_down": 0xAE,
+    "mute": 0xAD,
+    "play_pause": 0xB3,
+    "next_track": 0xB0,
+    "previous_track": 0xB1,
+}
 VK_MENU, VK_F4 = 0x12, 0x73  # Alt, F4: closes the window in front
 APPS: dict[str, list[str]] = {
     # "start" resolves Chrome through its App Paths registration.
