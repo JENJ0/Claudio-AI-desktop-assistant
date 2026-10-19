@@ -54,6 +54,12 @@
 - A reply without its English text, or a language without its own voice, is said in Italian
   with the Italian voice instead of mixing them. `--text` starts from the first of
   `stt.languages`, like the live assistant.
+- Settings in `.env` from v0.1.0 keep working: a plain-text `CLAUDIO_ROUTER__UNKNOWN_REPLY` no
+  longer stops CLAUDIO from starting, and `CLAUDIO_STT__INITIAL_PROMPT` again replaces the
+  first language's prompt. `CLAUDIO_STT__LANGUAGES` takes `it,en` as well as JSON, and a value
+  that cannot be read gives a configuration error instead of a traceback.
+- Configuration errors are in English too with `language = "en"`, and `--check` no longer warns
+  about a missing Piper English voice when Kokoro speaks English.
 
 ## [0.1.0] - 2026-10-19
 

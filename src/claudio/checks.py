@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 
 from claudio.config import Settings
 from claudio.i18n import tr
@@ -20,6 +21,17 @@ PACKAGES = (
     "piper",
     "rapidfuzz",
 )
+
+
+def kokoro_voices(kokoro_dir: Path) -> set[str] | None:
+    """The voices in Kokoro's voices file; None when it cannot be read (reported apart)."""
+    import numpy as np
+
+    try:
+        with np.load(kokoro_dir / "voices-v1.0.bin") as data:
+            return set(data.files)
+    except (OSError, ValueError):
+        return None
 
 
 def run_checks(settings: Settings) -> bool:
@@ -69,6 +81,16 @@ def run_checks(settings: Settings) -> bool:
     for path in wanted:
         report(path.is_file(), tr("modello {path}", path=path.relative_to(models)))
     for language in settings.stt.languages:
+        if settings.tts.engine == "kokoro":  # one model, a voice per language inside it
+            voice = settings.tts.kokoro_voice_for(language)
+            found = kokoro_voices(models / "kokoro")
+            if found is not None and voice not in found and voice != settings.tts.kokoro_voice:
+                log.warning(
+                    "WARN voce Kokoro %s (%s) sconosciuta: risponderò con quella principale",
+                    voice,
+                    language,
+                )
+            continue
         voice = settings.tts.piper_voice_for(language)
         if voice != settings.tts.voice and not (models / "piper" / f"{voice}.onnx").is_file():
             log.warning(

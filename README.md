@@ -117,7 +117,7 @@ If the GPU cannot be used, CLAUDIO switches to Whisper `small` on the CPU by its
 Languages: `[stt] languages = ["it", "en"]` are the ones Whisper chooses from. Detection reuses
 the encoder pass of the transcription, so it costs almost nothing; when Whisper is unsure (below
 `language_confidence`, 0.6) CLAUDIO keeps the language of the previous request. With one language
-(`CLAUDIO_STT__LANGUAGES=["it"]`) there is no detection at all. Whisper's prompt is per language,
+(`CLAUDIO_STT__LANGUAGES=it` in `.env`) there is no detection at all. Whisper's prompt is per language,
 in `[stt.prompts]`. CLAUDIO's own messages (console, log, `--check`) are Italian by default;
 `language = "en"` (or `CLAUDIO_LANGUAGE=en`) switches them to English.
 

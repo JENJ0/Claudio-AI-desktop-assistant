@@ -117,7 +117,7 @@ Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e 
 Lingue: `[stt] languages = ["it", "en"]` sono quelle tra cui Whisper sceglie. Il riconoscimento
 riusa il passaggio dell'encoder della trascrizione, quindi non costa quasi nulla; quando Whisper è
 incerto (sotto `language_confidence`, 0.6) Claudio tiene la lingua della richiesta precedente. Con
-una lingua sola (`CLAUDIO_STT__LANGUAGES=["it"]`) il riconoscimento non c'è proprio. Il prompt di
+una lingua sola (`CLAUDIO_STT__LANGUAGES=it` in `.env`) il riconoscimento non c'è proprio. Il prompt di
 Whisper è per lingua, in `[stt.prompts]`. I messaggi del programma (console, log, `--check`) sono
 in italiano; con `language = "en"` (o `CLAUDIO_LANGUAGE=en`) passano all'inglese.
 

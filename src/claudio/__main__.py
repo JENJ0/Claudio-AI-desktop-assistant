@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import sys
 import time
@@ -11,7 +12,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from claudio import __version__
-from claudio.config import DEFAULT_LANGUAGE, ConfigError, Settings, load_settings
+from claudio.config import (
+    DEFAULT_LANGUAGE,
+    ConfigError,
+    Settings,
+    configured_language,
+    load_settings,
+)
 from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
@@ -209,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"CLAUDIO {__version__}")
     args = parser.parse_args(argv)
 
+    with contextlib.suppress(ValueError):  # so that a configuration error is in it too
+        set_language(configured_language(args.config))
     try:
         settings = load_settings(args.config)
     except ConfigError as exc:

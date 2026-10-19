@@ -105,6 +105,9 @@ EN: dict[str, str] = {
         "WARN voice %s (%s) missing: I will answer with the main one. Download it with: "
         "uv run python scripts/download_models.py --skip-whisper"
     ),
+    "WARN voce Kokoro %s (%s) sconosciuta: risponderò con quella principale": (
+        "WARN Kokoro voice %s (%s) unknown: I will answer with the main one"
+    ),
     "WARN nessuna GPU CUDA: lo STT userà la CPU (%s)": (
         "WARN no CUDA GPU: STT will use the CPU (%s)"
     ),

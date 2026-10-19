@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import tomllib
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
+    SettingsError,
     TomlConfigSettingsSource,
 )
 
@@ -24,6 +28,19 @@ DEFAULT_LANGUAGE = "it"  # commands.toml's plain `phrases` and `reply`, the firs
 
 class ConfigError(Exception):
     """Configuration file missing or invalid, with a readable message."""
+
+
+def _json_or(value: Any, plain: Any) -> Any:
+    """A setting from .env or the environment: JSON when it looks like JSON ('{"it": ...}',
+    '["it", "en"]'), else `plain(value)`. TOML values arrive already parsed."""
+    if not isinstance(value, str):
+        return value
+    if value.strip()[:1] in ("{", "["):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            pass
+    return plain(value)
 
 
 class AudioSettings(BaseModel):
@@ -69,14 +86,22 @@ class SttSettings(BaseModel):
     fallback_model: str = "small"
     fallback_compute_type: str = "int8"
     # Whisper picks the language of every request among these; a single one is fixed.
-    languages: list[str] = Field(default_factory=lambda: [DEFAULT_LANGUAGE], min_length=1)
+    # In .env: CLAUDIO_STT__LANGUAGES=it,en (or ["it", "en"]).
+    languages: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [DEFAULT_LANGUAGE], min_length=1
+    )
     language: str = ""  # one fixed language (overrides `languages`)
     language_confidence: float = Field(0.6, ge=0, le=1)  # below this: the last language spoken
     beam_size: int = Field(1, ge=1)
-    initial_prompt: str = ""  # the prompt of the first language (prompts.<lang> wins)
+    initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
     no_speech_threshold: float = Field(0.6, ge=0, le=1)
     cpu_threads: int = Field(4, ge=1)
+
+    @field_validator("languages", mode="before")
+    @classmethod
+    def _languages(cls, value: Any) -> Any:
+        return _json_or(value, lambda text: [p for p in re.split(r"[\s,]+", text) if p])
 
     @model_validator(mode="after")
     def _fixed_language(self) -> SttSettings:
@@ -85,9 +110,11 @@ class SttSettings(BaseModel):
         return self
 
     def prompt(self, language: str) -> str:
-        if language in self.prompts:
-            return self.prompts[language]
-        return self.initial_prompt if language == self.languages[0] else ""
+        """Whisper's prompt for `language`. initial_prompt (v0.1.0, often set in .env)
+        replaces the first language's shipped prompt."""
+        if self.initial_prompt and language == self.languages[0]:
+            return self.initial_prompt
+        return self.prompts.get(language, "")
 
 
 class VoiceSettings(BaseModel):
@@ -134,19 +161,23 @@ def in_language(texts: dict[str, str], language: str) -> str:
 class RouterSettings(BaseModel):
     commands_file: Path = Path("config/commands.toml")
     fuzzy_threshold: float = Field(85, ge=0, le=100)
-    # Per language; a plain string replaces the Italian one.
-    unknown_reply: dict[str, str] = Field(default_factory=lambda: dict(UNKNOWN_REPLY))
-    error_reply: dict[str, str] = Field(default_factory=lambda: dict(ERROR_REPLY))
+    # Per language; a plain string (also in .env, as in v0.1.0) replaces the Italian one.
+    unknown_reply: Annotated[dict[str, str], NoDecode] = Field(
+        default_factory=lambda: dict(UNKNOWN_REPLY)
+    )
+    error_reply: Annotated[dict[str, str], NoDecode] = Field(
+        default_factory=lambda: dict(ERROR_REPLY)
+    )
 
     @field_validator("unknown_reply", mode="before")
     @classmethod
     def _unknown_reply(cls, value: Any) -> Any:
-        return {**UNKNOWN_REPLY, DEFAULT_LANGUAGE: value} if isinstance(value, str) else value
+        return _json_or(value, lambda text: {**UNKNOWN_REPLY, DEFAULT_LANGUAGE: text})
 
     @field_validator("error_reply", mode="before")
     @classmethod
     def _error_reply(cls, value: Any) -> Any:
-        return {**ERROR_REPLY, DEFAULT_LANGUAGE: value} if isinstance(value, str) else value
+        return _json_or(value, lambda text: {**ERROR_REPLY, DEFAULT_LANGUAGE: text})
 
 
 class LoggingSettings(BaseModel):
@@ -205,6 +236,10 @@ def load_settings(path: Path | None = None, **overrides: Any) -> Settings:
         return Settings(**overrides)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(tr("{path}: TOML non valido ({error})", path=path, error=exc)) from exc
+    except SettingsError as exc:  # a value in .env or the environment that cannot be read
+        raise ConfigError(
+            tr("{path}: valori non validi -> {problems}", path=path, problems=exc)
+        ) from exc
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in exc.errors()
@@ -212,3 +247,23 @@ def load_settings(path: Path | None = None, **overrides: Any) -> Settings:
         raise ConfigError(
             tr("{path}: valori non validi -> {problems}", path=path, problems=problems)
         ) from exc
+
+
+def configured_language(path: Path | None = None) -> str:
+    """The `language` setting read without validating anything (environment, .env, TOML),
+    so that even a configuration error is reported in it."""
+    if value := os.environ.get("CLAUDIO_LANGUAGE"):
+        return value.strip()
+    try:
+        for line in (PROJECT_ROOT / ".env").read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "CLAUDIO_LANGUAGE":
+                return value.strip().strip("\"'")
+    except OSError:
+        pass
+    path = path or Path(os.environ.get("CLAUDIO_CONFIG", DEFAULT_CONFIG))
+    try:
+        with path.open("rb") as fh:
+            return str(tomllib.load(fh).get("language", DEFAULT_LANGUAGE))
+    except (OSError, tomllib.TOMLDecodeError):
+        return DEFAULT_LANGUAGE
