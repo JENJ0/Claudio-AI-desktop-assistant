@@ -96,6 +96,11 @@ class SttSettings(BaseModel):
     )
     language: str = ""  # one fixed language (overrides `languages`)
     language_confidence: float = Field(0.6, ge=0, le=1)  # below this: the last language spoken
+    # A language other than the first must be this sure (fast Italian often sounds English).
+    other_confidence: float = Field(0.8, ge=0, le=1)
+    # A request in another language that no command understands is transcribed again in the
+    # first one (~120 ms on the GPU, only then): "cue the calculator" -> "apri la calcolatrice".
+    retry_in_first_language: bool = True
     beam_size: int = Field(1, ge=1)
     initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language

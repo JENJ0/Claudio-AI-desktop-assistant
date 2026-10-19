@@ -213,6 +213,11 @@ async def run_assistant(settings: Settings) -> None:
             if settings.wakeword.second_chance
             else None
         ),
+        retry_language=(
+            settings.stt.languages[0]
+            if settings.stt.retry_in_first_language and len(settings.stt.languages) > 1
+            else None
+        ),
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

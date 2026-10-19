@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import functools
 import logging
 import time
 from collections import deque
@@ -50,6 +51,7 @@ class Assistant:
         level: LevelControl | None = None,
         system: SystemControl | None = None,
         second_chance: Callable[[np.ndarray], str] | None = None,
+        retry_language: str | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -64,6 +66,9 @@ class Assistant:
         # Hears the last 1.5 s after a near miss (a score just under the threshold): if the
         # text has the wake word, CLAUDIO wakes anyway. None: near misses are only logged.
         self.second_chance = second_chance
+        # A request heard in another language that no command understands is transcribed
+        # again in this one (fast Italian often sounds English). None: never.
+        self.retry_language = retry_language
         self._checking = False
         self._checks: set[asyncio.Task[None]] = set()
         self._stt_lock = asyncio.Lock()  # Whisper is used by one thing at a time
@@ -201,7 +206,8 @@ class Assistant:
         try:
             async with self._stt_lock:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
-            heard = self.transcriber.language
+                heard = self.transcriber.language
+                text, heard = await self._retry(audio, text, heard, inter)
             inter.mark("stt_done")
             inter.info["text"] = text
             inter.info["stt_language"] = heard
@@ -259,6 +265,35 @@ class Assistant:
         self._recent.clear()
         self.endpointer.reset()
         self._set_state(State.LISTENING)
+
+    async def _retry(
+        self, audio: np.ndarray, text: str, heard: str, inter: Interaction
+    ) -> tuple[str, str]:
+        """`text` again in retry_language when it was heard in another one and no command
+        understands it; the first transcription when the retry is not understood either."""
+        first = self.retry_language
+        understands = getattr(self.responder, "understands", None)
+        if (
+            first is None
+            or understands is None
+            or heard == first
+            or not text
+            or only_wake_words(text)
+            or getattr(self.responder, "awaiting", False)  # a yes/no: no command to match
+            or understands(text, heard)
+        ):
+            return text, heard
+        start = self.clock()
+        again = await asyncio.to_thread(
+            functools.partial(self.transcriber.transcribe, audio, language=first)
+        )
+        inter.info["retry_ms"] = round((self.clock() - start) * 1000)
+        if again and understands(again, first):
+            log.info("Riprovato in %s: %r -> %r", first, text, again)
+            inter.info["retried_from"] = text
+            return again, first
+        log.info("Riprovato in %s, non capito neanche così: %r", first, again)
+        return text, heard
 
     def _relisten(self, inter: Interaction) -> None:
         """The phrase was only the wake word (said again, or its tail after an early detection):

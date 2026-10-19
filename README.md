@@ -75,6 +75,8 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "vai in pausa", "vai a dormire" | pause: until "svegliati" CLAUDIO answers nothing else |
 | "svegliati" | back from the pause |
 | "spegniti" | closes CLAUDIO |
+| "quanto ho speso oggi" | today's Claude spending and the share of the daily budget |
+| "chiudi la finestra" | closes the window in front, after "Confermi?" and a "sì" |
 
 Every command works in English too: "open Chrome", "open my downloads", "turn up the volume by
 10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Whisper
@@ -84,6 +86,12 @@ with an English voice.
 The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code
 (`phrases_en` and `reply_en` are the English ones). Every other request gets "Questo non lo so
 ancora fare" or "I can't do that yet"; in Phase 2 they will go to Claude Haiku.
+
+Actions have a safety level (`level` in `commands.toml`). Level 1 runs at once. Level 2 asks
+"Confermi?" and CLAUDIO listens for the answer right away, without the wake word: "sì", "ok",
+"va bene" (or "yes") run it, anything else (a "no", silence, a word it does not get) cancels.
+Level 3 reads a summary of what will happen and only "confermo" / "I confirm" runs it. Every
+question and answer goes to the log.
 
 ## Configuration
 
@@ -111,11 +119,21 @@ not touched. To set it by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and
 `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. The `voce` and `guad` columns of `benchmark_latency.py --log`
 show the level and gain of every request.
 
+Spending (ready for Phase 2, when Claude answers): `[cost]` sets the daily budget (`daily_budget`,
+in dollars, 1.0 by default). Every Claude call will be written to `data/spend.db` (SQLite) with
+its model, input and output tokens, cache writes and reads (`cache_creation_input_tokens`,
+`cache_read_input_tokens`) and TTL, and its cost from [config/pricing.toml](config/pricing.toml),
+where the prices and cache multipliers live (never in the code). At 80 % CLAUDIO says so once a
+day; at 100 % it stops calling Claude until the next day, while local commands keep working.
+
 If the GPU cannot be used, CLAUDIO switches to Whisper `small` on the CPU by itself and logs it.
 
 Languages: `[stt] languages = ["it", "en"]` are the ones Whisper chooses from. Detection reuses
 the encoder pass of the transcription, so it costs almost nothing; when Whisper is unsure (below
-`language_confidence`, 0.6) CLAUDIO keeps the language of the previous request. With one language
+`language_confidence`, 0.6; for English `other_confidence`, 0.8, because fast Italian often sounds
+English to Whisper) CLAUDIO keeps the language of the previous request. A request heard as English
+that no command understands is transcribed again in Italian (about 120 ms, only then): "cue the
+calculator" becomes "apri la calcolatrice". `retry_in_first_language = false` turns it off. With one language
 (`CLAUDIO_STT__LANGUAGES=it` in `.env`) there is no detection at all. Whisper's prompt is per language,
 in `[stt.prompts]`. CLAUDIO's own messages (console, log, `--check`) are Italian by default;
 `language = "en"` (or `CLAUDIO_LANGUAGE=en`) switches them to English.

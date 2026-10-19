@@ -75,6 +75,8 @@ possibilità di sentire il nome (vedi `wakeword.second_chance`).
 | "vai in pausa", "vai a dormire" | pausa: finché non dici "svegliati" non risponde ad altro |
 | "svegliati" | esce dalla pausa |
 | "spegniti" | chiude CLAUDIO |
+| "quanto ho speso oggi" | la spesa di oggi per Claude e la quota del budget giornaliero |
+| "chiudi la finestra" | chiude la finestra in primo piano, dopo "Confermi?" e un "sì" |
 
 Ogni comando funziona anche in inglese: "open Chrome", "open my downloads", "turn up the volume by
 10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Per ogni
@@ -84,6 +86,12 @@ inglese.
 Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice
 (`phrases_en` e `reply_en` sono quelle inglesi). Tutte le altre richieste ricevono "Questo non lo
 so ancora fare" o "I can't do that yet" (in Fase 2 andranno a Claude Haiku).
+
+Ogni azione ha un livello di sicurezza (`level` in `commands.toml`). Il livello 1 parte subito.
+Il livello 2 chiede "Confermi?" e Claudio ascolta subito la risposta, senza wake word: "sì",
+"ok", "va bene" (o "yes") la eseguono, tutto il resto (un "no", il silenzio, una parola che non
+capisce) la annulla. Il livello 3 legge un riepilogo di cosa succederà e solo "confermo" / "I
+confirm" la esegue. Ogni domanda e risposta finisce nel log.
 
 ## Configurazione
 
@@ -111,11 +119,23 @@ partenza. Il livello del microfono in Windows non viene toccato. Per regolarlo a
 `CLAUDIO_AUDIO__AUTO_GAIN=false` e `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. Le colonne `voce` e `guad`
 di `benchmark_latency.py --log` mostrano livello e guadagno di ogni richiesta.
 
+Spesa (pronta per la Fase 2, quando risponderà Claude): `[cost]` imposta il budget giornaliero
+(`daily_budget`, in dollari, 1,0 di base). Ogni chiamata a Claude verrà scritta in `data/spend.db`
+(SQLite) con modello, token in ingresso e in uscita, scritture e letture della cache
+(`cache_creation_input_tokens`, `cache_read_input_tokens`) e TTL, e il costo calcolato da
+[config/pricing.toml](config/pricing.toml), dove stanno prezzi e moltiplicatori della cache (mai
+nel codice). All'80 % Claudio lo dice una volta al giorno; al 100 % smette di chiamare Claude fino
+al giorno dopo, mentre i comandi locali continuano a funzionare.
+
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 
 Lingue: `[stt] languages = ["it", "en"]` sono quelle tra cui Whisper sceglie. Il riconoscimento
 riusa il passaggio dell'encoder della trascrizione, quindi non costa quasi nulla; quando Whisper è
-incerto (sotto `language_confidence`, 0.6) Claudio tiene la lingua della richiesta precedente. Con
+incerto (sotto `language_confidence`, 0.6; per l'inglese `other_confidence`, 0.8, perché l'italiano
+veloce a Whisper sembra spesso inglese) Claudio tiene la lingua della richiesta precedente. Una
+richiesta sentita come inglese che nessun comando capisce viene ritrascritta in italiano (circa
+120 ms, solo in quel caso): "cue the calculator" diventa "apri la calcolatrice".
+`retry_in_first_language = false` lo disattiva. Con
 una lingua sola (`CLAUDIO_STT__LANGUAGES=it` in `.env`) il riconoscimento non c'è proprio. Il prompt di
 Whisper è per lingua, in `[stt.prompts]`. I messaggi del programma (console, log, `--check`) sono
 in italiano; con `language = "en"` (o `CLAUDIO_LANGUAGE=en`) passano all'inglese.

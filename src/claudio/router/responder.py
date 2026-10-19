@@ -41,6 +41,10 @@ class LocalResponder:
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
 
+    def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
+        """A local command matches `text` (the assistant retries in Italian when not)."""
+        return self.matcher.match(text, language) is not None
+
     @property
     def awaiting(self) -> bool:
         """True after a confirmation question: the assistant listens again, no wake word."""

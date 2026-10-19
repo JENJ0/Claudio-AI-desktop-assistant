@@ -73,16 +73,23 @@ def is_hallucination(text: str, prompt: str = "") -> bool:
 
 
 def pick_language(
-    probs: Mapping[str, float], languages: Sequence[str], last: str, min_confidence: float
+    probs: Mapping[str, float],
+    languages: Sequence[str],
+    last: str,
+    min_confidence: float,
+    other_confidence: float = 0.0,
 ) -> tuple[str, float]:
     """The most likely of `languages` and its share of their probability; `last` (the language
-    of the previous request) when that share is below `min_confidence`. Whisper's guesses
+    of the previous request) when that share is below `min_confidence`, or below
+    `other_confidence` for a language other than the first: Italian said fast often sounds
+    English to Whisper ("apri la calcolatrice" -> "cue the calculator"). Whisper's guesses
     outside the list ("es" for Italian said fast) are ignored."""
     scores = {lang: probs.get(lang, 0.0) for lang in languages}
     total = sum(scores.values())
     best = max(scores, key=lambda lang: scores[lang])
     confidence = scores[best] / total if total > 0 else 0.0
-    return (best if confidence >= min_confidence else last), confidence
+    needed = min_confidence if best == languages[0] else max(min_confidence, other_confidence)
+    return (best if confidence >= needed else last), confidence
 
 
 class WhisperTranscriber:
@@ -165,7 +172,7 @@ class WhisperTranscriber:
         encoded = model.encode(segment)
         probs = {token[2:-2]: prob for token, prob in model.model.detect_language(encoded)[0]}
         self.language, self.language_confidence = pick_language(
-            probs, s.languages, self.last_language, s.language_confidence
+            probs, s.languages, self.last_language, s.language_confidence, s.other_confidence
         )
         self._encoded = (segment, encoded)
         log.debug("Lingua: %s (%.2f)", self.language, self.language_confidence)
@@ -181,15 +188,21 @@ class WhisperTranscriber:
                 return encoded
         return type(self._model).encode(self._model, features)
 
-    def transcribe(self, audio: np.ndarray, *, quick: bool = False) -> str:
+    def transcribe(
+        self, audio: np.ndarray, *, quick: bool = False, language: str | None = None
+    ) -> str:
         """`quick`: the wake word's second chance. A short look at 1.5 s of audio, without the
         prompt (it must not put "Claudio" in noise) and without touching the language kept for
-        the next unsure request."""
+        the next unsure request. `language`: no detection, transcribe in that one (the retry
+        of a request not understood in the language Whisper guessed)."""
         s = self.settings
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             return ""  # silence: Whisper would invent something ("Buon appetito!")
         audio = audio.astype(np.float32, copy=False)
-        language = self.detect_language(audio)
+        if language is None:
+            language = self.detect_language(audio)
+        else:
+            self.language, self.language_confidence = language, 1.0
         prompt = "" if quick else s.prompt(language)
         reuse = self._encoded is not None
         if reuse:

@@ -158,6 +158,8 @@ EN: dict[str, str] = {
     # system
     "Sistema: %s": "System: %s",
     "Comando di sistema sconosciuto '{command}'": "Unknown system command '{command}'",
+    "Riprovato in %s: %r -> %r": "Retried in %s: %r -> %r",
+    "Riprovato in %s, non capito neanche così: %r": "Retried in %s, still not understood: %r",
     # safety
     "Conferma richiesta (livello %d): %s": "Confirmation asked (level %d): %s",
     "Conferma data (livello %d): eseguo %s": "Confirmation given (level %d): running %s",
