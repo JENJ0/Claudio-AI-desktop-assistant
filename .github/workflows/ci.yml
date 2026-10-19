@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy src
+
+      - name: Unit tests
+        run: uv run pytest --cov=claudio --cov-report=term-missing:skip-covered
+
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: models-${{ hashFiles('scripts/download_models.py', 'config/claudio.toml') }}-small
+
+      - name: Download models (VAD, wake word, Piper voice, Whisper small = CPU fallback)
+        run: uv run python scripts/download_models.py --whisper small
+
+      - name: Model checks
+        run: uv run claudio --check
+
+      - name: Integration tests on real models (CPU)
+        env:
+          CLAUDIO_STT__DEVICE: cpu
+        run: uv run pytest -m slow -s

@@ -1,0 +1,66 @@
+# CLAUDIO configuration. Every value can be overridden with an environment
+# variable or .env entry: CLAUDIO_<SECTION>__<KEY>, e.g. CLAUDIO_STT__DEVICE=cpu.
+# Relative paths are resolved from the project root.
+
+models_dir = "models"
+logs_dir = "logs"
+data_dir = "data"          # what Claudio keeps between runs (microphone level...)
+
+[audio]
+# Device name (or part of it) or index; empty = Windows default.
+# List devices with: uv run python scripts/list_audio_devices.py
+input_device = ""          # e.g. "C270"
+output_device = ""         # empty = whatever Windows is using when Claudio speaks
+sample_rate = 16000        # required by openWakeWord, Silero and Whisper
+block_ms = 80              # openWakeWord works on 80 ms frames
+output_sample_rate = 24000 # Kokoro; Piper (22050 Hz) is resampled
+beep_volume = 0.25
+input_gain_db = 0.0        # digital boost of the microphone, in dB (where auto_gain starts)
+auto_gain = true           # Claudio adjusts the boost itself after every request, per microphone
+
+# Wake words: any of the models below wakes CLAUDIO, each with its own threshold.
+# v0.1.0 placeholder: pre-trained "hey jarvis". From v0.1.1 (models trained by us):
+#   [[wakeword.models]]  name = "hey_claudio"  threshold = 0.5
+#   [[wakeword.models]]  name = "claudio"      threshold = 0.6   (single word: stricter)
+[[wakeword.models]]
+name = "hey_jarvis"
+threshold = 0.22           # placeholder model, struggles with fast Italian speech (JenJo's misses: 0.23-0.32)
+
+[vad]
+threshold = 0.4            # speech probability to count a window as speech (lower = more sensitive)
+min_speech_ms = 64         # speech needed to consider the phrase started
+end_silence_ms = 400       # silence that closes the phrase
+pre_roll_ms = 800          # audio kept before the detected start (soft first words)
+no_speech_timeout_s = 4.0  # nothing said after the wake word -> back to idle
+max_utterance_s = 8.0
+
+[stt]
+model = "large-v3-turbo"
+device = "auto"            # auto | cuda | cpu
+compute_type = "float16"
+fallback_model = "small"
+fallback_compute_type = "int8"
+language = "it"
+beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
+initial_prompt = "Hey Jarvis, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
+no_speech_threshold = 0.6
+cpu_threads = 4
+
+[tts]
+engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback
+kokoro_voice = "im_nicola" # Kokoro Italian voices: im_nicola, if_sara
+voice = "it_IT-paola-medium" # Piper voice
+length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% faster)
+# noise_scale / noise_w_scale (Piper): voice variation (0 = identical every time); unset = default
+use_cuda = false           # Piper only
+effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (robotic tone)
+
+[router]
+commands_file = "config/commands.toml"
+fuzzy_threshold = 85
+unknown_reply = "Questo non lo so ancora fare."
+
+[logging]
+level = "INFO"
+save_audio = true          # keep a WAV of what CLAUDIO heard after each wake word (logs/audio/)
+keep_audio = 50            # how many to keep
