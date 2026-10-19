@@ -44,6 +44,7 @@ HALLUCINATIONS_EXACT = {
 }
 MIN_RMS = 1e-3  # about -60 dBFS: below this there is nothing to transcribe
 MAX_NEW_TOKENS = 80  # an 8 s request is about 50 tokens; a repetition loop stops here
+QUICK_NEW_TOKENS = 24  # the second chance listens to 1.5 s: "hey claudio che ore sono" is ~12
 LOOP_RATIO = 2.4  # gzip ratio above which a text is a loop ("Ciao, ciao, ciao..."), as in Whisper
 
 
@@ -180,13 +181,16 @@ class WhisperTranscriber:
                 return encoded
         return type(self._model).encode(self._model, features)
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, *, quick: bool = False) -> str:
+        """`quick`: the wake word's second chance. A short look at 1.5 s of audio, without the
+        prompt (it must not put "Claudio" in noise) and without touching the language kept for
+        the next unsure request."""
         s = self.settings
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             return ""  # silence: Whisper would invent something ("Buon appetito!")
         audio = audio.astype(np.float32, copy=False)
         language = self.detect_language(audio)
-        prompt = s.prompt(language)
+        prompt = "" if quick else s.prompt(language)
         reuse = self._encoded is not None
         if reuse:
             self._model.encode = self._encode
@@ -200,7 +204,7 @@ class WhisperTranscriber:
                 condition_on_previous_text=False,
                 without_timestamps=True,
                 temperature=0.0,
-                max_new_tokens=MAX_NEW_TOKENS,
+                max_new_tokens=QUICK_NEW_TOKENS if quick else MAX_NEW_TOKENS,
             )
             parts = []
             for seg in segments:  # a generator: Whisper runs while it is consumed
@@ -218,6 +222,6 @@ class WhisperTranscriber:
         if text and is_hallucination(text, prompt):
             log.info("Trascrizione scartata (allucinazione nota): %r", text)
             return ""
-        if text and not only_wake_words(text):
+        if text and not quick and not only_wake_words(text):
             self.last_language = language
         return text

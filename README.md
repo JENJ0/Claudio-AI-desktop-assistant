@@ -145,6 +145,11 @@ them off.
 Attempts where the wake word did not fire are logged too, as `near_miss` with the highest score
 reached: `benchmark_latency.py --log` lists them, to see how far to lower the threshold.
 
+A near miss also gets a second chance (`wakeword.second_chance`): Whisper listens to the last
+1.5 s, about 130 ms on the GPU and only at those moments, and if it hears the name CLAUDIO wakes
+anyway. The row says what it heard (`second_chance`, `second_chance_ms`), so the near misses
+that were not the wake word are visible too.
+
 ```powershell
 uv run python scripts/benchmark_latency.py --log                      # live
 uv run python scripts/record_samples.py commands --repeat 2           # record the commands

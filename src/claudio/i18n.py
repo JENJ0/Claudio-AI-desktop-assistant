@@ -43,6 +43,13 @@ EN: dict[str, str] = {
         "No request after the wake word: back to waiting"
     ),
     "Errore durante la richiesta": "Error while handling the request",
+    "Seconda possibilità non riuscita": "The second chance failed",
+    "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo": (
+        "Second chance: Whisper heard %r (score %.2f): waking up"
+    ),
+    "Seconda possibilità: Whisper ha sentito %r: niente da fare": (
+        "Second chance: Whisper heard %r: nothing to do"
+    ),
     "Spegnimento richiesto a voce: chiudo": "Shutdown asked by voice: closing",
     "Impossibile salvare l'audio della wake word mancata": (
         "Could not save the audio of the missed wake word"

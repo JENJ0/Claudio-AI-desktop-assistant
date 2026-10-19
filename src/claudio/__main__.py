@@ -194,6 +194,11 @@ async def run_assistant(settings: Settings) -> None:
         audio_sink=recorder,
         level=level,
         system=system,
+        second_chance=(
+            (lambda audio: transcriber.transcribe(audio, quick=True))
+            if settings.wakeword.second_chance
+            else None
+        ),
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

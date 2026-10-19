@@ -34,13 +34,12 @@ POSITIVES: dict[str, dict[str, list[tuple[str, int]]]] = {
     },
 }
 
-# Close to the wake words but not them: the models must stay silent.
+# Close to the wake words but not them: the models must stay silent. No "Claudia" here (nor
+# in the sentences below): JenJo is fine with it waking CLAUDIO, and "Claudia" differs from
+# "Claudio" only by the last vowel, so teaching the models to refuse it taught the
+# single-word model to refuse his own voice saying "Claudio" too.
 ADVERSARIAL: dict[str, list[str]] = {
     "it": [
-        "claudia",
-        "ehi claudia",
-        "hey claudia",
-        "ciao claudia",
         "clara",
         "ehi clara",
         "audio",
@@ -144,7 +143,6 @@ SENTENCES: dict[str, list[str]] = {
         "la riunione è spostata alle tre",
         "mi passi il caricabatterie",
         "fa freddo qui dentro",
-        "ho parlato con claudia ieri sera",
         "il mio amico paolo arriva domani",
         "chiudi la finestra per favore",
         "ascolto la radio in macchina",
@@ -223,8 +221,7 @@ RECORDING_STYLES: dict[str, list[tuple[str, str, str]]] = {  # (slug, how, what 
 
 # JenJo's own voice saying everything but the wake word (record_samples.py negatives).
 NEGATIVE_PROMPTS: list[str] = [
-    *SENTENCES["it"][7:37],
-    "Claudia, mi apri la porta?",
+    *SENTENCES["it"][7:36],
     "Alza l'audio della televisione",
     "Hey, ciao, come stai?",
     "Ehi, guarda qui",

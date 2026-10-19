@@ -1,6 +1,12 @@
 import pytest
 
-from claudio.router.normalizer import extract_number, normalize, only_wake_words, strip_accents
+from claudio.router.normalizer import (
+    extract_number,
+    heard_wake_word,
+    normalize,
+    only_wake_words,
+    strip_accents,
+)
 
 
 @pytest.mark.parametrize(
@@ -97,3 +103,22 @@ def test_extract_number_english(text: str, rest: str, number: int | None) -> Non
 
 def test_unknown_language_uses_the_italian_rules() -> None:
     assert normalize("Apri il blocco note", lang="de") == "apri blocco note"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Hey Claudio", True),
+        ("Claudio, che ore sono?", True),
+        ("ok clodio", True),
+        ("e il giarvis", True),
+        ("Ehi.", False),
+        ("Hey", False),
+        ("Claudia, mi apri la porta?", False),
+        ("alza l'audio", False),
+        ("il gatto dorme sul divano", False),
+        ("", False),
+    ],
+)
+def test_heard_wake_word_is_the_name_itself(text: str, expected: bool) -> None:
+    assert heard_wake_word(text) is expected

@@ -303,6 +303,25 @@ def test_only_real_requests_set_the_fallback_language() -> None:
     assert stt.last_language == "en"
 
 
+def test_quick_mode_is_a_short_look_that_remembers_nothing() -> None:
+    """The wake word's second chance: no prompt (it must not put "Claudio" in noise), few
+    tokens, and the language kept for an unsure request stays that of the last real one."""
+    import numpy as np
+
+    from claudio.config import SttSettings
+
+    stt = make_stt()
+    stt.settings = SttSettings(languages=["it", "en"], prompts={"it": "Hey Claudio.", "en": "x"})
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    stt._model = FakeMultilingualWhisper([("<|en|>", 0.9)], text=" Open Chrome.")
+    assert stt.transcribe(speech, quick=True) == "Open Chrome."
+    kwargs = stt._model.kwargs
+    assert kwargs["initial_prompt"] is None and kwargs["max_new_tokens"] == 24
+    assert stt.last_language == "it"  # a real request would have made it English
+    stt.transcribe(speech)
+    assert stt._model.kwargs["initial_prompt"] == "x" and stt.last_language == "en"
+
+
 def test_the_warm_up_does_not_choose_the_language(monkeypatch) -> None:
     from pathlib import Path
 

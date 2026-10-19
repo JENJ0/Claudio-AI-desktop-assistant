@@ -6,16 +6,21 @@
 - Wake word training kit in `scripts/wakeword/` for "Hey Claudio" and "Claudio": synthetic
   voices (Piper Italian voices, 904 English speakers reading Italian, Kokoro voices blended in
   pairs) from slow to very fast speech and with light mispronunciations, similar words as
-  negatives ("Claudia", "audio", "chiudi", "hey Claude"), augmentation with numpy and scipy only,
-  openWakeWord's network trained in two rounds, checkpoint chosen for the best recall at no more
-  than 0.5 false wakes per hour, and a per-threshold report on JenJo's held-out takes through the
-  real streaming detector. A Colab notebook (`train_claudio.ipynb`, CPU runtime) runs it all,
-  stops at the first failed step, and after a disconnect resumes where it stopped; new or redone
+  negatives ("audio", "chiudi", "hey Claude"), augmentation with numpy and scipy only,
+  openWakeWord's network trained in two rounds in three variants, and a per-threshold report on
+  JenJo's held-out takes through the real streaming detector. A Colab notebook
+  (`train_claudio.ipynb`, CPU runtime) runs it all, stops at the first failed step, and after a disconnect resumes where it stopped; new or redone
   takes are picked up without starting again from scratch.
 - `record_samples.py` guides the recordings: a different way of speaking every five takes
   (fast, quiet, from 2 m, "Ehi", a missing letter, followed by a command), ordinary sentences
   without the wake word, room noise with and without the TV, and `pack` for the Colab zip. New
   takes never overwrite old ones; `r` redoes the previous take, the last one included.
+- Second chance for the wake word: when the model's score peaks between `near_miss_floor`
+  (0.15) and the threshold, Whisper listens to the last 1.5 s (no prompt, greedy, a few tokens;
+  nothing kept for the language fallback) and, if it hears the name, CLAUDIO wakes as if the
+  model had fired. At most one check runs at a time, never over a request already under way, and
+  Whisper is used by one thing at a time. `wakeword.second_chance = false` turns it off. The
+  `metrics.jsonl` row keeps what Whisper heard (`second_chance`, `second_chance_ms`).
 - System voice commands, local and free: "vai in pausa" or "vai a dormire" (CLAUDIO then
   answers only "svegliati" and "spegniti", and every other request gets a low beep), "svegliati",
   and "spegniti", which closes CLAUDIO cleanly after saying "A presto.". Shutting down needs one
@@ -35,6 +40,17 @@
   `language` setting; a test checks that every message has its English version.
 
 ### Changed
+- Wake word training, second round, after the first models heard JenJo's own voice badly
+  ("Hey Claudio" 31 takes in 50, "Claudio" alone none): two fifths of every batch of positives
+  now come from his takes (each repeated 60 times with different noise) instead of being lost
+  among thousands of synthetic windows; the checkpoint kept is chosen on his held-out takes,
+  not only on synthetic ones; each model tries three settings and keeps the best; "Claudia" is
+  no longer a negative (it differs from "Claudio" by one vowel and refusing it taught the
+  single-word model to refuse the real word); the false wake limit is one per validation hour
+  instead of one every two. The report now also says how many of the takes it learned from it
+  hears and which ordinary sentences wake it. Work folders and models made by the first recipe
+  are made again.
+- The 38 ordinary sentences to record no longer include the two with "Claudia".
 - README in English, with the Italian version in `README.it.md`; CHANGELOG in English.
 - `stt.language` is now `stt.languages` (`language` still fixes a single one), and Whisper's
   prompt is per language in `[stt.prompts]`. `router.unknown_reply` and the new

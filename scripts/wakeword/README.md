@@ -2,7 +2,7 @@
 
 Trains CLAUDIO's two wake word models, `hey_claudio.onnx` ("Hey Claudio") and `claudio.onnx`
 ("Claudio"), for [openWakeWord](https://github.com/dscripka/openWakeWord). It runs for free on
-Google Colab (2-3 hours, CPU runtime) or on any Linux PC.
+Google Colab (2-4 hours, CPU runtime) or on any Linux PC.
 
 | File | What it does |
 |---|---|
@@ -28,7 +28,7 @@ uv run python scripts/record_samples.py pack
   saying it: normal, fast, slow, quiet, loud, from 2 m, "Ehi" instead of "Hey", with a missing
   letter, absent-minded, followed by a command. Takes followed by a command are only used to
   measure the model, never to train it.
-- `negatives`: 40 ordinary sentences without the wake word (about 3 minutes).
+- `negatives`: 38 ordinary sentences without the wake word (about 3 minutes).
 - `noise`: one minute of the quiet room and one with the TV or music on, nobody speaking.
 - `pack`: writes `samples/claudio_training.zip` with the recordings and these scripts.
 
@@ -53,7 +53,10 @@ session, tick `new_recordings` in the upload cell before Run all.
 Copy `hey_claudio.onnx` and `claudio.onnx` from the zip into `models/wakeword/`. The two
 `*_report.json` files (also printed as tables at the end of each training) give, for every
 threshold, how many of your held-out takes wake CLAUDIO and how many false wakes per hour the
-validation audio causes, plus the recommended threshold. Put that threshold in
+validation audio causes, plus the recommended threshold. The report also says how many of the
+takes it learned from it hears (if it misses those, the training failed; if it hears only
+those, it does not generalise) and which of your ordinary sentences wake it. Put the
+threshold in
 `config/claudio.toml`, in place of the `hey_jarvis` placeholder:
 
 ```toml
@@ -92,17 +95,27 @@ options (number of clips, steps, target false wakes per hour).
 
 - **Positives**: 6000 synthetic clips per model, from very slow to very fast speech, with light
   mispronunciations ("hey cladio", "clodio"), plus your takes repeated with different noise.
-- **Negatives**: similar words ("Claudia", "audio", "chiudi", "hey Claude"), ordinary Italian
-  and English sentences, your own sentences and room noise, and about 2000 hours of varied
+- **Negatives**: similar words ("audio", "chiudi", "hey Claude"; not "Claudia": it differs from
+  "Claudio" only by the last vowel and refusing it taught the models to refuse the real word
+  too, so it may wake CLAUDIO), ordinary Italian and English sentences, your own sentences and room noise, and about 2000 hours of varied
   audio (openWakeWord's precomputed ACAV100M features).
 - **Augmentation**: silence and room noise trimmed around the voice, speed 0.85-1.25x,
   synthetic room echo from desk-dry to across the room, microphone filters, AudioSet and
   ESC-50 background sounds at 0-20 dB SNR; the wake word ends near the end of each 2 s window,
   sometimes followed by the start of a command, as the detector hears it while streaming.
 - **Training**: openWakeWord's small network (16 frames x 96 features), two rounds with
-  negatives weighing more and more; the checkpoint kept is the one with the best recall at no
-  more than 0.5 false wakes per hour (`--target-fph`).
+  negatives weighing more and more. Two fifths of every batch of positives come from your own
+  takes (`--real-fraction`, each take repeated 60 times with different noise,
+  `--real-copies`): drawn evenly, the few real windows were lost among the synthetic ones and
+  the model learned the synthetic voices instead of the word. The checkpoint kept is the one
+  that hears the most of your held-out takes (and the synthetic ones) at no more than 1 false
+  wake per hour on the validation audio (`--target-fph`).
+- **Variants**: each model is trained with three settings (`--variants`: the base network, a
+  wider one, a wider one with the negatives weighing less) and the one that hears most of your
+  held-out takes within the false wake limit is kept. The report says which and shows all.
 - **Report**: your held-out takes go through the real streaming detector, as in CLAUDIO.
+- **Older work folders**: scratch made by an older recipe (`RECIPE` in `train_wakeword.py`)
+  is made again, and a model made by an older recipe is trained again.
 
 The training data has its own licences (openWakeWord features CC BY-NC-SA 4.0, ESC-50
 CC BY-NC 3.0, AudioSet CC BY 4.0): the resulting models are for personal, non-commercial use.

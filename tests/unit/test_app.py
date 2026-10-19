@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 
@@ -291,6 +292,105 @@ async def test_near_miss_is_logged_without_waking(fake_vad, vad_settings, make_f
     row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
     assert row["outcome"] == "near_miss" and row["wake_score"] == 0.3
     assert row["audio_file"] == "near_miss.wav" and row["m2_ms"] is None
+
+
+class SecondChance:
+    """Stands for Whisper listening to the last 1.5 s after a near miss."""
+
+    def __init__(
+        self, text: str = "", error: bool = False, gate: threading.Event | None = None
+    ) -> None:
+        self.text, self.error, self.gate, self.heard = text, error, gate, []
+
+    def __call__(self, audio: np.ndarray) -> str:
+        self.heard.append(audio)
+        if self.gate is not None:
+            self.gate.wait(5)  # runs in a worker thread, like Whisper
+        if self.error:
+            raise RuntimeError("CUDA esplosa")
+        return self.text
+
+
+def with_second_chance(fake_vad, vad_settings, check: SecondChance, tmp_path):
+    wake = FakeWake(set(), miss_on={20})
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        wake,
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        FakeResponder(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        audio_sink=lambda audio, outcome: f"{outcome}.wav",
+        second_chance=check,
+    )
+    return assistant, speaker
+
+
+async def test_second_chance_wakes_when_whisper_hears_the_name(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    check = SecondChance("Hey Claudio.")
+    assistant, speaker = with_second_chance(fake_vad, vad_settings, check, tmp_path)
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert len(check.heard) == 1 and 0 < len(check.heard[0]) <= 24000  # the last 1.5 s
+    assert speaker.beeps == ["wake"] and assistant.state is State.LISTENING
+    info = assistant._interaction.info
+    assert info["second_chance"] == "Hey Claudio." and info["wake_score"] == 0.3
+    assert info["second_chance_ms"] >= 0
+    await run_frames(assistant, make_frames("speech", 800) + make_frames("silence", 800))
+    assert speaker.spoken == ["Apro Chrome."]
+    assert assistant.history[-1]["outcome"] == "ok"
+    assert assistant.history[-1]["second_chance"] == "Hey Claudio."
+    assert not (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").count("near_miss")
+
+
+async def test_second_chance_keeps_the_near_miss_when_it_hears_something_else(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    assistant, speaker = with_second_chance(
+        fake_vad, vad_settings, SecondChance("il gatto dorme sul divano"), tmp_path
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == [] and assistant.state is State.IDLE
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["audio_file"] == "near_miss.wav"
+    assert row["second_chance"] == "il gatto dorme sul divano" and row["second_chance_ms"] >= 0
+
+
+async def test_a_failing_second_chance_is_a_plain_near_miss(
+    fake_vad, vad_settings, make_frames, tmp_path, caplog
+) -> None:
+    assistant, speaker = with_second_chance(
+        fake_vad, vad_settings, SecondChance(error=True), tmp_path
+    )
+    with caplog.at_level("ERROR"):
+        await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == [] and assistant.state is State.IDLE
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["second_chance"] == ""
+    assert "CUDA esplosa" in caplog.text
+
+
+async def test_second_chance_never_wakes_a_busy_assistant(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """Whisper answers after the model itself woke CLAUDIO: no second wake, no second beep."""
+    gate = threading.Event()
+    check = SecondChance("Hey Claudio", gate=gate)
+    assistant, speaker = with_second_chance(fake_vad, vad_settings, check, tmp_path)
+    assistant.wake.fire_on = {22}
+    for frame in make_frames("silence", 2400):
+        assistant.clock.t += 0.08
+        await assistant.handle_frame(frame)
+        await asyncio.sleep(0)  # lets the second chance start (it waits on the gate)
+    assert assistant.state is State.LISTENING and speaker.beeps == ["wake"]
+    gate.set()
+    await assistant.wait_idle()
+    assert speaker.beeps == ["wake"] and assistant.state is State.LISTENING
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["second_chance"] == "Hey Claudio"
 
 
 async def test_quiet_microphone_is_reported_once(fake_vad, vad_settings, make_frames, caplog):

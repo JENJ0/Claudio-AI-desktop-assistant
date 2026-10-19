@@ -146,6 +146,11 @@ Anche i tentativi in cui la wake word non è scattata finiscono nel log come `ne
 punteggio massimo raggiunto: `benchmark_latency.py --log` li elenca per capire quanto abbassare
 la soglia.
 
+Un tentativo mancato ha anche una seconda possibilità (`wakeword.second_chance`): Whisper ascolta
+l'ultimo secondo e mezzo, circa 130 ms sulla GPU e solo in quei momenti, e se sente il nome
+CLAUDIO si attiva lo stesso. La riga dice cosa ha sentito (`second_chance`, `second_chance_ms`),
+così si vedono anche i tentativi mancati che non erano la wake word.
+
 ```powershell
 uv run python scripts/benchmark_latency.py --log                      # dal vivo
 uv run python scripts/record_samples.py commands --repeat 2           # registra i comandi

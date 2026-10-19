@@ -219,6 +219,13 @@ def only_wake_words(text: str) -> bool:
     return bool(words) and not strip_wake_words(words)
 
 
+def heard_wake_word(text: str) -> bool:
+    """True when the transcript has the wake word itself, anywhere ("hey claudio", "ok
+    claudio che ore sono"); a lone greeting, "audio" or "claudia" is not it."""
+    words = normalize(text, drop_fillers=False).split()
+    return any(w not in GREETINGS and is_wake_word(w) for w in words)
+
+
 def extract_number(norm_text: str, lang: str = DEFAULT) -> tuple[str, int | None]:
     """Remove the first number ("di 10", "tre volte") from normalised text and return it."""
     rules = language(lang)

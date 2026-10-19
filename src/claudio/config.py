@@ -68,6 +68,10 @@ class WakeWordSettings(BaseModel):
     models: list[WakeWordModel] = Field(
         default_factory=lambda: [WakeWordModel(name="hey_jarvis")], min_length=1
     )
+    # A peak between this and the threshold is a missed wake word: it is logged and, with
+    # second_chance, Whisper listens to the last 1.5 s and wakes CLAUDIO if it hears the name.
+    near_miss_floor: float = Field(0.15, gt=0, lt=1)
+    second_chance: bool = True
 
 
 class VadSettings(BaseModel):
