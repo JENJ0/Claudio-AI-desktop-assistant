@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 
 from claudio.config import Settings
+from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +21,17 @@ PACKAGES = (
     "piper",
     "rapidfuzz",
 )
+
+
+def kokoro_voices(kokoro_dir: Path) -> set[str] | None:
+    """The voices in Kokoro's voices file; None when it cannot be read (reported apart)."""
+    import numpy as np
+
+    try:
+        with np.load(kokoro_dir / "voices-v1.0.bin") as data:
+            return set(data.files)
+    except (OSError, ValueError):
+        return None
 
 
 def run_checks(settings: Settings) -> bool:
@@ -40,10 +53,17 @@ def run_checks(settings: Settings) -> bool:
         from claudio.router.matcher import CommandMatcher, load_commands
 
         commands = load_commands(settings.resolve(settings.router.commands_file))
-        CommandMatcher(commands, settings.router.fuzzy_threshold)
-        report(True, f"{len(commands)} comandi in {settings.router.commands_file}")
+        matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
+        languages = ", ".join(matcher.languages)
+        what = tr(
+            "{count} comandi in {file} ({languages})",
+            count=len(commands),
+            file=settings.router.commands_file,
+            languages=languages,
+        )
+        report(True, what)
     except Exception as exc:
-        report(False, f"comandi: {exc}")
+        report(False, tr("comandi: {error}", error=exc))
 
     models = settings.resolve(settings.models_dir)
     from claudio.wakeword.detector import FEATURE_MODELS, find_wakeword_model
@@ -59,11 +79,37 @@ def run_checks(settings: Settings) -> bool:
         wanted += [models / "kokoro" / name for name in KOKORO_FILES]
     wanted += [models / "wakeword" / f for f in FEATURE_MODELS]
     for path in wanted:
-        report(path.is_file(), f"modello {path.relative_to(models)}")
+        report(path.is_file(), tr("modello {path}", path=path.relative_to(models)))
+    for language in settings.stt.languages:
+        if settings.tts.engine == "kokoro":  # one model, a voice per language inside it
+            voice = settings.tts.kokoro_voice_for(language)
+            found = kokoro_voices(models / "kokoro")
+            if found is not None and voice not in found and voice != settings.tts.kokoro_voice:
+                log.warning(
+                    "WARN voce Kokoro %s (%s) sconosciuta: risponderò con quella principale",
+                    voice,
+                    language,
+                )
+            continue
+        voice = settings.tts.piper_voice_for(language)
+        if voice != settings.tts.voice and not (models / "piper" / f"{voice}.onnx").is_file():
+            log.warning(
+                "WARN voce %s (%s) mancante: risponderò con quella principale. "
+                "Scaricala con: uv run python scripts/download_models.py --skip-whisper",
+                voice,
+                language,
+            )
     for wake in settings.wakeword.models:
         try:
             path = find_wakeword_model(wake.name, models / "wakeword")
-            report(True, f"wake word {path.name} (soglia {wake.threshold})")
+            report(
+                True,
+                tr(
+                    "wake word {name} (soglia {threshold})",
+                    name=path.name,
+                    threshold=wake.threshold,
+                ),
+            )
         except FileNotFoundError as exc:
             report(False, str(exc))
 
@@ -76,7 +122,9 @@ def run_checks(settings: Settings) -> bool:
         gpus = ctranslate2.get_cuda_device_count()
         if gpus:
             types = sorted(ctranslate2.get_supported_compute_types("cuda"))
-            report(True, f"GPU CUDA: {gpus} (tipi: {', '.join(types)})")
+            report(
+                True, tr("GPU CUDA: {count} (tipi: {types})", count=gpus, types=", ".join(types))
+            )
         else:
             log.warning(
                 "WARN nessuna GPU CUDA: lo STT userà la CPU (%s)", settings.stt.fallback_model
@@ -92,8 +140,8 @@ def run_checks(settings: Settings) -> bool:
     )
 
     for kind, spec, label in (
-        ("input", settings.audio.input_device, "microfono"),
-        ("output", settings.audio.output_device, "uscita audio"),
+        ("input", settings.audio.input_device, tr("microfono")),
+        ("output", settings.audio.output_device, tr("uscita audio")),
     ):
         try:
             if kind == "output":
@@ -101,7 +149,7 @@ def run_checks(settings: Settings) -> bool:
             else:
                 index = resolve_device(spec, kind)
             follows = (
-                " (segue l'uscita predefinita di Windows)"
+                tr(" (segue l'uscita predefinita di Windows)")
                 if kind == "output" and spec == ""
                 else ""
             )

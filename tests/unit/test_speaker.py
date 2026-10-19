@@ -95,3 +95,24 @@ async def test_effect_colours_every_sentence() -> None:
     await speaker.speak(stream("Uno. ", "Due."))
     assert [n for n, _ in player.played] == [1001, 1002]
     assert seen == [22050, 22050]
+
+
+async def test_each_language_speaks_with_its_voice() -> None:
+    class Voice(FakeSynth):
+        def __init__(self, rate: int) -> None:
+            super().__init__()
+            self.sample_rate = rate
+
+    class RatePlayer(FakePlayer):
+        def write(self, audio: np.ndarray, sample_rate: int | None = None) -> None:
+            self.played.append((sample_rate or 0, 0.0))
+
+    italian, english, player = Voice(22050), Voice(16000), RatePlayer()
+    speaker = StreamingSpeaker(italian, player, voices={"en": english})
+    language = iter(["en", "en", "it"])
+    await speaker.speak(stream("Opening. Chrome."), language=lambda: next(language))
+    await speaker.speak(stream("Apro."), language="it")
+    await speaker.speak(stream("Hallo."), language="de")  # no German voice: the main one
+    assert [t for t, _ in english.calls] == ["Opening.", "Chrome."]
+    assert [t for t, _ in italian.calls] == ["Apro.", "Hallo."]
+    assert [rate for rate, _ in player.played] == [16000, 16000, 22050, 22050]

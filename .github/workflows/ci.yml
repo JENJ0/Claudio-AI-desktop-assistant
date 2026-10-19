@@ -42,7 +42,11 @@ jobs:
       - name: Download models (VAD, wake word, Piper voice, Whisper small = CPU fallback)
         run: uv run python scripts/download_models.py --whisper small
 
+      # config/claudio.toml uses our own hey_claudio model, which is not in Git: CI checks
+      # with the pre-trained one that download_models.py fetches.
       - name: Model checks
+        env:
+          CLAUDIO_WAKEWORD__MODELS: '[{"name": "hey_jarvis", "threshold": 0.22}]'
         run: uv run claudio --check
 
       - name: Integration tests on real models (CPU)

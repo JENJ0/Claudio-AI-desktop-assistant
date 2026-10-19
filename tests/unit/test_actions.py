@@ -5,6 +5,7 @@ import pytest
 
 from claudio.router.actions import ActionContext, ActionRunner, say_date, say_time
 from claudio.router.matcher import Command, CommandMatcher, Match
+from claudio.system import SystemControl
 
 
 class Recorder:
@@ -107,3 +108,65 @@ def test_unknown_action_raises(rec) -> None:
     match = Match(Command("x", ("x",), "explode"), 100)
     with pytest.raises(ValueError, match="explode"):
         ActionRunner(rec.ctx()).execute(match)
+
+
+def test_system_commands_change_state_once(matcher, rec) -> None:
+    system = SystemControl()
+    runner = ActionRunner(rec.ctx(), system)
+
+    def say(text: str) -> str:
+        match = matcher.match(text)
+        assert match is not None
+        return runner.execute(match)
+
+    assert say("vai a dormire").startswith("Vado in pausa") and system.paused
+    assert say("vai in pausa") == "Sono già in pausa."
+    assert say("svegliati") == "Eccomi." and not system.paused
+    assert say("svegliati") == "Sono già sveglio."
+    assert say("spegniti") == "A presto." and system.stopping
+    assert rec.ran == [] and rec.keys == []  # nothing touches the PC
+
+
+def test_unknown_system_command_raises() -> None:
+    with pytest.raises(ValueError, match="reboot"):
+        SystemControl().apply("reboot")
+
+
+def test_english_replies(matcher, rec) -> None:
+    runner = ActionRunner(rec.ctx(), SystemControl())
+
+    def say(text: str) -> str:
+        match = matcher.match(text, "en")
+        assert match is not None
+        return runner.execute(match, match.language)
+
+    assert say("open chrome") == "Opening Chrome."
+    assert say("what time is it") == "It's 2 oh 5 p.m."
+    assert say("what day is it") == "Today is Sunday, October 18th, 2026."
+    assert say("go to sleep").startswith("Pausing.")
+    assert say("pause") == "I'm already paused."
+    assert say("wake up") == "I'm here."
+    assert say("wake up") == "I'm already awake."
+    assert say("shut down") == "See you soon."
+
+
+@pytest.mark.parametrize(
+    ("h", "m", "text"),
+    [
+        (0, 0, "It's 12 a.m."),
+        (12, 0, "It's 12 p.m."),
+        (9, 0, "It's 9 o'clock."),
+        (9, 30, "It's 9 30 a.m."),
+        (23, 7, "It's 11 oh 7 p.m."),
+    ],
+)
+def test_say_time_english(h, m, text) -> None:
+    assert say_time(datetime(2026, 1, 1, h, m), "en") == text
+
+
+@pytest.mark.parametrize(
+    ("day", "text"),
+    [(1, "Sunday, November 1st"), (2, "Monday, November 2nd"), (11, "Wednesday, November 11th")],
+)
+def test_say_date_english(day, text) -> None:
+    assert say_date(datetime(2026, 11, day), "en") == f"Today is {text}, 2026."

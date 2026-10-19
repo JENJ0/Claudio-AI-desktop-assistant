@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 
@@ -13,6 +14,7 @@ import pytest
 from claudio.app import Assistant, State
 from claudio.audio.vad import Endpointer
 from claudio.metrics import MetricsWriter
+from claudio.system import SystemControl
 
 
 class FakeWake:
@@ -38,10 +40,14 @@ class FakeStt:
     """Returns `text`, or the items of a list one call after another (the last one repeats)."""
 
     def __init__(
-        self, text: str | list[str] = "apri chrome", error: bool = False, delay: float = 0
+        self,
+        text: str | list[str] = "apri chrome",
+        error: bool = False,
+        delay: float = 0,
+        language: str = "it",
     ) -> None:
         self.texts = [text] if isinstance(text, str) else text
-        self.error, self.delay, self.audio = error, delay, None
+        self.error, self.delay, self.audio, self.language = error, delay, None, language
         self.heard: list[np.ndarray] = []
 
     def transcribe(self, audio: np.ndarray) -> str:
@@ -58,33 +64,42 @@ class FakeResponder:
     def __init__(self) -> None:
         self.last_route: dict = {}
         self.seen: list[str] = []
+        self.language = "it"
 
-    async def respond(self, text: str) -> AsyncIterator[str]:
+    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
         self.seen.append(text)
+        self.language = "en" if "open" in text else language  # the language of the phrase
         if "chrome" in text:
             self.last_route = {"route": "local", "command": "open_chrome"}
-            yield "Apro "
+            yield "Opening " if self.language == "en" else "Apro "
             yield "Chrome."
         else:
             self.last_route = {"route": "unknown"}
-            yield "Questo non lo so ancora fare."
+            yield (
+                "I can't do that yet." if self.language == "en" else "Questo non lo so ancora fare."
+            )
 
 
 class FakeSpeaker:
     def __init__(self) -> None:
         self.spoken: list[str] = []
+        self.languages: list[str] = []
         self.beeps: list[str] = []
 
     async def beep(self, kind: str = "wake") -> None:
         self.beeps.append(kind)
 
     async def speak(
-        self, text_stream: AsyncIterator[str], on_first_audio: Callable[[], None] | None = None
+        self,
+        text_stream: AsyncIterator[str],
+        on_first_audio: Callable[[], None] | None = None,
+        language: str | Callable[[], str] = "it",
     ) -> None:
         text = "".join([c async for c in text_stream])
         if on_first_audio:
             on_first_audio()
         self.spoken.append(text)
+        self.languages.append(language() if callable(language) else language)
 
 
 class AudioClock:
@@ -279,6 +294,105 @@ async def test_near_miss_is_logged_without_waking(fake_vad, vad_settings, make_f
     assert row["audio_file"] == "near_miss.wav" and row["m2_ms"] is None
 
 
+class SecondChance:
+    """Stands for Whisper listening to the last 1.5 s after a near miss."""
+
+    def __init__(
+        self, text: str = "", error: bool = False, gate: threading.Event | None = None
+    ) -> None:
+        self.text, self.error, self.gate, self.heard = text, error, gate, []
+
+    def __call__(self, audio: np.ndarray) -> str:
+        self.heard.append(audio)
+        if self.gate is not None:
+            self.gate.wait(5)  # runs in a worker thread, like Whisper
+        if self.error:
+            raise RuntimeError("CUDA esplosa")
+        return self.text
+
+
+def with_second_chance(fake_vad, vad_settings, check: SecondChance, tmp_path):
+    wake = FakeWake(set(), miss_on={20})
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        wake,
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        FakeResponder(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        audio_sink=lambda audio, outcome: f"{outcome}.wav",
+        second_chance=check,
+    )
+    return assistant, speaker
+
+
+async def test_second_chance_wakes_when_whisper_hears_the_name(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    check = SecondChance("Hey Claudio.")
+    assistant, speaker = with_second_chance(fake_vad, vad_settings, check, tmp_path)
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert len(check.heard) == 1 and 0 < len(check.heard[0]) <= 24000  # the last 1.5 s
+    assert speaker.beeps == ["wake"] and assistant.state is State.LISTENING
+    info = assistant._interaction.info
+    assert info["second_chance"] == "Hey Claudio." and info["wake_score"] == 0.3
+    assert info["second_chance_ms"] >= 0
+    await run_frames(assistant, make_frames("speech", 800) + make_frames("silence", 800))
+    assert speaker.spoken == ["Apro Chrome."]
+    assert assistant.history[-1]["outcome"] == "ok"
+    assert assistant.history[-1]["second_chance"] == "Hey Claudio."
+    assert not (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").count("near_miss")
+
+
+async def test_second_chance_keeps_the_near_miss_when_it_hears_something_else(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    assistant, speaker = with_second_chance(
+        fake_vad, vad_settings, SecondChance("il gatto dorme sul divano"), tmp_path
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == [] and assistant.state is State.IDLE
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["audio_file"] == "near_miss.wav"
+    assert row["second_chance"] == "il gatto dorme sul divano" and row["second_chance_ms"] >= 0
+
+
+async def test_a_failing_second_chance_is_a_plain_near_miss(
+    fake_vad, vad_settings, make_frames, tmp_path, caplog
+) -> None:
+    assistant, speaker = with_second_chance(
+        fake_vad, vad_settings, SecondChance(error=True), tmp_path
+    )
+    with caplog.at_level("ERROR"):
+        await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == [] and assistant.state is State.IDLE
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["second_chance"] == ""
+    assert "CUDA esplosa" in caplog.text
+
+
+async def test_second_chance_never_wakes_a_busy_assistant(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """Whisper answers after the model itself woke CLAUDIO: no second wake, no second beep."""
+    gate = threading.Event()
+    check = SecondChance("Hey Claudio", gate=gate)
+    assistant, speaker = with_second_chance(fake_vad, vad_settings, check, tmp_path)
+    assistant.wake.fire_on = {22}
+    for frame in make_frames("silence", 2400):
+        assistant.clock.t += 0.08
+        await assistant.handle_frame(frame)
+        await asyncio.sleep(0)  # lets the second chance start (it waits on the gate)
+    assert assistant.state is State.LISTENING and speaker.beeps == ["wake"]
+    gate.set()
+    await assistant.wait_idle()
+    assert speaker.beeps == ["wake"] and assistant.state is State.LISTENING
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["second_chance"] == "Hey Claudio"
+
+
 async def test_quiet_microphone_is_reported_once(fake_vad, vad_settings, make_frames, caplog):
     assistant, *_ = build(fake_vad, vad_settings, FakeStt(), {1, 30})
     stats = assistant.endpointer.stats
@@ -382,3 +496,111 @@ async def test_microphone_level_is_adjusted_after_speech_only(
 @pytest.mark.parametrize("state", list(State))
 def test_states_are_strings(state: State) -> None:
     assert isinstance(state.value, str)
+
+
+class SystemResponder(FakeResponder):
+    """The real system commands on top of the fake router: pause, resume, shut down."""
+
+    def __init__(self, system: SystemControl) -> None:
+        super().__init__()
+        self.system = system
+
+    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+        self.seen.append(text)
+        command = {"dormi": "pause", "svegliati": "resume", "spegniti": "shutdown"}.get(text)
+        if command:
+            self.system.apply(command)
+            self.last_route = {"route": "local", "command": command}
+            yield "Ok."
+        elif self.system.paused:
+            self.last_route = {"route": "paused"}
+        else:
+            async for chunk in super().respond(text):
+                yield chunk
+
+
+class OnsetWake(FakeWake):
+    """Fires at the start of every burst of speech heard while idle."""
+
+    def __init__(self) -> None:
+        super().__init__(set())
+        self._loud = False
+
+    def process(self, frame: np.ndarray) -> tuple[str, float] | None:
+        self.calls += 1
+        loud, was = bool(np.abs(frame).max() > 1000), self._loud
+        self._loud = loud
+        return ("claudio", 0.9) if loud and not was else None
+
+
+def build_system(fake_vad, vad_settings, texts: list[str]):
+    system = SystemControl()
+    wake, speaker, responder = OnsetWake(), FakeSpeaker(), SystemResponder(system)
+    assistant = Assistant(
+        wake,
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(texts),
+        responder,
+        speaker,
+        clock=AudioClock(),
+        system=system,
+    )
+    return assistant, speaker, system
+
+
+async def run_requests(assistant: Assistant, make_frames, n: int) -> None:
+    """n requests (a wake word at the start of 800 ms of speech), each sent only once the
+    previous one is over, with silence in between: no race with the STT worker thread."""
+    clock = assistant.clock
+    assert isinstance(clock, AudioClock)
+    request = make_frames("silence", 160) + make_frames("speech", 800)
+    silence = np.zeros(1280, dtype=np.int16)
+
+    async def gen():
+        for _ in range(n):
+            for f in request:
+                clock.t += 0.08
+                yield f
+                await asyncio.sleep(0)
+            for _ in range(100):  # listening ends, then the reply
+                clock.t += 0.08
+                yield silence
+                await asyncio.sleep(0.001)
+                if assistant.state is State.IDLE and assistant.endpointer.started:
+                    break
+
+    await assistant.run(gen())
+
+
+async def test_pause_ignores_requests_until_woken(fake_vad, vad_settings, make_frames) -> None:
+    texts = ["dormi", "apri chrome", "svegliati", "apri chrome"]
+    assistant, speaker, system = build_system(fake_vad, vad_settings, texts)
+    await run_requests(assistant, make_frames, 4)
+    assert speaker.spoken == ["Ok.", "", "Ok.", "Apro Chrome."]
+    assert speaker.beeps.count("cancel") == 1  # the request heard while paused
+    assert [row["outcome"] for row in assistant.history] == ["ok", "paused", "ok", "ok"]
+    assert not system.paused
+
+
+async def test_shutdown_ends_the_run_after_the_reply(fake_vad, vad_settings, make_frames) -> None:
+    assistant, speaker, system = build_system(fake_vad, vad_settings, ["spegniti", "apri chrome"])
+    await run_requests(assistant, make_frames, 3)
+    assert speaker.spoken == ["Ok."] and system.stopping
+    assert len(assistant.history) == 1  # the second wake word never came: CLAUDIO had closed
+    assert assistant.state is State.IDLE
+
+
+async def test_reply_is_spoken_in_the_language_heard(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    for heard, text, spoken, voice in [
+        ("en", "close the door", "I can't do that yet.", "en"),
+        ("it", "open chrome", "Opening Chrome.", "en"),  # the phrase is English
+        ("it", "apri chrome", "Apro Chrome.", "it"),
+    ]:
+        stt = FakeStt(text, language=heard)
+        assistant, _, speaker, _ = build(fake_vad, vad_settings, stt, {3}, tmp_path)
+        frames = make_frames("silence", 640) + make_frames("speech", 1000)
+        await run_frames(assistant, frames + make_frames("silence", 800))
+        assert speaker.spoken == [spoken] and speaker.languages == [voice]
+        assert assistant.history[-1]["stt_language"] == heard

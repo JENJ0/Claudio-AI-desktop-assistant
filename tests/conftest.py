@@ -5,7 +5,7 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-from claudio.config import PROJECT_ROOT, VadSettings
+from claudio.config import PROJECT_ROOT, Settings, VadSettings
 from claudio.router.matcher import CommandMatcher, load_commands
 
 COMMANDS_FILE = PROJECT_ROOT / "config" / "commands.toml"
@@ -24,6 +24,13 @@ class FakeVad:
 
     def reset(self) -> None:
         self.resets += 1
+
+
+@pytest.fixture(autouse=True)
+def ignore_the_developers_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The .env on a developer's PC (their voice, their microphone) must not change what a
+    test expects of the shipped settings. Tests that need a value set it in the environment."""
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
 
 
 @pytest.fixture

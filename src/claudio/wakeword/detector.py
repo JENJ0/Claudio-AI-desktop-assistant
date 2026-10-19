@@ -11,11 +11,12 @@ from pathlib import Path
 import numpy as np
 
 from claudio.config import WakeWordSettings
+from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
 
 FEATURE_MODELS = ("melspectrogram.onnx", "embedding_model.onnx")
-NEAR_MISS_FLOOR = 0.15  # a peak between this and the threshold is logged as a missed wake word
+NEAR_MISS_FLOOR = 0.15  # default for WakeWordSettings.near_miss_floor
 
 
 def find_wakeword_model(model: str, wakeword_dir: Path) -> Path:
@@ -30,8 +31,13 @@ def find_wakeword_model(model: str, wakeword_dir: Path) -> Path:
     if matches:
         return matches[-1]  # highest version
     raise FileNotFoundError(
-        f"Modello wake word '{model}' non trovato in {wakeword_dir}. "
-        "Esegui: uv run python scripts/download_models.py"
+        tr(
+            "Modello wake word '{model}' non trovato in {folder}. Se lo hai addestrato tu, "
+            "copialo lì (scripts/wakeword/README.md); altrimenti esegui: "
+            "uv run python scripts/download_models.py",
+            model=model,
+            folder=wakeword_dir,
+        )
     )
 
 
@@ -42,7 +48,9 @@ class OpenWakeWordDetector:
         paths = [find_wakeword_model(m.name, wakeword_dir) for m in settings.models]
         for feature in FEATURE_MODELS:
             if not (wakeword_dir / feature).is_file():
-                raise FileNotFoundError(f"Modello {feature} mancante in {wakeword_dir}")
+                raise FileNotFoundError(
+                    tr("Modello {name} mancante in {folder}", name=feature, folder=wakeword_dir)
+                )
         self._model = Model(
             wakeword_models=[str(p) for p in paths],
             inference_framework="onnx",
@@ -53,7 +61,7 @@ class OpenWakeWordDetector:
         self.thresholds = {p.stem: m.threshold for p, m in zip(paths, settings.models, strict=True)}
         self.names = [m.name.replace("_", " ") for m in settings.models]
         self._silence = np.zeros(frame_size, dtype=np.int16)
-        self._near_miss = NearMissTracker(self.thresholds)
+        self._near_miss = NearMissTracker(self.thresholds, settings.near_miss_floor)
         log.info(
             "Wake word: %s", ", ".join(f"{k} (soglia {v:.2f})" for k, v in self.thresholds.items())
         )

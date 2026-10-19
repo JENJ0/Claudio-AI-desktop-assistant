@@ -17,7 +17,8 @@ from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
-from claudio.router.normalizer import only_wake_words
+from claudio.router.normalizer import heard_wake_word, only_wake_words
+from claudio.system import SystemControl
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ class Assistant:
         clock: Callable[[], float] = time.perf_counter,
         audio_sink: Callable[[np.ndarray, str], str | None] | None = None,
         level: LevelControl | None = None,
+        system: SystemControl | None = None,
+        second_chance: Callable[[np.ndarray], str] | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -57,6 +60,13 @@ class Assistant:
         self.clock = clock
         self.audio_sink = audio_sink  # saves what was heard; returns the file name
         self.level = level  # automatic microphone gain; None = only warn when it is too quiet
+        self.system = system or SystemControl()  # pause and "spegniti", shared with the router
+        # Hears the last 1.5 s after a near miss (a score just under the threshold): if the
+        # text has the wake word, CLAUDIO wakes anyway. None: near misses are only logged.
+        self.second_chance = second_chance
+        self._checking = False
+        self._checks: set[asyncio.Task[None]] = set()
+        self._stt_lock = asyncio.Lock()  # Whisper is used by one thing at a time
         self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S))
         self._prewake = np.zeros(0, dtype=np.float32)
         self._held: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
@@ -77,6 +87,9 @@ class Assistant:
         try:
             async for frame in frames:
                 await self.handle_frame(frame)
+                if self.system.stopping and self.state is State.IDLE:  # after "A presto."
+                    log.info("Spegnimento richiesto a voce: chiudo")
+                    break
         finally:
             await self.wait_idle()
 
@@ -94,9 +107,9 @@ class Assistant:
             self._held.append(frame)  # the request itself, if the phrase was only the wake word
         # While answering/speaking the microphone is ignored (no barge-in yet).
 
-    def _on_wake(self, name: str, score: float) -> None:
+    def _on_wake(self, name: str, score: float, **info: Any) -> None:
         self._interaction = Interaction(
-            clock=self.clock, info={"wake_word": name, "wake_score": round(score, 3)}
+            clock=self.clock, info={"wake_word": name, "wake_score": round(score, 3), **info}
         )
         self._interaction.mark("wake")
         log.info("Wake word rilevata: %s (%.2f)", name, score)
@@ -119,13 +132,43 @@ class Assistant:
         return self._prewake[-keep:] if keep else self._prewake[:0]
 
     def _on_near_miss(self, name: str, score: float) -> None:
+        heard = self._recent.get()
+        if self.second_chance is None or self._checking:
+            self._log_near_miss(name, score, heard)
+            return
+        self._checking = True
+        task = asyncio.create_task(self._second_chance(name, score, heard))
+        self._checks.add(task)
+        task.add_done_callback(self._checks.discard)
+
+    async def _second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
+        assert self.second_chance is not None
+        text, start = "", self.clock()
+        try:
+            async with self._stt_lock:
+                text = await asyncio.to_thread(self.second_chance, heard)
+        except Exception:
+            log.exception("Seconda possibilità non riuscita")
+        finally:
+            self._checking = False
+        ms = round((self.clock() - start) * 1000)
+        if self.state is State.IDLE and heard_wake_word(text):
+            log.info(
+                "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
+            )
+            self._on_wake(name, score, second_chance=text, second_chance_ms=ms)
+            return
+        log.info("Seconda possibilità: Whisper ha sentito %r: niente da fare", text)
+        self._log_near_miss(name, score, heard, second_chance=text, second_chance_ms=ms)
+
+    def _log_near_miss(self, name: str, score: float, heard: np.ndarray, **info: Any) -> None:
         inter = Interaction(
             clock=self.clock,
-            info={"wake_word": name, "wake_score": round(score, 3), "outcome": "near_miss"},
+            info={"wake_word": name, "wake_score": round(score, 3), "outcome": "near_miss", **info},
         )
         if self.audio_sink is not None:
             try:
-                inter.info["audio_file"] = self.audio_sink(self._recent.get(), "near_miss")
+                inter.info["audio_file"] = self.audio_sink(heard, "near_miss")
             except Exception:
                 log.exception("Impossibile salvare l'audio della wake word mancata")
         if self.metrics is not None:
@@ -154,10 +197,13 @@ class Assistant:
         assert inter is not None
         outcome = "ok"
         try:
-            text = await asyncio.to_thread(self.transcriber.transcribe, audio)
+            async with self._stt_lock:
+                text = await asyncio.to_thread(self.transcriber.transcribe, audio)
+            heard = self.transcriber.language
             inter.mark("stt_done")
             inter.info["text"] = text
-            log.info("Trascritto: %r", text)
+            inter.info["stt_language"] = heard
+            log.info("Trascritto (%s): %r", heard, text)
             if only_wake_words(text) and "relisten" not in inter.info:
                 outcome = "relisten"
                 self._relisten(inter)
@@ -168,9 +214,13 @@ class Assistant:
                 return
             self._set_state(State.RESPONDING)
             await self.speaker.speak(
-                self._marked(self.responder.respond(text), inter),
+                self._marked(self.responder.respond(text, heard), inter),
                 on_first_audio=lambda: self._on_first_audio(inter),
+                language=lambda: self.responder.language,
             )
+            if getattr(self.responder, "last_route", {}).get("route") == "paused":
+                outcome = "paused"  # only "svegliati" and "spegniti" are answered
+                await self.speaker.beep("cancel")
         except Exception:
             outcome = "error"
             log.exception("Errore durante la richiesta")
@@ -252,6 +302,8 @@ class Assistant:
         task.add_done_callback(self._beeps.discard)
 
     async def wait_idle(self) -> None:
+        if self._checks:
+            await asyncio.gather(*self._checks, return_exceptions=True)
         # A request that listened again has started a new task: wait for that one too.
         while self._task is not None and not self._task.done():
             await asyncio.gather(self._task, return_exceptions=True)

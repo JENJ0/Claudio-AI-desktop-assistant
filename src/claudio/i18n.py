@@ -1,0 +1,215 @@
+"""CLAUDIO's own messages (console, log files, --check) in Italian or English, chosen by the
+`language` setting. The code writes them in Italian; EN maps each one, %-placeholders and
+{names} included, to its English version. Spoken replies are not here: they follow the
+language of the request (config/commands.toml)."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+LANGUAGES = ("it", "en")
+_current = "it"
+
+EN: dict[str, str] = {
+    # __main__
+    "Router: %d comandi locali (%s)": "Router: %d local commands (%s)",
+    "TTS: %s (%d Hz)%s%s": "TTS: %s (%d Hz)%s%s",
+    ", effetto {effect}": ", effect {effect}",
+    "STT: %s su %s, lingue %s": "STT: %s on %s, languages %s",
+    'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).': (
+        'Models loaded in %.1f s. Say "%s" to start (Ctrl+C to quit).'
+    ),
+    '" o "': '" or "',
+    "Prima parola dopo %.0f ms (router + TTS)": "First word after %.0f ms (router + TTS)",
+    "Errore di configurazione: {error}": "Configuration error: {error}",
+    "Chiusura richiesta: arrivederci": "Shutdown requested: goodbye",
+    "Kokoro non disponibile (%s): uso Piper %s": "Kokoro not available (%s): using Piper %s",
+    "Voce per '%s' non disponibile (%s): uso quella principale": (
+        "Voice for '%s' not available (%s): using the main one"
+    ),
+    # app
+    "Pronto: in ascolto della wake word": "Ready: listening for the wake word",
+    "Wake word rilevata: %s (%.2f)": "Wake word detected: %s (%.2f)",
+    "Solo la wake word: ascolto la richiesta": "Only the wake word: listening for the request",
+    "Stato: %s -> %s": "State: %s -> %s",
+    "Trascritto (%s): %r": "Transcribed (%s): %r",
+    "Microfono basso: la voce arriva al massimo a %.0f dBFS (meglio tra -20 e -10). Aumenta il "
+    "guadagno, per esempio CLAUDIO_AUDIO__INPUT_GAIN_DB=12 in .env": (
+        "Microphone too quiet: the voice peaks at %.0f dBFS (best between -20 and -10). Raise "
+        "the gain, for example CLAUDIO_AUDIO__INPUT_GAIN_DB=12 in .env"
+    ),
+    "Nessuna richiesta dopo la wake word: torno in attesa": (
+        "No request after the wake word: back to waiting"
+    ),
+    "Errore durante la richiesta": "Error while handling the request",
+    "Seconda possibilità non riuscita": "The second chance failed",
+    "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo": (
+        "Second chance: Whisper heard %r (score %.2f): waking up"
+    ),
+    "Seconda possibilità: Whisper ha sentito %r: niente da fare": (
+        "Second chance: Whisper heard %r: nothing to do"
+    ),
+    "Spegnimento richiesto a voce: chiudo": "Shutdown asked by voice: closing",
+    "Impossibile salvare l'audio della wake word mancata": (
+        "Could not save the audio of the missed wake word"
+    ),
+    "Impossibile riprodurre il segnale di errore": "Could not play the error sound",
+    "Impossibile salvare l'audio della richiesta": "Could not save the audio of the request",
+    # audio
+    "Stato audio in ingresso: %s": "Audio input status: %s",
+    "Microfono: %s%s": "Microphone: %s%s",
+    "Microfono non disponibile (%s): riprovo tra 1 s": (
+        "Microphone not available (%s): retrying in 1 s"
+    ),
+    "Nessun dispositivo di {kind} contiene '{spec}'. Elencali con: "
+    "uv run python scripts/list_audio_devices.py": (
+        "No {kind} device contains '{spec}'. List them with: "
+        "uv run python scripts/list_audio_devices.py"
+    ),
+    "Uscita predefinita di Windows non leggibile: %s": "Windows default output not readable: %s",
+    "Microfono: guadagno da +%.0f a +%.0f dB (%s)": "Microphone: gain from +%.0f to +%.0f dB (%s)",
+    "Microfono: guadagno +%.0f dB (salvato dall'ultima volta)": (
+        "Microphone: gain +%.0f dB (saved last time)"
+    ),
+    "Microfono basso anche con +%.0f dB (voce a %.0f dBFS): alza il livello del microfono nelle "
+    "impostazioni audio di Windows o avvicinati": (
+        "Microphone still too quiet with +%.0f dB (voice at %.0f dBFS): raise the microphone "
+        "level in Windows sound settings or move closer"
+    ),
+    "File del livello microfono illeggibile: riparto da zero": (
+        "Microphone level file unreadable: starting from zero"
+    ),
+    "Impossibile salvare il livello del microfono: %s": "Could not save the microphone level: %s",
+    "Uscita audio: %s": "Audio output: %s",
+    "Uscita predefinita di Windows cambiata in %s, che non c'era all'avvio: riavvia CLAUDIO per "
+    "usarla": (
+        "Windows default output changed to %s, which was not there at start-up: restart CLAUDIO "
+        "to use it"
+    ),
+    "Uscita predefinita di Windows cambiata: %s": "Windows default output changed: %s",
+    "Uscita %s non apribile (%s): uso quella di base": (
+        "Output %s cannot be opened (%s): using the default"
+    ),
+    "Uscita audio non disponibile (%s): riapro il dispositivo": (
+        "Audio output not available (%s): reopening the device"
+    ),
+    "Modello Silero VAD mancante: {path}": "Silero VAD model missing: {path}",
+    # checks
+    "{count} comandi in {file} ({languages})": "{count} commands in {file} ({languages})",
+    "comandi: {error}": "commands: {error}",
+    "modello {path}": "model {path}",
+    "wake word {name} (soglia {threshold})": "wake word {name} (threshold {threshold})",
+    "GPU CUDA: {count} (tipi: {types})": "CUDA GPU: {count} (types: {types})",
+    "microfono": "microphone",
+    "uscita audio": "audio output",
+    " (segue l'uscita predefinita di Windows)": " (follows the Windows default output)",
+    "Qualcosa manca: vedi le righe ERR. Modelli: uv run python scripts/download_models.py": (
+        "Something is missing: see the ERR lines. Models: uv run python scripts/download_models.py"
+    ),
+    "WARN voce %s (%s) mancante: risponderò con quella principale. Scaricala con: "
+    "uv run python scripts/download_models.py --skip-whisper": (
+        "WARN voice %s (%s) missing: I will answer with the main one. Download it with: "
+        "uv run python scripts/download_models.py --skip-whisper"
+    ),
+    "WARN voce Kokoro %s (%s) sconosciuta: risponderò con quella principale": (
+        "WARN Kokoro voice %s (%s) unknown: I will answer with the main one"
+    ),
+    "WARN nessuna GPU CUDA: lo STT userà la CPU (%s)": (
+        "WARN no CUDA GPU: STT will use the CPU (%s)"
+    ),
+    "WARN controllo GPU fallito: %s": "WARN GPU check failed: %s",
+    # config
+    "File di configurazione non trovato: {path}": "Configuration file not found: {path}",
+    "{path}: TOML non valido ({error})": "{path}: invalid TOML ({error})",
+    "{path}: valori non validi -> {problems}": "{path}: invalid values -> {problems}",
+    # metrics
+    "Latenza M1=%s ms M2=%s ms (STT %s ms, TTS prima frase %s ms)": (
+        "Latency M1=%s ms M2=%s ms (STT %s ms, TTS first sentence %s ms)"
+    ),
+    "Metriche: %s": "Metrics: %s",
+    # router
+    "Azione eseguita: %s": "Action done: %s",
+    "Azione sconosciuta '{action}' nel comando '{command}'": (
+        "Unknown action '{action}' in command '{command}'"
+    ),
+    "{path}: comando duplicato '{command}'": "{path}: duplicate command '{command}'",
+    "{path}: il comando '{command}' non ha frasi": "{path}: command '{command}' has no phrases",
+    "Frase '{phrase}' ambigua: {first} e {second}": (
+        "Ambiguous phrase '{phrase}': {first} and {second}"
+    ),
+    "In pausa, ignoro: %r": "Paused, ignoring: %r",
+    "Richiesta non riconosciuta: %r": "Request not recognised: %r",
+    "Errore eseguendo %s": "Error running %s",
+    # stt
+    "STT riscaldato in %.0f ms": "STT warmed up in %.0f ms",
+    "Lingua: %s (%.2f)": "Language: %s (%.2f)",
+    "Trascrizione scartata (allucinazione nota): %r": (
+        "Transcript dropped (known hallucination): %r"
+    ),
+    "Trascrizione scartata (ripetizione): %r": "Transcript dropped (repetition): %r",
+    "nessuna GPU CUDA trovata": "no CUDA GPU found",
+    "GPU non utilizzabile (%s): passo alla CPU con '%s' %s": (
+        "GPU not usable (%s): switching to the CPU with '%s' %s"
+    ),
+    # system
+    "Sistema: %s": "System: %s",
+    "Comando di sistema sconosciuto '{command}'": "Unknown system command '{command}'",
+    # tts
+    "Effetto voce '{name}' sconosciuto (disponibili: {known})": (
+        "Unknown voice effect '{name}' (available: {known})"
+    ),
+    "Kokoro: mancano {files} in {folder}. Esegui: uv run python scripts/download_models.py": (
+        "Kokoro: {files} missing in {folder}. Run: uv run python scripts/download_models.py"
+    ),
+    "Frase troppo lunga per Kokoro (%d fonemi): la taglio": (
+        "Sentence too long for Kokoro (%d phonemes): cutting it"
+    ),
+    "Voce Kokoro '{voice}' sconosciuta (disponibili: {known})": (
+        "Unknown Kokoro voice '{voice}' (available: {known})"
+    ),
+    "Voce Piper '{voice}' mancante in {folder}. Esegui: uv run python scripts/download_models.py": (
+        "Piper voice '{voice}' missing in {folder}. Run: uv run python scripts/download_models.py"
+    ),
+    "TTS (%s): %s": "TTS (%s): %s",
+    # wake word
+    "Modello wake word '{model}' non trovato in {folder}. Se lo hai addestrato tu, "
+    "copialo lì (scripts/wakeword/README.md); altrimenti esegui: "
+    "uv run python scripts/download_models.py": (
+        "Wake word model '{model}' not found in {folder}. If you trained it yourself, "
+        "copy it there (scripts/wakeword/README.md); otherwise run: "
+        "uv run python scripts/download_models.py"
+    ),
+    "Modello {name} mancante in {folder}": "Model {name} missing in {folder}",
+    "Wake word: %s": "Wake word: %s",
+    "Wake word sotto soglia: %s %.2f (soglia %.2f)": (
+        "Wake word below threshold: %s %.2f (threshold %.2f)"
+    ),
+}
+
+
+def set_language(code: str) -> None:
+    global _current
+    if code not in LANGUAGES:
+        raise ValueError(f"language must be one of {', '.join(LANGUAGES)}, not '{code}'")
+    _current = code
+
+
+def current() -> str:
+    return _current
+
+
+def tr(text: str, **values: Any) -> str:
+    """`text` in the program's language, with {names} filled in from `values`."""
+    if _current == "en":
+        text = EN.get(text, text)
+    return text.format(**values) if values else text
+
+
+class TranslateFilter(logging.Filter):
+    """Translates every log message on its way to a handler (the %-arguments stay as they are)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _current != "it" and isinstance(record.msg, str):
+            record.msg = EN.get(record.msg, record.msg)
+        return True

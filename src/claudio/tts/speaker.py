@@ -1,10 +1,11 @@
-"""Piper TTS: synthesises the next sentence while the current one plays."""
+"""Piper TTS: synthesises the next sentence while the current one plays, each language
+with its own voice."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,8 @@ import numpy as np
 
 from claudio.audio.earcons import make_earcons
 from claudio.audio.player import AudioPlayer
-from claudio.config import TtsSettings
+from claudio.config import DEFAULT_LANGUAGE, TtsSettings
+from claudio.i18n import tr
 from claudio.tts.sentence_splitter import split_stream
 
 log = logging.getLogger(__name__)
@@ -22,8 +24,12 @@ def voice_path(piper_dir: Path, voice: str) -> Path:
     path = piper_dir / f"{voice}.onnx"
     if not path.is_file() or not path.with_suffix(".onnx.json").is_file():
         raise FileNotFoundError(
-            f"Voce Piper '{voice}' mancante in {piper_dir}. "
-            "Esegui: uv run python scripts/download_models.py"
+            tr(
+                "Voce Piper '{voice}' mancante in {folder}. Esegui: "
+                "uv run python scripts/download_models.py",
+                voice=voice,
+                folder=piper_dir,
+            )
         )
     return path
 
@@ -49,6 +55,7 @@ class PiperSynth:
 
 class StreamingSpeaker:
     """Works with any synth exposing synthesize(text) -> int16 array and sample_rate.
+    `voices` are the other languages' synths (a language without one uses `synth`);
     `effect` (int16 audio, sample rate) -> int16 audio colours every sentence."""
 
     def __init__(
@@ -57,44 +64,58 @@ class StreamingSpeaker:
         player: AudioPlayer,
         beep_volume: float = 0.25,
         effect: Callable[[np.ndarray, int], np.ndarray] | None = None,
+        voices: Mapping[str, Any] | None = None,
     ) -> None:
         self.synth = synth
+        self.voices = dict(voices or {})
         self.player = player
         self.effect = effect
         self._earcons = make_earcons(player.sample_rate, beep_volume)
 
-    def render(self, sentence: str) -> np.ndarray:
-        audio = self.synth.synthesize(sentence)
-        return self.effect(audio, self.synth.sample_rate) if self.effect else audio
+    def voice(self, language: str) -> Any:
+        return self.voices.get(language, self.synth)
+
+    def render(self, sentence: str, language: str = DEFAULT_LANGUAGE) -> tuple[np.ndarray, int]:
+        synth = self.voice(language)
+        audio = synth.synthesize(sentence)
+        rate = int(synth.sample_rate)
+        return (self.effect(audio, rate) if self.effect else audio), rate
 
     def warm_up(self) -> None:
         self.render("Ciao.")
+        for language in self.voices:
+            self.render("Hi.", language)
 
     async def beep(self, kind: str = "wake") -> None:
         await asyncio.to_thread(self.player.write, self._earcons[kind])
 
     async def speak(
-        self, text_stream: AsyncIterator[str], on_first_audio: Callable[[], None] | None = None
+        self,
+        text_stream: AsyncIterator[str],
+        on_first_audio: Callable[[], None] | None = None,
+        language: str | Callable[[], str] = DEFAULT_LANGUAGE,
     ) -> None:
-        queue: asyncio.Queue[np.ndarray | None] = asyncio.Queue(maxsize=2)
+        """`language` may be a callable, read at every sentence: the responder only knows the
+        language of its reply once it has matched the request."""
+        queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=2)
 
         async def produce() -> None:
             try:
                 async for sentence in split_stream(text_stream):
-                    log.debug("TTS: %s", sentence)
-                    audio = await asyncio.to_thread(self.render, sentence)
-                    await queue.put(audio)
+                    lang = language() if callable(language) else language
+                    log.debug("TTS (%s): %s", lang, sentence)
+                    await queue.put(await asyncio.to_thread(self.render, sentence, lang))
             finally:
                 await queue.put(None)
 
         producer = asyncio.create_task(produce())
         first = True
         try:
-            while (audio := await queue.get()) is not None:
+            while (item := await queue.get()) is not None:
                 if first and on_first_audio is not None:
                     on_first_audio()
                 first = False
-                await asyncio.to_thread(self.player.write, audio, self.synth.sample_rate)
+                await asyncio.to_thread(self.player.write, *item)
         finally:
             if not producer.done():
                 producer.cancel()

@@ -60,6 +60,16 @@ def test_no_near_miss_for_noise_or_a_detection() -> None:
     assert feed_scores(tracker, [0.2, 0.6, 0.3, 0.0]) == []  # it fired
 
 
+def test_near_miss_floor_is_configurable() -> None:
+    from claudio.config import WakeWordSettings
+
+    settings = WakeWordSettings()
+    assert settings.near_miss_floor == 0.15 and settings.second_chance
+    tracker = NearMissTracker(THRESHOLDS, floor=0.3)
+    assert feed_scores(tracker, [0.1, 0.25, 0.1, 0.0]) == []
+    assert feed_scores(NearMissTracker(THRESHOLDS, floor=0.2), [0.1, 0.25, 0.1, 0.0]) != []
+
+
 def test_near_miss_reset_drops_a_pending_burst() -> None:
     tracker = NearMissTracker(THRESHOLDS)
     feed_scores(tracker, [0.3])

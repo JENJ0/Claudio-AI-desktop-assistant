@@ -1,80 +1,138 @@
 # Local commands recognised without any LLM (zero cost).
 # Each command: phrases (examples, matched exactly and fuzzily after
-# normalisation), action, optional params and the spoken reply.
+# normalisation; exact = true turns the fuzzy match off), action, optional params and the
+# spoken reply. `phrases` and `reply` are Italian; `phrases_en` and `reply_en` the same in
+# English (any two-letter language works the same way). CLAUDIO answers in the language of
+# the phrase it recognised; a missing reply_xx falls back to the Italian one (reply and
+# voice). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
-# Actions: open_app, open_folder, media_key, tell_time, tell_date.
+# Actions: open_app, open_folder, media_key, tell_time, tell_date, system.
 
 [[command]]
 id = "open_chrome"
 phrases = ["apri chrome", "apri google chrome", "apri il browser", "avvia chrome", "lancia chrome", "apri internet"]
+phrases_en = ["open chrome", "open google chrome", "open the browser", "start chrome", "launch chrome", "open the internet"]
 action = "open_app"
 params = { app = "chrome" }
 reply = "Apro Chrome."
+reply_en = "Opening Chrome."
 
 [[command]]
 id = "open_downloads"
 phrases = ["apri la cartella download", "apri download", "apri i download", "apri la cartella dei download", "mostra i download", "vai su download"]
+phrases_en = ["open downloads", "open the downloads folder", "open my downloads", "show my downloads", "go to downloads"]
 action = "open_folder"
 params = { folder = "downloads" }
 reply = "Apro la cartella Download."
+reply_en = "Opening Downloads."
 
 [[command]]
 id = "open_documents"
 phrases = ["apri documenti", "apri la cartella documenti", "apri i documenti", "mostra i documenti", "vai su documenti"]
+phrases_en = ["open documents", "open the documents folder", "open my documents", "show my documents", "go to documents"]
 action = "open_folder"
 params = { folder = "documents" }
 reply = "Apro Documenti."
+reply_en = "Opening Documents."
 
 [[command]]
 id = "open_explorer"
 phrases = ["apri esplora file", "apri esplora risorse", "apri il file explorer", "apri gestione file", "apri le cartelle"]
+phrases_en = ["open file explorer", "open explorer", "open windows explorer", "open the file manager", "open my files"]
 action = "open_folder"
 params = { folder = "explorer" }
 reply = "Apro Esplora file."
+reply_en = "Opening File Explorer."
 
 [[command]]
 id = "open_notepad"
 phrases = ["apri il blocco note", "apri blocco note", "apri notepad", "avvia il blocco note", "apri il blocco notes"]
+phrases_en = ["open notepad", "open the notepad", "start notepad", "launch notepad"]
 action = "open_app"
 params = { app = "notepad" }
 reply = "Apro il Blocco note."
+reply_en = "Opening Notepad."
 
 [[command]]
 id = "open_calculator"
 phrases = ["apri la calcolatrice", "apri calcolatrice", "avvia la calcolatrice", "lancia la calcolatrice", "calcolatrice"]
+phrases_en = ["open the calculator", "open calculator", "start the calculator", "launch the calculator", "calculator"]
 action = "open_app"
 params = { app = "calculator" }
 reply = "Apro la calcolatrice."
+reply_en = "Opening the calculator."
 
 [[command]]
 id = "volume_up"
 phrases = ["alza il volume", "volume su", "aumenta il volume", "alza l audio", "piu volume", "alza"]
+phrases_en = ["turn up the volume", "turn the volume up", "volume up", "increase the volume", "raise the volume", "louder", "turn the volume on", "turn on the volume", "volume on"]
 action = "media_key"
 params = { key = "volume_up", steps = 5 }
 reply = "Volume alzato."
+reply_en = "Volume up."
 
 [[command]]
 id = "volume_down"
 phrases = ["abbassa il volume", "volume giu", "diminuisci il volume", "abbassa l audio", "meno volume", "abbassa"]
+phrases_en = ["turn down the volume", "turn the volume down", "volume down", "decrease the volume", "lower the volume", "quieter"]
 action = "media_key"
 params = { key = "volume_down", steps = 5 }
 reply = "Volume abbassato."
+reply_en = "Volume down."
 
 [[command]]
 id = "mute"
 phrases = ["togli l audio", "muto", "silenzia", "disattiva l audio", "metti in muto", "togli il volume", "riattiva l audio"]
+phrases_en = ["mute", "unmute", "mute the sound", "mute the audio", "turn off the sound", "turn the sound back on", "turn off the volume", "turn the volume off"]
 action = "media_key"
 params = { key = "mute", steps = 1 }
 reply = ""
+reply_en = ""
 
 [[command]]
 id = "tell_time"
 phrases = ["che ore sono", "che ora e", "dimmi l ora", "mi dici l ora", "sai che ore sono"]
+phrases_en = ["what time is it", "what's the time", "tell me the time", "do you know what time it is", "what time is it now"]
+keywords_en = ["time"]  # "what's the tide" is close to "what's the time"
 action = "tell_time"
 reply = ""
+reply_en = ""
 
 [[command]]
 id = "tell_date"
 phrases = ["che giorno e oggi", "che giorno e", "quanti ne abbiamo oggi", "dimmi la data", "che data e oggi"]
+phrases_en = ["what day is it today", "what day is it", "what's the date", "what's the date today", "tell me the date", "what's today's date"]
+keywords_en = ["date", "day"]  # "what's the weather today" is close to "what's the date today"
 action = "tell_date"
 reply = ""
+reply_en = ""
+
+# System commands: also heard while paused (then they are the only ones answered).
+# "already" is said when there is nothing to change (pausing while already paused).
+[[command]]
+id = "pause"
+phrases = ["vai in pausa", "mettiti in pausa", "fai una pausa", "vai a dormire", "dormi", "vai a nanna"]
+phrases_en = ["go to sleep", "pause", "take a break", "sleep"]
+action = "system"
+params = { do = "pause", already = "Sono già in pausa.", already_en = "I'm already paused." }
+reply = "Vado in pausa. Per riattivarmi chiamami e di' svegliati."
+reply_en = "Pausing. To wake me up, call me and say wake up."
+
+[[command]]
+id = "resume"
+phrases = ["svegliati", "sveglia", "torna attivo", "riattivati", "esci dalla pausa", "sei sveglio"]
+phrases_en = ["wake up", "resume", "unpause", "are you awake", "come back"]
+action = "system"
+params = { do = "resume", already = "Sono già sveglio.", already_en = "I'm already awake." }
+reply = "Eccomi."
+reply_en = "I'm here."
+
+[[command]]
+id = "shutdown"
+phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegnerti"]
+phrases_en = ["shut down", "shut yourself down", "turn yourself off", "switch yourself off"]
+action = "system"
+exact = true  # no fuzzy match: "spegni la luce" or "shut down the PC" must not close CLAUDIO
+params = { do = "shutdown" }
+reply = "A presto."
+reply_en = "See you soon."

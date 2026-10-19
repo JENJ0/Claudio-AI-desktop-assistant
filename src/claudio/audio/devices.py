@@ -8,6 +8,8 @@ import sys
 import threading
 from typing import Any
 
+from claudio.i18n import tr
+
 log = logging.getLogger(__name__)
 
 PREFERRED_HOST_API = "WASAPI"  # lowest latency on Windows; same name also appears under MME/DS
@@ -133,8 +135,12 @@ def resolve_device(
     ]
     if not matches:
         raise ValueError(
-            f"Nessun dispositivo di {kind} contiene '{spec}'. "
-            "Elencali con: uv run python scripts/list_audio_devices.py"
+            tr(
+                "Nessun dispositivo di {kind} contiene '{spec}'. Elencali con: "
+                "uv run python scripts/list_audio_devices.py",
+                kind=kind,
+                spec=spec,
+            )
         )
     for index in matches:
         if PREFERRED_HOST_API in str(hostapis[devices[index]["hostapi"]]["name"]):

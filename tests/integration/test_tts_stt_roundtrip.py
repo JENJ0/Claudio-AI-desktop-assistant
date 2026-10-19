@@ -111,7 +111,7 @@ def test_roundtrip_speech_to_command(synth: Any) -> None:
         hits += ok
         if not ok:  # diagnose: VAD cut, prompt bias, or the audio itself?
             raw = stt.transcribe(speech.astype(np.float32) / 32768)
-            stt.settings = stt_settings.model_copy(update={"initial_prompt": ""})
+            stt.settings = stt_settings.model_copy(update={"initial_prompt": "", "prompts": {}})
             bare = stt.transcribe(utterance)
             stt.settings = stt_settings
             print(
@@ -119,6 +119,46 @@ def test_roundtrip_speech_to_command(synth: Any) -> None:
                 f" raw {raw!r}, no prompt {bare!r}"
             )
     assert hits >= len(PHRASES) - 1  # `small` may miss one; large-v3-turbo should get all
+    if len(stt.settings.languages) > 1:
+        assert stt.language == "it"
+        assert stt._reused >= len(PHRASES)  # language detection cost no second encoder pass
     assert not stt.transcribe(np.zeros(16000 * 2, dtype=np.float32))  # silence -> nothing
     hiss = np.random.default_rng(0).standard_normal(16000 * 2).astype(np.float32) * 0.003
     print(f"hiss -> {stt.transcribe(hiss)!r}")  # informative: v0.1.1 tunes no_speech filters
+
+
+EN_PHRASES = [
+    ("Open the calculator.", "open_calculator"),
+    ("What time is it?", "tell_time"),
+    ("Turn up the volume.", "volume_up"),
+]
+
+
+@pytest.mark.skipif(whisper_model() is None, reason="nessun modello Whisper scaricato")
+def test_roundtrip_english(synth: Any) -> None:
+    """An English request is heard as English and matched to an English phrase."""
+    from claudio.stt.transcriber import WhisperTranscriber
+
+    if "en" not in SETTINGS.stt.languages:
+        pytest.skip("inglese non configurato")
+    if hasattr(synth, "for_language"):
+        english = synth.for_language("en")
+    else:
+        path = MODELS / "piper" / f"{SETTINGS.tts.piper_voice_for('en')}.onnx"
+        if not path.is_file():
+            pytest.skip("voce Piper inglese non scaricata")
+        tts = NATURAL.model_copy(update={"noise_scale": 0.0, "noise_w_scale": 0.0})
+        english = PiperSynth(path, tts)
+    name = whisper_model()
+    assert name is not None
+    stt_settings = SETTINGS.stt.model_copy(update={"model": name, "fallback_model": name})
+    stt = WhisperTranscriber(stt_settings, WHISPER_DIR)
+    matcher = CommandMatcher(load_commands(SETTINGS.resolve(SETTINGS.router.commands_file)))
+    hits = 0
+    for phrase, expected in EN_PHRASES:
+        speech = resample(english.synthesize(phrase), english.sample_rate, 16000)
+        text = stt.transcribe(speech.astype(np.float32) / 32768)
+        match = matcher.match(text, stt.language)
+        print(f"{phrase!r} -> {stt.language} ({stt.language_confidence:.2f}) {text!r}")
+        hits += bool(match and match.command.id == expected and match.language == "en")
+    assert hits >= len(EN_PHRASES) - 1
