@@ -6,7 +6,7 @@
 # the phrase it recognised; a missing reply_xx falls back to the Italian one (reply and
 # voice). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
-# Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, system.
+# Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system.
 
 [[command]]
 id = "open_chrome"
@@ -116,6 +116,20 @@ keywords_en = ["spend", "spent", "spending"]
 action = "tell_spend"
 reply = ""
 reply_en = ""
+
+# Safety levels (level = 1 | 2 | 3, default 1). Level 2: CLAUDIO asks `confirm` and a yes runs
+# the action; level 3: `confirm` is the summary of what will happen and only "confermo" /
+# "I confirm" runs it. Anything else cancels. Used here as the test of the mechanism.
+[[command]]
+id = "close_window"
+phrases = ["chiudi la finestra", "chiudi finestra", "chiudi questa finestra", "chiudi la finestra attiva"]
+phrases_en = ["close the window", "close window", "close this window", "close the active window"]
+action = "close_window"
+level = 2
+confirm = "Chiudo la finestra in primo piano. Confermi?"
+confirm_en = "I'll close the window in front. Do you confirm?"
+reply = "Fatto."
+reply_en = "Done."
 
 # System commands: also heard while paused (then they are the only ones answered).
 # "already" is said when there is nothing to change (pausing while already paused).

@@ -13,6 +13,7 @@ class Recorder:
         self.ran: list[list[str]] = []
         self.opened: list[str] = []
         self.keys: list[int] = []
+        self.combos: list[tuple[int, ...]] = []
         self.folder = folder
 
     def ctx(self) -> ActionContext:
@@ -20,6 +21,7 @@ class Recorder:
             run=self.ran.append,
             open_path=self.opened.append,
             press_key=self.keys.append,
+            press_combo=self.combos.append,
             now=lambda: datetime(2026, 10, 18, 14, 5),
             folder_lookup=lambda _id: self.folder,
             home=Path("/home/jenjo"),

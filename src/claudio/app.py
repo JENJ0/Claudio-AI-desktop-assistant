@@ -182,6 +182,7 @@ class Assistant:
         elif event is EndpointEvent.TIMEOUT:
             log.info("Nessuna richiesta dopo la wake word: torno in attesa")
             self._beep("cancel")
+            self._cancel_pending()
             self._finish(outcome="timeout")
         elif event is EndpointEvent.END:
             now = self.clock()
@@ -196,6 +197,7 @@ class Assistant:
         inter = self._interaction
         assert inter is not None
         outcome = "ok"
+        follow_up = False
         try:
             async with self._stt_lock:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
@@ -221,6 +223,8 @@ class Assistant:
             if getattr(self.responder, "last_route", {}).get("route") == "paused":
                 outcome = "paused"  # only "svegliati" and "spegniti" are answered
                 await self.speaker.beep("cancel")
+            # A confirmation question ("Confermi?"): the answer comes without the wake word.
+            follow_up = bool(getattr(self.responder, "awaiting", False))
         except Exception:
             outcome = "error"
             log.exception("Errore durante la richiesta")
@@ -233,7 +237,28 @@ class Assistant:
                 route = getattr(self.responder, "last_route", None)
                 if route:
                     inter.info.update(route)
+                if not follow_up:
+                    self._cancel_pending()  # an error or silence never leaves an action armed
                 self._finish(outcome)
+                if follow_up:
+                    self._listen_for_answer()
+
+    def _cancel_pending(self) -> None:
+        cancel = getattr(self.responder, "cancel_pending", None)
+        if cancel is not None:
+            cancel()
+
+    def _listen_for_answer(self) -> None:
+        """Listen again at once, no wake word needed: the answer to the question just asked."""
+        self._interaction = Interaction(
+            clock=self.clock, info={"wake_word": "follow_up", "wake_score": 0.0}
+        )
+        self._interaction.mark("wake")
+        self._beep("wake")
+        self._prewake = np.zeros(0, dtype=np.float32)
+        self._recent.clear()
+        self.endpointer.reset()
+        self._set_state(State.LISTENING)
 
     def _relisten(self, inter: Interaction) -> None:
         """The phrase was only the wake word (said again, or its tail after an early detection):

@@ -133,6 +133,9 @@ EN: dict[str, str] = {
     "Azione sconosciuta '{action}' nel comando '{command}'": (
         "Unknown action '{action}' in command '{command}'"
     ),
+    "{path}: il comando '{command}' ha un livello non valido ({level})": (
+        "{path}: command '{command}' has an invalid level ({level})"
+    ),
     "{path}: comando duplicato '{command}'": "{path}: duplicate command '{command}'",
     "{path}: il comando '{command}' non ha frasi": "{path}: command '{command}' has no phrases",
     "Frase '{phrase}' ambigua: {first} e {second}": (
@@ -155,6 +158,16 @@ EN: dict[str, str] = {
     # system
     "Sistema: %s": "System: %s",
     "Comando di sistema sconosciuto '{command}'": "Unknown system command '{command}'",
+    # safety
+    "Conferma richiesta (livello %d): %s": "Confirmation asked (level %d): %s",
+    "Conferma data (livello %d): eseguo %s": "Confirmation given (level %d): running %s",
+    "Conferma rifiutata (livello %d): %s non eseguito": (
+        "Confirmation refused (level %d): %s not run"
+    ),
+    "Conferma non chiara (livello %d): %s non eseguito": (
+        "Confirmation unclear (level %d): %s not run"
+    ),
+    "Conferma scaduta: %s non eseguito": "Confirmation expired: %s not run",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"

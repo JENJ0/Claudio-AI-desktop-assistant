@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 # Windows virtual-key codes for the media keys.
 MEDIA_KEYS = {"volume_up": 0xAF, "volume_down": 0xAE, "mute": 0xAD}
+VK_MENU, VK_F4 = 0x12, 0x73  # Alt, F4: closes the window in front
 APPS: dict[str, list[str]] = {
     # "start" resolves Chrome through its App Paths registration.
     "chrome": ["cmd", "/c", "start", "", "chrome"],
@@ -99,11 +100,23 @@ def _press_key(vk: int) -> None:
     user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
 
 
+def _press_combo(vks: tuple[int, ...]) -> None:
+    """Hold the keys down in order, release them in reverse (Alt+F4)."""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    for vk in vks:
+        user32.keybd_event(vk, 0, 0, 0)
+    for vk in reversed(vks):
+        user32.keybd_event(vk, 0, 2, 0)
+
+
 @dataclass
 class ActionContext:
     run: Callable[[list[str]], None] = _run
     open_path: Callable[[str], None] = _open_path
     press_key: Callable[[int], None] = _press_key
+    press_combo: Callable[[tuple[int, ...]], None] = _press_combo
     now: Callable[[], datetime] = datetime.now
     folder_lookup: Callable[[str], Path | None] = known_folder
     home: Path = field(default_factory=Path.home)
@@ -188,6 +201,7 @@ class ActionRunner:
             "tell_date": lambda m, lang: say_date(self.ctx.now(), lang),
             "system": self._system,
             "tell_spend": self._tell_spend,
+            "close_window": self._close_window,
         }
 
     def execute(self, match: Match, language: str = DEFAULT_LANGUAGE) -> str:
@@ -234,6 +248,10 @@ class ActionRunner:
         while already paused)."""
         changed = self.system.apply(match.command.params["do"])
         return None if changed else str(match.command.param_in("already", language) or "")
+
+    def _close_window(self, match: Match, language: str) -> None:
+        """Level 2: the responder has already asked and heard a yes."""
+        self.ctx.press_combo((VK_MENU, VK_F4))
 
     def _tell_spend(self, match: Match, language: str) -> str:
         if self.tracker is None:
