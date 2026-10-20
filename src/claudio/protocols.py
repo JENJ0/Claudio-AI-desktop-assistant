@@ -35,8 +35,9 @@ class SpeechProbability(Protocol):
 class Transcriber(Protocol):
     language: str  # of the last transcription
 
-    def transcribe(self, audio: np.ndarray) -> str:
-        """Transcribe 16 kHz float32 mono audio; returns "" when nothing was said."""
+    def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
+        """Transcribe 16 kHz float32 mono audio; returns "" when nothing was said.
+        `language`: skip the detection and use that one."""
         ...
 
 

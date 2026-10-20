@@ -34,6 +34,10 @@ EN: dict[str, str] = {
     "Solo la wake word: ascolto la richiesta": "Only the wake word: listening for the request",
     "Stato: %s -> %s": "State: %s -> %s",
     "Trascritto (%s): %r": "Transcribed (%s): %r",
+    "Wake word non confermata da Whisper, ignoro: %r": (
+        "Wake word not confirmed by Whisper, ignoring: %r"
+    ),
+    "Lista chiusa: %r -> %r": "Closed list: %r -> %r",
     "Microfono basso: la voce arriva al massimo a %.0f dBFS (meglio tra -20 e -10). Aumenta il "
     "guadagno, per esempio CLAUDIO_AUDIO__INPUT_GAIN_DB=12 in .env": (
         "Microphone too quiet: the voice peaks at %.0f dBFS (best between -20 and -10). Raise "
@@ -62,6 +66,10 @@ EN: dict[str, str] = {
     "Microfono non disponibile (%s): riprovo tra 1 s": (
         "Microphone not available (%s): retrying in 1 s"
     ),
+    "Microfono ancora non disponibile da %.0f s (%s): ricollegalo": (
+        "Microphone still not available after %.0f s (%s): plug it back in"
+    ),
+    "Microfono di nuovo disponibile dopo %.0f s": "Microphone available again after %.0f s",
     "Nessun dispositivo di {kind} contiene '{spec}'. Elencali con: "
     "uv run python scripts/list_audio_devices.py": (
         "No {kind} device contains '{spec}'. List them with: "
@@ -133,6 +141,9 @@ EN: dict[str, str] = {
     "Azione sconosciuta '{action}' nel comando '{command}'": (
         "Unknown action '{action}' in command '{command}'"
     ),
+    "{path}: il comando '{command}' ha un livello non valido ({level})": (
+        "{path}: command '{command}' has an invalid level ({level})"
+    ),
     "{path}: comando duplicato '{command}'": "{path}: duplicate command '{command}'",
     "{path}: il comando '{command}' non ha frasi": "{path}: command '{command}' has no phrases",
     "Frase '{phrase}' ambigua: {first} e {second}": (
@@ -155,6 +166,37 @@ EN: dict[str, str] = {
     # system
     "Sistema: %s": "System: %s",
     "Comando di sistema sconosciuto '{command}'": "Unknown system command '{command}'",
+    "Riprovato in %s: %r -> %r": "Retried in %s: %r -> %r",
+    "Riprovato in %s, non capito neanche così: %r": "Retried in %s, still not understood: %r",
+    # safety
+    "Conferma richiesta (livello %d): %s": "Confirmation asked (level %d): %s",
+    "Conferma data (livello %d): eseguo %s": "Confirmation given (level %d): running %s",
+    "Conferma rifiutata (livello %d): %s non eseguito": (
+        "Confirmation refused (level %d): %s not run"
+    ),
+    "Conferma non chiara (livello %d): %s non eseguito": (
+        "Confirmation unclear (level %d): %s not run"
+    ),
+    "Conferma scaduta: %s non eseguito": "Confirmation expired: %s not run",
+    "Basta: fine della conversazione": "Stop: end of the conversation",
+    "Ripeto: %r": "Repeating: %r",
+    "Fine della conversazione: torno in attesa della wake word": (
+        "End of the conversation: waiting for the wake word again"
+    ),
+    "Non è una richiesta, fine della conversazione: %r": (
+        "Not a request, end of the conversation: %r"
+    ),
+    "Ascolto durante la risposta non riuscito": "Listening while speaking failed",
+    "Sentito mentre parlo: %r": "Heard while speaking: %r",
+    "Interrotto a voce: %r": "Interrupted by voice: %r",
+    "Risposta interrotta": "Reply interrupted",
+    # cost
+    "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
+        "No price for model '{model}' in config/pricing.toml"
+    ),
+    "File dei prezzi non trovato: {path}": "Prices file not found: {path}",
+    "Budget giornaliero: %d%% speso": "Daily budget: %d%% spent",
+    "Costo chiamata %s: %.5f %s": "Call cost %s: %.5f %s",
     # tts
     "Effetto voce '{name}' sconosciuto (disponibili: {known})": (
         "Unknown voice effect '{name}' (available: {known})"

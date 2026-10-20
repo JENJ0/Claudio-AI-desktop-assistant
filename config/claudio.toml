@@ -28,6 +28,7 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
 second_chance = true       # after one, Whisper listens to the last 1.5 s (~130 ms) and wakes CLAUDIO if it hears the name
+verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
 
 [[wakeword.models]]
 name = "hey_claudio"
@@ -52,13 +53,16 @@ fallback_compute_type = "int8"
 # A single language (languages = ["it"]) skips the detection.
 languages = ["it", "en"]
 language_confidence = 0.6
+other_confidence = 0.8         # English (not the first language) must be at least this sure
+retry_in_first_language = true # an English request no command understands is retried in Italian
+closed_list = true             # a request not understood: Whisper proposes 5 transcriptions, the first known command wins
 beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
 no_speech_threshold = 0.6
 cpu_threads = 4
 
 [stt.prompts]              # Whisper's prompt per language: names it would otherwise misspell
-it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi."
-en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it."
+it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi, metti in pausa la musica, canzone successiva, ripeti, basta."
+en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it, pause the music, next song, repeat, stop."
 
 [tts]
 engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback
@@ -78,6 +82,17 @@ commands_file = "config/commands.toml"
 fuzzy_threshold = 85
 unknown_reply = { it = "Questo non lo so ancora fare.", en = "I can't do that yet." }
 error_reply = { it = "Non ci sono riuscito.", en = "I couldn't do it." }
+
+[conversation]
+window_s = 6.0             # after a reply, listen this long without the wake word (0 = off)
+barge_in = true            # "basta" / "stop" while CLAUDIO speaks interrupts it (best with headphones)
+barge_in_max_s = 2.0       # speech heard while speaking is checked in slices this long
+
+[cost]
+pricing_file = "config/pricing.toml"  # prices per model and cache multipliers (never in the code)
+db_file = "data/spend.db"             # SQLite ledger of every Claude call (tokens, cache, cost)
+daily_budget = 1.0                    # USD per day: warning at warn_at, Claude blocked at 100 %
+warn_at = 0.8                         # local commands keep working when the budget is spent
 
 [logging]
 level = "INFO"

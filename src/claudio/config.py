@@ -72,6 +72,9 @@ class WakeWordSettings(BaseModel):
     # second_chance, Whisper listens to the last 1.5 s and wakes CLAUDIO if it hears the name.
     near_miss_floor: float = Field(0.15, gt=0, lt=1)
     second_chance: bool = True
+    # After a wake, keep the request only if Whisper heard the name at the start or it is a
+    # local command: "Hey, ciao, come stai?" wakes the model but ends in silence.
+    verify: bool = True
 
 
 class VadSettings(BaseModel):
@@ -96,6 +99,14 @@ class SttSettings(BaseModel):
     )
     language: str = ""  # one fixed language (overrides `languages`)
     language_confidence: float = Field(0.6, ge=0, le=1)  # below this: the last language spoken
+    # A language other than the first must be this sure (fast Italian often sounds English).
+    other_confidence: float = Field(0.8, ge=0, le=1)
+    # A request in another language that no command understands is transcribed again in the
+    # first one (~120 ms on the GPU, only then): "cue the calculator" -> "apri la calcolatrice".
+    retry_in_first_language: bool = True
+    # A request no command understands: Whisper proposes 5 transcriptions and the first known
+    # command wins (one more Whisper pass, only on requests not understood).
+    closed_list: bool = True
     beam_size: int = Field(1, ge=1)
     initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
@@ -184,6 +195,21 @@ class RouterSettings(BaseModel):
         return _json_or(value, lambda text: {**ERROR_REPLY, DEFAULT_LANGUAGE: text})
 
 
+class ConversationSettings(BaseModel):
+    # After a reply CLAUDIO keeps listening this long without the wake word (0 = off).
+    window_s: float = Field(6.0, ge=0, le=30)
+    # Listen while speaking: "basta" / "stop" cuts the reply short (best with headphones).
+    barge_in: bool = True
+    barge_in_max_s: float = Field(2.0, gt=0, le=8)  # longer speech is checked in slices this long
+
+
+class CostSettings(BaseModel):
+    pricing_file: Path = Path("config/pricing.toml")  # prices and cache multipliers
+    db_file: Path = Path("data/spend.db")  # the ledger: one row per Claude call
+    daily_budget: float = Field(1.0, gt=0)  # in the currency of the prices file (USD)
+    warn_at: float = Field(0.8, gt=0, lt=1)  # share of the budget that is announced aloud
+
+
 class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
@@ -211,6 +237,8 @@ class Settings(BaseSettings):
     stt: SttSettings = SttSettings()
     tts: TtsSettings = TtsSettings()
     router: RouterSettings = RouterSettings()
+    conversation: ConversationSettings = ConversationSettings()
+    cost: CostSettings = CostSettings()
     logging: LoggingSettings = LoggingSettings()
 
     @classmethod

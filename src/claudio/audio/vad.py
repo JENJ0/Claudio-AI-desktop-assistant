@@ -70,10 +70,12 @@ class Endpointer:
         self._preroll = RingBuffer(sample_rate * settings.pre_roll_ms // 1000)
         self.reset()
 
-    def reset(self, lead_in: np.ndarray | None = None) -> None:
+    def reset(self, lead_in: np.ndarray | None = None, timeout_s: float | None = None) -> None:
         """Start a new phrase. `lead_in` (float32) is what was heard just before, wake word
         included: its last stretch of speech is kept in case the phrase was said in one breath
-        ("hey claudio che ore sono") and its first words came before the wake word fired."""
+        ("hey claudio che ore sono") and its first words came before the wake word fired.
+        `timeout_s` replaces no_speech_timeout_s for this phrase (the conversation window)."""
+        self._timeout_s = self.settings.no_speech_timeout_s if timeout_s is None else timeout_s
         self._lead_in = np.zeros(0, dtype=np.float32)
         if lead_in is not None:
             self._lead_in = self._speech_tail(lead_in)
@@ -136,7 +138,7 @@ class Endpointer:
                     self._chunks.insert(0, self._lead_in)
                 self._utterance_len = sum(len(c) for c in self._chunks)
                 return EndpointEvent.START
-            if self._elapsed >= s.no_speech_timeout_s * self.sample_rate:
+            if self._elapsed >= self._timeout_s * self.sample_rate:
                 self._finished = True
                 return EndpointEvent.TIMEOUT
             return EndpointEvent.NONE

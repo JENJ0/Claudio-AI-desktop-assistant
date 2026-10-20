@@ -1,5 +1,54 @@
 # Changelog
 
+## [Unreleased] - 0.1.2
+
+### Added
+- Spending counter, ready for Phase 2: prices and cache multipliers in `config/pricing.toml`
+  (Haiku 5.5, Sonnet 5.5, Opus 5.5; cache writes 1.25x at 5 min and 2x at 1 h, reads 0.1x or the
+  model's own price), a SQLite ledger in `data/spend.db` with one row per call (model, TTL,
+  input/output tokens, `cache_creation_input_tokens`, `cache_read_input_tokens` and their 5 min /
+  1 h split, cost), a daily budget (`[cost] daily_budget`, 1 USD) announced once a day at 80 %
+  and blocking Claude at 100 %. Local commands never count and keep working. Voice command
+  "quanto ho speso oggi" / "how much did I spend today". Tested with fake `usage` objects only.
+- Safety levels with spoken confirmation: `level = 2` in `commands.toml` asks the command's
+  `confirm` question and listens for the answer without the wake word; only a clear yes runs
+  the action, while a no, silence or anything unclear cancels it. `level = 3` accepts only an
+  explicit "confermo" / "I confirm". Every question and answer is logged. "chiudi la finestra"
+  (Alt+F4 on the window in front) is the level-2 test command.
+- Conversation window: after a reply CLAUDIO listens for 6 s more without the wake word
+  (`[conversation] window_s`, 0 = off). It closes on silence, on "basta", or on anything no
+  command understands (no "Questo non lo so fare" for the TV).
+- Barge-in: while speaking, a second Silero VAD and a quick Whisper pass listen for "basta" /
+  "stop" / "zitto" and cut the reply short (the audio is queued in 0.1 s slices). An
+  interrupted confirmation question cancels its action. `[conversation] barge_in`.
+- "ripeti" / "non ho capito" says the last reply again, in its language and voice.
+- Media keys: play/pause, next and previous track ("metti in pausa la musica", "canzone
+  successiva", "salta 3 canzoni", "canzone precedente").
+- Wake word verifier (`wakeword.verify`, on): a wake is kept only when Whisper heard the name
+  among the first words or the request is a local command; otherwise it ends in silence
+  (`outcome = false_wake`). Fixes "Hey, ciao, come stai?" (0.98) answering "non ho capito".
+- Closed list (`stt.closed_list`, on): a request no command understands gets one more Whisper
+  pass with 5 hypotheses, and the first that is a known command wins (`closed_list_from`,
+  `closed_list_ms` in `metrics.jsonl`).
+- `scripts/compare_stt.py`: the saved requests through Whisper turbo, large-v3, the closed list
+  and Parakeet TDT 0.6B v3 (onnx-asr, optional), with commands understood, median and p90 time,
+  and how many the wake verifier would drop.
+
+### Fixed (robustness)
+- An unplugged microphone logged a warning every second: now one warning, one every ~30 s while
+  it stays missing, and a line when audio flows again.
+
+### Fixed
+- A reply stopped before its end (an error in the audio output) could hang the speaker forever
+  while the next sentences were queued.
+
+### Changed
+- Fast Italian heard as English (live test of 19/10: "cue the calculator", "come with me"):
+  English must now be 80 % sure (`stt.other_confidence`), and a request heard as English that no
+  command understands is transcribed again in Italian (`stt.retry_in_first_language`, only then,
+  about 120 ms). The `metrics.jsonl` row keeps the first text (`retried_from`, `retry_ms`).
+- Version 0.1.2 (`claudio --check` printed 0.1.0 during v0.1.1).
+
 ## [Unreleased] - 0.1.1
 
 ### Added
