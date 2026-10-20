@@ -26,6 +26,12 @@
   go straight to Claude, ~150 ms sooner and without being turned into a similar command.
 - The wake word verifier still runs before Claude: a false wake never reaches the API.
 
+### Fixed
+- A question said after a pause ("Hey Claudio" ... beep ... "come ti chiami?") was dropped as
+  a false wake: its transcript has no name. Now, when the request is not a command, a quick
+  Whisper pass on the wake word audio (~100 ms) keeps the wake if the name is there
+  (`wake_check`, `wake_check_ms` in `metrics.jsonl`). "Hey, ciao, come stai?" is still dropped.
+
 ## 0.1.2
 
 ### Added

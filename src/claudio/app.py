@@ -107,6 +107,7 @@ class Assistant:
         self._stt_lock = asyncio.Lock()  # Whisper is used by one thing at a time
         self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S))
         self._prewake = np.zeros(0, dtype=np.float32)
+        self._wake_audio = np.zeros(0, dtype=np.float32)
         self._held: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
         self._warned_quiet = False
         self.state = State.IDLE
@@ -155,6 +156,7 @@ class Assistant:
         self._beep("wake")
         self._prewake = self._recent.get()
         self._recent.clear()
+        self._wake_audio = self._lead_in()  # the wake word itself, for the verifier
         if self.audio_sink is not None:
             sr = self.endpointer.sample_rate
             self._interaction.info["prewake_ms"] = round(len(self._prewake) * 1000 / sr)
@@ -259,7 +261,7 @@ class Assistant:
                 outcome = "empty"
                 await self.speaker.beep("cancel")
                 return
-            if self._false_wake(text, heard, inter):
+            if self._false_wake(text, heard, inter) and not await self._name_before(inter):
                 # Woke on something that only starts like the name: silence, nothing else.
                 outcome = "false_wake"
                 log.info("Wake word non confermata da Whisper, ignoro: %r", text)
@@ -319,6 +321,26 @@ class Assistant:
         if self.claude_min_words is None or _words(text) < self.claude_min_words:
             return False
         return addressed_to_claudio(text)
+
+    async def _name_before(self, inter: Interaction) -> bool:
+        """The request was said after a pause ("Hey Claudio" ... beep ... "come ti chiami?"):
+        its transcript has no name, so Whisper listens to the wake word itself (~100 ms, only
+        on requests that are not commands). "Hey, ciao" there is still a false wake."""
+        if self.second_chance is None or not self._wake_audio.size:
+            return False
+        start = self.clock()
+        try:
+            async with self._stt_lock:
+                text = await asyncio.to_thread(self.second_chance, self._wake_audio)
+        except Exception:
+            log.exception("Verifica della wake word non riuscita")
+            return False
+        inter.info["wake_check_ms"] = round((self.clock() - start) * 1000)
+        inter.info["wake_check"] = text
+        if heard_wake_word(text):
+            log.info("Nome sentito prima della richiesta: %r", text)
+            return True
+        return False
 
     def _false_wake(self, text: str, heard: str, inter: Interaction) -> bool:
         """Only a real wake word detection is judged: not the conversation window, not a
