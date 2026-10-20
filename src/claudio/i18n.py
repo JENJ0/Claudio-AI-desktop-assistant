@@ -34,6 +34,10 @@ EN: dict[str, str] = {
     "Solo la wake word: ascolto la richiesta": "Only the wake word: listening for the request",
     "Stato: %s -> %s": "State: %s -> %s",
     "Trascritto (%s): %r": "Transcribed (%s): %r",
+    "Wake word non confermata da Whisper, ignoro: %r": (
+        "Wake word not confirmed by Whisper, ignoring: %r"
+    ),
+    "Lista chiusa: %r -> %r": "Closed list: %r -> %r",
     "Microfono basso: la voce arriva al massimo a %.0f dBFS (meglio tra -20 e -10). Aumenta il "
     "guadagno, per esempio CLAUDIO_AUDIO__INPUT_GAIN_DB=12 in .env": (
         "Microphone too quiet: the voice peaks at %.0f dBFS (best between -20 and -10). Raise "

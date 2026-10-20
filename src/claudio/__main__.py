@@ -240,6 +240,12 @@ async def run_assistant(settings: Settings) -> None:
         ),
         conversation_s=settings.conversation.window_s,
         barge_in=build_barge_in(settings, transcriber) if settings.conversation.barge_in else None,
+        verify_wake=settings.wakeword.verify,
+        closed_list=(
+            (lambda audio, language: transcriber.candidates(audio, language=language))
+            if settings.stt.closed_list
+            else None
+        ),
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

@@ -72,6 +72,9 @@ class WakeWordSettings(BaseModel):
     # second_chance, Whisper listens to the last 1.5 s and wakes CLAUDIO if it hears the name.
     near_miss_floor: float = Field(0.15, gt=0, lt=1)
     second_chance: bool = True
+    # After a wake, keep the request only if Whisper heard the name at the start or it is a
+    # local command: "Hey, ciao, come stai?" wakes the model but ends in silence.
+    verify: bool = True
 
 
 class VadSettings(BaseModel):
@@ -101,6 +104,9 @@ class SttSettings(BaseModel):
     # A request in another language that no command understands is transcribed again in the
     # first one (~120 ms on the GPU, only then): "cue the calculator" -> "apri la calcolatrice".
     retry_in_first_language: bool = True
+    # A request no command understands: Whisper proposes 5 transcriptions and the first known
+    # command wins (one more Whisper pass, only on requests not understood).
+    closed_list: bool = True
     beam_size: int = Field(1, ge=1)
     initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language

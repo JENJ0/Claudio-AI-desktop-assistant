@@ -21,6 +21,7 @@ from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
 from claudio.router.normalizer import heard_wake_word, only_wake_words
 from claudio.system import SystemControl
+from claudio.wakeword.verifier import wake_confirmed
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ class Assistant:
         retry_language: str | None = None,
         conversation_s: float = 0.0,
         barge_in: BargeIn | None = None,
+        verify_wake: bool = False,
+        closed_list: Callable[[np.ndarray, str], list[str]] | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -85,6 +88,10 @@ class Assistant:
         # After a reply, listen this long for another request without the wake word (0: off).
         self.conversation_s = conversation_s
         self.barge_in = barge_in  # None: the microphone is ignored while speaking
+        # Drop a wake whose transcript has no name at the start and no command (verifier.py).
+        self.verify_wake = verify_wake
+        # (audio, language) -> Whisper's n-best: tried on a request no command understands.
+        self.closed_list = closed_list
         self._barge_checking = False
         self._interrupted = False  # the reply being spoken was cut short by "basta"
         self._checking = False
@@ -231,6 +238,7 @@ class Assistant:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
                 heard = self.transcriber.language
                 text, heard = await self._retry(audio, text, heard, inter)
+                text = await self._closed_list(audio, text, heard, inter)
             inter.mark("stt_done")
             inter.info["text"] = text
             inter.info["stt_language"] = heard
@@ -242,6 +250,11 @@ class Assistant:
             if not text or only_wake_words(text):
                 outcome = "empty"
                 await self.speaker.beep("cancel")
+                return
+            if self._false_wake(text, heard, inter):
+                # Woke on something that only starts like the name: silence, nothing else.
+                outcome = "false_wake"
+                log.info("Wake word non confermata da Whisper, ignoro: %r", text)
                 return
             if inter.info.get("wake_word") == "conversation" and not self._understood(text, heard):
                 # Heard without the wake word: the TV or someone else talking, not a request.
@@ -289,6 +302,45 @@ class Assistant:
     def _understood(self, text: str, language: str) -> bool:
         understands = getattr(self.responder, "understands", None)
         return understands is None or bool(understands(text, language))
+
+    def _false_wake(self, text: str, heard: str, inter: Interaction) -> bool:
+        """Only a real wake word detection is judged: not the conversation window, not a
+        yes/no answer, not a second chance (Whisper already heard the name) and not the
+        request after a lone wake word (the name was in the phrase before)."""
+        if (
+            not self.verify_wake
+            or inter.info.get("wake_word") == "conversation"
+            or getattr(self.responder, "awaiting", False)
+            or "second_chance" in inter.info
+            or "relisten" in inter.info
+        ):
+            return False
+        return not wake_confirmed(text, self._understood(text, heard))
+
+    async def _closed_list(
+        self, audio: np.ndarray, text: str, heard: str, inter: Interaction
+    ) -> str:
+        """The first of Whisper's n-best transcriptions that a command understands, when the
+        best one is not understood; `text` when none is (or there is nothing to fix)."""
+        understands = getattr(self.responder, "understands", None)
+        if (
+            self.closed_list is None
+            or understands is None
+            or not text
+            or only_wake_words(text)
+            or getattr(self.responder, "awaiting", False)
+            or understands(text, heard)
+        ):
+            return text
+        start = self.clock()
+        candidates = await asyncio.to_thread(self.closed_list, audio, heard)
+        inter.info["closed_list_ms"] = round((self.clock() - start) * 1000)
+        found = next((c for c in candidates if c != text and understands(c, heard)), None)
+        if found is None:
+            return text
+        log.info("Lista chiusa: %r -> %r", text, found)
+        inter.info["closed_list_from"] = text
+        return found
 
     def _keeps_conversation(self, outcome: str) -> bool:
         return (

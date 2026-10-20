@@ -28,6 +28,7 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
 second_chance = true       # after one, Whisper listens to the last 1.5 s (~130 ms) and wakes CLAUDIO if it hears the name
+verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
 
 [[wakeword.models]]
 name = "hey_claudio"
@@ -54,6 +55,7 @@ languages = ["it", "en"]
 language_confidence = 0.6
 other_confidence = 0.8         # English (not the first language) must be at least this sure
 retry_in_first_language = true # an English request no command understands is retried in Italian
+closed_list = true             # a request not understood: Whisper proposes 5 transcriptions, the first known command wins
 beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
 no_speech_threshold = 0.6
 cpu_threads = 4

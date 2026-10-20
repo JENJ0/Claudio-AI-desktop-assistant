@@ -24,6 +24,19 @@
 - "ripeti" / "non ho capito" says the last reply again, in its language and voice.
 - Media keys: play/pause, next and previous track ("metti in pausa la musica", "canzone
   successiva", "salta 3 canzoni", "canzone precedente").
+- Wake word verifier (`wakeword.verify`, on): a wake is kept only when Whisper heard the name
+  among the first words or the request is a local command; otherwise it ends in silence
+  (`outcome = false_wake`). Fixes "Hey, ciao, come stai?" (0.98) answering "non ho capito".
+- Closed list (`stt.closed_list`, on): a request no command understands gets one more Whisper
+  pass with 5 hypotheses, and the first that is a known command wins (`closed_list_from`,
+  `closed_list_ms` in `metrics.jsonl`).
+- `scripts/compare_stt.py`: the saved requests through Whisper turbo, large-v3, the closed list
+  and Parakeet TDT 0.6B v3 (onnx-asr, optional), with commands understood, median and p90 time,
+  and how many the wake verifier would drop.
+
+### Fixed (robustness)
+- An unplugged microphone logged a warning every second: now one warning, one every ~30 s while
+  it stays missing, and a line when audio flows again.
 
 ### Fixed
 - A reply stopped before its end (an error in the audio output) could hang the speaker forever

@@ -192,6 +192,21 @@ audio said before the beep reaches Whisper (by default all of it, wake word incl
 `--beam 1` Whisper tries one hypothesis instead of 5, and `--model large-v3` uses another model
 (download it first with `download_models.py --whisper large-v3`).
 
+`compare_stt.py` compares speech-to-text engines on the same saved requests and counts how many
+each one turns into a known command, with its median and p90 time:
+
+```powershell
+uv run python scripts/compare_stt.py                                   # turbo vs closed list
+uv run python scripts/compare_stt.py --engines turbo large-v3 lista parakeet --details
+```
+
+`lista` is the closed list CLAUDIO uses live (`stt.closed_list`): when no command understands
+the best transcription, Whisper proposes 5 and the first known command wins. `parakeet` needs
+`uv pip install onnx-asr` (NVIDIA Parakeet TDT 0.6B v3, downloaded on first use). The last line
+says how many requests the wake word verifier (`wakeword.verify`) would drop: a wake is kept
+only when Whisper heard the name at the start or the request is a local command, so "Hey, ciao,
+come stai?" ends in silence and, from v0.2.0, never costs a Claude call.
+
 ## Development
 
 ```powershell

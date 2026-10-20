@@ -196,6 +196,22 @@ prima del bip arriva a Whisper (di base tutto, wake word compresa); con `--beam 
 una sola ipotesi invece di 5, con `--model large-v3` un altro modello (va prima scaricato con
 `download_models.py --whisper large-v3`).
 
+`compare_stt.py` confronta i motori di trascrizione sulle stesse richieste salvate e conta quante
+ognuno ne trasforma in un comando conosciuto, con tempo mediano e p90:
+
+```powershell
+uv run python scripts/compare_stt.py                                   # turbo contro lista chiusa
+uv run python scripts/compare_stt.py --engines turbo large-v3 lista parakeet --details
+```
+
+`lista` è la lista chiusa che CLAUDIO usa dal vivo (`stt.closed_list`): se nessun comando capisce
+la trascrizione migliore, Whisper ne propone 5 e vince il primo comando conosciuto. `parakeet`
+richiede `uv pip install onnx-asr` (NVIDIA Parakeet TDT 0.6B v3, scaricato al primo uso).
+L'ultima riga dice quante richieste scarterebbe il verificatore della wake word
+(`wakeword.verify`): l'attivazione resta solo se Whisper ha sentito il nome all'inizio o la
+richiesta è un comando locale, così "Hey, ciao, come stai?" finisce nel silenzio e, da v0.2.0,
+non costa mai una chiamata a Claude.
+
 ## Sviluppo
 
 ```powershell
