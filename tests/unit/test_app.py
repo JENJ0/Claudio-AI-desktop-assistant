@@ -65,6 +65,17 @@ class FakeResponder:
         self.last_route: dict = {}
         self.seen: list[str] = []
         self.language = "it"
+        self.awaiting = False
+        self.asked_question = False
+
+    def understands(self, text: str, language: str = "it") -> bool:
+        return True
+
+    def is_stop(self, text: str) -> bool:
+        return False
+
+    def cancel_pending(self) -> None:
+        pass
 
     async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
         self.seen.append(text)
@@ -85,6 +96,9 @@ class FakeSpeaker:
         self.spoken: list[str] = []
         self.languages: list[str] = []
         self.beeps: list[str] = []
+
+    def interrupt(self) -> None:
+        pass
 
     async def beep(self, kind: str = "wake") -> None:
         self.beeps.append(kind)
@@ -287,7 +301,7 @@ async def test_near_miss_is_logged_without_waking(fake_vad, vad_settings, make_f
         audio_sink=sink,
     )
     await run_frames(assistant, make_frames("silence", 2400))
-    assert speaker.beeps == [] and assistant.state is State.IDLE and assistant.history == []
+    assert speaker.beeps == [] and assistant.state is State.IDLE and not assistant.history
     assert saved == ["near_miss"]
     row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
     assert row["outcome"] == "near_miss" and row["wake_score"] == 0.3
@@ -604,3 +618,13 @@ async def test_reply_is_spoken_in_the_language_heard(
         await run_frames(assistant, frames + make_frames("silence", 800))
         assert speaker.spoken == [spoken] and speaker.languages == [voice]
         assert assistant.history[-1]["stt_language"] == heard
+
+
+def test_history_is_bounded(fake_vad, vad_settings) -> None:
+    from claudio.app import HISTORY_MAX
+
+    assistant, *_ = build(fake_vad, vad_settings, FakeStt("apri chrome"), {1})
+    for i in range(HISTORY_MAX + 50):
+        assistant.history.append({"n": i})
+    assert len(assistant.history) == HISTORY_MAX
+    assert assistant.history[-1] == {"n": HISTORY_MAX + 49}

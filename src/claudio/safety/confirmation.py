@@ -37,7 +37,7 @@ NO_WORDS = frozenset(
 YES_WORDS = frozenset(
     {"si", "sii", "certo", "certamente", "ok", "okay", "esatto", "procedi", "avanti", "fallo"}
     | {"confermo", "conferma", "confermato", "yes", "yeah", "yep", "sure", "confirm"}
-    | {"confirmed", "proceed", "affirmative", "go"}
+    | {"confirmed", "proceed", "affirmative"}
 )
 # Level 3 accepts only the explicit words (a plain "sì" is too easy to say by accident).
 EXPLICIT_WORDS = frozenset({"confermo", "conferma", "confirm", "confirmed"})

@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 0.2.0
 
+### Fixed (code review)
+- `Assistant.history` keeps the last 200 interactions only (was unbounded).
+- `console.log` (5 MB x 3 copies) and `logs/metrics.jsonl` (5 MB, 3 copies) rotate.
+- CI: `permissions: contents: read`; actions pinned to a commit SHA.
+- `Responder` and `Speaker` protocols declare everything `Assistant` uses: no more `getattr`.
+- "go" alone no longer counts as a yes.
+
 ### Added
 - Claude answers what no local command understands (`src/claudio/brain/`): Haiku 5.5 by
   default, streamed sentence by sentence to the voice, in the language of the request (or

@@ -5,6 +5,7 @@ read as it is (Claude reads the folder) instead of being copied into the chat.""
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,8 @@ log = logging.getLogger(__name__)
 
 CONSOLE_FILE = "console.log"
 CONVERSATION_FILE = "conversazione.md"
+LOG_MAX_BYTES = 5_000_000
+LOG_BACKUPS = 3
 CONSOLE_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 
 
@@ -31,7 +34,9 @@ def start_session(logs_dir: Path, keep: int, now: datetime | None = None) -> Pat
         folder = root / f"{now.strftime('%Y-%m-%d_%H-%M')}_{n}"
         n += 1
     folder.mkdir()
-    handler = logging.FileHandler(folder / CONSOLE_FILE, encoding="utf-8")
+    handler = logging.handlers.RotatingFileHandler(  # a session can last days
+        folder / CONSOLE_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
+    )
     handler.setFormatter(logging.Formatter(CONSOLE_FORMAT, datefmt="%H:%M:%S"))
     handler.addFilter(TranslateFilter())
     logging.getLogger().addHandler(handler)

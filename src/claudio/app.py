@@ -29,6 +29,7 @@ PREWAKE_S = 1.5  # audio kept before the wake word: one-breath phrases and the s
 HELD_FRAMES = 100  # frames kept while transcribing (~8 s), replayed if we listen again
 LEAD_IN_S = PREWAKE_S  # one breath: how much of the audio before the detection Whisper gets
 QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
+HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
 
 
@@ -114,7 +115,8 @@ class Assistant:
         self._interaction: Interaction | None = None
         self._task: asyncio.Task[None] | None = None
         self._beeps: set[asyncio.Task[None]] = set()
-        self.history: list[dict[str, Any]] = []  # finished interactions (for tests/benchmarks)
+        # Finished interactions (for tests/benchmarks). Bounded: always-on runs last for weeks.
+        self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_MAX)
 
     def _set_state(self, state: State) -> None:
         if state != self.state:
@@ -278,7 +280,7 @@ class Assistant:
                 on_first_audio=lambda: self._on_first_audio(inter),
                 language=lambda: self.responder.language,
             )
-            route = getattr(self.responder, "last_route", {})
+            route = self.responder.last_route
             if route.get("route") == "paused":
                 outcome = "paused"  # only "svegliati" and "spegniti" are answered
                 await self.speaker.beep("cancel")
@@ -288,7 +290,7 @@ class Assistant:
             elif self._interrupted:
                 outcome = "interrupted"
             # A confirmation question ("Confermi?"): the answer comes without the wake word.
-            follow_up = bool(getattr(self.responder, "awaiting", False)) and not self._interrupted
+            follow_up = self.responder.awaiting and not self._interrupted
         except Exception:
             outcome = "error"
             log.exception("Errore durante la richiesta")
@@ -298,7 +300,7 @@ class Assistant:
                 log.exception("Impossibile riprodurre il segnale di errore")
         finally:
             if outcome != "relisten":
-                route = getattr(self.responder, "last_route", None)
+                route = self.responder.last_route
                 if route:
                     inter.info.update(route)
                 if not follow_up:
@@ -310,15 +312,14 @@ class Assistant:
                     self._listen_for_answer(conversation=True)
 
     def _understood(self, text: str, language: str) -> bool:
-        understands = getattr(self.responder, "understands", None)
-        return understands is None or bool(understands(text, language))
+        return self.responder.understands(text, language)
 
     def _is_request(self, text: str, language: str) -> bool:
         """Heard in the conversation window: a command, or (with Claude) a phrase that sounds
         addressed to Claudio. The TV's "e poi gli ho detto di no" is not: it costs nothing."""
         if self._understood(text, language):
             return True
-        if self.claude_min_words is not None and getattr(self.responder, "asked_question", False):
+        if self.claude_min_words is not None and self.responder.asked_question:
             return True  # Claude asked "da dove parti?": "Milano." is the answer
         if self.claude_min_words is None or _words(text) < self.claude_min_words:
             return False
@@ -351,7 +352,7 @@ class Assistant:
         if (
             not self.verify_wake
             or inter.info.get("wake_word") == "conversation"
-            or getattr(self.responder, "awaiting", False)
+            or self.responder.awaiting
             or "second_chance" in inter.info
             or "relisten" in inter.info
         ):
@@ -363,13 +364,12 @@ class Assistant:
     ) -> str:
         """The first of Whisper's n-best transcriptions that a command understands, when the
         best one is not understood; `text` when none is (or there is nothing to fix)."""
-        understands = getattr(self.responder, "understands", None)
+        understands = self.responder.understands
         if (
             self.closed_list is None
-            or understands is None
             or not text
             or only_wake_words(text)
-            or getattr(self.responder, "awaiting", False)
+            or self.responder.awaiting
             or understands(text, heard)
             or (self.closed_list_max_words and _words(text) > self.closed_list_max_words)
         ):
@@ -393,9 +393,7 @@ class Assistant:
         )
 
     def _cancel_pending(self) -> None:
-        cancel = getattr(self.responder, "cancel_pending", None)
-        if cancel is not None:
-            cancel()
+        self.responder.cancel_pending()
 
     def _listen_for_answer(self, conversation: bool = False) -> None:
         """Listen again at once, no wake word needed: the answer to the question just asked,
@@ -435,8 +433,7 @@ class Assistant:
             log.exception("Ascolto durante la risposta non riuscito")
         finally:
             self._barge_checking = False
-        is_stop = getattr(self.responder, "is_stop", None)
-        if not text or is_stop is None or not is_stop(text):
+        if not text or not self.responder.is_stop(text):
             log.debug("Sentito mentre parlo: %r", text)
             return
         if self.state is not State.SPEAKING:
@@ -445,9 +442,7 @@ class Assistant:
         self._interrupted = True
         if self._interaction is not None:
             self._interaction.info["barge_in"] = text
-        interrupt = getattr(self.speaker, "interrupt", None)
-        if interrupt is not None:
-            interrupt()
+        self.speaker.interrupt()
 
     async def _retry(
         self, audio: np.ndarray, text: str, heard: str, inter: Interaction
@@ -455,14 +450,13 @@ class Assistant:
         """`text` again in retry_language when it was heard in another one and no command
         understands it; the first transcription when the retry is not understood either."""
         first = self.retry_language
-        understands = getattr(self.responder, "understands", None)
+        understands = self.responder.understands
         if (
             first is None
-            or understands is None
             or heard == first
             or not text
             or only_wake_words(text)
-            or getattr(self.responder, "awaiting", False)  # a yes/no: no command to match
+            or self.responder.awaiting  # a yes/no: no command to match
             or understands(text, heard)
         ):
             return text, heard
