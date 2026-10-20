@@ -1,6 +1,32 @@
 # Changelog
 
-## [Unreleased] - 0.1.2
+## [Unreleased] - 0.2.0
+
+### Added
+- Claude answers what no local command understands (`src/claudio/brain/`): Haiku 5.5 by
+  default, streamed sentence by sentence to the voice, in the language of the request (or
+  Italian when that language has no voice). Short spoken style, no Markdown. `[claude]` in
+  `config/claudio.toml` (model, `max_tokens` 300, effort low, thinking off, timeout 10 s,
+  history of 6 turns reset after 5 min of silence); `enabled = false` keeps CLAUDIO local-only.
+- The API key comes only from `.env` (`ANTHROPIC_API_KEY`, see `.env.example`), never logged.
+- Every call goes through the spending counter: blocked at 100 % of the daily budget (a spoken
+  sentence, no request sent), the 80 % warning said before the reply once a day, tokens
+  (cache read/write included), model and TTL logged and stored in `data/spend.db`.
+- "basta" while Claude speaks closes the API stream; the tokens already generated are still
+  counted (output estimated from the text). "ripeti" repeats Claude's reply too.
+- Missing or invalid key, network errors, API errors and refusals become one short spoken
+  sentence: Claudio keeps working. A model missing from `pricing.toml` switches Claude off.
+
+### Changed
+- Conversation window: a phrase that no command understands goes to Claude only when it sounds
+  addressed to it (a question, a request verb such as "dimmi" / "spiegami", or the name) and has
+  at least `[claude] conversation_min_words` words; anything else still ends the window in
+  silence, so the TV costs nothing.
+- Closed list only for requests of at most `[stt] closed_list_max_words` (5) words: longer ones
+  go straight to Claude, ~150 ms sooner and without being turned into a similar command.
+- The wake word verifier still runs before Claude: a false wake never reaches the API.
+
+## 0.1.2
 
 ### Added
 - Spending counter, ready for Phase 2: prices and cache multipliers in `config/pricing.toml`

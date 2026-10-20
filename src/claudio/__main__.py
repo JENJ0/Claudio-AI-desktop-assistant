@@ -24,6 +24,7 @@ from claudio.logging_setup import setup_logging
 
 if TYPE_CHECKING:
     from claudio.app import BargeIn
+    from claudio.brain.claude import ClaudeBrain
     from claudio.cost.tracker import CostTracker
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
@@ -53,12 +54,44 @@ def build_responder(settings: Settings, system: SystemControl | None = None) -> 
     commands = load_commands(settings.resolve(settings.router.commands_file))
     matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
+    tracker = build_tracker(settings)
+    brain = build_brain(settings, tracker)
     return LocalResponder(
         matcher,
-        ActionRunner(system=system, tracker=build_tracker(settings)),
+        ActionRunner(system=system, tracker=tracker),
         settings.router.unknown_reply,
         settings.router.error_reply,
+        fallback=brain.ask if brain else None,
+        fallback_info=(lambda: brain.last_call) if brain else None,
     )
+
+
+def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
+    """Claude for what no command understands; None when it is switched off. A missing key
+    still builds it: Claudio then says where the key goes instead of "I can't do that"."""
+    from claudio.brain.claude import ClaudeBrain, make_client
+    from claudio.cost.pricing import PricingError
+
+    claude = settings.claude
+    if not claude.enabled:
+        log.info("Claude spento ([claude] enabled = false): solo comandi locali")
+        return None
+    try:
+        tracker.pricing.price(claude.model)  # no prices, no calls: the spend must be counted
+    except PricingError as exc:
+        log.error("Claude spento: %s", exc)
+        return None
+    key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else ""
+    if not key.strip():
+        log.warning("ANTHROPIC_API_KEY mancante nel file .env: Claude non risponderà")
+    client = make_client(key.strip(), claude.timeout_s) if key.strip() else None
+    log.info(
+        "Claude: %s, max %d token, budget %.2f al giorno",
+        claude.model,
+        claude.max_tokens,
+        tracker.daily_budget,
+    )
+    return ClaudeBrain(client, tracker, claude)
 
 
 def build_synth(settings: Settings) -> tuple[Any, str]:
@@ -246,6 +279,8 @@ async def run_assistant(settings: Settings) -> None:
             if settings.stt.closed_list
             else None
         ),
+        closed_list_max_words=settings.stt.closed_list_max_words,
+        claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

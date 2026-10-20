@@ -2,16 +2,16 @@
 
 **English** | [Italiano](README.it.md)
 
-A voice assistant for Windows that runs **entirely on the PC**: wake word, transcription,
-commands and voice. Phase 1 makes no API calls, so it costs nothing to run. It understands
-Italian and English and answers in the language you spoke.
+A voice assistant for Windows: wake word, transcription, commands and voice run **on the PC**
+for free. What no local command understands is answered by Claude (Anthropic API, Haiku), with
+a daily budget. It understands Italian and English and answers in the language you spoke.
 
 ```
 Microphone ─► openWakeWord ("Hey Claudio") ─► beep
            └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router ─► Kokoro, Nicola's voice (sentence by sentence)
 ```
 
-Status: **v0.1.1**, Phase 1, second iteration. The wake word is our own "Hey Claudio", trained
+Status: **v0.2.0**, Phase 2 (Claude), first iteration. The wake word is our own "Hey Claudio", trained
 on the owner's voice (see [scripts/wakeword/README.md](scripts/wakeword/README.md); the model
 file is not in Git). "Claudio" alone is trained too but not reliable enough yet, so it is off.
 Full specification (in Italian): [CLAUDE.md](CLAUDE.md).
@@ -102,6 +102,23 @@ anything that is not a command (the TV, someone else talking), with a low beep a
 While it speaks, CLAUDIO also listens for "basta" / "stop" and stops at once: with speakers its
 own voice reaches the microphone too, so headphones work best. Both are in `[conversation]`
 (`window_s = 0` turns the window off, `barge_in = false` the listening while speaking).
+
+## Claude (questions)
+
+1. Create an API key at <https://console.anthropic.com> and add some prepaid credit (the
+   Claude Pro subscription does not include the API).
+2. Copy `.env.example` to `.env` in the project folder (next to `pyproject.toml`) and write the
+   key after `ANTHROPIC_API_KEY=`. `.env` is in `.gitignore`: it never reaches GitHub.
+3. Try it without the microphone: `uv run claudio --text "chi era Leonardo da Vinci"`.
+
+Local commands always come first and cost nothing; Claude answers the rest, streamed sentence by
+sentence. Each call is logged with its tokens (cache included) and cost in `data/spend.db`;
+`[cost] daily_budget` (1 USD) is announced at 80 % and blocks Claude at 100 %. In the
+conversation window (no wake word) a phrase goes to Claude only when it sounds addressed to it
+(a question, "dimmi...", "spiegami...", or the name), so the TV costs nothing. "basta" stops a
+reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
+`config/claudio.toml` (`enabled = false` for local only). A Haiku question costs about
+0.0002 USD.
 
 ## Configuration
 

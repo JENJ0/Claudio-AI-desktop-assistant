@@ -56,6 +56,7 @@ language_confidence = 0.6
 other_confidence = 0.8         # English (not the first language) must be at least this sure
 retry_in_first_language = true # an English request no command understands is retried in Italian
 closed_list = true             # a request not understood: Whisper proposes 5 transcriptions, the first known command wins
+closed_list_max_words = 5      # longer requests skip it (~150 ms saved): a question for Claude, not a misheard command
 beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
 no_speech_threshold = 0.6
 cpu_threads = 4
@@ -93,6 +94,19 @@ pricing_file = "config/pricing.toml"  # prices per model and cache multipliers (
 db_file = "data/spend.db"             # SQLite ledger of every Claude call (tokens, cache, cost)
 daily_budget = 1.0                    # USD per day: warning at warn_at, Claude blocked at 100 %
 warn_at = 0.8                         # local commands keep working when the budget is spent
+
+# Claude answers what no local command understands. The key goes in .env (ANTHROPIC_API_KEY),
+# never here. Every call is counted in [cost]: warning at warn_at, blocked at 100 %.
+[claude]
+enabled = true                 # false: local commands only, zero cost
+model = "claude-haiku-5-5"     # must be in config/pricing.toml
+max_tokens = 300               # a spoken reply: 2-4 sentences
+effort = "low"                 # low | medium | high: low = fastest first word
+thinking = false               # Haiku thinks by default: off saves latency and tokens
+timeout_s = 10.0
+history_turns = 6              # question/answer pairs sent back as context (0 = none)
+history_reset_s = 300          # after 5 minutes of silence the context starts over
+conversation_min_words = 3     # without the wake word: shorter phrases are not sent to Claude
 
 [logging]
 level = "INFO"

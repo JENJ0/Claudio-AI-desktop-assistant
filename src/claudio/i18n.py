@@ -227,6 +227,33 @@ EN: dict[str, str] = {
     "Wake word sotto soglia: %s %.2f (soglia %.2f)": (
         "Wake word below threshold: %s %.2f (threshold %.2f)"
     ),
+    # Claude (brain/, Phase 2)
+    "Claude: %s, max %d token, budget %.2f al giorno": (
+        "Claude: %s, max %d tokens, budget %.2f a day"
+    ),
+    "Claude spento ([claude] enabled = false): solo comandi locali": (
+        "Claude off ([claude] enabled = false): local commands only"
+    ),
+    "ANTHROPIC_API_KEY mancante nel file .env: Claude non risponderà": (
+        "ANTHROPIC_API_KEY missing from the .env file: Claude will not answer"
+    ),
+    "Claude spento: %s": "Claude off: %s",
+    "Claude: chiave API mancante (ANTHROPIC_API_KEY nel file .env)": (
+        "Claude: API key missing (ANTHROPIC_API_KEY in the .env file)"
+    ),
+    "Claude bloccato: budget di oggi finito (%d%%)": (
+        "Claude blocked: today's budget is spent (%d%%)"
+    ),
+    "Claude ha rifiutato la richiesta": "Claude refused the request",
+    "Claude %s: %d in, %d out, cache %d letti / %d scritti (TTL %s)%s": (
+        "Claude %s: %d in, %d out, cache %d read / %d written (TTL %s)%s"
+    ),
+    ", interrotta (stima)": ", cut short (estimate)",
+    "Claude: chiave API non valida (401)": "Claude: invalid API key (401)",
+    "Claude non raggiungibile: %s": "Claude unreachable: %s",
+    "Claude errore %s: %s": "Claude error %s: %s",
+    "Claude: spesa non registrata": "Claude: spending not recorded",
+    "Non è un comando, chiedo a Claude: %r": "Not a command, asking Claude: %r",
 }
 
 
