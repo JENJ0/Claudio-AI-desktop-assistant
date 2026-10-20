@@ -120,6 +120,12 @@ conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a l
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
 (`enabled = false` per solo comandi locali). Una domanda a Haiku costa circa 0,0002 USD.
 
+## Log delle sessioni
+
+Ogni avvio scrive `logs/sessions/<data>_<ora>/console.log` e `conversazione.md` (richieste,
+risposte, latenza, costo): basta mandare quella cartella, o farla leggere a Claude, invece di
+copiare la console. Restano le ultime 30 sessioni.
+
 ## Configurazione
 
 Tutto è in [config/claudio.toml](config/claudio.toml): microfono e uscita, soglie della wake word,

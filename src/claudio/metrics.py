@@ -60,14 +60,17 @@ class Interaction:
 class MetricsWriter:
     """Appends one JSON line per interaction to logs/metrics.jsonl."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, conversation: Any = None) -> None:
         self.path = path
+        self.conversation = conversation  # session_log.ConversationLog: the readable copy
         path.parent.mkdir(parents=True, exist_ok=True)
 
     def write(self, interaction: Interaction) -> dict[str, Any]:
         row = {"ts": time.time(), **interaction.summary()}
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        if self.conversation is not None:
+            self.conversation.add(row)
         if row["m2_ms"] is None:  # timeout, near miss...: nothing was said back
             log.debug("Metriche: %s", row.get("outcome"), extra={"metrics": row})
             return row

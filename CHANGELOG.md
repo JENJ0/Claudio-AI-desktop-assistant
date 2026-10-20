@@ -26,6 +26,13 @@
   go straight to Claude, ~150 ms sooner and without being turned into a similar command.
 - The wake word verifier still runs before Claude: a false wake never reaches the API.
 
+- Every run gets a folder `logs/sessions/<date>_<time>/` (e.g. `2026-10-20_16-32`) with
+  `console.log` (the console, line by line) and `conversazione.md` (each request: time, wake
+  word, what was heard, Claudio's reply, latency, Claude's tokens and cost). The newest 30 are
+  kept (`[logging] keep_sessions`). The reply text is also in `metrics.jsonl` (`reply`).
+- After a Claude reply that ends with a question ("Da dove parti?"), the answer in the
+  conversation window goes to Claude even when it is one word ("Milano.").
+
 ### Fixed
 - A question said after a pause ("Hey Claudio" ... beep ... "come ti chiami?") was dropped as
   a false wake: its transcript has no name. Now, when the request is not a command, a quick
