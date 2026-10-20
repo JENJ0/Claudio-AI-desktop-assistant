@@ -19,7 +19,7 @@ from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
-from claudio.router.normalizer import heard_wake_word, only_wake_words
+from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
 from claudio.system import SystemControl
 from claudio.wakeword.verifier import wake_confirmed
 
@@ -68,6 +68,8 @@ class Assistant:
         barge_in: BargeIn | None = None,
         verify_wake: bool = False,
         closed_list: Callable[[np.ndarray, str], list[str]] | None = None,
+        closed_list_max_words: int = 0,
+        claude_min_words: int | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -92,6 +94,12 @@ class Assistant:
         self.verify_wake = verify_wake
         # (audio, language) -> Whisper's n-best: tried on a request no command understands.
         self.closed_list = closed_list
+        # Longer requests skip the closed list: a question for Claude, not a misheard command.
+        self.closed_list_max_words = closed_list_max_words  # 0: no limit
+        # Claude answers what no command understands. In the conversation window (no wake
+        # word) a request needs at least this many words: shorter is the TV or a remark.
+        # None: Claude is off and the window keeps only the local commands.
+        self.claude_min_words = claude_min_words
         self._barge_checking = False
         self._interrupted = False  # the reply being spoken was cut short by "basta"
         self._checking = False
@@ -256,7 +264,7 @@ class Assistant:
                 outcome = "false_wake"
                 log.info("Wake word non confermata da Whisper, ignoro: %r", text)
                 return
-            if inter.info.get("wake_word") == "conversation" and not self._understood(text, heard):
+            if inter.info.get("wake_word") == "conversation" and not self._is_request(text, heard):
                 # Heard without the wake word: the TV or someone else talking, not a request.
                 outcome = "conversation_end"
                 log.info("Non è una richiesta, fine della conversazione: %r", text)
@@ -303,6 +311,15 @@ class Assistant:
         understands = getattr(self.responder, "understands", None)
         return understands is None or bool(understands(text, language))
 
+    def _is_request(self, text: str, language: str) -> bool:
+        """Heard in the conversation window: a command, or (with Claude) a phrase that sounds
+        addressed to Claudio. The TV's "e poi gli ho detto di no" is not: it costs nothing."""
+        if self._understood(text, language):
+            return True
+        if self.claude_min_words is None or _words(text) < self.claude_min_words:
+            return False
+        return addressed_to_claudio(text)
+
     def _false_wake(self, text: str, heard: str, inter: Interaction) -> bool:
         """Only a real wake word detection is judged: not the conversation window, not a
         yes/no answer, not a second chance (Whisper already heard the name) and not the
@@ -330,6 +347,7 @@ class Assistant:
             or only_wake_words(text)
             or getattr(self.responder, "awaiting", False)
             or understands(text, heard)
+            or (self.closed_list_max_words and _words(text) > self.closed_list_max_words)
         ):
             return text
         start = self.clock()
@@ -512,3 +530,69 @@ class Assistant:
             await asyncio.gather(self._task, return_exceptions=True)
         if self._beeps:
             await asyncio.gather(*self._beeps, return_exceptions=True)
+
+
+# How a follow-up request to Claudio usually starts, when it is not a question.
+REQUEST_STARTS = frozenset(
+    [
+        "dimmi",
+        "spiegami",
+        "raccontami",
+        "descrivimi",
+        "dammi",
+        "fammi",
+        "consigliami",
+        "suggeriscimi",
+        "traduci",
+        "calcola",
+        "elenca",
+        "riassumi",
+        "continua",
+        "aiutami",
+        "scrivi",
+        "perche",
+        "come",
+        "cosa",
+        "chi",
+        "dove",
+        "quando",
+        "quale",
+        "quanto",
+        "tell",
+        "explain",
+        "describe",
+        "give",
+        "show",
+        "recommend",
+        "suggest",
+        "translate",
+        "calculate",
+        "list",
+        "summarize",
+        "continue",
+        "help",
+        "write",
+        "why",
+        "how",
+        "what",
+        "who",
+        "where",
+        "when",
+        "which",
+    ]
+)
+
+
+def addressed_to_claudio(text: str) -> bool:
+    """A question (Whisper writes the "?"), a request verb at the start ("dimmi di più") or
+    the name: worth asking Claude without the wake word."""
+    words = normalize(text, drop_fillers=False).split()
+    return (
+        text.rstrip().endswith("?")
+        or (bool(words) and words[0] in REQUEST_STARTS)
+        or heard_wake_word(text)
+    )
+
+
+def _words(text: str) -> int:
+    return len(normalize(text, drop_fillers=False).split())

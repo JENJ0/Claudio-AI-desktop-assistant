@@ -1,6 +1,6 @@
 [project]
 name = "claudio"
-version = "0.1.2"
+version = "0.2.0"
 description = "CLAUDIO: local Italian voice assistant for Windows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -18,7 +18,8 @@ dependencies = [
     "pydantic-settings>=2.4",
     "rapidfuzz>=3.9",
     "scipy>=1.11",  # voice effects (already required by openwakeword)
-    "pycaw>=20240316; sys_platform == 'win32'",  # Windows' current default output (Core Audio)
+    "pycaw>=20240316; sys_platform == 'win32'",
+    "anthropic>=1.15,<2",  # Claude API (Phase 2): answers what the local router does not know  # Windows' current default output (Core Audio)
 ]
 
 [project.optional-dependencies]

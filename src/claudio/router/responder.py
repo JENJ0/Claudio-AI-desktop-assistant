@@ -1,10 +1,11 @@
-"""Phase 1 responder: local router only. Phase 2 adds a Claude responder behind
-the same streaming interface."""
+"""The responder: local commands first (free), then `fallback` (Claude, Phase 2) for what no
+command understands."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection
 from typing import Any
 
 from claudio.config import DEFAULT_LANGUAGE, ERROR_REPLY, UNKNOWN_REPLY, in_language
@@ -23,6 +24,9 @@ from claudio.safety.confirmation import (
 
 log = logging.getLogger(__name__)
 
+# Asked with (request, reply language): Claude's reply, streamed.
+Fallback = Callable[[str, str], AsyncGenerator[str, None]]
+
 
 class LocalResponder:
     def __init__(
@@ -32,12 +36,16 @@ class LocalResponder:
         unknown_reply: dict[str, str] | None = None,
         error_reply: dict[str, str] | None = None,
         voiced: Collection[str] | None = None,
+        fallback: Fallback | None = None,
+        fallback_info: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.matcher = matcher
         self.actions = actions
         self.unknown_reply = unknown_reply or UNKNOWN_REPLY
         self.error_reply = error_reply or ERROR_REPLY
         self.voiced = voiced  # languages with their own voice (None: all of them)
+        self.fallback = fallback  # None: "Questo non lo so ancora fare"
+        self.fallback_info = fallback_info  # details of the last fallback call, for the metrics
         self.last_route: dict[str, Any] = {}
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
@@ -109,6 +117,18 @@ class LocalResponder:
             self.last_route = {"route": "paused"}
             log.info("In pausa, ignoro: %r", text, extra={"route": "paused"})
             return  # nothing to say: the assistant answers with a low beep
+        if match is None and self.fallback is not None:
+            self.language = self._reply_language(language, True)
+            self.last_route = {"route": "claude", "language": self.language}
+            log.info("Non è un comando, chiedo a Claude: %r", text, extra={"route": "claude"})
+            try:
+                async with contextlib.aclosing(self.fallback(text, self.language)) as reply:
+                    async for chunk in reply:
+                        yield chunk
+            finally:
+                if self.fallback_info is not None:
+                    self.last_route.update(self.fallback_info())
+            return
         if match is None:
             self.last_route = {"route": "unknown", "language": self.language}
             log.info("Richiesta non riconosciuta: %r", text, extra={"route": "unknown"})

@@ -9,7 +9,14 @@ import tomllib
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -107,6 +114,7 @@ class SttSettings(BaseModel):
     # A request no command understands: Whisper proposes 5 transcriptions and the first known
     # command wins (one more Whisper pass, only on requests not understood).
     closed_list: bool = True
+    closed_list_max_words: int = Field(5, ge=0)  # longer requests skip it (0 = no limit)
     beam_size: int = Field(1, ge=1)
     initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
@@ -210,6 +218,20 @@ class CostSettings(BaseModel):
     warn_at: float = Field(0.8, gt=0, lt=1)  # share of the budget that is announced aloud
 
 
+class ClaudeSettings(BaseModel):
+    """Claude answers what no local command understands (Phase 2)."""
+
+    enabled: bool = True  # false: Claudio stays local-only ("Questo non lo so ancora fare")
+    model: str = "claude-haiku-5-5"  # must be in the prices file
+    max_tokens: int = Field(300, ge=16, le=4096)  # a spoken reply: a few sentences
+    effort: Literal["low", "medium", "high"] = "low"  # low: fastest first word
+    thinking: bool = False  # Haiku thinks by default: off saves latency and tokens
+    timeout_s: float = Field(10.0, gt=0, le=120)
+    history_turns: int = Field(6, ge=0, le=50)  # question/answer pairs sent back as context
+    history_reset_s: float = Field(300.0, gt=0)  # silence after which the context starts over
+    conversation_min_words: int = Field(3, ge=1)  # without the wake word: shorter is not a request
+
+
 class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
@@ -239,6 +261,9 @@ class Settings(BaseSettings):
     router: RouterSettings = RouterSettings()
     conversation: ConversationSettings = ConversationSettings()
     cost: CostSettings = CostSettings()
+    claude: ClaudeSettings = ClaudeSettings()
+    # The Claude API key, only from .env or the environment (never in the TOML, never logged).
+    anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")
     logging: LoggingSettings = LoggingSettings()
 
     @classmethod
