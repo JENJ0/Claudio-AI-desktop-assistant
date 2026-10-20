@@ -21,7 +21,7 @@ from claudio.i18n import tr
 from claudio.router.normalizer import extract_number, normalize
 from claudio.router.normalizer import language as language_rules
 
-_TRANSLATED = re.compile(r"^(phrases|reply|keywords)_([a-z]{2})$")
+_TRANSLATED = re.compile(r"^(phrases|reply|keywords|confirm)_([a-z]{2})$")
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,9 @@ class Command:
     other_phrases: dict[str, tuple[str, ...]] = field(default_factory=dict)
     other_replies: dict[str, str] = field(default_factory=dict)
     keywords: dict[str, frozenset[str]] = field(default_factory=dict)  # per language
+    level: int = 1  # safety level: 1 runs at once, 2 asks yes/no, 3 asks an explicit "confermo"
+    confirm: str = ""  # the question asked at level 2-3 (Italian; confirm_xx for the others)
+    other_confirms: dict[str, str] = field(default_factory=dict)
 
     @property
     def languages(self) -> tuple[str, ...]:
@@ -48,6 +51,10 @@ class Command:
     def reply_in(self, language: str) -> str:
         """The reply in `language`, else the Italian one."""
         return self.other_replies.get(language, self.reply)
+
+    def confirm_in(self, language: str) -> str:
+        """The question for `language`, else the Italian one (may be empty: the generic one)."""
+        return self.other_confirms.get(language, self.confirm)
 
     def has_reply_in(self, language: str) -> bool:
         return language == DEFAULT_LANGUAGE or language in self.other_replies
@@ -73,6 +80,7 @@ def load_commands(path: Path) -> list[Command]:
     for raw in data.get("command", []):
         other_phrases: dict[str, tuple[str, ...]] = {}
         other_replies: dict[str, str] = {}
+        other_confirms: dict[str, str] = {}
         keywords: dict[str, frozenset[str]] = {}
         if "keywords" in raw:
             keywords[DEFAULT_LANGUAGE] = _keywords(raw["keywords"], DEFAULT_LANGUAGE)
@@ -83,6 +91,8 @@ def load_commands(path: Path) -> list[Command]:
                     other_phrases[lang] = tuple(value)
                 elif kind == "reply":
                     other_replies[lang] = str(value)
+                elif kind == "confirm":
+                    other_confirms[lang] = str(value)
                 else:
                     keywords[lang] = _keywords(value, lang)
         cmd = Command(
@@ -95,7 +105,19 @@ def load_commands(path: Path) -> list[Command]:
             other_phrases=other_phrases,
             other_replies=other_replies,
             keywords=keywords,
+            level=int(raw.get("level", 1)),
+            confirm=raw.get("confirm", ""),
+            other_confirms=other_confirms,
         )
+        if cmd.level not in (1, 2, 3):
+            raise ValueError(
+                tr(
+                    "{path}: il comando '{command}' ha un livello non valido ({level})",
+                    path=path,
+                    command=cmd.id,
+                    level=cmd.level,
+                )
+            )
         if cmd.id in seen:
             raise ValueError(tr("{path}: comando duplicato '{command}'", path=path, command=cmd.id))
         if not cmd.phrases:

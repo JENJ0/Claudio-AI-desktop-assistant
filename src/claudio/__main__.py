@@ -23,11 +23,26 @@ from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
 if TYPE_CHECKING:
+    from claudio.app import BargeIn
+    from claudio.cost.tracker import CostTracker
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
     from claudio.tts.speaker import StreamingSpeaker
 
 log = logging.getLogger("claudio")
+
+
+def build_tracker(settings: Settings) -> CostTracker:
+    from claudio.cost.pricing import load_pricing
+    from claudio.cost.tracker import open_tracker
+
+    cost = settings.cost
+    return open_tracker(
+        load_pricing(settings.resolve(cost.pricing_file)),
+        settings.resolve(cost.db_file),
+        cost.daily_budget,
+        cost.warn_at,
+    )
 
 
 def build_responder(settings: Settings, system: SystemControl | None = None) -> LocalResponder:
@@ -40,7 +55,7 @@ def build_responder(settings: Settings, system: SystemControl | None = None) -> 
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
     return LocalResponder(
         matcher,
-        ActionRunner(system=system),
+        ActionRunner(system=system, tracker=build_tracker(settings)),
         settings.router.unknown_reply,
         settings.router.error_reply,
     )
@@ -133,6 +148,25 @@ async def run_text(settings: Settings, text: str) -> None:
     speaker.player.close()
 
 
+def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
+    """The listener used while CLAUDIO speaks: a second Silero VAD (its own state) that
+    closes a phrase after a short pause, or every barge_in_max_s of continuous speech."""
+    from claudio.app import BargeIn
+    from claudio.audio.vad import Endpointer, SileroVad
+
+    vad = SileroVad(
+        settings.resolve(settings.models_dir) / "vad" / "silero_vad.onnx",
+        settings.audio.sample_rate,
+    )
+    vad_settings = settings.vad.model_copy(
+        update={"end_silence_ms": 300, "max_utterance_s": settings.conversation.barge_in_max_s}
+    )
+    return BargeIn(
+        Endpointer(vad, vad_settings, settings.audio.sample_rate),
+        lambda audio: transcriber.transcribe(audio, quick=True),
+    )
+
+
 async def run_assistant(settings: Settings) -> None:
     from claudio.app import Assistant
     from claudio.audio.capture import AudioCapture
@@ -199,6 +233,13 @@ async def run_assistant(settings: Settings) -> None:
             if settings.wakeword.second_chance
             else None
         ),
+        retry_language=(
+            settings.stt.languages[0]
+            if settings.stt.retry_in_first_language and len(settings.stt.languages) > 1
+            else None
+        ),
+        conversation_s=settings.conversation.window_s,
+        barge_in=build_barge_in(settings, transcriber) if settings.conversation.barge_in else None,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

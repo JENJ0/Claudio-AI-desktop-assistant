@@ -261,7 +261,7 @@ NEGATIVE_EN = [
     "Open Spotify",
     "What's the weather tomorrow?",
     "Book a flight to Rome",
-    "Pause the music",
+    "Pause the game",  # media keys need music, a video or a song
     "Tell me a joke",
     "Thank you",
     "Yes",

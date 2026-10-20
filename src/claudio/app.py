@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import functools
 import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -26,6 +28,7 @@ PREWAKE_S = 1.5  # audio kept before the wake word: one-breath phrases and the s
 HELD_FRAMES = 100  # frames kept while transcribing (~8 s), replayed if we listen again
 LEAD_IN_S = PREWAKE_S  # one breath: how much of the audio before the detection Whisper gets
 QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
+WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
 
 
 class State(enum.StrEnum):
@@ -34,6 +37,15 @@ class State(enum.StrEnum):
     TRANSCRIBING = "transcribing"
     RESPONDING = "responding"
     SPEAKING = "speaking"
+
+
+@dataclass
+class BargeIn:
+    """Listens while CLAUDIO speaks: its own endpointer (its own VAD, so the request's
+    stats stay intact) and a quick Whisper pass on each phrase, looking for "basta"."""
+
+    endpointer: Endpointer
+    transcribe: Callable[[np.ndarray], str]
 
 
 class Assistant:
@@ -50,6 +62,9 @@ class Assistant:
         level: LevelControl | None = None,
         system: SystemControl | None = None,
         second_chance: Callable[[np.ndarray], str] | None = None,
+        retry_language: str | None = None,
+        conversation_s: float = 0.0,
+        barge_in: BargeIn | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -64,6 +79,14 @@ class Assistant:
         # Hears the last 1.5 s after a near miss (a score just under the threshold): if the
         # text has the wake word, CLAUDIO wakes anyway. None: near misses are only logged.
         self.second_chance = second_chance
+        # A request heard in another language that no command understands is transcribed
+        # again in this one (fast Italian often sounds English). None: never.
+        self.retry_language = retry_language
+        # After a reply, listen this long for another request without the wake word (0: off).
+        self.conversation_s = conversation_s
+        self.barge_in = barge_in  # None: the microphone is ignored while speaking
+        self._barge_checking = False
+        self._interrupted = False  # the reply being spoken was cut short by "basta"
         self._checking = False
         self._checks: set[asyncio.Task[None]] = set()
         self._stt_lock = asyncio.Lock()  # Whisper is used by one thing at a time
@@ -105,7 +128,8 @@ class Assistant:
             self._on_listen(frame)
         elif self.state == State.TRANSCRIBING:
             self._held.append(frame)  # the request itself, if the phrase was only the wake word
-        # While answering/speaking the microphone is ignored (no barge-in yet).
+        elif self.state == State.SPEAKING and self.barge_in is not None:
+            self._on_barge_frame(frame, self.barge_in)
 
     def _on_wake(self, name: str, score: float, **info: Any) -> None:
         self._interaction = Interaction(
@@ -180,8 +204,12 @@ class Assistant:
         if event is EndpointEvent.START:
             self._interaction.mark("speech_start")
         elif event is EndpointEvent.TIMEOUT:
-            log.info("Nessuna richiesta dopo la wake word: torno in attesa")
+            if self._interaction.info.get("wake_word") == "conversation":
+                log.info("Fine della conversazione: torno in attesa della wake word")
+            else:
+                log.info("Nessuna richiesta dopo la wake word: torno in attesa")
             self._beep("cancel")
+            self._cancel_pending()
             self._finish(outcome="timeout")
         elif event is EndpointEvent.END:
             now = self.clock()
@@ -196,10 +224,13 @@ class Assistant:
         inter = self._interaction
         assert inter is not None
         outcome = "ok"
+        follow_up = False
+        self._interrupted = False
         try:
             async with self._stt_lock:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
-            heard = self.transcriber.language
+                heard = self.transcriber.language
+                text, heard = await self._retry(audio, text, heard, inter)
             inter.mark("stt_done")
             inter.info["text"] = text
             inter.info["stt_language"] = heard
@@ -212,15 +243,29 @@ class Assistant:
                 outcome = "empty"
                 await self.speaker.beep("cancel")
                 return
+            if inter.info.get("wake_word") == "conversation" and not self._understood(text, heard):
+                # Heard without the wake word: the TV or someone else talking, not a request.
+                outcome = "conversation_end"
+                log.info("Non è una richiesta, fine della conversazione: %r", text)
+                await self.speaker.beep("cancel")
+                return
             self._set_state(State.RESPONDING)
             await self.speaker.speak(
                 self._marked(self.responder.respond(text, heard), inter),
                 on_first_audio=lambda: self._on_first_audio(inter),
                 language=lambda: self.responder.language,
             )
-            if getattr(self.responder, "last_route", {}).get("route") == "paused":
+            route = getattr(self.responder, "last_route", {})
+            if route.get("route") == "paused":
                 outcome = "paused"  # only "svegliati" and "spegniti" are answered
                 await self.speaker.beep("cancel")
+            elif route.get("command") == "stop":
+                outcome = "stopped"  # "basta": the conversation is over
+                await self.speaker.beep("cancel")
+            elif self._interrupted:
+                outcome = "interrupted"
+            # A confirmation question ("Confermi?"): the answer comes without the wake word.
+            follow_up = bool(getattr(self.responder, "awaiting", False)) and not self._interrupted
         except Exception:
             outcome = "error"
             log.exception("Errore durante la richiesta")
@@ -233,7 +278,111 @@ class Assistant:
                 route = getattr(self.responder, "last_route", None)
                 if route:
                     inter.info.update(route)
+                if not follow_up:
+                    self._cancel_pending()  # an error or silence never leaves an action armed
                 self._finish(outcome)
+                if follow_up:
+                    self._listen_for_answer()
+                elif self._keeps_conversation(outcome):
+                    self._listen_for_answer(conversation=True)
+
+    def _understood(self, text: str, language: str) -> bool:
+        understands = getattr(self.responder, "understands", None)
+        return understands is None or bool(understands(text, language))
+
+    def _keeps_conversation(self, outcome: str) -> bool:
+        return (
+            outcome == "ok"
+            and self.conversation_s > 0
+            and not self.system.paused
+            and not self.system.stopping
+        )
+
+    def _cancel_pending(self) -> None:
+        cancel = getattr(self.responder, "cancel_pending", None)
+        if cancel is not None:
+            cancel()
+
+    def _listen_for_answer(self, conversation: bool = False) -> None:
+        """Listen again at once, no wake word needed: the answer to the question just asked,
+        or (`conversation`) another request within conversation_s of the reply."""
+        kind = "conversation" if conversation else "follow_up"
+        self._interaction = Interaction(
+            clock=self.clock, info={"wake_word": kind, "wake_score": 0.0}
+        )
+        self._interaction.mark("wake")
+        self._beep("wake")
+        self._prewake = np.zeros(0, dtype=np.float32)
+        self._recent.clear()
+        self.endpointer.reset(timeout_s=self.conversation_s if conversation else None)
+        self._set_state(State.LISTENING)
+
+    def _on_barge_frame(self, frame: np.ndarray, barge: BargeIn) -> None:
+        event = barge.endpointer.process(frame)
+        if event is EndpointEvent.TIMEOUT:
+            barge.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
+        elif event is EndpointEvent.END:
+            audio = barge.endpointer.audio()
+            barge.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
+            if self._barge_checking:
+                return  # still looking at the last phrase: this one is skipped
+            self._barge_checking = True
+            task = asyncio.create_task(self._check_barge_in(audio, barge))
+            self._checks.add(task)
+            task.add_done_callback(self._checks.discard)
+
+    async def _check_barge_in(self, audio: np.ndarray, barge: BargeIn) -> None:
+        """Whisper on what was heard while speaking: "basta" interrupts the reply."""
+        text = ""
+        try:
+            async with self._stt_lock:
+                text = await asyncio.to_thread(barge.transcribe, audio)
+        except Exception:
+            log.exception("Ascolto durante la risposta non riuscito")
+        finally:
+            self._barge_checking = False
+        is_stop = getattr(self.responder, "is_stop", None)
+        if not text or is_stop is None or not is_stop(text):
+            log.debug("Sentito mentre parlo: %r", text)
+            return
+        if self.state is not State.SPEAKING:
+            return  # the reply had already ended
+        log.info("Interrotto a voce: %r", text)
+        self._interrupted = True
+        if self._interaction is not None:
+            self._interaction.info["barge_in"] = text
+        interrupt = getattr(self.speaker, "interrupt", None)
+        if interrupt is not None:
+            interrupt()
+
+    async def _retry(
+        self, audio: np.ndarray, text: str, heard: str, inter: Interaction
+    ) -> tuple[str, str]:
+        """`text` again in retry_language when it was heard in another one and no command
+        understands it; the first transcription when the retry is not understood either."""
+        first = self.retry_language
+        understands = getattr(self.responder, "understands", None)
+        if (
+            first is None
+            or understands is None
+            or heard == first
+            or not text
+            or only_wake_words(text)
+            or getattr(self.responder, "awaiting", False)  # a yes/no: no command to match
+            or understands(text, heard)
+        ):
+            return text, heard
+        start = self.clock()
+        again = await asyncio.to_thread(
+            functools.partial(self.transcriber.transcribe, audio, language=first)
+        )
+        inter.info["retry_ms"] = round((self.clock() - start) * 1000)
+        if again and understands(again, first):
+            log.info("Riprovato in %s: %r -> %r", first, text, again)
+            inter.info["retried_from"] = text
+            return again, first
+        log.info("Riprovato in %s, non capito neanche così: %r", first, again)
+        return text, heard
 
     def _relisten(self, inter: Interaction) -> None:
         """The phrase was only the wake word (said again, or its tail after an early detection):
@@ -259,6 +408,8 @@ class Assistant:
 
     def _on_first_audio(self, inter: Interaction) -> None:
         inter.mark("first_audio")
+        if self.barge_in is not None:
+            self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
         self._set_state(State.SPEAKING)
 
     def _finish(self, outcome: str) -> None:

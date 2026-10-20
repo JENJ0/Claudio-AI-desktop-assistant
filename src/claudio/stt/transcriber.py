@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,7 @@ HALLUCINATIONS_EXACT = {
 MIN_RMS = 1e-3  # about -60 dBFS: below this there is nothing to transcribe
 MAX_NEW_TOKENS = 80  # an 8 s request is about 50 tokens; a repetition loop stops here
 QUICK_NEW_TOKENS = 24  # the second chance listens to 1.5 s: "hey claudio che ore sono" is ~12
+CANDIDATES = 5  # the closed list: how many transcriptions Whisper proposes
 LOOP_RATIO = 2.4  # gzip ratio above which a text is a loop ("Ciao, ciao, ciao..."), as in Whisper
 
 
@@ -73,16 +74,23 @@ def is_hallucination(text: str, prompt: str = "") -> bool:
 
 
 def pick_language(
-    probs: Mapping[str, float], languages: Sequence[str], last: str, min_confidence: float
+    probs: Mapping[str, float],
+    languages: Sequence[str],
+    last: str,
+    min_confidence: float,
+    other_confidence: float = 0.0,
 ) -> tuple[str, float]:
     """The most likely of `languages` and its share of their probability; `last` (the language
-    of the previous request) when that share is below `min_confidence`. Whisper's guesses
+    of the previous request) when that share is below `min_confidence`, or below
+    `other_confidence` for a language other than the first: Italian said fast often sounds
+    English to Whisper ("apri la calcolatrice" -> "cue the calculator"). Whisper's guesses
     outside the list ("es" for Italian said fast) are ignored."""
     scores = {lang: probs.get(lang, 0.0) for lang in languages}
     total = sum(scores.values())
     best = max(scores, key=lambda lang: scores[lang])
     confidence = scores[best] / total if total > 0 else 0.0
-    return (best if confidence >= min_confidence else last), confidence
+    needed = min_confidence if best == languages[0] else max(min_confidence, other_confidence)
+    return (best if confidence >= needed else last), confidence
 
 
 class WhisperTranscriber:
@@ -165,7 +173,7 @@ class WhisperTranscriber:
         encoded = model.encode(segment)
         probs = {token[2:-2]: prob for token, prob in model.model.detect_language(encoded)[0]}
         self.language, self.language_confidence = pick_language(
-            probs, s.languages, self.last_language, s.language_confidence
+            probs, s.languages, self.last_language, s.language_confidence, s.other_confidence
         )
         self._encoded = (segment, encoded)
         log.debug("Lingua: %s (%.2f)", self.language, self.language_confidence)
@@ -181,15 +189,21 @@ class WhisperTranscriber:
                 return encoded
         return type(self._model).encode(self._model, features)
 
-    def transcribe(self, audio: np.ndarray, *, quick: bool = False) -> str:
+    def transcribe(
+        self, audio: np.ndarray, *, quick: bool = False, language: str | None = None
+    ) -> str:
         """`quick`: the wake word's second chance. A short look at 1.5 s of audio, without the
         prompt (it must not put "Claudio" in noise) and without touching the language kept for
-        the next unsure request."""
+        the next unsure request. `language`: no detection, transcribe in that one (the retry
+        of a request not understood in the language Whisper guessed)."""
         s = self.settings
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             return ""  # silence: Whisper would invent something ("Buon appetito!")
         audio = audio.astype(np.float32, copy=False)
-        language = self.detect_language(audio)
+        if language is None:
+            language = self.detect_language(audio)
+        else:
+            self.language, self.language_confidence = language, 1.0
         prompt = "" if quick else s.prompt(language)
         reuse = self._encoded is not None
         if reuse:
@@ -225,3 +239,44 @@ class WhisperTranscriber:
         if text and not quick and not only_wake_words(text):
             self.last_language = language
         return text
+
+    def candidates(
+        self, audio: np.ndarray, n: int = CANDIDATES, *, language: str | None = None
+    ) -> list[str]:
+        """The `n` best transcriptions of one beam search, most likely first: the "closed
+        list" picks the first that is a known command ("apri la calcolatrice" may be only the
+        third guess when said fast). Same prompt and filters as transcribe(); at most 30 s."""
+        from faster_whisper.tokenizer import Tokenizer
+        from faster_whisper.transcribe import pad_or_trim
+
+        if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
+            return []
+        audio = audio.astype(np.float32, copy=False)
+        language = language or self.detect_language(audio)
+        model = self._model
+        prompt_text = self.settings.prompt(language)
+        tokenizer = Tokenizer(
+            model.hf_tokenizer, model.model.is_multilingual, task="transcribe", language=language
+        )
+        previous = tokenizer.encode(" " + prompt_text.strip()) if prompt_text else []
+        prompt = model.get_prompt(tokenizer, previous, without_timestamps=True)
+        features = pad_or_trim(model.feature_extractor(audio)[..., :-1])
+        result = model.model.generate(
+            model.encode(features),
+            [prompt],
+            beam_size=max(n, self.settings.beam_size),
+            num_hypotheses=n,
+            max_length=len(prompt) + MAX_NEW_TOKENS,
+            suppress_blank=True,
+        )[0]
+        texts: list[str] = []
+        for ids in result.sequences_ids:
+            text = tokenizer.decode([t for t in ids if t < tokenizer.eot]).strip()
+            if text and text not in texts and not is_hallucination(text, prompt_text):
+                texts.append(text)
+        return texts
+
+
+def first_known(candidates: Sequence[str], is_known: Callable[[str], bool]) -> str:
+    """The closed list: the first candidate that is a known command, else the most likely."""
+    return next((c for c in candidates if is_known(c)), candidates[0] if candidates else "")
