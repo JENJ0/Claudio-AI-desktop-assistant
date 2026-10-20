@@ -72,6 +72,15 @@ class LocalResponder:
         """True after a confirmation question: the assistant listens again, no wake word."""
         return self._pending is not None
 
+    @property
+    def asked_question(self) -> bool:
+        """Claude's last reply ended with a question: the next phrase is its answer."""
+        return (
+            self.last_route.get("route") == "claude"
+            and self._last_reply is not None
+            and self._last_reply[0].rstrip().endswith("?")
+        )
+
     def cancel_pending(self) -> None:
         """Nothing was said after the question (or it was not understood as speech)."""
         if self._pending is not None:

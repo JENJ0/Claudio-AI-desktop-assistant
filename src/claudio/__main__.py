@@ -200,7 +200,7 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
     )
 
 
-async def run_assistant(settings: Settings) -> None:
+async def run_assistant(settings: Settings, session: Path) -> None:
     from claudio.app import Assistant
     from claudio.audio.capture import AudioCapture
     from claudio.audio.devices import resolve_device
@@ -208,6 +208,7 @@ async def run_assistant(settings: Settings) -> None:
     from claudio.audio.recorder import UtteranceRecorder
     from claudio.audio.vad import Endpointer, SileroVad
     from claudio.metrics import MetricsWriter
+    from claudio.session_log import ConversationLog
     from claudio.stt.transcriber import WhisperTranscriber
     from claudio.system import SystemControl
     from claudio.wakeword.detector import OpenWakeWordDetector
@@ -257,7 +258,7 @@ async def run_assistant(settings: Settings) -> None:
         transcriber=transcriber,
         responder=responder,
         speaker=speaker,
-        metrics=MetricsWriter(logs / "metrics.jsonl"),
+        metrics=MetricsWriter(logs / "metrics.jsonl", ConversationLog(session)),
         audio_sink=recorder,
         level=level,
         system=system,
@@ -312,7 +313,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     set_language(settings.language)
     setup_logging(settings.resolve(settings.logs_dir), settings.logging.level)
+    session = None
+    if not args.check and not args.text:
+        from claudio.session_log import start_session
+
+        session = start_session(settings.resolve(settings.logs_dir), settings.logging.keep_sessions)
     log.info("CLAUDIO %s", __version__)
+    if session is not None:
+        log.info("Sessione salvata in %s", session)
 
     try:
         if args.check:
@@ -322,7 +330,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.text:
             asyncio.run(run_text(settings, args.text))
         else:
-            asyncio.run(run_assistant(settings))
+            assert session is not None
+            asyncio.run(run_assistant(settings, session))
     except KeyboardInterrupt:
         log.info("Chiusura richiesta: arrivederci")
     except (FileNotFoundError, ValueError) as exc:

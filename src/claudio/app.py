@@ -318,6 +318,8 @@ class Assistant:
         addressed to Claudio. The TV's "e poi gli ho detto di no" is not: it costs nothing."""
         if self._understood(text, language):
             return True
+        if self.claude_min_words is not None and getattr(self.responder, "asked_question", False):
+            return True  # Claude asked "da dove parti?": "Milano." is the answer
         if self.claude_min_words is None or _words(text) < self.claude_min_words:
             return False
         return addressed_to_claudio(text)
@@ -494,9 +496,15 @@ class Assistant:
             self._on_listen(frame)
 
     async def _marked(self, stream: AsyncIterator[str], inter: Interaction) -> AsyncIterator[str]:
-        async for chunk in stream:
-            inter.mark("first_text")
-            yield chunk
+        parts: list[str] = []
+        try:
+            async for chunk in stream:
+                inter.mark("first_text")
+                parts.append(chunk)
+                yield chunk
+        finally:
+            if parts:  # what was said, also when "basta" cut it short (session log, metrics)
+                inter.info["reply"] = "".join(parts).strip()
 
     def _on_first_audio(self, inter: Interaction) -> None:
         inter.mark("first_audio")

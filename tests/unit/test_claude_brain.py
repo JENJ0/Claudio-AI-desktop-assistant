@@ -365,3 +365,18 @@ async def test_long_questions_skip_the_closed_list(fake_vad, vad_settings, make_
     assistant.closed_list_max_words = 5
     await run_frames(assistant, request(make_frames))
     assert calls == ["it"] and speaker.spoken == ["Apro Chrome."]
+
+
+async def test_answer_to_claudes_question_needs_no_wake_word(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    """ "Da dove parti?" ... "Milano.": one word, but it is the answer."""
+    client = FakeClient(["Da dove parti?"])
+    assistant, speaker, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["quanto dista Napoli", "Milano."]
+    )
+    with_claude(assistant, r, brain(pricing, client))
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert len(client.calls) == 2
+    assert client.calls[1]["messages"][-1]["content"] == "[it] Milano."
+    assert assistant.history[0]["reply"] == "Da dove parti?"

@@ -120,6 +120,12 @@ reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
 `config/claudio.toml` (`enabled = false` for local only). A Haiku question costs about
 0.0002 USD.
 
+## Session logs
+
+Every run writes `logs/sessions/<date>_<time>/console.log` and `conversazione.md` (requests,
+replies, latency, cost): send that folder, or let Claude read it, instead of copying the
+console. The newest 30 sessions are kept.
+
 ## Configuration
 
 Everything is in [config/claudio.toml](config/claudio.toml): microphone and output, wake word

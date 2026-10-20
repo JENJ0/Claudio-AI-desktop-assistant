@@ -236,6 +236,7 @@ class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
     keep_audio: int = Field(50, ge=1)
+    keep_sessions: int = Field(30, ge=1)  # logs/sessions/<date_time>/: console + conversation
 
 
 class Settings(BaseSettings):

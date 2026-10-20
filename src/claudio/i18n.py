@@ -229,6 +229,8 @@ EN: dict[str, str] = {
     ),
     "Verifica della wake word non riuscita": "Wake word check failed",
     "Nome sentito prima della richiesta: %r": "Name heard before the request: %r",
+    "Conversazione non salvata": "Conversation not saved",
+    "Sessione salvata in %s": "Session saved in %s",
     # Claude (brain/, Phase 2)
     "Claude: %s, max %d token, budget %.2f al giorno": (
         "Claude: %s, max %d tokens, budget %.2f a day"
