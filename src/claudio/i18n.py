@@ -227,6 +227,8 @@ EN: dict[str, str] = {
     "Wake word sotto soglia: %s %.2f (soglia %.2f)": (
         "Wake word below threshold: %s %.2f (threshold %.2f)"
     ),
+    "Verifica della wake word non riuscita": "Wake word check failed",
+    "Nome sentito prima della richiesta: %r": "Name heard before the request: %r",
     # Claude (brain/, Phase 2)
     "Claude: %s, max %d token, budget %.2f al giorno": (
         "Claude: %s, max %d tokens, budget %.2f a day"

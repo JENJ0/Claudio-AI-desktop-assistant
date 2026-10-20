@@ -83,3 +83,40 @@ async def test_closed_list_without_a_command_keeps_the_text(
     await run_frames(assistant, request(make_frames))
     assert calls == ["it"] and responder.seen == ["Claudio prenota un volo"]
     assert "closed_list_from" not in assistant.history[-1]
+
+
+async def test_request_after_a_pause_is_kept_when_the_wake_audio_has_the_name(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    """ "Hey Claudio" ... beep ... "come ti chiami?": the transcript has no name."""
+    assistant, speaker, _, _ = setup(fake_vad, vad_settings, "Come ti chiami?")
+    heard: list[int] = []
+
+    def quick(audio):
+        heard.append(len(audio))
+        return "Hey Claudio."
+
+    assistant.second_chance = quick
+    await run_frames(assistant, request(make_frames))
+    assert heard and heard[0] > 0
+    assert speaker.spoken == ["Questo non lo so ancora fare."]
+    row = assistant.history[-1]
+    assert row["outcome"] == "ok" and row["wake_check"] == "Hey Claudio."
+
+
+async def test_wake_audio_without_the_name_is_still_a_false_wake(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    assistant, speaker, responder, _ = setup(fake_vad, vad_settings, "come stai?")
+    assistant.second_chance = lambda audio: "Hey, ciao,"
+    await run_frames(assistant, request(make_frames))
+    assert speaker.spoken == [] and responder.seen == []
+    assert assistant.history[-1]["outcome"] == "false_wake"
+
+
+async def test_commands_skip_the_wake_audio_check(fake_vad, vad_settings, make_frames) -> None:
+    assistant, speaker, _, _ = setup(fake_vad, vad_settings, "apri chrome")
+    calls: list[int] = []
+    assistant.second_chance = lambda audio: calls.append(1) or ""
+    await run_frames(assistant, request(make_frames))
+    assert calls == [] and speaker.spoken == ["Apro Chrome."]
