@@ -95,11 +95,44 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
 
 
 def build_synth(settings: Settings) -> tuple[Any, str]:
-    """The configured voice; Piper if Kokoro cannot start, so Claudio always speaks."""
+    """The configured voice; Piper if Kokoro cannot start, so Claudio always speaks.
+    With engine "jack" that voice is the fallback of Jack's worker, started here."""
+    if settings.tts.engine != "jack":
+        return build_base_synth(settings)
+    from claudio.tts.jack import JackSynth, WorkerError
+
+    fallback, fallback_name = build_base_synth(settings)
+    tts = settings.tts
+    models = settings.resolve(settings.models_dir)
+    worker = Path(__file__).parent / "tts" / "jack_worker.py"
+    synth = JackSynth(
+        [
+            str(models / tts.jack_python),
+            str(worker),
+            "--checkpoint",
+            str(models / tts.jack_checkpoint),
+            "--rvc-model",
+            str(models / tts.jack_rvc_model),
+            "--applio",
+            str(models / tts.jack_applio),
+        ],
+        fallback,
+        tts.jack_startup_timeout_s,
+        tts.jack_sentence_timeout_s,
+    )
+    try:
+        synth.start()
+    except WorkerError as exc:
+        log.warning("Jack non disponibile (%s): uso %s", exc, fallback_name)
+        return fallback, fallback_name
+    return synth, f"Jack (fallback {fallback_name})"
+
+
+def build_base_synth(settings: Settings) -> tuple[Any, str]:
     from claudio.tts.speaker import PiperSynth, voice_path
 
     models = settings.resolve(settings.models_dir)
-    if settings.tts.engine == "kokoro":
+    if settings.tts.engine in ("kokoro", "jack"):
         try:
             from claudio.tts.kokoro import KokoroSynth
 
@@ -124,8 +157,9 @@ def build_voices(settings: Settings, synth: Any) -> dict[str, tuple[Any, str]]:
         if language == DEFAULT_LANGUAGE:
             continue
         try:
-            if isinstance(synth, KokoroSynth):
-                other = synth.for_language(language)
+            base = getattr(synth, "fallback", synth)  # Jack speaks Italian only
+            if isinstance(base, KokoroSynth):
+                other = base.for_language(language)
                 voices[language] = other, f"Kokoro {other.voice}"
             else:
                 name = settings.tts.piper_voice_for(language)

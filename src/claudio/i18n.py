@@ -214,6 +214,19 @@ EN: dict[str, str] = {
         "Piper voice '{voice}' missing in {folder}. Run: uv run python scripts/download_models.py"
     ),
     "TTS (%s): %s": "TTS (%s): %s",
+    "Jack non disponibile (%s): uso %s": "Jack not available (%s): using %s",
+    "worker Jack non avviabile: {error}": "Jack worker cannot start: {error}",
+    "worker Jack: {error}": "Jack worker: {error}",
+    "worker Jack: nessuna risposta in {seconds} s": "Jack worker: no answer in {seconds} s",
+    "worker Jack terminato": "Jack worker ended",
+    "Worker Jack pronto in %.1f s (VRAM GPU %d MB)": (
+        "Jack worker ready in %.1f s (GPU VRAM %d MB)"
+    ),
+    "Worker Jack: protocollo rotto (%s)": "Jack worker: broken protocol (%s)",
+    "Jack non ha risposto (%s): uso la voce di ripiego": (
+        "Jack did not answer (%s): using the fallback voice"
+    ),
+    "Riavvio del worker Jack fallito: %s": "Jack worker restart failed: %s",
     # wake word
     "Modello wake word '{model}' non trovato in {folder}. Se lo hai addestrato tu, "
     "copialo lì (scripts/wakeword/README.md); altrimenti esegui: "

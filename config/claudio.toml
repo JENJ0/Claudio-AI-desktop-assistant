@@ -66,13 +66,23 @@ it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora fi
 en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it, pause the music, next song, repeat, stop."
 
 [tts]
-engine = "kokoro"          # "kokoro" (Nicola, male) or "piper"; Piper is also the fallback
+engine = "kokoro"          # "kokoro" (Nicola, male), "piper" or "jack" (see below); Piper is the last fallback
 kokoro_voice = "im_nicola" # Kokoro Italian voices: im_nicola, if_sara
 voice = "it_IT-paola-medium" # Piper voice
 length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% faster)
 # noise_scale / noise_w_scale (Piper): voice variation (0 = identical every time); unset = default
 use_cuda = false           # Piper only
 effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (robotic tone)
+
+# engine = "jack": Handsome Jack's voice (Qwen3-TTS + RVC) in a worker process with its own venv.
+# If the worker cannot start or answer, Kokoro/Piper speaks. Paths are relative to models/;
+# set the effect to "none" with Jack. Personal use only. See README ("Jack's voice").
+# jack_python = "voices/jack/worker/env/Scripts/python.exe"
+# jack_checkpoint = "voices/jack/ft/0.6B/checkpoint-epoch-5"
+# jack_rvc_model = "voices/jack/rvc/Applio/logs/jack/jack_100e_2800s.pth"
+# jack_applio = "voices/jack/rvc/Applio"
+# jack_startup_timeout_s = 90
+# jack_sentence_timeout_s = 15
 
 [tts.voices.en]            # the voices for English replies (same engine, same effect)
 kokoro_voice = "am_michael"

@@ -77,6 +77,9 @@ class StreamingSpeaker:
     def interrupt(self) -> None:
         """Stop the reply being spoken ("basta" heard while speaking)."""
         self._cancel.set()
+        for synth in (self.synth, *self.voices.values()):
+            if cancel := getattr(synth, "cancel", None):  # a worker generating audio stops too
+                cancel()
 
     def voice(self, language: str) -> Any:
         return self.voices.get(language, self.synth)
