@@ -108,7 +108,7 @@ class StreamingSpeaker:
                 yield chunk, int(synth.sample_rate)
         finally:
             with contextlib.suppress(ValueError):  # still running in its thread: it ends by itself
-                chunks.close()  # type: ignore[attr-defined]  # an abandoned stream stops the worker
+                chunks.close()  # an abandoned stream stops the worker
 
     def warm_up(self) -> None:
         self.render("Ciao.")
