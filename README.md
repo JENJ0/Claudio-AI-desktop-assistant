@@ -120,6 +120,22 @@ reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
 `config/claudio.toml` (`enabled = false` for local only). A Haiku question costs about
 0.0002 USD.
 
+## Jack's voice (optional, personal use)
+
+`engine = "jack"` in `[tts]` speaks with a Qwen3-TTS model fine-tuned on Handsome Jack's Italian
+lines, passed through RVC. It needs an NVIDIA GPU (~1.2 GB VRAM) and runs in a **separate
+worker process** with its own venv, so Claudio itself does not depend on torch.
+
+1. The trained voice is not in the repo. Put it under `models/voices/jack/`: the Qwen3
+   checkpoint (`ft/0.6B/checkpoint-epoch-5`), Applio 3.7.0 with the RVC model
+   (`rvc/Applio/logs/jack/jack_100e_2800s.pth`); other paths: `jack_*` keys in `[tts]`.
+2. Build the worker venv once: `powershell -File scripts\setup_jack_worker.ps1`.
+3. Try it alone: `models\voices\jack\worker\env\Scripts\python.exe scripts\try_jack.py --play`.
+4. In `.env`: `CLAUDIO_TTS__ENGINE=jack` and `CLAUDIO_TTS__EFFECT=none`.
+
+Startup takes 10-30 s more (models are loaded once). Kokoro (Piper if Kokoro is missing) is
+the fallback for English and for any sentence the worker cannot speak.
+
 ## Session logs
 
 Every run writes `logs/sessions/<date>_<time>/console.log` and `conversazione.md` (requests,

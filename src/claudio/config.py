@@ -148,7 +148,7 @@ class VoiceSettings(BaseModel):
 
 
 class TtsSettings(BaseModel):
-    engine: Literal["kokoro", "piper"] = "kokoro"
+    engine: Literal["kokoro", "piper", "jack"] = "kokoro"
     kokoro_voice: str = "im_nicola"
     voice: str = "it_IT-paola-medium"  # Piper: engine "piper", and the fallback
     # Other languages' voices, by the language Whisper detects.
@@ -162,6 +162,13 @@ class TtsSettings(BaseModel):
     noise_w_scale: float | None = Field(None, ge=0)
     use_cuda: bool = False
     effect: Literal["none", "estremo", "jarvis", "ultron", "ultron_estremo"] = "none"
+    # Engine "jack": a worker process with its own venv; paths are relative to models_dir.
+    jack_python: Path = Path("voices/jack/worker/env/Scripts/python.exe")
+    jack_checkpoint: Path = Path("voices/jack/ft/0.6B/checkpoint-epoch-5")
+    jack_rvc_model: Path = Path("voices/jack/rvc/Applio/logs/jack/jack_100e_2800s.pth")
+    jack_applio: Path = Path("voices/jack/rvc/Applio")
+    jack_startup_timeout_s: float = Field(90.0, gt=0)
+    jack_sentence_timeout_s: float = Field(15.0, gt=0)
 
     def kokoro_voice_for(self, language: str) -> str:
         other = self.voices.get(language)
