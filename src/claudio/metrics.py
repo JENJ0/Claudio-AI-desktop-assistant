@@ -74,16 +74,17 @@ class MetricsWriter:
         path.parent.mkdir(parents=True, exist_ok=True)
 
     def _rotate(self) -> None:
-        """metrics.jsonl -> .1 -> .2 -> .3 once it passes `max_bytes`: always-on runs last weeks."""
+        """metrics.jsonl -> .1 -> .2 -> .3 once it passes `max_bytes`: always-on runs last weeks.
+        On Windows a file open elsewhere cannot be renamed: keep appending, retry next time."""
         try:
             if self.path.stat().st_size < self.max_bytes:
                 return
-        except FileNotFoundError:
-            return
-        for i in range(self.backups, 0, -1):
-            src = self.path if i == 1 else self.path.with_name(f"{self.path.name}.{i - 1}")
-            if src.exists():
-                src.replace(self.path.with_name(f"{self.path.name}.{i}"))
+            for i in range(self.backups, 0, -1):
+                src = self.path if i == 1 else self.path.with_name(f"{self.path.name}.{i - 1}")
+                if src.exists():
+                    src.replace(self.path.with_name(f"{self.path.name}.{i}"))
+        except OSError:
+            log.warning("Rotazione di %s non riuscita", self.path.name, exc_info=True)
 
     def write(self, interaction: Interaction) -> dict[str, Any]:
         row = {"ts": time.time(), **interaction.summary()}
