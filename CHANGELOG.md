@@ -10,6 +10,12 @@
 - "go" alone no longer counts as a yes.
 
 ### Added
+- Jack's voice (`engine = "jack"` in `[tts]`): Qwen3-TTS 0.6B fine-tuned on Handsome Jack's
+  Italian lines + RVC, in a separate worker process (`src/claudio/tts/jack_worker.py`, own venv
+  built by `scripts/setup_jack_worker.ps1`: torch stays out of Claudio's venv). The audio is
+  played as it is generated (first chunk ~0.3 s). If the worker cannot start, dies or does not
+  answer in time, Kokoro/Piper speaks and the worker restarts in the background. "basta" stops
+  the generation too. English replies keep Kokoro/Piper. `scripts/try_jack.py` is the manual test.
 - Claude answers what no local command understands (`src/claudio/brain/`): Haiku 5.5 by
   default, streamed sentence by sentence to the voice, in the language of the request (or
   Italian when that language has no voice). Short spoken style, no Markdown. `[claude]` in
