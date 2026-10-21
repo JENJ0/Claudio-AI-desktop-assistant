@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -43,6 +43,29 @@ class Transcriber(Protocol):
 
 class Responder(Protocol):
     language: str  # of the reply being streamed, known by its first chunk
+    last_route: dict[str, Any]  # how the last request was handled ("route", "command"...)
+
+    @property
+    def awaiting(self) -> bool:
+        """A confirmation question is open: the answer comes without the wake word."""
+        ...
+
+    @property
+    def asked_question(self) -> bool:
+        """Claude's last reply ended with a question: the next phrase is its answer."""
+        ...
+
+    def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
+        """A local command matches `text`."""
+        ...
+
+    def is_stop(self, text: str) -> bool:
+        """`text` is only "basta" / "stop": said while CLAUDIO speaks, it interrupts."""
+        ...
+
+    def cancel_pending(self) -> None:
+        """Drop an armed level 2-3 action (nothing was answered)."""
+        ...
 
     def respond(self, text: str, language: str = DEFAULT_LANGUAGE) -> AsyncIterator[str]:
         """Stream the reply to `text`, heard in `language`. Phase 1: one chunk. Phase 2:
@@ -67,3 +90,7 @@ class Speaker(Protocol):
     ) -> None: ...
 
     async def beep(self, kind: str = "wake") -> None: ...
+
+    def interrupt(self) -> None:
+        """Stop the reply being spoken."""
+        ...

@@ -110,3 +110,24 @@ def test_metrics_rows_reach_the_conversation(tmp_path: Path, session: Path) -> N
     inter = Interaction(info={"wake_word": "hey_claudio", "outcome": "ok", "text": "che ore sono"})
     writer.write(inter)
     assert "**JenJo:** che ore sono" in (session / CONVERSATION_FILE).read_text(encoding="utf-8")
+
+
+def test_console_log_rotates(session: Path) -> None:
+    from logging.handlers import RotatingFileHandler
+
+    handlers = [
+        h
+        for h in logging.getLogger().handlers
+        if isinstance(h, RotatingFileHandler) and Path(h.baseFilename).parent == session
+    ]
+    assert len(handlers) == 1 and handlers[0].maxBytes > 0 and handlers[0].backupCount >= 1
+
+
+def test_metrics_file_rotates_and_keeps_the_newest(tmp_path: Path) -> None:
+    path = tmp_path / "metrics.jsonl"
+    writer = MetricsWriter(path, max_bytes=100, backups=2)
+    for _ in range(6):
+        writer.write(Interaction(info={"wake_word": "hey_claudio", "outcome": "ok"}))
+    assert path.exists() and path.with_name("metrics.jsonl.1").exists()
+    assert path.with_name("metrics.jsonl.2").exists()
+    assert not path.with_name("metrics.jsonl.3").exists()  # only `backups` copies stay

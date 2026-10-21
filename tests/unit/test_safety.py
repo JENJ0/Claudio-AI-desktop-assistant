@@ -37,6 +37,10 @@ def test_yes(text: str) -> None:
     assert parse_answer(text) is Answer.YES
 
 
+def test_go_alone_is_not_a_yes() -> None:
+    assert parse_answer("go away") is not Answer.YES
+
+
 @pytest.mark.parametrize(
     "text",
     [
