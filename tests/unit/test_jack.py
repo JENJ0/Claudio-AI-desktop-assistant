@@ -23,7 +23,7 @@ FAKE_WORKER = textwrap.dedent(
         sys.exit(1)
     if mode == "slow_start":
         time.sleep(30)
-    emit({"event": "ready", "sample_rate": 48000, "load_s": 1.5, "vram_mb": 2900})
+    emit({"event": "ready", "sample_rate": 24000, "load_s": 1.5, "vram_mb": 2900})
     cancelled = -1
     for line in sys.stdin:
         req = json.loads(line)
@@ -40,6 +40,9 @@ FAKE_WORKER = textwrap.dedent(
         if mode == "error":
             emit({"event": "error", "id": rid, "message": "boom"})
             continue
+        if mode == "cut":  # one piece of audio, then the worker dies
+            emit({"event": "audio", "id": rid, "bytes": 2}, b"\\x01\\x00")
+            sys.exit(1)
         if mode == "stale":  # a leftover of an earlier sentence arrives first
             emit({"event": "audio", "id": rid - 1, "bytes": 4}, b"\\x07\\x00\\x07\\x00")
         for k in range(3):
@@ -80,12 +83,12 @@ def test_speaks_through_the_worker(tmp_path, synths) -> None:
     synth, fallback = make(tmp_path, "ok", startup_timeout_s=10)
     synths.append(synth)
     synth.start()
-    assert (synth.sample_rate, synth.load_s, synth.vram_mb) == (48000, 1.5, 2900)
+    assert (synth.sample_rate, synth.load_s, synth.vram_mb) == (24000, 1.5, 2900)
     audio = synth.synthesize("Ciao.")
     assert audio.dtype == np.int16
     assert len(audio) == 300
     assert audio[0] == 1 and audio[100] == 2 and audio[200] == 3  # chunks in order
-    assert synth.sample_rate == 48000
+    assert synth.sample_rate == 24000
     assert fallback.texts == []
 
 
@@ -183,3 +186,23 @@ def test_build_synth_wraps_the_fallback_when_the_worker_starts(monkeypatch, tmp_
         "--checkpoint",
         str(tmp_path / "voices/jack/ft/0.6B/checkpoint-epoch-5"),
     ]
+
+
+def test_stream_yields_the_chunks_as_they_come(tmp_path, synths) -> None:
+    synth, fallback = make(tmp_path, "ok", startup_timeout_s=10)
+    synths.append(synth)
+    synth.start()
+    pieces = list(synth.stream("Ciao."))
+    assert [int(p[0]) for p in pieces] == [1, 2, 3]
+    assert synth.last_first_ms == 5 and synth.last_total_ms == 9
+    assert fallback.texts == []
+
+
+def test_a_worker_that_fails_after_some_audio_is_not_repeated_by_the_fallback(
+    tmp_path, synths
+) -> None:
+    synth, fallback = make(tmp_path, "cut", startup_timeout_s=10, sentence_timeout_s=1)
+    synths.append(synth)
+    synth.start()
+    pieces = list(synth.stream("Ciao."))
+    assert len(pieces) == 1 and fallback.texts == []

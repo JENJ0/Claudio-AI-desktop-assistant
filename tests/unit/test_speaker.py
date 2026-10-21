@@ -116,3 +116,53 @@ async def test_each_language_speaks_with_its_voice() -> None:
     assert [t for t, _ in english.calls] == ["Opening.", "Chrome."]
     assert [t for t, _ in italian.calls] == ["Apro.", "Hallo."]
     assert [rate for rate, _ in player.played] == [16000, 16000, 22050, 22050]
+
+
+class StreamingSynth:
+    """Like Jack: stream() yields the audio of a sentence in pieces."""
+
+    sample_rate = 24000
+
+    def __init__(self) -> None:
+        self.streamed: list[str] = []
+        self.closed = 0
+
+    def synthesize(self, text: str) -> np.ndarray:
+        raise AssertionError("a streaming synth is played through stream()")
+
+    def stream(self, text: str):
+        self.streamed.append(text)
+        try:
+            for k in (1, 2, 3):
+                yield np.full(100, k, dtype=np.int16)
+        finally:
+            self.closed += 1
+
+
+def test_a_streaming_voice_is_played_piece_by_piece() -> None:
+    synth, player = StreamingSynth(), FakePlayer()
+    speaker = StreamingSpeaker(synth, player)
+
+    async def text():
+        yield "Prima frase. Seconda frase."
+
+    asyncio.run(speaker.speak(text()))
+    assert synth.streamed == ["Prima frase.", "Seconda frase."]
+    assert [first for first, _ in player.played] == [1, 2, 3, 1, 2, 3]
+    assert synth.closed == 2
+
+
+def test_an_effect_makes_a_streaming_voice_render_whole_sentences() -> None:
+    class Whole(StreamingSynth):
+        def synthesize(self, text: str) -> np.ndarray:
+            return np.full(100, 7, dtype=np.int16)
+
+    synth, player = Whole(), FakePlayer()
+    speaker = StreamingSpeaker(synth, player, effect=lambda audio, rate: audio)
+
+    async def text():
+        yield "Una frase."
+
+    asyncio.run(speaker.speak(text()))
+    assert synth.streamed == []
+    assert [first for first, _ in player.played] == [7]

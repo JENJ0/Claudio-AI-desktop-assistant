@@ -11,7 +11,7 @@ Requests, one JSON line each on stdin:
   {"op": "interrupt"}        stops every speak received so far, even one in progress
   {"op": "quit"}
 Replies, one JSON line each on stdout:
-  {"event": "ready", "sample_rate": 48000, "load_s": 14.2, "vram_mb": 2900}
+  {"event": "ready", "sample_rate": 24000, "load_s": 14.2, "vram_mb": 2900}
   {"event": "audio", "id": 7, "bytes": 24000}   followed by that many bytes of int16 PCM
   {"event": "done", "id": 7, "cancelled": false, "first_ms": 310, "total_ms": 900}
   {"event": "error", "id": 7, "message": "..."}
@@ -33,7 +33,8 @@ PROTOCOL_OUT = sys.stdout.buffer
 sys.stdout = sys.stderr  # whatever a library prints must not corrupt the protocol
 
 QWEN_RATE = 24_000
-OUT_RATE = 48_000  # Applio's realtime rate
+RVC_RATE = 48_000  # Applio's realtime rate
+OUT_RATE = 24_000  # what is sent: the player's rate, so nothing is resampled without a filter
 BLOCK_S = 0.25
 CONTEXT = 480  # Qwen samples of the previous chunk kept to resample a chunk without edge ripple
 TAIL_S = 0.15  # speech ends this long after the input: RVC output follows the input by ~70 ms
@@ -78,20 +79,29 @@ class RvcStream:
         self.begin()
 
     def begin(self) -> None:
+        from scipy.signal import butter, sosfilt_zi
+
+        self.sos = butter(8, 0.45, output="sos")  # low-pass at 10.8 kHz before dropping to 24 kHz
+        self.zi = sosfilt_zi(self.sos) * 0.0
         self.pending = self.np.zeros(0, dtype=self.np.float32)  # 48 kHz not yet converted
         self.tail = self.np.zeros(0, dtype=self.np.float32)  # last Qwen samples
         self.fed = 0  # 48 kHz samples received
         self.emitted = 0
 
-    def _convert(self, audio: Any) -> bytes:
+    def _convert(self, audio: Any, limit: int | None = None) -> bytes:
+        """One 48 kHz block through RVC; int16 PCM at 24 kHz. `limit` cuts the block short."""
         import torch
+        from scipy.signal import sosfilt
 
         np = self.np
         torch.cuda.synchronize()
         out, _volume, _perf = self.vc.on_request(audio, **self.kw)
-        out = np.asarray(out, dtype=np.float32)
+        out = np.asarray(out, dtype=np.float32)[:limit]
+        smooth, self.zi = sosfilt(self.sos, out, zi=self.zi)
+        first = -self.emitted % 2  # keep the even samples of the whole stream
         self.emitted += len(out)
-        return (np.clip(out, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+        pcm = np.clip(smooth[first::2], -1.0, 1.0)
+        return (pcm * 32767).astype("<i2").tobytes()
 
     def feed(self, chunk: Any) -> list[bytes]:
         """One Qwen3 chunk (float32, 24 kHz) in; zero or more converted blocks out."""
@@ -113,17 +123,15 @@ class RvcStream:
     def flush(self) -> list[bytes]:
         """Convert what is left (zero-padded), then zeros until the speech has ended."""
         np = self.np
-        end = self.fed + int(TAIL_S * OUT_RATE)
+        end = self.fed + int(TAIL_S * RVC_RATE)
         blocks = []
         if len(self.pending):
             pad = np.zeros(self.block - len(self.pending), dtype=np.float32)
             blocks.append(self._convert(np.concatenate([self.pending, pad])))
         self.pending = np.zeros(0, dtype=np.float32)
         while self.emitted < end:
-            blocks.append(self._convert(np.zeros(self.block, dtype=np.float32)))
-        keep = len(blocks[-1]) - 2 * (self.emitted - end) if blocks else 0
-        if blocks and self.emitted > end:
-            blocks[-1] = blocks[-1][: max(keep, 0)]
+            limit = min(self.block, end - self.emitted)
+            blocks.append(self._convert(np.zeros(self.block, dtype=np.float32), limit))
         return blocks
 
 

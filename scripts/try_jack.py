@@ -63,12 +63,17 @@ def main() -> None:
     )
     for n, text in enumerate(SENTENCES * 2, 1):  # twice: the second round shows the warm timing
         t = time.perf_counter()
-        audio = synth.synthesize(text)
+        pieces, first = [], None
+        for piece in synth.stream(text):
+            first = first or 1000 * (time.perf_counter() - t)
+            pieces.append(piece)
         wall = 1000 * (time.perf_counter() - t)
+        audio = np.concatenate(pieces)
         seconds = len(audio) / synth.sample_rate
         print(
-            f"{n}: first audio {synth.last_first_ms} ms, sentence done {synth.last_total_ms} ms "
-            f"(client {wall:.0f} ms), {seconds:.2f} s of speech, peak {np.abs(audio).max()}"
+            f"{n}: first chunk after {first:.0f} ms (worker {synth.last_first_ms} ms), "
+            f"sentence done in {wall:.0f} ms, {len(pieces)} chunks, {seconds:.2f} s of speech, "
+            f"peak {np.abs(audio).max()}"
         )
         sf.write(out / f"{n}.wav", audio, synth.sample_rate)
         if args.play:

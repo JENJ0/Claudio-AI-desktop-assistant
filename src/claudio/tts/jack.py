@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -24,7 +25,7 @@ from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
 
-SAMPLE_RATE = 48_000
+SAMPLE_RATE = 24_000
 RESTART_COOLDOWN_S = 30.0
 CREATE_NO_WINDOW = 0x08000000  # Windows: no console window for the worker
 
@@ -166,39 +167,55 @@ class JackSynth:
                 self._send({"op": "interrupt"})
 
     def synthesize(self, text: str) -> np.ndarray:
+        """The whole sentence at once (see stream() for audio as it is generated)."""
+        chunks = list(self.stream(text))
+        return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)
+
+    def stream(self, text: str) -> Iterator[np.ndarray]:
+        """int16 chunks as the worker produces them; the first one arrives in ~0.3 s.
+        A worker that fails before any audio leaves the sentence to the fallback voice."""
+        spoken = False
         if self.alive():
             try:
-                audio = self._speak(text)
                 self.sample_rate = SAMPLE_RATE
-                return audio
+                for chunk in self._speak(text):
+                    spoken = True
+                    yield chunk
+                return
             except WorkerError as exc:
                 log.warning("Jack non ha risposto (%s): uso la voce di ripiego", exc)
                 self.close()
         self._schedule_restart()
+        if spoken:  # cut in the middle: a second voice would repeat what was already said
+            return
         audio = self.fallback.synthesize(text)
         self.sample_rate = int(self.fallback.sample_rate)
-        return audio
+        yield audio
 
-    def _speak(self, text: str) -> np.ndarray:
+    def _speak(self, text: str) -> Iterator[np.ndarray]:
         self._next_id += 1
         rid = self._next_id
         self._send({"op": "speak", "id": rid, "text": text, "language": "Auto"})
         deadline = time.monotonic() + self.sentence_timeout_s
-        chunks: list[bytes] = []
-        while True:
-            event = self._next_event(max(deadline - time.monotonic(), 0.01))
-            if event.get("id") != rid:
-                continue  # leftovers of an interrupted sentence
-            kind = event.get("event")
-            if kind == "audio":
-                chunks.append(event["pcm"])
-            elif kind == "done":
-                self.last_first_ms = event.get("first_ms")
-                self.last_total_ms = int(event.get("total_ms", 0))
-                break
-            elif kind == "error":
-                raise WorkerError(event.get("message", "errore"))
-        return np.frombuffer(b"".join(chunks), dtype="<i2").astype(np.int16)
+        finished = False
+        try:
+            while True:
+                event = self._next_event(max(deadline - time.monotonic(), 0.01))
+                if event.get("id") != rid:
+                    continue  # leftovers of an interrupted sentence
+                kind = event.get("event")
+                if kind == "audio":
+                    yield np.frombuffer(event["pcm"], dtype="<i2").astype(np.int16)
+                elif kind == "done":
+                    self.last_first_ms = event.get("first_ms")
+                    self.last_total_ms = int(event.get("total_ms", 0))
+                    finished = True
+                    return
+                elif kind == "error":
+                    raise WorkerError(event.get("message", "errore"))
+        finally:
+            if not finished:
+                self.cancel()  # abandoned half way (barge-in, error): stop generating
 
     def _schedule_restart(self) -> None:
         """After a failure, try the worker again in the background, at most every 30 s."""

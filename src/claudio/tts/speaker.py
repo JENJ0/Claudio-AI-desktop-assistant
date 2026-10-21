@@ -4,6 +4,7 @@ with its own voice."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -90,6 +91,25 @@ class StreamingSpeaker:
         rate = int(synth.sample_rate)
         return (self.effect(audio, rate) if self.effect else audio), rate
 
+    async def render_stream(
+        self, sentence: str, language: str
+    ) -> AsyncIterator[tuple[np.ndarray, int]]:
+        """The audio of a sentence. A synth with stream() (Jack) is played as it is generated,
+        so the first words start before the sentence is finished; with a voice effect, the
+        sentence is rendered whole, as the effect needs it."""
+        synth = self.voice(language)
+        stream = getattr(synth, "stream", None)
+        if stream is None or self.effect:
+            yield await asyncio.to_thread(self.render, sentence, language)
+            return
+        chunks = iter(stream(sentence))
+        try:
+            while (chunk := await asyncio.to_thread(next, chunks, None)) is not None:
+                yield chunk, int(synth.sample_rate)
+        finally:
+            with contextlib.suppress(ValueError):  # still running in its thread: it ends by itself
+                chunks.close()  # type: ignore[attr-defined]  # an abandoned stream stops the worker
+
     def warm_up(self) -> None:
         self.render("Ciao.")
         for language in self.voices:
@@ -114,7 +134,8 @@ class StreamingSpeaker:
                 async for sentence in split_stream(text_stream):
                     lang = language() if callable(language) else language
                     log.debug("TTS (%s): %s", lang, sentence)
-                    await queue.put(await asyncio.to_thread(self.render, sentence, lang))
+                    async for item in self.render_stream(sentence, lang):
+                        await queue.put(item)
             finally:
                 await queue.put(None)
 
