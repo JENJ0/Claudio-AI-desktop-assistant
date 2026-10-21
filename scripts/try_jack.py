@@ -58,7 +58,8 @@ def main() -> None:
     t0 = time.perf_counter()
     synth.start()
     print(
-        f"start: {time.perf_counter() - t0:.1f} s (worker load {synth.load_s} s, GPU in use {synth.vram_mb} MB)"
+        f"start: {time.perf_counter() - t0:.1f} s (worker load {synth.load_s} s, "
+        f"GPU in use {synth.vram_mb} MB)"
     )
     for n, text in enumerate(SENTENCES * 2, 1):  # twice: the second round shows the warm timing
         t = time.perf_counter()
