@@ -9,20 +9,21 @@ import functools
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
-from claudio.config import in_language
+from claudio.config import NoiseSettings, in_language
+from claudio.intake import Decision, Heard, Kind, RequestFilter, Segment
+from claudio.intake import addressed_to_claudio as addressed_to_claudio  # re-exported
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
-from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
+from claudio.router.normalizer import heard_wake_word
 from claudio.system import SystemControl
-from claudio.wakeword.verifier import wake_confirmed
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +74,8 @@ class Assistant:
         closed_list_max_words: int = 0,
         claude_min_words: int | None = None,
         only_addressed: bool = True,
+        noise: NoiseSettings | None = None,
+        stt_segments: Callable[[], Sequence[Segment]] | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -87,26 +90,24 @@ class Assistant:
         # Hears the last 1.5 s after a near miss (a score just under the threshold): if the
         # text has the wake word, CLAUDIO wakes anyway. None: near misses are only logged.
         self.second_chance = second_chance
-        # A request heard in another language that no command understands is transcribed
-        # again in this one (fast Italian often sounds English). None: never.
-        self.retry_language = retry_language
+        # Whether a phrase is a request: the rules live in intake.py. Their settings are also
+        # attributes of the Assistant (properties below).
+        self.intake = RequestFilter(
+            verify_wake=verify_wake,
+            claude_min_words=claude_min_words,
+            only_addressed=only_addressed,
+            closed_list_max_words=closed_list_max_words,
+            retry_language=retry_language,
+            noise=noise,
+        )
+        # Whisper's confidence in each segment of the last transcription (the noise filter).
+        # None: not known, only the speech level is judged.
+        self.stt_segments = stt_segments
         # After a reply, listen this long for another request without the wake word (0: off).
         self.conversation_s = conversation_s
         self.barge_in = barge_in  # None: the microphone is ignored while speaking
-        # Drop a wake whose transcript has no name at the start and no command (verifier.py).
-        self.verify_wake = verify_wake
         # (audio, language) -> Whisper's n-best: tried on a request no command understands.
         self.closed_list = closed_list
-        # Longer requests skip the closed list: a question for Claude, not a misheard command.
-        self.closed_list_max_words = closed_list_max_words  # 0: no limit
-        # Claude answers what no command understands. In the conversation window (no wake
-        # word) a request needs at least this many words: shorter is the TV or a remark.
-        # None: Claude is off and the window keeps only the local commands.
-        self.claude_min_words = claude_min_words
-        # True: in the window only phrases that sound addressed to Claudio go to Claude (the TV
-        # costs nothing). False: every phrase of claude_min_words or more is answered, until
-        # "basta" or silence (JenJo's choice, 23/10).
-        self.only_addressed = only_addressed
         self._barge_checking = False
         self._interrupted = False  # the reply being spoken was cut short by "basta"
         self._checking = False
@@ -123,6 +124,56 @@ class Assistant:
         self._beeps: set[asyncio.Task[None]] = set()
         # Finished interactions (for tests/benchmarks). Bounded: always-on runs last for weeks.
         self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_MAX)
+
+    # The request filter's settings, as attributes of the Assistant.
+
+    @property
+    def verify_wake(self) -> bool:
+        """Drop a wake whose transcript has no name at the start and no command."""
+        return self.intake.verify_wake
+
+    @verify_wake.setter
+    def verify_wake(self, value: bool) -> None:
+        self.intake.verify_wake = value
+
+    @property
+    def retry_language(self) -> str | None:
+        """A request heard in another language that no command understands is transcribed
+        again in this one (fast Italian often sounds English). None: never."""
+        return self.intake.retry_language
+
+    @retry_language.setter
+    def retry_language(self, value: str | None) -> None:
+        self.intake.retry_language = value
+
+    @property
+    def closed_list_max_words(self) -> int:
+        """Longer requests skip the closed list: a question for Claude (0: no limit)."""
+        return self.intake.closed_list_max_words
+
+    @closed_list_max_words.setter
+    def closed_list_max_words(self, value: int) -> None:
+        self.intake.closed_list_max_words = value
+
+    @property
+    def claude_min_words(self) -> int | None:
+        """In the conversation window a phrase for Claude needs this many words (shorter is
+        the TV or a remark). None: Claude is off, the window keeps only local commands."""
+        return self.intake.claude_min_words
+
+    @claude_min_words.setter
+    def claude_min_words(self, value: int | None) -> None:
+        self.intake.claude_min_words = value
+
+    @property
+    def only_addressed(self) -> bool:
+        """True: in the window only phrases that sound addressed to Claudio go to Claude.
+        False: every phrase of claude_min_words or more is answered (JenJo's choice, 23/10)."""
+        return self.intake.only_addressed
+
+    @only_addressed.setter
+    def only_addressed(self, value: bool) -> None:
+        self.intake.only_addressed = value
 
     def _set_state(self, state: State) -> None:
         if state != self.state:
@@ -258,34 +309,29 @@ class Assistant:
             async with self._stt_lock:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
                 heard = self.transcriber.language
+                # Whisper's confidence in the first pass: a retry only replaces it when understood.
+                segments = list(self.stt_segments()) if self.stt_segments is not None else []
                 text, heard = await self._retry(audio, text, heard, inter)
                 text = await self._closed_list(audio, text, heard, inter)
             inter.mark("stt_done")
             inter.info["text"] = text
             inter.info["stt_language"] = heard
             log.info("Trascritto (%s): %r", heard, text)
-            if only_wake_words(text) and "relisten" not in inter.info:
-                outcome = "relisten"
+            if "retried_from" in inter.info or "closed_list_from" in inter.info:
+                segments = []  # a known command now: the first pass's doubts no longer apply
+            decision = await self._decide(text, heard, inter, segments)
+            outcome = decision.kind.value
+            if decision.kind is Kind.RELISTEN:
                 self._relisten(inter)
                 return
-            if not text or only_wake_words(text):
-                outcome = "empty"
-                await self.speaker.beep("cancel")
-                return
-            if self._false_wake(text, heard, inter) and not await self._name_before(inter):
-                # Woke on something that only starts like the name: silence, nothing else.
-                outcome = "false_wake"
-                log.info("Wake word non confermata da Whisper, ignoro: %r", text)
-                return
-            if inter.info.get("wake_word") == "conversation" and not self._is_request(text, heard):
-                # Heard without the wake word: the TV or someone else talking, not a request.
-                outcome = "conversation_end"
-                log.info("Non è una richiesta, fine della conversazione: %r", text)
-                await self.speaker.beep("cancel")
+            if decision.dropped:
+                self._log_drop(decision, inter)
+                if decision.kind is not Kind.FALSE_WAKE:  # a false wake ends in silence
+                    await self.speaker.beep("cancel")
                 return
             self._set_state(State.RESPONDING)
             await self.speaker.speak(
-                self._marked(self.responder.respond(text, heard), inter),
+                self._marked(self.responder.respond(decision.text, heard), inter),
                 on_first_audio=lambda: self._on_first_audio(inter),
                 language=lambda: self.responder.language,
             )
@@ -320,19 +366,43 @@ class Assistant:
                 elif self._keeps_conversation(outcome):
                     self._listen_for_answer(conversation=True)
 
-    def _understood(self, text: str, language: str) -> bool:
-        return self.responder.understands(text, language)
+    async def _decide(
+        self, text: str, language: str, inter: Interaction, segments: Sequence[Segment]
+    ) -> Decision:
+        """The request filter's decision. A false wake gets one more chance: the request may
+        have been said after a pause, with the name only in the wake word audio."""
+        info = inter.info
+        speech_dbfs = self.endpointer.stats()["speech_dbfs"] if self.endpointer.started else None
+        heard = Heard(
+            wake_word=str(info.get("wake_word", "")),
+            relistened="relisten" in info,
+            second_chance="second_chance" in info,
+            speech_dbfs=speech_dbfs,
+            segments=segments,
+        )
+        if segments:  # for tuning the noise filter on real logs
+            info["stt_no_speech"] = round(max(s.no_speech_prob for s in segments), 3)
+            info["stt_logprob"] = round(min(s.avg_logprob for s in segments), 3)
+        decision = self.intake.decide(text, language, heard, self.responder)
+        if decision.kind is Kind.FALSE_WAKE and await self._name_before(inter):
+            heard = replace(heard, name_heard=True)
+            decision = self.intake.decide(text, language, heard, self.responder)
+        if decision.reason and not decision.dropped:
+            info["intake"] = decision.reason  # e.g. quiet_answer: the "sì" was not counted
+            log.info("Risposta troppo lontana dal microfono, non la conto: %r", text)
+        return decision
 
-    def _is_request(self, text: str, language: str) -> bool:
-        """Heard in the conversation window: a command, or (with Claude) a phrase that sounds
-        addressed to Claudio. The TV's "e poi gli ho detto di no" is not: it costs nothing."""
-        if self._understood(text, language):
-            return True
-        if self.claude_min_words is not None and self.responder.asked_question:
-            return True  # Claude asked "da dove parti?": "Milano." is the answer
-        if self.claude_min_words is None or _words(text) < self.claude_min_words:
-            return False
-        return not self.only_addressed or addressed_to_claudio(text)
+    def _log_drop(self, decision: Decision, inter: Interaction) -> None:
+        text = decision.text
+        if decision.kind is Kind.FALSE_WAKE:
+            log.info("Wake word non confermata da Whisper, ignoro: %r", text)
+        elif decision.kind is Kind.NOT_REQUEST:
+            # Heard without the wake word: the TV or someone else talking, not a request.
+            log.info("Non è una richiesta, fine della conversazione: %r", text)
+        elif decision.kind is Kind.NOISE:
+            inter.info["drop_reason"] = "noise"
+            inter.info["noise"] = decision.reason
+            log.info("Rumore scambiato per parole (%s), ignoro: %r", decision.reason, text)
 
     async def _name_before(self, inter: Interaction) -> bool:
         """The request was said after a pause ("Hey Claudio" ... beep ... "come ti chiami?"):
@@ -354,33 +424,14 @@ class Assistant:
             return True
         return False
 
-    def _false_wake(self, text: str, heard: str, inter: Interaction) -> bool:
-        """Only a real wake word detection is judged: not the conversation window, not a
-        yes/no answer, not a second chance (Whisper already heard the name) and not the
-        request after a lone wake word (the name was in the phrase before)."""
-        if (
-            not self.verify_wake
-            or inter.info.get("wake_word") == "conversation"
-            or self.responder.awaiting
-            or "second_chance" in inter.info
-            or "relisten" in inter.info
-        ):
-            return False
-        return not wake_confirmed(text, self._understood(text, heard))
-
     async def _closed_list(
         self, audio: np.ndarray, text: str, heard: str, inter: Interaction
     ) -> str:
         """The first of Whisper's n-best transcriptions that a command understands, when the
         best one is not understood; `text` when none is (or there is nothing to fix)."""
         understands = self.responder.understands
-        if (
-            self.closed_list is None
-            or not text
-            or only_wake_words(text)
-            or self.responder.awaiting
-            or understands(text, heard)
-            or (self.closed_list_max_words and _words(text) > self.closed_list_max_words)
+        if self.closed_list is None or not self.intake.wants_closed_list(
+            text, heard, self.responder
         ):
             return text
         start = self.clock()
@@ -460,14 +511,7 @@ class Assistant:
         understands it; the first transcription when the retry is not understood either."""
         first = self.retry_language
         understands = self.responder.understands
-        if (
-            first is None
-            or heard == first
-            or not text
-            or only_wake_words(text)
-            or self.responder.awaiting  # a yes/no: no command to match
-            or understands(text, heard)
-        ):
+        if first is None or not self.intake.wants_retry(text, heard, self.responder):
             return text, heard
         start = self.clock()
         again = await asyncio.to_thread(
@@ -610,69 +654,3 @@ TYPED_NEEDS_VOICE = {
     "it": "Questa azione va confermata a voce: chiedimela parlando.",
     "en": "This action needs a spoken confirmation: ask me out loud.",
 }
-
-
-# How a follow-up request to Claudio usually starts, when it is not a question.
-REQUEST_STARTS = frozenset(
-    [
-        "dimmi",
-        "spiegami",
-        "raccontami",
-        "descrivimi",
-        "dammi",
-        "fammi",
-        "consigliami",
-        "suggeriscimi",
-        "traduci",
-        "calcola",
-        "elenca",
-        "riassumi",
-        "continua",
-        "aiutami",
-        "scrivi",
-        "perche",
-        "come",
-        "cosa",
-        "chi",
-        "dove",
-        "quando",
-        "quale",
-        "quanto",
-        "tell",
-        "explain",
-        "describe",
-        "give",
-        "show",
-        "recommend",
-        "suggest",
-        "translate",
-        "calculate",
-        "list",
-        "summarize",
-        "continue",
-        "help",
-        "write",
-        "why",
-        "how",
-        "what",
-        "who",
-        "where",
-        "when",
-        "which",
-    ]
-)
-
-
-def addressed_to_claudio(text: str) -> bool:
-    """A question (Whisper writes the "?"), a request verb at the start ("dimmi di più") or
-    the name: worth asking Claude without the wake word."""
-    words = normalize(text, drop_fillers=False).split()
-    return (
-        text.rstrip().endswith("?")
-        or (bool(words) and words[0] in REQUEST_STARTS)
-        or heard_wake_word(text)
-    )
-
-
-def _words(text: str) -> int:
-    return len(normalize(text, drop_fillers=False).split())

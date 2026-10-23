@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,37 @@ def start_session(logs_dir: Path, keep: int, now: datetime | None = None) -> Pat
     return folder
 
 
+def purge_old_logs(
+    logs_dir: Path, days: int, current: Path | None = None, now: float | None = None
+) -> int:
+    """Privacy (logging.retention_days): delete what Claudio heard more than `days` ago, by
+    last change. Session folders (console and conversation), the WAVs in logs/audio/ (near
+    misses too) and the rotated metrics files; the live metrics.jsonl and `current` stay.
+    Returns how many were deleted."""
+    cutoff = (now if now is not None else time.time()) - days * 86400
+    old: list[Path] = []
+    sessions = logs_dir / "sessions"
+    if sessions.is_dir():
+        old += [p for p in sessions.iterdir() if p.is_dir() and p != current]
+    audio = logs_dir / "audio"
+    if audio.is_dir():
+        old += list(audio.glob("*.wav"))
+    old += list(logs_dir.glob("metrics.jsonl.*"))
+    removed = 0
+    for path in old:
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed += 1
+        except OSError:
+            log.warning("Impossibile eliminare il vecchio log %s", path)
+    return removed
+
+
 class ConversationLog:
     """Appends each finished request (a metrics row) to conversazione.md."""
 
@@ -78,6 +110,8 @@ def format_row(row: dict[str, Any]) -> str:
         lines.append(f"**JenJo:** {row['text']}")
     if row.get("reply"):
         lines.append(f"**Claudio:** {row['reply']}")
+    if row.get("tools"):
+        lines.append("**Azioni:** " + "; ".join(row["tools"]))
     details = []
     for key, label in (("m1_ms", "M1"), ("m2_ms", "M2"), ("stt_ms", "STT")):
         if row.get(key) is not None:

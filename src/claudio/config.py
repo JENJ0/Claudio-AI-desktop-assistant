@@ -224,6 +224,21 @@ class ConversationSettings(BaseModel):
     only_addressed: bool = False
 
 
+class NoiseSettings(BaseModel):
+    """Noise transcribed as words (the TV, a cough, "Tremi un podcast"): a phrase no command
+    understands is not sent to Claude when it is short and Whisper was unsure of all of it, or
+    when it was too quiet to be someone talking to the microphone. Local commands are free and
+    never judged. Every drop is logged as drop_reason=noise with the figures, to tune these."""
+
+    enabled: bool = True
+    max_words: int = Field(4, ge=0)  # only phrases this short are judged on Whisper's confidence
+    no_speech_prob: float = Field(0.5, ge=0, le=1)  # a segment is unsure above this...
+    avg_logprob: float = Field(-0.8, le=0)  # ...or below this
+    min_speech_dbfs: float = Field(-45.0, le=0)  # loudest 32 ms below this: not a request
+    # The answer to "Confermi?": quieter than this is the TV, not JenJo (treated as unclear).
+    answer_min_dbfs: float = Field(-35.0, le=0)
+
+
 class CostSettings(BaseModel):
     pricing_file: Path = Path("config/pricing.toml")  # prices and cache multipliers
     db_file: Path = Path("data/spend.db")  # the ledger: one row per Claude call
@@ -260,6 +275,35 @@ class ClaudeSettings(BaseModel):
     )
 
 
+class PcSettings(BaseModel):
+    """Claude acts on the PC with tools (Phase 3). JenJo chose "Equilibrata" (23/10): harmless
+    keys without a question, apps from the Start menu, files only in the user folder."""
+
+    enabled: bool = True  # false (or not Windows): Claude answers but cannot act
+    max_rounds: int = Field(4, ge=1, le=10)  # tool round trips per request
+    max_tokens: int = Field(400, ge=64, le=4096)  # per call when tools are offered
+    roots: list[str] = Field(default_factory=lambda: ["~"])  # "*" = any local drive
+    safe_keys: list[str] = Field(
+        default_factory=lambda: [
+            *("up", "down", "left", "right", "page_up", "page_down", "home", "end"),
+            *("tab", "shift+tab", "escape", "f5", "alt+tab", "alt+left", "alt+right", "win"),
+            *("ctrl+c", "ctrl+t", "ctrl+f", "ctrl+tab", "ctrl+shift+tab"),
+            *("ctrl+plus", "ctrl+minus", "ctrl+0"),
+        ]
+    )  # level 1; every other combination asks first. [] = always ask
+    type_max_chars: int = Field(500, ge=1, le=5000)
+    read_chars: int = Field(1500, ge=100, le=10000)  # window text sent to Claude
+    read_timeout_s: float = Field(2.0, gt=0, le=30)  # slow apps (Electron) stop here
+    search_limit: int = Field(8, ge=1, le=50)
+    search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
+    max_windows: int = Field(25, ge=1, le=100)
+    apps_refresh_s: float = Field(600.0, ge=0)
+    # Windows never read (title or program): password managers.
+    private_windows: list[str] = Field(
+        default_factory=lambda: ["keepass", "bitwarden", "1password", "lastpass", "password"]
+    )
+
+
 class ChatSettings(BaseModel):
     """The chat window (`claudio --ui`): what is written there reaches the running assistant."""
 
@@ -274,7 +318,8 @@ class LoggingSettings(BaseModel):
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
     keep_audio: int = Field(50, ge=1)
     keep_sessions: int = Field(30, ge=1)  # logs/sessions/<date_time>/: console + conversation
-    # Privacy: the chat database (data/claudio.db) forgets what is older than this many days.
+    # Privacy: the chat (data/claudio.db), logs/sessions/ and logs/audio/ forget what is older
+    # than this many days (at startup).
     retention_days: int = Field(30, ge=1)
 
 
@@ -300,8 +345,10 @@ class Settings(BaseSettings):
     tts: TtsSettings = TtsSettings()
     router: RouterSettings = RouterSettings()
     conversation: ConversationSettings = ConversationSettings()
+    noise: NoiseSettings = NoiseSettings()
     cost: CostSettings = CostSettings()
     claude: ClaudeSettings = ClaudeSettings()
+    pc: PcSettings = PcSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")
     chat: ChatSettings = ChatSettings()

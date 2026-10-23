@@ -39,6 +39,8 @@ class LocalResponder:
         fallback: Fallback | None = None,
         fallback_info: Callable[[], dict[str, Any]] | None = None,
         on_prepare: Callable[[], None] | None = None,
+        fallback_awaiting: Callable[[], bool] | None = None,
+        fallback_cancel: Callable[[], None] | None = None,
     ) -> None:
         self.matcher = matcher
         self.actions = actions
@@ -48,6 +50,9 @@ class LocalResponder:
         self.fallback = fallback  # None: "Questo non lo so ancora fare"
         self.fallback_info = fallback_info  # details of the last fallback call, for the metrics
         self.on_prepare = on_prepare  # a request is coming: get ready (Claude's connection)
+        # Claude asked "Confermi?" before a PC action: the next phrase is its answer.
+        self.fallback_awaiting = fallback_awaiting
+        self.fallback_cancel = fallback_cancel
         self.last_route: dict[str, Any] = {}
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
@@ -82,7 +87,14 @@ class LocalResponder:
     @property
     def awaiting(self) -> bool:
         """True after a confirmation question: the assistant listens again, no wake word."""
-        return self._pending is not None
+        return self._pending is not None or self._fallback_waits()
+
+    def _fallback_waits(self) -> bool:
+        return (
+            self.fallback is not None
+            and self.fallback_awaiting is not None
+            and self.fallback_awaiting()
+        )
 
     @property
     def asked_question(self) -> bool:
@@ -102,6 +114,8 @@ class LocalResponder:
                 extra={"route": "confirm_timeout"},
             )
             self._pending = None
+        if self.fallback_cancel is not None:
+            self.fallback_cancel()
 
     def _reply_language(self, language: str, has_text: bool) -> str:
         """`language` when there is a reply and a voice for it, else Italian: the text and
@@ -127,6 +141,13 @@ class LocalResponder:
             async for chunk in self._answer(text):
                 yield chunk
             return
+        if self._fallback_waits():
+            # The answer to Claude's "Confermi?" goes to Claude, never to a local command, and
+            # is answered in the language (and voice) of the question.
+            log.info("Risposta alla conferma di Claude: %r", text, extra={"route": "claude"})
+            async for chunk in self._ask_fallback(text):
+                yield chunk
+            return
         match = self.matcher.match(text, language)
         if match:
             self.language = self._reply_language(
@@ -140,15 +161,9 @@ class LocalResponder:
             return  # nothing to say: the assistant answers with a low beep
         if match is None and self.fallback is not None:
             self.language = self._reply_language(language, True)
-            self.last_route = {"route": "claude", "language": self.language}
             log.info("Non è un comando, chiedo a Claude: %r", text, extra={"route": "claude"})
-            try:
-                async with contextlib.aclosing(self.fallback(text, self.language)) as reply:
-                    async for chunk in reply:
-                        yield chunk
-            finally:
-                if self.fallback_info is not None:
-                    self.last_route.update(self.fallback_info())
+            async for chunk in self._ask_fallback(text):
+                yield chunk
             return
         if match is None:
             self.last_route = {"route": "unknown", "language": self.language}
@@ -181,6 +196,17 @@ class LocalResponder:
             return
         async for chunk in self._execute(match):
             yield chunk
+
+    async def _ask_fallback(self, text: str) -> AsyncIterator[str]:
+        assert self.fallback is not None
+        self.last_route = {"route": "claude", "language": self.language}
+        try:
+            async with contextlib.aclosing(self.fallback(text, self.language)) as reply:
+                async for chunk in reply:
+                    yield chunk
+        finally:
+            if self.fallback_info is not None:
+                self.last_route.update(self.fallback_info())
 
     async def _repeat(self, match: Match) -> AsyncIterator[str]:
         if self._last_reply is None:

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from claudio.brain.claude import ClaudeBrain
     from claudio.chat.launcher import ChatLauncher
     from claudio.cost.tracker import CostTracker
+    from claudio.pc.tools import PcTools
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
     from claudio.tts.speaker import StreamingSpeaker
@@ -72,7 +73,30 @@ def build_responder(
         fallback=brain.ask if brain else None,
         fallback_info=(lambda: brain.last_call) if brain else None,
         on_prepare=brain.warm_up if brain else None,
+        fallback_awaiting=(lambda: brain.awaiting) if brain else None,
+        fallback_cancel=brain.cancel_pending if brain else None,
     )
+
+
+def build_pc_tools(settings: Settings) -> PcTools | None:
+    """The tools Claude acts on the PC with: Windows only, and only with [pc] enabled."""
+    if not settings.pc.enabled:
+        log.info("Azioni sul PC spente ([pc] enabled = false)")
+        return None
+    if sys.platform != "win32":
+        log.info("Azioni sul PC: solo su Windows")
+        return None
+    from claudio.pc.tools import PcTools
+    from claudio.pc.windows import WindowsDesktop
+
+    tools = PcTools(WindowsDesktop(), settings.pc)
+    log.info(
+        "Azioni sul PC: %d strumenti, cartelle %s, %d tasti senza conferma",
+        len(tools.definitions()),
+        ", ".join(settings.pc.roots),
+        len(tools.safe_keys),
+    )
+    return tools
 
 
 def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
@@ -94,7 +118,7 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
     if not key.strip():
         log.warning("ANTHROPIC_API_KEY mancante nel file .env: Claude non risponderà")
     client = make_client(key.strip(), claude.timeout_s, claude.keepalive_s) if key.strip() else None
-    brain = ClaudeBrain(client, tracker, claude)
+    brain = ClaudeBrain(client, tracker, claude, tools=build_pc_tools(settings), pc=settings.pc)
     if brain.smart_model is not None:
         try:
             tracker.pricing.price(brain.smart_model)
@@ -284,7 +308,7 @@ async def run_assistant(
     from claudio.audio.vad import Endpointer, SileroVad
     from claudio.chat.store import ChatStore
     from claudio.metrics import MetricsWriter
-    from claudio.session_log import ConversationLog
+    from claudio.session_log import ConversationLog, purge_old_logs
     from claudio.stt.transcriber import WhisperTranscriber
     from claudio.system import SystemControl
     from claudio.wakeword.detector import OpenWakeWordDetector
@@ -333,6 +357,12 @@ async def run_assistant(
             purged,
             settings.logging.retention_days,
         )
+    if purged := purge_old_logs(logs, settings.logging.retention_days, current=session):
+        log.info(
+            "Log: %d file più vecchi di %d giorni eliminati",
+            purged,
+            settings.logging.retention_days,
+        )
     recorder = (
         UtteranceRecorder(logs / "audio", settings.logging.keep_audio, settings.audio.sample_rate)
         if settings.logging.save_audio
@@ -369,6 +399,8 @@ async def run_assistant(
         closed_list_max_words=settings.stt.closed_list_max_words,
         claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
         only_addressed=settings.conversation.only_addressed,
+        noise=settings.noise,
+        stt_segments=lambda: transcriber.last_segments,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

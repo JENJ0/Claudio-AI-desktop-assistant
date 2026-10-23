@@ -1,6 +1,6 @@
 [project]
 name = "claudio"
-version = "0.2.2"
+version = "0.3.1"
 description = "CLAUDIO: local Italian voice assistant for Windows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -23,6 +23,8 @@ dependencies = [
     "fastapi>=0.115",  # local server behind the chat window (later also the iPhone, Phase 6)
     "uvicorn>=0.32",
     "pywebview>=5.3; sys_platform == 'win32'",  # the chat window (Windows WebView2)
+    "pywinauto>=0.6.9; sys_platform == 'win32'",  # reads and drives windows (UI Automation, Phase 3)
+    "psutil>=5.9; sys_platform == 'win32'",  # the program behind each window
 ]
 
 [project.scripts]
