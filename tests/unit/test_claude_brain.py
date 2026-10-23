@@ -355,6 +355,21 @@ async def test_tv_in_the_window_costs_nothing(
     assert [row["outcome"] for row in assistant.history] == ["ok", "conversation_end"]
 
 
+async def test_window_answers_everything_when_asked_to(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    """JenJo's choice (23/10): "La chat non funziona." is answered too, until "basta"."""
+    client = FakeClient(["Vediamo."])
+    assistant, speaker, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["che ore sono", "la chat non funziona", "boh"]
+    )
+    with_claude(assistant, r, brain(pricing, client))
+    assistant.only_addressed = False
+    await talk(assistant, make_frames, speaker, requests=3)
+    assert len(client.calls) == 1  # "boh" is still too short
+    assert [row["outcome"] for row in assistant.history] == ["ok", "ok", "conversation_end"]
+
+
 async def test_long_questions_skip_the_closed_list(fake_vad, vad_settings, make_frames) -> None:
     long = "Claudio quanto è distante la Luna dalla Terra"
     assistant, _, _, calls = setup_closed_list(fake_vad, vad_settings, long, ["apri chrome"])
@@ -439,7 +454,7 @@ async def test_haiku_hands_over_to_sonnet(pricing: Pricing) -> None:
     )
     b = brain(pricing, client)
     reply = await ask(b, "meglio il treno o l'auto per Roma, considerando i costi")
-    assert reply == "Ci penso un attimo.Conviene il treno: costa meno."
+    assert reply == "Ci penso un attimo. Conviene il treno: costa meno."  # a space: two sentences
     haiku, sonnet = client.calls
     assert sonnet["model"] == "claude-sonnet-5-5" and sonnet["max_tokens"] == 1024
     assert "thinking" not in sonnet and "tools" not in sonnet  # Sonnet 5.5 refuses "disabled"

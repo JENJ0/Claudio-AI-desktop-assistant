@@ -219,6 +219,9 @@ class ConversationSettings(BaseModel):
     # Listen while speaking: "basta" / "stop" cuts the reply short (best with headphones).
     barge_in: bool = True
     barge_in_max_s: float = Field(2.0, gt=0, le=8)  # longer speech is checked in slices this long
+    # true: in the window only questions, "dimmi..." or the name reach Claude (the TV costs
+    # nothing). false: everything is answered until "basta" or silence.
+    only_addressed: bool = False
 
 
 class CostSettings(BaseModel):

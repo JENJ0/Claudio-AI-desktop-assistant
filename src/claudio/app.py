@@ -72,6 +72,7 @@ class Assistant:
         closed_list: Callable[[np.ndarray, str], list[str]] | None = None,
         closed_list_max_words: int = 0,
         claude_min_words: int | None = None,
+        only_addressed: bool = True,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -102,6 +103,10 @@ class Assistant:
         # word) a request needs at least this many words: shorter is the TV or a remark.
         # None: Claude is off and the window keeps only the local commands.
         self.claude_min_words = claude_min_words
+        # True: in the window only phrases that sound addressed to Claudio go to Claude (the TV
+        # costs nothing). False: every phrase of claude_min_words or more is answered, until
+        # "basta" or silence (JenJo's choice, 23/10).
+        self.only_addressed = only_addressed
         self._barge_checking = False
         self._interrupted = False  # the reply being spoken was cut short by "basta"
         self._checking = False
@@ -327,7 +332,7 @@ class Assistant:
             return True  # Claude asked "da dove parti?": "Milano." is the answer
         if self.claude_min_words is None or _words(text) < self.claude_min_words:
             return False
-        return addressed_to_claudio(text)
+        return not self.only_addressed or addressed_to_claudio(text)
 
     async def _name_before(self, inter: Interaction) -> bool:
         """The request was said after a pause ("Hey Claudio" ... beep ... "come ti chiami?"):

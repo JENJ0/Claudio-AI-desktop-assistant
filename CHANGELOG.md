@@ -15,6 +15,14 @@
   (written reply only, `[chat] speak_typed`). `POST /api/send` needs JSON, no foreign Origin and
   the random token of the page. Level 2-3 actions written there need a spoken confirmation.
 
+### Fixed (JenJo's test, 23/10)
+- After Haiku's "Ci penso un attimo." the voice waited for Sonnet (no space between the two
+  replies kept the first sentence open).
+- Haiku no longer hands short or unclear requests to Sonnet.
+- In the conversation window every phrase of 3+ words is answered until "basta" or silence
+  (`[conversation] only_addressed = false`; true brings back the TV filter).
+- The chat window says why a message could not be sent; the server logs refused messages.
+
 ### Changed (latency)
 - The HTTPS connection to the API opens at the wake word (free models lookup) and stays open 60 s
   (`[claude] keepalive_s`; httpx closed it after 5 s): no TCP/TLS handshake on the request.

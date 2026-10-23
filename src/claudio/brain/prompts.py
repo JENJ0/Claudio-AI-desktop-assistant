@@ -31,8 +31,9 @@ ASK_SONNET_TOOL = {
         "Hand this request to a stronger model that answers JenJo directly. Use it only when a "
         "good answer needs careful reasoning: multi-step maths or logic, comparing options, "
         "planning, technical or detailed explanations, advice with trade-offs. Never use it for "
-        "greetings, small talk, simple facts or short questions. Before calling it, say one "
-        "very short sentence in the user's language, such as 'Ci penso un attimo.'"
+        "greetings, small talk, simple facts, short questions, or a request that is short or "
+        "unclear (ask JenJo yourself what they mean). Before calling it, say one very short "
+        "sentence in the user's language, such as 'Ci penso un attimo.'"
     ),
     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
 }

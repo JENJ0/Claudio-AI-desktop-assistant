@@ -148,8 +148,11 @@ class ClaudeBrain:
                 self._remember(messages, leg)
                 return
             log.info("Haiku passa la richiesta a Sonnet")
-            if not "".join(leg.parts).strip():
+            said = "".join(leg.parts)
+            if not said.strip():
                 yield in_language(THINKING, language) + " "
+            elif not said[-1].isspace():
+                yield " "  # "attimo.Ecco" would keep the first sentence waiting for Sonnet
             if self.tracker.check().state is BudgetState.BLOCKED:
                 self.last_call["claude_error"] = "budget"
                 yield in_language(BUDGET_BLOCKED, language)

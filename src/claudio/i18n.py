@@ -274,6 +274,8 @@ EN: dict[str, str] = {
     "Scritto nella finestra: %r": "Written in the window: %r",
     "Errore rispondendo al messaggio scritto": "Error answering the written message",
     "Messaggi della finestra non letti": "Window messages not read",
+    "Messaggio dalla finestra rifiutato (origine %s)": "Window message refused (origin %s)",
+    "Messaggio dalla finestra in coda: %d": "Window message queued: %d",
     "Claude spento ([claude] enabled = false): solo comandi locali": (
         "Claude off ([claude] enabled = false): local commands only"
     ),
