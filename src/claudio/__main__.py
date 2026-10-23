@@ -379,6 +379,7 @@ async def run_assistant(
         only_addressed=settings.conversation.only_addressed,
         noise=settings.noise,
         confirm_below=settings.wakeword.confirm_below,
+        always_confirm=wake.confirmed,
         stt_segments=lambda: transcriber.last_segments,
     )
     log.info(

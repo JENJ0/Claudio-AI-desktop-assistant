@@ -22,10 +22,8 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 
 # Wake words: any of the models below wakes CLAUDIO, each with its own threshold.
 # "hey_claudio" is trained on JenJo's voice (scripts/wakeword/, models/wakeword/hey_claudio.onnx,
-# not in Git). Its threshold comes from scripts/benchmark_wakeword.py. "claudio" alone is trained
-# too but hears only 9 takes in 50 and wakes 60 times an hour in the room noise: it stays out
-# (add it with its own [[wakeword.models]] block) until it is retrained. v0.1.0 used the
-# pre-trained "hey_jarvis" (threshold 0.22).
+# not in Git). Its threshold comes from scripts/benchmark_wakeword.py. "claudio" alone (below)
+# is weaker: Whisper confirms each of its detections. v0.1.0 used the pre-trained "hey_jarvis".
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
 confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more)
@@ -35,6 +33,14 @@ verify = true              # drop a wake when Whisper did not hear the name at t
 [[wakeword.models]]
 name = "hey_claudio"
 threshold = 0.30           # benchmark on JenJo's 50 takes: 44 heard, 0 false wakes in the room noise
+
+# "Claudio" alone (JenJo, 23/10): the model is weak (9 takes in 50 at 0.5, ~60 false wakes an
+# hour), so every detection is checked by Whisper (~130 ms): it wakes only if the name is heard.
+# A low threshold catches more; the noise it lets through costs a Whisper pass, not a wake.
+[[wakeword.models]]
+name = "claudio"
+threshold = 0.25
+confirm = true
 
 [vad]
 threshold = 0.4            # speech probability to count a window as speech (lower = more sensitive)

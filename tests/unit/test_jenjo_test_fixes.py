@@ -119,3 +119,36 @@ def test_jack_speed_plan() -> None:
     up, down, semitones = speed_plan(0.9)  # 10% slower: stretched by 1/0.9, pitch +2
     assert up / down == pytest.approx(2 / 0.9) and semitones == 2
     assert speed_plan(1.12)[2] == -2
+
+
+class ClaudioWake(FakeWake):
+    """The "claudio" model: fires strong, but it is noisy, so Whisper always checks it."""
+
+    def process(self, frame: np.ndarray) -> tuple[str, float] | None:
+        hit = super().process(frame)
+        return ("claudio", 0.9) if hit else None
+
+
+@pytest.mark.parametrize(("heard", "wakes"), [("Claudio.", True), ("il gatto", False)])
+async def test_claudio_alone_is_always_checked(
+    fake_vad, vad_settings, make_frames, tmp_path, heard: str, wakes: bool
+) -> None:
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        ClaudioWake({20}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        OnlyCommands(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        second_chance=SecondChance(heard),
+        always_confirm=frozenset({"claudio"}),
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert (assistant.state is State.LISTENING) is wakes
+    assert speaker.beeps == (["wake"] if wakes else [])
+    if not wakes:  # a noisy model: no near miss row, no WAV
+        assert not (tmp_path / "metrics.jsonl").exists() or not (
+            tmp_path / "metrics.jsonl"
+        ).read_text(encoding="utf-8")

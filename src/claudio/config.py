@@ -68,6 +68,9 @@ class AudioSettings(BaseModel):
 class WakeWordModel(BaseModel):
     name: str
     threshold: float = Field(0.5, gt=0, lt=1)
+    # Every detection of this model is checked by Whisper first (the name must be heard): for
+    # a model that fires often on noise, like "claudio" alone. No near misses are logged.
+    confirm: bool = False
 
 
 class WakeWordSettings(BaseModel):

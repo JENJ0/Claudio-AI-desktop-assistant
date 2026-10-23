@@ -76,6 +76,7 @@ class Assistant:
         only_addressed: bool = True,
         noise: NoiseSettings | None = None,
         confirm_below: float = 0.0,
+        always_confirm: frozenset[str] = frozenset(),
         stt_segments: Callable[[], Sequence[Segment]] | None = None,
     ) -> None:
         self.wake = wake
@@ -110,6 +111,8 @@ class Assistant:
         # A detection scoring below this wakes CLAUDIO only if Whisper hears the name (the
         # second chance): a 0.34 on Claudio's own voice or the TV no longer beeps. 0: off.
         self.confirm_below = confirm_below
+        # Wake word models whose every detection Whisper checks ("claudio" alone: noisy).
+        self.always_confirm = always_confirm
         # (audio, language) -> Whisper's n-best: tried on a request no command understands.
         self.closed_list = closed_list
         self._barge_checking = False
@@ -199,7 +202,7 @@ class Assistant:
         if self.state == State.IDLE:
             self._recent.append(frame.astype(np.float32) / 32768.0)
             detection = self.wake.process(frame)
-            if detection is not None and self._weak(detection[1]):
+            if detection is not None and self._weak(*detection):
                 log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
                 self._on_near_miss(*detection)
             elif detection is not None:
@@ -232,8 +235,10 @@ class Assistant:
         self._set_state(State.LISTENING)
         self.responder.prepare()
 
-    def _weak(self, score: float) -> bool:
-        return score < self.confirm_below and self.second_chance is not None
+    def _weak(self, name: str, score: float) -> bool:
+        return self.second_chance is not None and (
+            score < self.confirm_below or name in self.always_confirm
+        )
 
     def _lead_in(self) -> np.ndarray:
         """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
@@ -265,7 +270,7 @@ class Assistant:
         ms = round((self.clock() - start) * 1000)
         # A weak detection said fast often loses the name ("apri cancolatrice"): a command counts.
         language = self.transcriber.language
-        weak = self._weak(score) and bool(text) and self.responder.understands(text, language)
+        weak = self._weak(name, score) and bool(text) and self.responder.understands(text, language)
         if self.state is State.IDLE and (heard_wake_word(text) or weak):
             log.info(
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
@@ -273,6 +278,8 @@ class Assistant:
             self._on_wake(name, score, second_chance=text, second_chance_ms=ms)
             return
         log.info("Seconda possibilità: Whisper ha sentito %r: niente da fare", text)
+        if name in self.always_confirm:
+            return  # a noisy model: its rejected detections are not worth a WAV each
         self._log_near_miss(name, score, heard, second_chance=text, second_chance_ms=ms)
 
     def _log_near_miss(self, name: str, score: float, heard: np.ndarray, **info: Any) -> None:

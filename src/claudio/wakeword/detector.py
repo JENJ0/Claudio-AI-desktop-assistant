@@ -61,7 +61,12 @@ class OpenWakeWordDetector:
         self.thresholds = {p.stem: m.threshold for p, m in zip(paths, settings.models, strict=True)}
         self.names = [m.name.replace("_", " ") for m in settings.models]
         self._silence = np.zeros(frame_size, dtype=np.int16)
-        self._near_miss = NearMissTracker(self.thresholds, settings.near_miss_floor)
+        # Models checked by Whisper on every detection (by openWakeWord's name for them).
+        self.confirmed = frozenset(
+            p.stem for p, m in zip(paths, settings.models, strict=True) if m.confirm
+        )
+        near = {k: v for k, v in self.thresholds.items() if k not in self.confirmed}
+        self._near_miss = NearMissTracker(near, settings.near_miss_floor)
         log.info(
             "Wake word: %s", ", ".join(f"{k} (soglia {v:.2f})" for k, v in self.thresholds.items())
         )

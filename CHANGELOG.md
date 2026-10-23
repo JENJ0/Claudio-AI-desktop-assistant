@@ -29,6 +29,8 @@
   that hears the most (Windows' own unless another is 10 dB louder or it is silent), and
   chooses again when it hears nothing for 5 s or only a very quiet room for 60 s.
   `input_device = ""` follows Windows' default microphone while running.
+- "Claudio" alone wakes again: the `claudio` model is back (`threshold = 0.25`, `confirm =
+  true`): Whisper checks every detection, so its noise costs a Whisper pass, not a wake.
 
 ## 0.2.2
 
