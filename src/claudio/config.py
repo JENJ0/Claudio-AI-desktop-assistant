@@ -275,6 +275,35 @@ class ClaudeSettings(BaseModel):
     )
 
 
+class PcSettings(BaseModel):
+    """Claude acts on the PC with tools (Phase 3). JenJo chose "Equilibrata" (23/10): harmless
+    keys without a question, apps from the Start menu, files only in the user folder."""
+
+    enabled: bool = True  # false (or not Windows): Claude answers but cannot act
+    max_rounds: int = Field(4, ge=1, le=10)  # tool round trips per request
+    max_tokens: int = Field(400, ge=64, le=4096)  # per call when tools are offered
+    roots: list[str] = Field(default_factory=lambda: ["~"])  # "*" = any local drive
+    safe_keys: list[str] = Field(
+        default_factory=lambda: [
+            *("up", "down", "left", "right", "page_up", "page_down", "home", "end"),
+            *("tab", "shift+tab", "escape", "f5", "alt+tab", "alt+left", "alt+right", "win"),
+            *("ctrl+c", "ctrl+t", "ctrl+f", "ctrl+tab", "ctrl+shift+tab"),
+            *("ctrl+plus", "ctrl+minus", "ctrl+0"),
+        ]
+    )  # level 1; every other combination asks first. [] = always ask
+    type_max_chars: int = Field(500, ge=1, le=5000)
+    read_chars: int = Field(1500, ge=100, le=10000)  # window text sent to Claude
+    read_timeout_s: float = Field(2.0, gt=0, le=30)  # slow apps (Electron) stop here
+    search_limit: int = Field(8, ge=1, le=50)
+    search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
+    max_windows: int = Field(25, ge=1, le=100)
+    apps_refresh_s: float = Field(600.0, ge=0)
+    # Windows never read (title or program): password managers.
+    private_windows: list[str] = Field(
+        default_factory=lambda: ["keepass", "bitwarden", "1password", "lastpass", "password"]
+    )
+
+
 class ChatSettings(BaseModel):
     """The chat window (`claudio --ui`): what is written there reaches the running assistant."""
 
@@ -319,6 +348,7 @@ class Settings(BaseSettings):
     noise: NoiseSettings = NoiseSettings()
     cost: CostSettings = CostSettings()
     claude: ClaudeSettings = ClaudeSettings()
+    pc: PcSettings = PcSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")
     chat: ChatSettings = ChatSettings()

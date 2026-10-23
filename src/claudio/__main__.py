@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from claudio.brain.claude import ClaudeBrain
     from claudio.chat.launcher import ChatLauncher
     from claudio.cost.tracker import CostTracker
+    from claudio.pc.tools import PcTools
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
     from claudio.tts.speaker import StreamingSpeaker
@@ -72,7 +73,30 @@ def build_responder(
         fallback=brain.ask if brain else None,
         fallback_info=(lambda: brain.last_call) if brain else None,
         on_prepare=brain.warm_up if brain else None,
+        fallback_awaiting=(lambda: brain.awaiting) if brain else None,
+        fallback_cancel=brain.cancel_pending if brain else None,
     )
+
+
+def build_pc_tools(settings: Settings) -> PcTools | None:
+    """The tools Claude acts on the PC with: Windows only, and only with [pc] enabled."""
+    if not settings.pc.enabled:
+        log.info("Azioni sul PC spente ([pc] enabled = false)")
+        return None
+    if sys.platform != "win32":
+        log.info("Azioni sul PC: solo su Windows")
+        return None
+    from claudio.pc.tools import PcTools
+    from claudio.pc.windows import WindowsDesktop
+
+    tools = PcTools(WindowsDesktop(), settings.pc)
+    log.info(
+        "Azioni sul PC: %d strumenti, cartelle %s, %d tasti senza conferma",
+        len(tools.definitions()),
+        ", ".join(settings.pc.roots),
+        len(tools.safe_keys),
+    )
+    return tools
 
 
 def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
@@ -94,7 +118,7 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
     if not key.strip():
         log.warning("ANTHROPIC_API_KEY mancante nel file .env: Claude non risponderà")
     client = make_client(key.strip(), claude.timeout_s, claude.keepalive_s) if key.strip() else None
-    brain = ClaudeBrain(client, tracker, claude)
+    brain = ClaudeBrain(client, tracker, claude, tools=build_pc_tools(settings), pc=settings.pc)
     if brain.smart_model is not None:
         try:
             tracker.pricing.price(brain.smart_model)

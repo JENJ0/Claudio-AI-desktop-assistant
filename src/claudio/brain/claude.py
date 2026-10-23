@@ -6,7 +6,12 @@ answers the question; no: Haiku does), or JenJo asks for it ("pensaci bene").
 
 Every call goes through the spending counter: `check()` before (80 % warning said aloud once a
 day, nothing sent at 100 %) and `record()` after, also when the reply is cut short by "basta"
-(the tokens already generated are billed by Anthropic)."""
+(the tokens already generated are billed by Anthropic).
+
+With the PC tools (Phase 3), Haiku also acts: open, search, read windows, type... Several
+tools may come in one reply, up to `[pc] max_rounds` round trips per request. A level 2-3
+action stops the loop: Claudio says what it will do and asks; the next request is the answer
+(the responder reports `awaiting`, so the assistant listens without the wake word)."""
 
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from claudio.brain.prompts import (
     API_ERROR,
@@ -31,13 +36,23 @@ from claudio.brain.prompts import (
     OFFER,
     REFUSED,
     SYSTEM_PROMPT,
+    SYSTEM_PROMPT_TOOLS,
 )
-from claudio.config import ClaudeSettings, in_language
+from claudio.config import ClaudeSettings, PcSettings, in_language
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.i18n import tr
 from claudio.router.normalizer import normalize
-from claudio.safety.confirmation import Answer, parse_answer
+from claudio.safety.confirmation import (
+    CANCELLED,
+    LEVEL_SAFE,
+    NOT_UNDERSTOOD,
+    Answer,
+    parse_answer,
+)
+
+if TYPE_CHECKING:
+    from claudio.pc.tools import PcTools, ToolCall
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +60,7 @@ CACHE_TTL: CacheTtl = "5m"  # the default TTL of `cache_control`: what a cache w
 CHARS_PER_TOKEN = 3  # estimate for a reply cut short before the API sent its output count
 _MARKDOWN = re.compile(r"[*#`]+")  # read aloud as "asterisco": never sent to the voice
 OFFER_TTL_S = 60.0  # "Vuoi che usi Sonnet?" waits this long for its answer
+ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # not strftime: Windows' locale
 
@@ -61,6 +77,8 @@ class ClaudeBrain:
         settings: ClaudeSettings,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], datetime] = datetime.now,
+        tools: PcTools | None = None,
+        pc: PcSettings | None = None,
     ) -> None:
         self.client = client
         self.tracker = tracker
@@ -79,11 +97,26 @@ class ClaudeBrain:
         self._warming: set[asyncio.Task[None]] = set()
         # Haiku proposed Sonnet and Claudio asked "Vuoi che usi Sonnet?": (messages, language,
         # when). The next request is the answer.
-        self._offer: tuple[list[dict[str, str]], str, float] | None = None
+        self._offer: tuple[list[dict[str, Any]], str, float] | None = None
         self.last_call: dict[str, Any] = {}  # model, tokens, cost of the last call (metrics)
+        self.tools = tools  # None: Claude answers but cannot act on the PC
+        self.pc = pc or PcSettings()
+        self._action: _Action | None = None  # a level 2-3 tool call waiting for its yes
 
     def reset(self) -> None:
         self._history.clear()
+
+    @property
+    def awaiting(self) -> bool:
+        """An action asked "Confermi?": the next request is the answer."""
+        return self._action is not None and self.clock() - self._action.asked < ACTION_TTL_S
+
+    def cancel_pending(self) -> None:
+        """No answer came (silence, "basta", a typed message): the action is not run."""
+        if self._action is not None:
+            names = ", ".join(c.name for c in self._action.calls)
+            log.info("Conferma scaduta: %s non eseguito", names, extra={"route": "tool"})
+            self._action = None
 
     def warm_up(self) -> None:
         """JenJo is about to speak (wake word): open the HTTPS connection now, for free (a
@@ -141,6 +174,11 @@ class ClaudeBrain:
 
     async def _answer(self, text: str, language: str) -> AsyncGenerator[str, None]:
         start = self.clock()
+        action = self._take_action()
+        if action is not None:
+            async for chunk in self._confirm(action, text, start):
+                yield chunk
+            return
         offer = self._take_offer()
         if offer is not None:
             answer = parse_answer(text)
@@ -164,30 +202,127 @@ class ClaudeBrain:
             async for chunk in self._sonnet(messages, language, start):
                 yield chunk
             return
-        leg = _Leg()
+        turn = _Turn(messages[-1]["content"])
         async with contextlib.aclosing(
-            self._stream(self._params(messages), language, start, leg)
+            self._loop(messages, language, start, turn, 0, offer_from=messages)
         ) as haiku:
             async for chunk in haiku:
                 yield chunk
-        if not leg.handoff or self.smart_model is None:
-            self._remember(messages, leg)
-            return
-        # Never Sonnet without a yes (JenJo, 23/10): ask, and keep the question for the answer.
-        log.info("Haiku propone Sonnet: chiedo conferma")
-        self._offer = (messages, language, self.clock())
-        self.last_call["escalated"] = "offered"
-        said = "".join(leg.parts)
-        yield ("" if not said or said[-1].isspace() else " ") + in_language(OFFER, language)
 
-    def _take_offer(self) -> tuple[list[dict[str, str]], str] | None:
+    async def _loop(
+        self,
+        messages: list[dict[str, Any]],
+        language: str,
+        start: float,
+        turn: _Turn,
+        round_no: int,
+        offer_from: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Haiku, with its tools, until it answers in words: each round runs the level-1
+        calls and sends their results back; a level 2-3 call stops here and asks first."""
+        while True:
+            last = self.tools is None or round_no >= self.pc.max_rounds - 1
+            leg = _Leg()
+            async with contextlib.aclosing(
+                self._stream(self._params(messages, last_round=last), language, start, leg)
+            ) as haiku:
+                async for chunk in haiku:
+                    yield chunk
+            turn.parts.extend(leg.parts)
+            if leg.handoff and not leg.calls and self.smart_model and offer_from is not None:
+                # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question for the answer.
+                log.info("Haiku propone Sonnet: chiedo conferma")
+                self._offer = (offer_from, language, self.clock())
+                self.last_call["escalated"] = "offered"
+                yield _space(turn) + in_language(OFFER, language)
+                return
+            if leg.handoff and leg.calls:  # Sonnet in the middle of an action: not now
+                leg.content = [b for b in leg.content if b.get("name") != ASK_SONNET_TOOL["name"]]
+            if not leg.complete or not leg.calls or self.tools is None:
+                turn.complete = leg.complete
+                self._remember(turn)
+                return
+            messages = [*messages, {"role": "assistant", "content": leg.content}]
+            confirm = [c for c in leg.calls if self.tools.level(c) > LEVEL_SAFE]
+            if confirm:
+                level = max(self.tools.level(c) for c in confirm)
+                ask = await self.tools.question(confirm, language)
+                self._action = _Action(messages, leg.calls, turn, language, level, round_no)
+                self._action.asked = self.clock()
+                self._note_tools(confirm, "ask")
+                log.info(
+                    "Conferma richiesta (livello %d): %s",
+                    level,
+                    ", ".join(c.brief() for c in confirm),
+                    extra={"route": "confirm", "level": level},
+                )
+                said = _space(turn) + ask
+                turn.parts.append(said)
+                yield said
+                return
+            results = await self._run_calls(leg.calls)
+            messages = [*messages, {"role": "user", "content": results}]
+            round_no += 1
+
+    async def _confirm(self, action: _Action, text: str, start: float) -> AsyncGenerator[str, None]:
+        """The answer to "Confermi?": yes runs the calls and Haiku goes on; anything else
+        cancels (a TV in the background never confirms an action)."""
+        answer = parse_answer(text, action.level)
+        self.last_call["confirm"] = answer.value
+        if answer is not Answer.YES:
+            reply = CANCELLED if answer is Answer.NO else NOT_UNDERSTOOD
+            log.info("Conferma %s: azione non eseguita", answer.value, extra={"route": "tool"})
+            self._note_tools(action.calls, "refused")
+            said = in_language(reply, action.language)
+            action.turn.parts.append(" " + said)
+            action.turn.complete = True
+            self._remember(action.turn)
+            yield said
+            return
+        log.info("Conferma data (livello %d): eseguo", action.level)
+        results = await self._run_calls(action.calls)
+        messages = [*action.messages, {"role": "user", "content": results}]
+        async with contextlib.aclosing(
+            self._loop(messages, action.language, start, action.turn, action.round_no + 1)
+        ) as haiku:
+            async for chunk in haiku:
+                yield chunk
+
+    async def _run_calls(self, calls: list[ToolCall]) -> list[dict[str, Any]]:
+        assert self.tools is not None
+        results = []
+        for call in calls:
+            outcome = await self.tools.run(call)
+            self._note_tools([call], "error" if outcome.error else "ok")
+            block: dict[str, Any] = {
+                "type": "tool_result",
+                "tool_use_id": call.id,
+                "content": outcome.text,
+            }
+            if outcome.error:
+                block["is_error"] = True
+            results.append(block)
+        return results
+
+    def _note_tools(self, calls: list[ToolCall], outcome: str) -> None:
+        """For metrics.jsonl and conversazione.md: what was done, and how it went."""
+        done = self.last_call.setdefault("tools", [])
+        done.extend(f"{c.brief()} {outcome}" for c in calls)
+
+    def _take_action(self) -> _Action | None:
+        action, self._action = self._action, None
+        if action is None or self.clock() - action.asked > ACTION_TTL_S:
+            return None
+        return action
+
+    def _take_offer(self) -> tuple[list[dict[str, Any]], str] | None:
         offer, self._offer = self._offer, None
         if offer is None or self.clock() - offer[2] > OFFER_TTL_S:
             return None
         return offer[0], offer[1]
 
     async def _haiku(
-        self, messages: list[dict[str, str]], language: str, start: float, tools: bool = True
+        self, messages: list[dict[str, Any]], language: str, start: float, tools: bool = True
     ) -> AsyncGenerator[str, None]:
         leg = _Leg()
         async with contextlib.aclosing(
@@ -195,10 +330,10 @@ class ClaudeBrain:
         ) as haiku:
             async for chunk in haiku:
                 yield chunk
-        self._remember(messages, leg)
+        self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
 
     async def _sonnet(
-        self, messages: list[dict[str, str]], language: str, start: float
+        self, messages: list[dict[str, Any]], language: str, start: float
     ) -> AsyncGenerator[str, None]:
         if self.smart_model is None:
             async for chunk in self._haiku(messages, language, start, tools=False):
@@ -210,18 +345,20 @@ class ClaudeBrain:
         ) as sonnet:
             async for chunk in sonnet:
                 yield chunk
-        self._remember(messages, leg)
+        self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
 
-    def _remember(self, messages: list[dict[str, str]], leg: _Leg) -> None:
-        answer = "".join(leg.parts).strip()
-        if leg.complete and answer:
-            self._history.append((messages[-1]["content"], answer))
+    def _remember(self, turn: _Turn) -> None:
+        """Only the words go into the history: tool calls and window text stay out of it
+        (they cost tokens at every later turn, and the history is plain text)."""
+        answer = "".join(turn.parts).strip()
+        if turn.complete and answer:
+            self._history.append((turn.question, answer))
             self._last_turn = self.clock()
 
-    def _messages(self, text: str, language: str) -> list[dict[str, str]]:
+    def _messages(self, text: str, language: str) -> list[dict[str, Any]]:
         if self.clock() - self._last_turn > self.settings.history_reset_s:
             self._history.clear()  # a new conversation: old context costs and confuses
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         if self.settings.history_turns:
             for question, answer in self._history:
                 messages.append({"role": "user", "content": question})
@@ -238,12 +375,12 @@ class ClaudeBrain:
         return f"[{language} | {_DAYS[now.weekday()]} {now:%Y-%m-%d %H:%M}]"
 
     def _common(
-        self, model: str, max_tokens: int, messages: list[dict[str, str]]
+        self, model: str, max_tokens: int, messages: list[dict[str, Any]]
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": SYSTEM_PROMPT,
+            "system": SYSTEM_PROMPT_TOOLS if self.tools is not None else SYSTEM_PROMPT,
             "messages": messages,
         }
         if self.settings.cache:
@@ -252,17 +389,29 @@ class ClaudeBrain:
             params["cache_control"] = {"type": "ephemeral"}
         return params
 
-    def _params(self, messages: list[dict[str, str]], tools: bool = True) -> dict[str, Any]:
+    def _params(
+        self, messages: list[dict[str, Any]], tools: bool = True, last_round: bool = False
+    ) -> dict[str, Any]:
+        """The tool list is always the same (ask_sonnet first, then the PC tools): it is the
+        start of the cached prefix. On the last round Haiku must answer in words."""
         s = self.settings
-        params = self._common(s.model, s.max_tokens, messages)
+        max_tokens = max(s.max_tokens, self.pc.max_tokens) if self.tools else s.max_tokens
+        params = self._common(s.model, max_tokens, messages)
         params["output_config"] = {"effort": s.effort}
         if not s.thinking:
             params["thinking"] = {"type": "disabled"}
+        listed: list[dict[str, Any]] = []
         if tools and s.escalate and self.smart_model is not None:
-            params["tools"] = [ASK_SONNET_TOOL]
+            listed.append(ASK_SONNET_TOOL)
+        if tools and self.tools is not None:
+            listed.extend(self.tools.definitions())
+        if listed:
+            params["tools"] = listed
+            if last_round and self.tools is not None:
+                params["tool_choice"] = {"type": "none"}
         return params
 
-    def _smart_params(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+    def _smart_params(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Sonnet thinks (adaptive thinking, its default: "disabled" is refused on Sonnet 5.5);
         a low effort keeps the wait short."""
         s = self.settings
@@ -320,11 +469,7 @@ class ClaudeBrain:
             if not "".join(leg.parts).strip():
                 yield in_language(REFUSED, language)
             return
-        leg.handoff = final is not None and any(
-            getattr(block, "type", None) == "tool_use"
-            and getattr(block, "name", None) == ASK_SONNET_TOOL["name"]
-            for block in getattr(final, "content", None) or []
-        )
+        leg.read(final)
         leg.complete = True
 
     def _record(self, model: str, final: Any, stream: Any, parts: list[str]) -> None:
@@ -372,12 +517,74 @@ class ClaudeBrain:
 
 
 class _Leg:
-    """One API call of an answer: its text, whether it finished, whether Haiku handed over."""
+    """One API call of an answer: its text, whether it finished, whether Haiku handed over,
+    the PC tools it called and its content (sent back with the tool results)."""
 
     def __init__(self) -> None:
         self.parts: list[str] = []
         self.complete = False
         self.handoff = False
+        self.calls: list[ToolCall] = []
+        self.content: list[dict[str, Any]] = []
+
+    def read(self, final: Any) -> None:
+        """Calls are kept only when the reply stopped to call them: a reply cut by max_tokens
+        may hold a call with half its arguments."""
+        from claudio.pc.tools import ToolCall
+
+        for block in getattr(final, "content", None) or []:
+            kind = getattr(block, "type", None)
+            if kind == "text":
+                self.content.append({"type": "text", "text": block.text})
+            elif kind == "tool_use":
+                args = dict(getattr(block, "input", None) or {})
+                self.content.append(
+                    {
+                        "type": "tool_use",
+                        "id": getattr(block, "id", ""),
+                        "name": block.name,
+                        "input": args,
+                    }
+                )
+                if block.name == ASK_SONNET_TOOL["name"]:
+                    self.handoff = True
+                elif getattr(final, "stop_reason", None) == "tool_use":
+                    self.calls.append(ToolCall(getattr(block, "id", ""), block.name, args))
+
+
+class _Turn:
+    """One request across its rounds: the question and everything said in reply."""
+
+    def __init__(self, question: str, parts: list[str] | None = None, complete: bool = False):
+        self.question = question
+        self.parts = list(parts or [])
+        self.complete = complete
+
+
+class _Action:
+    """Tool calls waiting for JenJo's yes, with the conversation to continue from."""
+
+    def __init__(
+        self,
+        messages: list[dict[str, Any]],
+        calls: list[ToolCall],
+        turn: _Turn,
+        language: str,
+        level: int,
+        round_no: int,
+    ) -> None:
+        self.messages = messages
+        self.calls = calls
+        self.turn = turn
+        self.language = language
+        self.level = level
+        self.round_no = round_no
+        self.asked = -float("inf")
+
+
+def _space(turn: _Turn) -> str:
+    said = "".join(turn.parts)
+    return "" if not said or said[-1].isspace() else " "
 
 
 def make_client(api_key: str, timeout_s: float, keepalive_s: float = 60.0) -> Any:

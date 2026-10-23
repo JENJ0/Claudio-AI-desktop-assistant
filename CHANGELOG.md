@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] - 0.3.1
+
+### Added
+- Claude acts on the PC (`src/claudio/pc/`, `[pc]` in `config/claudio.toml`): Haiku's tools
+  `open_app` (Start menu apps, classic and Store), `open_path`, `search_files` (Windows Search
+  index, folder walk as fallback), `list_windows`, `read_window` (UI Automation text, cut at
+  `read_chars`, marked as data), `focus_window`, `press_keys`, `type_text`, `close_window`,
+  `move_file`. Several tools per reply, up to `max_rounds` (4) round trips; the last round
+  answers in words only. Tool definitions are part of the cached prefix.
+- Safety levels fixed in code: level 1 runs at once; level 2 (type, close, move, any key not in
+  `safe_keys`) makes Claudio say exactly what will run and ask "Confermi?"; the answer goes
+  through the same checks as a local command's (short yes, voice near the microphone, voice
+  only). JenJo's choice "Equilibrata": harmless keys without asking, apps from the Start menu,
+  files only inside the user folder (`roots`), never overwritten, no programs opened as files,
+  password managers never read.
+- Every action is logged with level, outcome and `tool_ms`; `metrics.jsonl` gets `tools`,
+  `conversazione.md` an "Azioni" line.
+- Dependencies (Windows only): `pywinauto`, `psutil`.
+
 ## [Unreleased] - 0.3.0
 
 ### Changed

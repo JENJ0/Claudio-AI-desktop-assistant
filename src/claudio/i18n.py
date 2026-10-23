@@ -308,6 +308,24 @@ EN: dict[str, str] = {
     "Claude errore %s: %s": "Claude error %s: %s",
     "Claude: spesa non registrata": "Claude: spending not recorded",
     "Non è un comando, chiedo a Claude: %r": "Not a command, asking Claude: %r",
+    # Phase 3: actions on the PC
+    "Azioni sul PC: %d strumenti, cartelle %s, %d tasti senza conferma": (
+        "PC actions: %d tools, folders %s, %d keys without confirmation"
+    ),
+    "Azioni sul PC spente ([pc] enabled = false)": "PC actions off ([pc] enabled = false)",
+    "Azioni sul PC: solo su Windows": "PC actions: Windows only",
+    "Conferma data (livello %d): eseguo": "Confirmed (level %d): running",
+    "Conferma %s: azione non eseguita": "Confirmation %s: action not run",
+    "Azione PC %s livello %d: %s (%d ms)": "PC action %s level %d: %s (%d ms)",
+    "[pc] safe_keys: tasto non valido ignorato: %r": "[pc] safe_keys: invalid key ignored: %r",
+    "Azione PC fallita: %s": "PC action failed: %s",
+    "Risposta alla conferma di Claude: %r": "Answer to Claude's confirmation: %r",
+    "App nel menu Start: %d": "Apps in the Start menu: %d",
+    "Lettura di %r interrotta dopo %.1f s": "Reading %r stopped after %.1f s",
+    "COM non inizializzato per le azioni sul PC": "COM not initialised for the PC actions",
+    "Indice di Windows non disponibile (%s): cerco nelle cartelle": (
+        "Windows Search index unavailable (%s): walking the folders"
+    ),
 }
 
 
