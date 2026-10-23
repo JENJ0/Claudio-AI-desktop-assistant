@@ -152,3 +152,32 @@ async def test_claudio_alone_is_always_checked(
         assert not (tmp_path / "metrics.jsonl").exists() or not (
             tmp_path / "metrics.jsonl"
         ).read_text(encoding="utf-8")
+
+
+async def test_a_burst_of_claudio_detections_is_checked_once(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """One "Claudio" fires the model for many frames in a row (8 checks in 3 s on 24/10):
+    while Whisper is listening the others are dropped, with no near miss row or WAV."""
+    import threading
+
+    gate = threading.Event()
+    check = SecondChance("il gatto", gate=gate)
+    assistant = Assistant(
+        ClaudioWake(set(range(20, 30))),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        OnlyCommands(),
+        FakeSpeaker(),
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        second_chance=check,
+        always_confirm=frozenset({"claudio"}),
+    )
+    for frame in make_frames("silence", 2400)[:30]:
+        await assistant.handle_frame(frame)
+    gate.set()
+    await assistant.wait_idle()
+    assert len(check.heard) == 1
+    rows = tmp_path / "metrics.jsonl"
+    assert not rows.exists() or not rows.read_text(encoding="utf-8")

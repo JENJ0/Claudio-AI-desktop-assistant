@@ -151,15 +151,17 @@ def test_candidates_skip_loopbacks_and_prefer_wasapi() -> None:
     assert candidate_inputs(devices, hostapis) == [1, 4]
 
 
-def test_auto_microphone_is_chosen_again_when_it_goes_silent(fake_sd, monkeypatch) -> None:
+def test_auto_microphone_moves_only_to_a_louder_one(fake_sd, monkeypatch) -> None:
+    """A quiet microphone is kept unless another hears more, and the switch re-scans nothing
+    (sd._terminate() also broke the speaker's stream: PaErrorCode -9988 on 24/10)."""
     sd = fake_sd(failures=0)
-    monkeypatch.setattr(capture, "DEAD_S", 0.0)  # every frame of the fake is quiet
-    chosen = iter([3, 5, 5, 5])
-    picks: list[int] = []
+    monkeypatch.setattr(capture, "QUIET_S", 0.0)  # every frame of the fake is quiet
+    chosen = iter([3, 3, 5, 5, 5, 5])
+    asked: list[int | None] = []
 
-    def chooser() -> int | None:
-        picks.append(next(chosen))
-        return picks[-1]
+    def chooser(current: int | None) -> int | None:
+        asked.append(current)
+        return next(chosen)
 
     mic = capture.AudioCapture(16000, 4, device="auto", chooser=chooser)
 
@@ -167,8 +169,9 @@ def test_auto_microphone_is_chosen_again_when_it_goes_silent(fake_sd, monkeypatc
         n = 0
         async for _ in mic.frames():
             n += 1
-            if n == 2:
+            if n == 4:
                 return
 
     asyncio.run(run())
-    assert picks[:2] == [3, 5] and sd.opened >= 2
+    assert asked[:3] == [None, 3, 3]  # at start, then twice from microphone 3
+    assert sd.opened == 2 and sd.rescans == 0  # 3 kept once, then 5 opened

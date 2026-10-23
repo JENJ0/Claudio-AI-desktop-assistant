@@ -203,7 +203,8 @@ class Assistant:
             self._recent.append(frame.astype(np.float32) / 32768.0)
             detection = self.wake.process(frame)
             if detection is not None and self._weak(*detection):
-                log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
+                if not self._checking:
+                    log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
                 self._on_near_miss(*detection)
             elif detection is not None:
                 self._on_wake(*detection)
@@ -249,6 +250,8 @@ class Assistant:
 
     def _on_near_miss(self, name: str, score: float) -> None:
         heard = self._recent.get()
+        if self._checking and self._weak(name, score):
+            return  # the same phrase fires for many frames: Whisper is already listening to it
         if self.second_chance is None or self._checking:
             self._log_near_miss(name, score, heard)
             return

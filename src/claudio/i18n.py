@@ -68,8 +68,8 @@ EN: dict[str, str] = {
     "WARN voce di Jack non installata (%s): parlerà Kokoro": (
         "WARN Jack's voice is not installed (%s): Kokoro will speak"
     ),
-    "Il microfono non sente niente: ne scelgo un altro": (
-        "The microphone hears nothing: choosing another one"
+    "Un altro microfono sente di più: passo a quello": (
+        "Another microphone hears more: switching to it"
     ),
     "Microfono %d non apribile per la prova: %s": (
         "Microphone %d could not be opened for the probe: %s"
