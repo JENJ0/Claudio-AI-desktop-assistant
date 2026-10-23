@@ -245,6 +245,10 @@ EN: dict[str, str] = {
     "Conversazione non salvata": "Conversation not saved",
     "Rotazione di %s non riuscita": "Rotation of %s failed",
     "Sessione salvata in %s": "Session saved in %s",
+    "Chat: %d messaggi più vecchi di %d giorni eliminati": (
+        "Chat: %d messages older than %d days deleted"
+    ),
+    "Chat non salvata": "Chat not saved",
     # Claude (brain/, Phase 2)
     "Claude: %s, max %d token, budget %.2f al giorno": (
         "Claude: %s, max %d tokens, budget %.2f a day"

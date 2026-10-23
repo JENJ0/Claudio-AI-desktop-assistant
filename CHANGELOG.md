@@ -1,6 +1,21 @@
 # Changelog
 
-## [Unreleased] - 0.2.0
+## [Unreleased] - 0.2.1
+
+### Added (chat window)
+- `claudio --ui` opens the chat in its own window (pywebview/WebView2 over a local FastAPI
+  server on 127.0.0.1, read-only, Host header checked): every conversation, search across all of
+  them, Claudio's answers with route/model/cost/latency, today's spending. Updates live while
+  Claudio runs. The window and the assistant are separate processes sharing `data/claudio.db`.
+- `src/claudio/chat/`: `ChatStore` (SQLite, WAL) fed by `MetricsWriter`; also the base for the
+  Phase 4 memory.
+- `logging.retention_days` (30): the chat database forgets older messages at startup (privacy).
+
+### Fixed
+- Jack read some numbers in Spanish ("22", "51" with language Auto): digits are now spelled out
+  in Italian before the worker (`tts/numbers.py`).
+
+## 0.2.0
 
 ### Fixed (code review)
 - `Assistant.history` keeps the last 200 interactions only (was unbounded).
