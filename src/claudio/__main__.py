@@ -8,6 +8,7 @@ import contextlib
 import logging
 import sys
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,7 @@ from claudio.logging_setup import setup_logging
 if TYPE_CHECKING:
     from claudio.app import BargeIn
     from claudio.brain.claude import ClaudeBrain
+    from claudio.chat.launcher import ChatLauncher
     from claudio.cost.tracker import CostTracker
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
@@ -48,7 +50,11 @@ def build_tracker(settings: Settings) -> CostTracker:
     )
 
 
-def build_responder(settings: Settings, system: SystemControl | None = None) -> LocalResponder:
+def build_responder(
+    settings: Settings,
+    system: SystemControl | None = None,
+    chat: ChatLauncher | None = None,
+) -> LocalResponder:
     from claudio.router.actions import ActionRunner
     from claudio.router.matcher import CommandMatcher, load_commands
     from claudio.router.responder import LocalResponder
@@ -60,7 +66,7 @@ def build_responder(settings: Settings, system: SystemControl | None = None) -> 
     brain = build_brain(settings, tracker)
     return LocalResponder(
         matcher,
-        ActionRunner(system=system, tracker=tracker),
+        ActionRunner(system=system, tracker=tracker, chat=chat),
         settings.router.unknown_reply,
         settings.router.error_reply,
         fallback=brain.ask if brain else None,
@@ -200,6 +206,26 @@ def build_speaker(settings: Settings) -> StreamingSpeaker:
     return speaker
 
 
+def startup_notices(settings: Settings, jack_running: bool, stt_device: str) -> list[str]:
+    """What Claudio says out loud at startup when it runs degraded: a warning in the console
+    alone went unnoticed (on 23/10 Jack's worker failed and Kokoro answered all evening)."""
+    notices = []
+    if settings.tts.engine == "jack" and not jack_running:
+        notices.append(tr("La voce di Jack non è partita: uso quella di riserva."))
+    if settings.stt.device == "auto" and stt_device == "cpu":
+        notices.append(tr("La scheda video non è disponibile: ti capisco più lentamente."))
+    if notices:
+        notices.append(tr("Il motivo è nel log."))
+    return notices
+
+
+async def say(speaker: StreamingSpeaker, text: str) -> None:
+    async def once() -> AsyncIterator[str]:
+        yield text
+
+    await speaker.speak(once())
+
+
 async def run_text(settings: Settings, text: str) -> None:
     """Router + TTS on typed text: tests the reply path without microphone or STT."""
     responder = build_responder(settings)
@@ -236,7 +262,9 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
     )
 
 
-async def run_assistant(settings: Settings, session: Path) -> None:
+async def run_assistant(
+    settings: Settings, session: Path, chat_window: ChatLauncher | None = None
+) -> None:
     from claudio.app import Assistant
     from claudio.audio.capture import AudioCapture
     from claudio.audio.devices import resolve_device
@@ -262,9 +290,12 @@ async def run_assistant(settings: Settings, session: Path) -> None:
         ", ".join(settings.stt.languages),
     )
     system = SystemControl()
-    responder = build_responder(settings, system)
+    responder = build_responder(settings, system, chat_window)
     speaker = build_speaker(settings)
     responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}  # no English text in Italian voice
+    from claudio.tts.jack import JackSynth
+
+    notices = startup_notices(settings, isinstance(speaker.synth, JackSynth), transcriber.device)
     resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
     capture = AudioCapture(
         settings.audio.sample_rate,
@@ -333,9 +364,15 @@ async def run_assistant(settings: Settings, session: Path) -> None:
         tr('" o "').join(wake.names),
     )
     try:
+        for notice in notices:
+            log.warning("Avviso a voce: %s", notice)
+        if notices:
+            await say(speaker, " ".join(notices))
         await assistant.run(capture.frames())
     finally:
         speaker.player.close()
+        if chat_window is not None:
+            chat_window.close()  # "spegniti" or Ctrl+C: the window goes with Claudio
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -357,7 +394,11 @@ def main(argv: list[str] | None = None) -> int:
         print(tr("Errore di configurazione: {error}", error=exc), file=sys.stderr)
         return 2
     set_language(settings.language)
-    setup_logging(settings.resolve(settings.logs_dir), settings.logging.level)
+    setup_logging(
+        settings.resolve(settings.logs_dir),
+        settings.logging.level,
+        "chat-window.log.jsonl" if args.ui else "claudio.log.jsonl",
+    )
     if args.ui:
         from claudio.chat.window import open_window
 
@@ -380,8 +421,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.text:
             asyncio.run(run_text(settings, args.text))
         else:
+            from claudio.chat.launcher import ChatLauncher, window_command
+
             assert session is not None
-            asyncio.run(run_assistant(settings, session))
+            chat_window = ChatLauncher(window_command(args.config))
+            asyncio.run(run_assistant(settings, session, chat_window))
     except KeyboardInterrupt:
         log.info("Chiusura richiesta: arrivederci")
     except (FileNotFoundError, ValueError) as exc:

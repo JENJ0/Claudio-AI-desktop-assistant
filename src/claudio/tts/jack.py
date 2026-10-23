@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 
 from claudio.i18n import tr
-from claudio.tts.numbers import digits_to_words_it
+from claudio.tts.number_words import digits_to_words_it
 
 log = logging.getLogger(__name__)
 

@@ -188,12 +188,6 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
-[package.optional-dependencies]
-gpu = [
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cudnn-cu12" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
@@ -202,6 +196,10 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+gpu = [
+    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cudnn-cu12" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -209,8 +207,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "faster-whisper", specifier = ">=1.1.1" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "nvidia-cublas-cu12", marker = "extra == 'gpu'", specifier = ">=12.8" },
-    { name = "nvidia-cudnn-cu12", marker = "extra == 'gpu'", specifier = ">=9.8,<10" },
     { name = "onnxruntime", specifier = ">=1.18,<2" },
     { name = "openwakeword", specifier = "==0.6.0" },
     { name = "piper-tts", specifier = ">=1.3" },
@@ -224,7 +220,6 @@ requires-dist = [
     { name = "soundfile", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
-provides-extras = ["gpu"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -233,6 +228,10 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-cov", specifier = ">=5" },
     { name = "ruff", specifier = ">=0.6" },
+]
+gpu = [
+    { name = "nvidia-cublas-cu12", specifier = ">=12.8" },
+    { name = "nvidia-cudnn-cu12", specifier = ">=9.8,<10" },
 ]
 
 [[package]]

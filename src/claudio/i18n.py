@@ -249,6 +249,17 @@ EN: dict[str, str] = {
         "Chat: %d messages older than %d days deleted"
     ),
     "Chat non salvata": "Chat not saved",
+    "Chat aperta": "Chat opened",
+    "Chat chiusa": "Chat closed",
+    "Comando chat sconosciuto '{command}'": "Unknown chat command '{command}'",
+    "Avviso a voce: %s": "Spoken notice: %s",
+    "La voce di Jack non è partita: uso quella di riserva.": (
+        "Jack's voice did not start: using the backup voice."
+    ),
+    "La scheda video non è disponibile: ti capisco più lentamente.": (
+        "The graphics card is not available: I understand you more slowly."
+    ),
+    "Il motivo è nel log.": "The reason is in the log.",
     # Claude (brain/, Phase 2)
     "Claude: %s, max %d token, budget %.2f al giorno": (
         "Claude: %s, max %d tokens, budget %.2f a day"

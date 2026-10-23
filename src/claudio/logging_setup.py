@@ -28,7 +28,11 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def setup_logging(logs_dir: Path, level: str = "INFO") -> None:
+def setup_logging(
+    logs_dir: Path, level: str = "INFO", file_name: str = "claudio.log.jsonl"
+) -> None:
+    """`file_name`: the chat window logs to its own file (two processes rotating one file
+    fail on Windows)."""
     logs_dir.mkdir(parents=True, exist_ok=True)
     root = logging.getLogger()
     root.setLevel(level)
@@ -43,7 +47,7 @@ def setup_logging(logs_dir: Path, level: str = "INFO") -> None:
     root.addHandler(console)
 
     file_handler = logging.handlers.RotatingFileHandler(
-        logs_dir / "claudio.log.jsonl", maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+        logs_dir / file_name, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
     )
     file_handler.setFormatter(JsonFormatter())
     file_handler.addFilter(TranslateFilter())

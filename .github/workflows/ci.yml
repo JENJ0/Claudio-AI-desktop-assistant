@@ -16,6 +16,8 @@ jobs:
   test:
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      UV_NO_GROUP: gpu  # no GPU on the runner: skip ~1 GB of CUDA libraries (sync and run)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

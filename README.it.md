@@ -31,7 +31,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
-uv sync --extra gpu                       # senza GPU: uv sync
+uv sync                                   # senza GPU: uv sync --no-group gpu
 uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper turbo + small
 uv run claudio --check                    # tutte le righe devono essere OK
 uv run python scripts/check_gpu.py        # verifica che Whisper giri davvero sulla RTX
@@ -122,7 +122,13 @@ lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
 
 ## Finestra con la chat
 
-`uv run claudio --ui` apre le conversazioni in una finestra: scegli una sessione a sinistra,
+Con Claudio acceso (`uv run claudio`) di' **"apri la chat"**, "chat" o "fammi scrivere": la
+finestra si apre e Claudio continua ad ascoltare. "chiudi la chat" la chiude, e si chiude anche
+quando si spegne Claudio. Le frasi sono in `config/commands.toml` (`open_chat`, `close_chat`),
+riconosciute in locale a costo zero. `uv run claudio --ui` apre la stessa finestra da sola (solo
+lettura, senza voce).
+
+La finestra mostra le conversazioni: scegli una sessione a sinistra,
 cerca in tutte dalla barra in alto, vedi quanto è costata ogni risposta. Legge `data/claudio.db`,
 quindi funziona con Claudio acceso (si aggiorna da sola) o spento. I messaggi più vecchi di
 `logging.retention_days` (30) vengono cancellati all'avvio di Claudio.

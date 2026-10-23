@@ -1,6 +1,6 @@
 import pytest
 
-from claudio.tts.numbers import digits_to_words_it, int_to_words
+from claudio.tts.number_words import digits_to_words_it, int_to_words
 
 
 @pytest.mark.parametrize(

@@ -23,10 +23,7 @@ def main() -> int:
 
     print(f"ctranslate2 {ctranslate2.__version__}, GPU CUDA: {ctranslate2.get_cuda_device_count()}")
     if ctranslate2.get_cuda_device_count() == 0:
-        print(
-            "Nessuna GPU vista da CTranslate2: aggiorna il driver NVIDIA e verifica "
-            "`uv sync --extra gpu`."
-        )
+        print("Nessuna GPU vista da CTranslate2: aggiorna il driver NVIDIA e verifica `uv sync`.")
         return 1
     print("Tipi supportati:", ", ".join(sorted(ctranslate2.get_supported_compute_types("cuda"))))
     stt_settings = settings.stt.model_copy(update={"device": "cuda"})
