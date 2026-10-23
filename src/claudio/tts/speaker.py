@@ -67,8 +67,10 @@ class StreamingSpeaker:
         beep_volume: float = 0.25,
         effect: Callable[[np.ndarray, int], np.ndarray] | None = None,
         voices: Mapping[str, Any] | None = None,
+        first_clause_chars: int = 0,
     ) -> None:
         self.synth = synth
+        self.first_clause_chars = first_clause_chars  # the first piece may end at a comma
         self.voices = dict(voices or {})
         self.player = player
         self.effect = effect
@@ -131,7 +133,9 @@ class StreamingSpeaker:
 
         async def produce() -> None:
             try:
-                async for sentence in split_stream(text_stream):
+                async for sentence in split_stream(
+                    text_stream, first_clause_chars=self.first_clause_chars
+                ):
                     lang = language() if callable(language) else language
                     log.debug("TTS (%s): %s", lang, sentence)
                     async for item in self.render_stream(sentence, lang):

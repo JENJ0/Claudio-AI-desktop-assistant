@@ -114,3 +114,68 @@ def test_server_rejects_bad_parameters(store) -> None:
     client = TestClient(create_app(store), base_url="http://127.0.0.1:8000")
     assert client.get("/api/messages", params={"limit": 100000}).status_code == 422
     assert client.get("/api/messages", params={"after_id": -1}).status_code == 422
+
+
+# --- v0.2.2: writing to Claudio from the window ----------------------------------------
+
+
+def test_inbox_hands_each_message_over_once(store) -> None:
+    first = store.enqueue("  apri   chrome ")
+    store.enqueue("che ore sono")
+    assert store.inbox_state(first) == "pending"
+    assert store.take_pending(max_age_s=60) == [(first, "apri chrome"), (first + 1, "che ore sono")]
+    assert store.take_pending(max_age_s=60) == []
+    assert store.inbox_state(first) == "taken"
+    assert store.inbox_state(999) is None
+
+
+def test_inbox_drops_what_was_written_while_claudio_was_off(store) -> None:
+    old = store.enqueue("ciao", now=time.time() - 600)
+    assert store.take_pending(max_age_s=120) == []
+    assert store.inbox_state(old) == "expired"
+
+
+def test_inbox_refuses_empty_text(store) -> None:
+    with pytest.raises(ValueError):
+        store.enqueue("   ")
+
+
+def page_token(client: TestClient) -> str:
+    html = client.get("/").text
+    return html.split('const TOKEN = "', 1)[1].split('"', 1)[0]
+
+
+def test_the_window_can_send_with_its_token(store) -> None:
+    client = TestClient(create_app(store), base_url="http://127.0.0.1:8000")
+    token = page_token(client)
+    assert token and token != "__CLAUDIO_TOKEN__"
+    sent = client.post("/api/send", json={"text": "ciao Claudio", "token": token})
+    assert sent.status_code == 200
+    message_id = sent.json()["id"]
+    assert client.get(f"/api/inbox/{message_id}").json() == {"state": "pending"}
+    assert store.take_pending(60) == [(message_id, "ciao Claudio")]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "status"),
+    [
+        ({"json": {"text": "ciao", "token": "wrong"}}, 403),
+        (
+            {"json": {"text": "ciao", "token": "TOKEN"}, "headers": {"origin": "https://evil.it"}},
+            403,
+        ),
+        ({"data": {"text": "ciao", "token": "TOKEN"}}, 422),  # an HTML form: not JSON
+        ({"json": {"text": "", "token": "TOKEN"}}, 422),
+        ({"json": {"text": "x" * 1001, "token": "TOKEN"}}, 422),
+    ],
+)
+def test_send_refuses_anything_but_the_window(store, kwargs, status) -> None:
+    client = TestClient(create_app(store, token="TOKEN"), base_url="http://127.0.0.1:8000")
+    assert client.post("/api/send", **kwargs).status_code == status
+    assert store.take_pending(60) == []
+
+
+def test_send_accepts_the_local_origin(store) -> None:
+    client = TestClient(create_app(store, token="T"), base_url="http://127.0.0.1:8000")
+    headers = {"origin": "http://127.0.0.1:8000"}
+    assert client.post("/api/send", json={"text": "ok", "token": "T"}, headers=headers).is_success

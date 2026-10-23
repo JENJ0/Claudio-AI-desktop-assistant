@@ -54,3 +54,29 @@ async def test_split_stream() -> None:
             yield piece
 
     assert [s async for s in split_stream(gen())] == ["Ciao.", "Sono Claudio."]
+
+
+def test_first_clause_ends_at_a_comma_once_long_enough() -> None:
+    s = SentenceSplitter(first_clause_chars=15)
+    assert s.feed("Ciao JenJo, sto bene") == []  # the first comma comes too early
+    assert s.feed(", grazie per averlo") == ["Ciao JenJo, sto bene,"]
+    assert s.feed(" chiesto, davvero. Tu") == ["grazie per averlo chiesto, davvero."]  # whole
+    assert s.flush() == ["Tu"]
+
+
+def test_first_clause_skips_decimal_commas() -> None:
+    s = SentenceSplitter(first_clause_chars=10)
+    assert s.feed("La temperatura è 3,5 gradi") == []
+    assert s.feed(", poco.") == ["La temperatura è 3,5 gradi,"]
+
+
+def test_first_clause_waits_for_what_follows_the_comma() -> None:
+    s = SentenceSplitter(first_clause_chars=5)
+    assert s.feed("Sono le 3,") == []  # "3,5" or "3, poi": the next chunk decides
+    assert s.feed("5.") == []
+    assert s.flush() == ["Sono le 3,5."]
+
+
+def test_a_full_sentence_before_the_comma_wins() -> None:
+    s = SentenceSplitter(first_clause_chars=5)
+    assert s.feed("Certo. Allora, vediamo, ") == ["Certo."]  # only the first piece is cut

@@ -169,6 +169,9 @@ class TtsSettings(BaseModel):
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
     jack_sentence_timeout_s: float = Field(15.0, gt=0)
+    # The first piece of a reply may end at a comma once it is this long: the voice starts
+    # before the whole first sentence has arrived from Claude (0 = whole sentences only).
+    first_clause_chars: int = Field(25, ge=0, le=200)
 
     def kokoro_voice_for(self, language: str) -> str:
         other = self.voices.get(language)
@@ -237,6 +240,30 @@ class ClaudeSettings(BaseModel):
     history_turns: int = Field(6, ge=0, le=50)  # question/answer pairs sent back as context
     history_reset_s: float = Field(300.0, gt=0)  # silence after which the context starts over
     conversation_min_words: int = Field(3, ge=1)  # without the wake word: shorter is not a request
+    cache: bool = True  # prompt caching: from the 2nd turn the conversation is read at 10 %
+    tell_time: bool = True  # the local date and time go with every request (after the cache)
+    keepalive_s: float = Field(60.0, ge=0, le=600)  # keep the HTTPS connection open between turns
+    # Sonnet for what needs reasoning: Haiku hands a request over with the `ask_sonnet` tool,
+    # or JenJo asks for it ("pensaci bene"). Empty smart_model: Haiku only.
+    smart_model: str = "claude-sonnet-5-5"  # must be in the prices file
+    smart_max_tokens: int = Field(1024, ge=64, le=8192)  # its thinking counts here too
+    smart_effort: Literal["low", "medium", "high"] = "low"
+    escalate: bool = True  # Haiku may call Sonnet by itself (one short tool definition per call)
+    smart_phrases: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "it": ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"],
+            "en": ["think hard", "think carefully", "think it through"],
+        }
+    )
+
+
+class ChatSettings(BaseModel):
+    """The chat window (`claudio --ui`): what is written there reaches the running assistant."""
+
+    typed: bool = True  # answer the messages written in the window
+    speak_typed: bool = False  # JenJo's choice (23/10): a written message gets a written reply
+    poll_s: float = Field(0.3, ge=0.05, le=5)  # how often the assistant looks for new ones
+    max_age_s: float = Field(120.0, gt=0)  # older ones (written while Claudio was off) are dropped
 
 
 class LoggingSettings(BaseModel):
@@ -274,6 +301,7 @@ class Settings(BaseSettings):
     claude: ClaudeSettings = ClaudeSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")
+    chat: ChatSettings = ChatSettings()
     logging: LoggingSettings = LoggingSettings()
 
     @classmethod

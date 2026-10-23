@@ -102,6 +102,7 @@ class Monotonic:
 
 
 def brain(pricing: Pricing, client: Any, budget: float = 1.0, **settings: Any) -> ClaudeBrain:
+    settings.setdefault("tell_time", False)  # the time tag has its own test
     return ClaudeBrain(
         client, tracker(pricing, budget), ClaudeSettings(**settings), clock=Monotonic()
     )
@@ -380,3 +381,175 @@ async def test_answer_to_claudes_question_needs_no_wake_word(
     assert len(client.calls) == 2
     assert client.calls[1]["messages"][-1]["content"] == "[it] Milano."
     assert assistant.history[0]["reply"] == "Da dove parti?"
+
+
+# --- v0.2.2: Sonnet when needed, caching, the time, the early connection ----------------
+
+
+class ScriptedStream(FakeStream):
+    def __init__(self, chunks: list[str], stop: str, content: list[Any], usage: dict[str, int]):
+        super().__init__(chunks, usage, stop, None)
+        self.content = content
+
+    async def get_final_message(self) -> Any:
+        return SimpleNamespace(usage=self.usage, stop_reason=self.stop, content=self.content)
+
+
+HANDOFF = [SimpleNamespace(type="tool_use", name="ask_sonnet", input={})]
+
+
+class ScriptedClient:
+    """One reply per call, in order: (chunks, stop reason, content blocks)."""
+
+    def __init__(self, *replies: tuple[list[str], str, list[Any]]):
+        self.replies = list(replies)
+        self.calls: list[dict[str, Any]] = []
+        self.retrieved: list[str] = []
+        self.messages = self
+        self.models = SimpleNamespace(retrieve=self._retrieve)
+
+    async def _retrieve(self, model: str) -> Any:
+        self.retrieved.append(model)
+        return SimpleNamespace(id=model)
+
+    def stream(self, **params: Any) -> ScriptedStream:
+        self.calls.append(params)
+        chunks, stop, content = self.replies.pop(0)
+        return ScriptedStream(chunks, stop, content, dict(USAGE))
+
+
+async def test_haiku_gets_the_tool_and_the_cache_marker(pricing: Pricing) -> None:
+    client = ScriptedClient((["Ciao."], "end_turn", []))
+    await ask(brain(pricing, client), "ciao come va")
+    params = client.calls[0]
+    assert params["tools"][0]["name"] == "ask_sonnet"
+    assert params["cache_control"] == {"type": "ephemeral"}
+
+
+async def test_no_tool_without_sonnet(pricing: Pricing) -> None:
+    client = ScriptedClient((["Ciao."], "end_turn", []))
+    await ask(brain(pricing, client, smart_model="", cache=False), "ciao come va")
+    assert "tools" not in client.calls[0] and "cache_control" not in client.calls[0]
+
+
+async def test_haiku_hands_over_to_sonnet(pricing: Pricing) -> None:
+    client = ScriptedClient(
+        (["Ci penso un attimo."], "tool_use", HANDOFF),
+        (["Conviene il treno: ", "costa meno."], "end_turn", []),
+    )
+    b = brain(pricing, client)
+    reply = await ask(b, "meglio il treno o l'auto per Roma, considerando i costi")
+    assert reply == "Ci penso un attimo.Conviene il treno: costa meno."
+    haiku, sonnet = client.calls
+    assert sonnet["model"] == "claude-sonnet-5-5" and sonnet["max_tokens"] == 1024
+    assert "thinking" not in sonnet and "tools" not in sonnet  # Sonnet 5.5 refuses "disabled"
+    assert sonnet["output_config"] == {"effort": "low"}
+    assert sonnet["messages"] == haiku["messages"]
+    assert b.last_call["escalated"] == "tool" and b.last_call["model"] == "claude-sonnet-5-5"
+    # Both calls are billed: 400 in + 30 out on Haiku, the same on Sonnet.
+    assert b.tracker.calls_today() == 2
+    assert b.last_call["input_tokens"] == 800
+    assert b.last_call["cost"] == pytest.approx(0.000055 + 0.0008 + 0.0003)
+    assert b._history[-1][1] == "Conviene il treno: costa meno."  # Sonnet's answer only
+
+
+async def test_a_silent_handover_still_says_something(pricing: Pricing) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ecco."], "end_turn", []))
+    assert await ask(brain(pricing, client), "fammi un piano") == "Ci penso un attimo. Ecco."
+
+
+async def test_asking_to_think_goes_straight_to_sonnet(pricing: Pricing) -> None:
+    client = ScriptedClient((["Allora."], "end_turn", []))
+    b = brain(pricing, client)
+    assert await ask(b, "Pensaci bene: quanto fa 17 per 23?") == "Allora."
+    assert [c["model"] for c in client.calls] == ["claude-sonnet-5-5"]
+    assert b.last_call["escalated"] == "asked" and "smart_first_ms" in b.last_call
+
+
+async def test_think_phrase_in_another_language(pricing: Pricing) -> None:
+    b = brain(pricing, ScriptedClient())
+    assert b.wants_smart("think hard about this", "it")
+    assert not b.wants_smart("pensa che bello", "it")
+    b.smart_model = None
+    assert not b.wants_smart("pensaci bene", "it")
+
+
+async def test_no_sonnet_when_the_budget_runs_out_after_haiku(pricing: Pricing) -> None:
+    client = ScriptedClient((["Un attimo."], "tool_use", HANDOFF))
+    b = brain(pricing, client, budget=0.00005)  # Haiku's 0.000055 uses it all
+    reply = await ask(b, "fammi un confronto dettagliato")
+    assert "budget di oggi" in reply and len(client.calls) == 1
+
+
+async def test_the_time_goes_after_the_cached_prefix(pricing: Pricing) -> None:
+    from datetime import datetime
+
+    client = ScriptedClient((["Sono le 17 e 15."], "end_turn", []))
+    b = ClaudeBrain(
+        client,
+        tracker(pricing, 1.0),
+        ClaudeSettings(),
+        clock=Monotonic(),
+        wall=lambda: datetime(2026, 10, 23, 17, 15),
+    )
+    await ask(b, "che ore sono in Thailandia")
+    assert client.calls[0]["system"] == SYSTEM_PROMPT  # frozen: cacheable
+    content = client.calls[0]["messages"][-1]["content"]
+    assert content == "[it | Fri 2026-10-23 17:15] che ore sono in Thailandia"
+
+
+async def test_warm_up_opens_the_connection_once(pricing: Pricing) -> None:
+    client = ScriptedClient()
+    b = brain(pricing, client)
+    b.warm_up()
+    b.warm_up()  # right after: the connection is fresh
+    await asyncio.gather(*b._warming)
+    assert client.retrieved == ["claude-haiku-5-5"]
+    b.clock.t += 16  # type: ignore[attr-defined]
+    b.warm_up()
+    await asyncio.gather(*b._warming)
+    assert len(client.retrieved) == 2
+
+
+async def test_warm_up_failures_are_silent(pricing: Pricing) -> None:
+    client = ScriptedClient()
+
+    async def broken(model: str) -> Any:
+        raise anthropic.APIConnectionError(request=REQUEST)
+
+    client.models = SimpleNamespace(retrieve=broken)
+    b = brain(pricing, client)
+    b.warm_up()
+    await asyncio.gather(*b._warming)  # no exception
+    brain(pricing, None).warm_up()  # no key: nothing to open
+
+
+async def test_responder_prepares_only_when_awake(
+    matcher: CommandMatcher, pricing: Pricing
+) -> None:
+    calls: list[int] = []
+    r = LocalResponder(matcher, ActionRunner(Recorder().ctx()), on_prepare=lambda: calls.append(1))
+    r.prepare()
+    r.actions.system.paused = True
+    r.prepare()  # paused: no Claude call will follow
+    assert calls == [1]
+
+
+def test_sonnet_without_prices_is_turned_off(tmp_path: Any, monkeypatch: Any) -> None:
+    from claudio.__main__ import build_brain
+    from claudio.config import load_settings
+
+    prices = tmp_path / "pricing.toml"
+    prices.write_text(
+        'currency = "USD"\ncache_write_5m_multiplier = 1.25\ncache_write_1h_multiplier = 2.0\n'
+        "cache_read_multiplier = 0.1\n[models.claude-haiku-5-5]\ninput = 0.1\noutput = 0.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDIO_COST__PRICING_FILE", str(prices))
+    monkeypatch.setenv("CLAUDIO_COST__DB_FILE", str(tmp_path / "spend.db"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    from claudio.__main__ import build_tracker
+
+    settings = load_settings()
+    b = build_brain(settings, build_tracker(settings))
+    assert b is not None and b.smart_model is None

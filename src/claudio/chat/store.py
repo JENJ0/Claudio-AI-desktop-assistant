@@ -1,6 +1,9 @@
 """SQLite store of the conversations (data/claudio.db). It is written by the assistant, one
 request at a time, and read by the chat window, a different process: WAL mode lets both work
-at once. A connection is opened per operation: the calls are rare and it keeps threads simple."""
+at once. A connection is opened per operation: the calls are rare and it keeps threads simple.
+
+The `inbox` table goes the other way: the window writes what JenJo types, the assistant takes
+it (no port, no socket between the two processes: the database is the only link)."""
 
 from __future__ import annotations
 
@@ -30,12 +33,20 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_ts ON messages (ts);
 CREATE INDEX IF NOT EXISTS messages_session ON messages (session, id);
+CREATE TABLE IF NOT EXISTS inbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    text TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'taken', 'expired'))
+);
+CREATE INDEX IF NOT EXISTS inbox_state ON inbox (state, id);
 """
 
 MESSAGE_COLUMNS = (
     "id, ts, session, role, text, route, model, cost, input_tokens, output_tokens, m2_ms"
 )
 MAX_LIMIT = 500
+MAX_TYPED_CHARS = 1000  # a written request: more is a paste, not a question for a voice
 
 
 def _like(term: str) -> str:
@@ -147,4 +158,41 @@ class ChatStore:
         """Privacy: everything the microphone picked up goes after `days` days."""
         cutoff = (now or time.time()) - days * 86400
         with self._connect() as db:
+            db.execute("DELETE FROM inbox WHERE ts < ?", (cutoff,))
             return db.execute("DELETE FROM messages WHERE ts < ?", (cutoff,)).rowcount
+
+    # --- the inbox: written in the window, answered by the assistant ---------------------
+
+    def enqueue(self, text: str, now: float | None = None) -> int:
+        """A message typed in the window; its id lets the window follow it."""
+        text = " ".join(text.split())[:MAX_TYPED_CHARS]
+        if not text:
+            raise ValueError("empty message")
+        with self._connect() as db:
+            cur = db.execute(
+                "INSERT INTO inbox (ts, text) VALUES (?, ?)", (now or time.time(), text)
+            )
+            return int(cur.lastrowid or 0)
+
+    def take_pending(self, max_age_s: float, now: float | None = None) -> list[tuple[int, str]]:
+        """The messages waiting, oldest first, marked as taken. Older than `max_age_s` (typed
+        while the assistant was off) they expire: an answer minutes later would surprise."""
+        cutoff = (now or time.time()) - max_age_s
+        with self._connect() as db:
+            db.execute(
+                "UPDATE inbox SET state = 'expired' WHERE state = 'pending' AND ts < ?", (cutoff,)
+            )
+            rows = db.execute(
+                "SELECT id, text FROM inbox WHERE state = 'pending' ORDER BY id"
+            ).fetchall()
+            if rows:
+                db.executemany(
+                    "UPDATE inbox SET state = 'taken' WHERE id = ?", [(r["id"],) for r in rows]
+                )
+        return [(int(r["id"]), str(r["text"])) for r in rows]
+
+    def inbox_state(self, message_id: int) -> str | None:
+        """pending (the assistant has not seen it: is it running?), taken, expired."""
+        with self._connect() as db:
+            row = db.execute("SELECT state FROM inbox WHERE id = ?", (message_id,)).fetchone()
+        return str(row["state"]) if row else None

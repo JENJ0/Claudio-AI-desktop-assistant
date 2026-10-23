@@ -17,6 +17,7 @@ import numpy as np
 
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
+from claudio.config import in_language
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
 from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
@@ -166,6 +167,7 @@ class Assistant:
         # ore sono" in one breath): the endpointer can prepend the speech heard just before.
         self.endpointer.reset(lead_in=self._lead_in())
         self._set_state(State.LISTENING)
+        self.responder.prepare()
 
     def _lead_in(self) -> np.ndarray:
         """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
@@ -222,6 +224,8 @@ class Assistant:
         event = self.endpointer.process(frame)
         if event is EndpointEvent.START:
             self._interaction.mark("speech_start")
+            if self._interaction.info.get("wake_word") == "conversation":
+                self.responder.prepare()  # no wake word in the conversation window
         elif event is EndpointEvent.TIMEOUT:
             if self._interaction.info.get("wake_word") == "conversation":
                 log.info("Fine della conversazione: torno in attesa della wake word")
@@ -489,6 +493,46 @@ class Assistant:
                 break
             self._on_listen(frame)
 
+    async def handle_typed(self, text: str, language: str, speak: bool = False) -> str:
+        """A message written in the chat window: the same router and Claude as a spoken
+        request, between two spoken ones (never during). Silent unless `speak`: the reply is
+        shown in the chat. Returns the reply."""
+        while self.state is not State.IDLE:  # a spoken request goes first
+            await asyncio.sleep(0.05)
+        self._set_state(State.RESPONDING)  # the wake word waits until this is answered
+        inter = Interaction(clock=self.clock, info={"wake_word": "typed", "text": text})
+        inter.mark("stt_done")
+        outcome = "ok"
+        log.info("Scritto nella finestra: %r", text)
+        try:
+            stream = self._marked(self.responder.respond(text, language), inter)
+            if speak:
+                await self.speaker.speak(
+                    stream,
+                    on_first_audio=lambda: inter.mark("first_audio"),
+                    language=lambda: self.responder.language,
+                )
+            else:
+                async for _ in stream:
+                    pass
+        except Exception:
+            outcome = "error"
+            log.exception("Errore rispondendo al messaggio scritto")
+        finally:
+            if self.responder.awaiting:  # level 2-3: confirmed by voice only, never armed here
+                self._cancel_pending()
+                note = in_language(TYPED_NEEDS_VOICE, self.responder.language)
+                inter.info["reply"] = note
+                outcome = "needs_voice"
+            inter.info.update(self.responder.last_route)
+            inter.mark("done")
+            inter.info["outcome"] = outcome
+            row = self.metrics.write(inter) if self.metrics else inter.summary()
+            self.history.append(row)
+            self.wake.reset()
+            self._set_state(State.IDLE)
+        return str(inter.info.get("reply", ""))
+
     async def _marked(self, stream: AsyncIterator[str], inter: Interaction) -> AsyncIterator[str]:
         parts: list[str] = []
         try:
@@ -554,6 +598,13 @@ class Assistant:
             await asyncio.gather(self._task, return_exceptions=True)
         if self._beeps:
             await asyncio.gather(*self._beeps, return_exceptions=True)
+
+
+# A level 2-3 action written in the chat window: it is confirmed by voice only.
+TYPED_NEEDS_VOICE = {
+    "it": "Questa azione va confermata a voce: chiedimela parlando.",
+    "en": "This action needs a spoken confirmation: ask me out loud.",
+}
 
 
 # How a follow-up request to Claudio usually starts, when it is not a question.

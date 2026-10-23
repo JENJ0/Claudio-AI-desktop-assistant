@@ -261,9 +261,19 @@ EN: dict[str, str] = {
     ),
     "Il motivo è nel log.": "The reason is in the log.",
     # Claude (brain/, Phase 2)
-    "Claude: %s, max %d token, budget %.2f al giorno": (
-        "Claude: %s, max %d tokens, budget %.2f a day"
+    "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno": (
+        "Claude: %s (reasoning: %s), max %d tokens, cache %s, budget %.2f a day"
     ),
+    "Sonnet spento, solo Haiku: %s": "Sonnet off, Haiku only: %s",
+    "Haiku passa la richiesta a Sonnet": "Haiku hands the request to Sonnet",
+    "Richiesta di ragionare: chiedo direttamente a Sonnet": (
+        "Asked to reason: asking Sonnet directly"
+    ),
+    "Claude: connessione anticipata non riuscita: %s": "Claude: early connection failed: %s",
+    "Preparazione della risposta non riuscita": "Getting the reply ready failed",
+    "Scritto nella finestra: %r": "Written in the window: %r",
+    "Errore rispondendo al messaggio scritto": "Error answering the written message",
+    "Messaggi della finestra non letti": "Window messages not read",
     "Claude spento ([claude] enabled = false): solo comandi locali": (
         "Claude off ([claude] enabled = false): local commands only"
     ),
