@@ -133,6 +133,8 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
             str(models / tts.jack_rvc_model),
             "--applio",
             str(models / tts.jack_applio),
+            "--speed",
+            str(tts.jack_speed),
         ],
         fallback,
         tts.jack_startup_timeout_s,
@@ -376,6 +378,7 @@ async def run_assistant(
         claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
         only_addressed=settings.conversation.only_addressed,
         noise=settings.noise,
+        confirm_below=settings.wakeword.confirm_below,
         stt_segments=lambda: transcriber.last_segments,
     )
     log.info(

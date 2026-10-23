@@ -27,6 +27,7 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 # pre-trained "hey_jarvis" (threshold 0.22).
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
+confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more)
 second_chance = true       # after one, Whisper listens to the last 1.5 s (~130 ms) and wakes CLAUDIO if it hears the name
 verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
 
@@ -66,13 +67,13 @@ it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora fi
 en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it, pause the music, next song, repeat, stop."
 
 [tts]
-engine = "kokoro"          # "kokoro" (Nicola, male), "piper" or "jack" (see below); Piper is the last fallback
+engine = "jack"            # "jack" (Claudio's voice, JenJo 23/10), "kokoro" (Nicola) or "piper"; the others are fallbacks
 kokoro_voice = "im_nicola" # Kokoro Italian voices: im_nicola, if_sara
 voice = "it_IT-paola-medium" # Piper voice
 length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% faster)
 # noise_scale / noise_w_scale (Piper): voice variation (0 = identical every time); unset = default
 use_cuda = false           # Piper only
-effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (robotic tone)
+effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (robotic tone; "none" with Jack)
 
 # engine = "jack": Handsome Jack's voice (Qwen3-TTS + RVC) in a worker process with its own venv.
 # If the worker cannot start or answer, Kokoro/Piper speaks. Paths are relative to models/;
@@ -83,6 +84,7 @@ effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
+jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pitch stays the same
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
 [tts.voices.en]            # the voices for English replies (same engine, same effect)
@@ -139,6 +141,8 @@ smart_effort = "low"           # low | medium | high
 smart_max_tokens = 1024        # its thinking counts here too
 escalate = true
 smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"], en = ["think hard", "think carefully", "think it through"] }
+# A request for detail: Claudio asks "Lo uso?" for Sonnet at once (no Haiku call).
+offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"], en = ["in detail", "in depth", "explain thoroughly"] }
 
 # The chat window (uv run claudio --ui): what you write there reaches the running assistant.
 [chat]

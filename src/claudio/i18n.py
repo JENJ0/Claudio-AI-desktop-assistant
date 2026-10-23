@@ -275,6 +275,10 @@ EN: dict[str, str] = {
     "Haiku propone Sonnet: chiedo conferma": "Haiku proposes Sonnet: asking first",
     "Sonnet approvato": "Sonnet approved",
     "Sonnet rifiutato: risponde Haiku": "Sonnet declined: Haiku answers",
+    "Richiesta dettagliata: propongo Sonnet": "Detailed request: proposing Sonnet",
+    "Wake word debole (%.2f): Whisper controlla il nome": (
+        "Weak wake word (%.2f): Whisper checks the name"
+    ),
     "Richiesta di ragionare: chiedo direttamente a Sonnet": (
         "Asked to reason: asking Sonnet directly"
     ),

@@ -75,6 +75,7 @@ class Assistant:
         claude_min_words: int | None = None,
         only_addressed: bool = True,
         noise: NoiseSettings | None = None,
+        confirm_below: float = 0.0,
         stt_segments: Callable[[], Sequence[Segment]] | None = None,
     ) -> None:
         self.wake = wake
@@ -106,6 +107,9 @@ class Assistant:
         # After a reply, listen this long for another request without the wake word (0: off).
         self.conversation_s = conversation_s
         self.barge_in = barge_in  # None: the microphone is ignored while speaking
+        # A detection scoring below this wakes CLAUDIO only if Whisper hears the name (the
+        # second chance): a 0.34 on Claudio's own voice or the TV no longer beeps. 0: off.
+        self.confirm_below = confirm_below
         # (audio, language) -> Whisper's n-best: tried on a request no command understands.
         self.closed_list = closed_list
         self._barge_checking = False
@@ -195,7 +199,10 @@ class Assistant:
         if self.state == State.IDLE:
             self._recent.append(frame.astype(np.float32) / 32768.0)
             detection = self.wake.process(frame)
-            if detection is not None:
+            if detection is not None and self._weak(detection[1]):
+                log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
+                self._on_near_miss(*detection)
+            elif detection is not None:
                 self._on_wake(*detection)
             elif (miss := self.wake.pop_near_miss()) is not None:
                 self._on_near_miss(*miss)
@@ -225,6 +232,9 @@ class Assistant:
         self._set_state(State.LISTENING)
         self.responder.prepare()
 
+    def _weak(self, score: float) -> bool:
+        return score < self.confirm_below and self.second_chance is not None
+
     def _lead_in(self) -> np.ndarray:
         """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
         out was worse on JenJo's 22 recordings (10 commands understood instead of 13): the
@@ -253,7 +263,10 @@ class Assistant:
         finally:
             self._checking = False
         ms = round((self.clock() - start) * 1000)
-        if self.state is State.IDLE and heard_wake_word(text):
+        # A weak detection said fast often loses the name ("apri cancolatrice"): a command counts.
+        language = self.transcriber.language
+        weak = self._weak(score) and bool(text) and self.responder.understands(text, language)
+        if self.state is State.IDLE and (heard_wake_word(text) or weak):
             log.info(
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
