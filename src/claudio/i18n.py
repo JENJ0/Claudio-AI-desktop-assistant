@@ -265,7 +265,9 @@ EN: dict[str, str] = {
         "Claude: %s (reasoning: %s), max %d tokens, cache %s, budget %.2f a day"
     ),
     "Sonnet spento, solo Haiku: %s": "Sonnet off, Haiku only: %s",
-    "Haiku passa la richiesta a Sonnet": "Haiku hands the request to Sonnet",
+    "Haiku propone Sonnet: chiedo conferma": "Haiku proposes Sonnet: asking first",
+    "Sonnet approvato": "Sonnet approved",
+    "Sonnet rifiutato: risponde Haiku": "Sonnet declined: Haiku answers",
     "Richiesta di ragionare: chiedo direttamente a Sonnet": (
         "Asked to reason: asking Sonnet directly"
     ),

@@ -447,30 +447,59 @@ async def test_no_tool_without_sonnet(pricing: Pricing) -> None:
     assert "tools" not in client.calls[0] and "cache_control" not in client.calls[0]
 
 
-async def test_haiku_hands_over_to_sonnet(pricing: Pricing) -> None:
+async def test_sonnet_only_after_a_yes(pricing: Pricing) -> None:
+    """JenJo, 23/10: never Sonnet without asking. Haiku proposes, Claudio asks, "sì" runs it."""
     client = ScriptedClient(
-        (["Ci penso un attimo."], "tool_use", HANDOFF),
+        ([], "tool_use", HANDOFF),
         (["Conviene il treno: ", "costa meno."], "end_turn", []),
     )
     b = brain(pricing, client)
-    reply = await ask(b, "meglio il treno o l'auto per Roma, considerando i costi")
-    assert reply == "Ci penso un attimo. Conviene il treno: costa meno."  # a space: two sentences
+    question = await ask(b, "meglio il treno o l'auto per Roma, considerando i costi")
+    assert question.endswith("Lo uso?") and len(client.calls) == 1
+    assert b.last_call["escalated"] == "offered"
+    assert await ask(b, "sì") == "Conviene il treno: costa meno."
     haiku, sonnet = client.calls
     assert sonnet["model"] == "claude-sonnet-5-5" and sonnet["max_tokens"] == 1024
     assert "thinking" not in sonnet and "tools" not in sonnet  # Sonnet 5.5 refuses "disabled"
     assert sonnet["output_config"] == {"effort": "low"}
-    assert sonnet["messages"] == haiku["messages"]
-    assert b.last_call["escalated"] == "tool" and b.last_call["model"] == "claude-sonnet-5-5"
-    # Both calls are billed: 400 in + 30 out on Haiku, the same on Sonnet.
+    assert sonnet["messages"] == haiku["messages"]  # the question, not "sì"
+    assert b.last_call["escalated"] == "approved" and b.last_call["model"] == "claude-sonnet-5-5"
     assert b.tracker.calls_today() == 2
-    assert b.last_call["input_tokens"] == 800
-    assert b.last_call["cost"] == pytest.approx(0.000055 + 0.0008 + 0.0003)
-    assert b._history[-1][1] == "Conviene il treno: costa meno."  # Sonnet's answer only
+    assert b._history[-1] == (haiku["messages"][-1]["content"], "Conviene il treno: costa meno.")
 
 
-async def test_a_silent_handover_still_says_something(pricing: Pricing) -> None:
-    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ecco."], "end_turn", []))
-    assert await ask(brain(pricing, client), "fammi un piano") == "Ci penso un attimo. Ecco."
+async def test_no_means_haiku_answers(pricing: Pricing) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Il treno."], "end_turn", []))
+    b = brain(pricing, client)
+    await ask(b, "fammi un confronto tra treno e auto")
+    assert await ask(b, "no grazie") == "Il treno."
+    first, second = client.calls
+    assert second["model"] == "claude-haiku-5-5" and "tools" not in second
+    assert second["messages"] == first["messages"]
+
+
+async def test_a_new_question_drops_the_offer(pricing: Pricing) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Roma."], "end_turn", []))
+    b = brain(pricing, client)
+    await ask(b, "fammi un piano di viaggio")
+    assert await ask(b, "qual è la capitale d'Italia") == "Roma."
+    assert client.calls[1]["messages"][-1]["content"].endswith("capitale d'Italia")
+    assert b._offer is None
+
+
+async def test_the_offer_expires(pricing: Pricing) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
+    b = brain(pricing, client)
+    await ask(b, "fammi un piano di viaggio")
+    b.clock.t += 61  # type: ignore[attr-defined]
+    await ask(b, "sì")
+    assert client.calls[1]["model"] == "claude-haiku-5-5"  # "sì" is a new request now
+
+
+async def test_haiku_words_before_the_offer_get_a_space(pricing: Pricing) -> None:
+    client = ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF))
+    reply = await ask(brain(pricing, client), "spiegami il mutuo variabile")
+    assert reply.startswith("Domanda complessa. Per questa serve Sonnet")
 
 
 async def test_asking_to_think_goes_straight_to_sonnet(pricing: Pricing) -> None:
@@ -489,11 +518,11 @@ async def test_think_phrase_in_another_language(pricing: Pricing) -> None:
     assert not b.wants_smart("pensaci bene", "it")
 
 
-async def test_no_sonnet_when_the_budget_runs_out_after_haiku(pricing: Pricing) -> None:
-    client = ScriptedClient((["Un attimo."], "tool_use", HANDOFF))
+async def test_no_sonnet_when_the_budget_runs_out_before_the_yes(pricing: Pricing) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF))
     b = brain(pricing, client, budget=0.00005)  # Haiku's 0.000055 uses it all
-    reply = await ask(b, "fammi un confronto dettagliato")
-    assert "budget di oggi" in reply and len(client.calls) == 1
+    await ask(b, "fammi un confronto dettagliato")
+    assert "budget di oggi" in await ask(b, "sì") and len(client.calls) == 1
 
 
 async def test_the_time_goes_after_the_cached_prefix(pricing: Pricing) -> None:
@@ -568,3 +597,14 @@ def test_sonnet_without_prices_is_turned_off(tmp_path: Any, monkeypatch: Any) ->
     settings = load_settings()
     b = build_brain(settings, build_tracker(settings))
     assert b is not None and b.smart_model is None
+
+
+async def test_the_yes_reaches_claude_through_the_router(
+    matcher: CommandMatcher, pricing: Pricing
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ecco il piano."], "end_turn", []))
+    r = hybrid(matcher, brain(pricing, client))
+    await say(r, "fammi un piano per la settimana")
+    assert r.asked_question  # the conversation window takes the one-word answer
+    assert await say(r, "sì") == "Ecco il piano."
+    assert client.calls[1]["model"] == "claude-sonnet-5-5"

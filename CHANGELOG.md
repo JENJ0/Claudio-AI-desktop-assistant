@@ -18,7 +18,9 @@
 ### Fixed (JenJo's test, 23/10)
 - After Haiku's "Ci penso un attimo." the voice waited for Sonnet (no space between the two
   replies kept the first sentence open).
-- Haiku no longer hands short or unclear requests to Sonnet.
+- Sonnet never runs without a yes (JenJo, 23/10): Haiku proposes it with `ask_sonnet`, Claudio
+  asks "Lo uso?"; "sì" -> Sonnet answers the original question, "no" -> Haiku does. "pensaci
+  bene" still asks Sonnet directly (that is the request). Haiku keeps short or unclear requests.
 - In the conversation window every phrase of 3+ words is answered until "basta" or silence
   (`[conversation] only_addressed = false`; true brings back the TV filter).
 - The chat window says why a message could not be sent; the server logs refused messages.

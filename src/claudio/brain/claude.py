@@ -1,7 +1,8 @@
 """Claude answers what the local router does not understand, streamed sentence by sentence.
 
-Haiku answers first. What needs reasoning goes to Sonnet: Haiku hands it over with the
-`ask_sonnet` tool (after a short "Ci penso un attimo."), or JenJo asks for it ("pensaci bene").
+Haiku answers first. What needs reasoning may go to Sonnet, never without JenJo's yes: Haiku
+proposes it with the `ask_sonnet` tool and Claudio asks "Vuoi che usi Sonnet?" (yes: Sonnet
+answers the question; no: Haiku does), or JenJo asks for it ("pensaci bene").
 
 Every call goes through the spending counter: `check()` before (80 % warning said aloud once a
 day, nothing sent at 100 %) and `record()` after, also when the reply is cut short by "basta"
@@ -27,21 +28,23 @@ from claudio.brain.prompts import (
     BUDGET_WARNING,
     NETWORK_ERROR,
     NO_KEY,
+    OFFER,
     REFUSED,
     SYSTEM_PROMPT,
-    THINKING,
 )
 from claudio.config import ClaudeSettings, in_language
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.i18n import tr
 from claudio.router.normalizer import normalize
+from claudio.safety.confirmation import Answer, parse_answer
 
 log = logging.getLogger(__name__)
 
 CACHE_TTL: CacheTtl = "5m"  # the default TTL of `cache_control`: what a cache write costs
 CHARS_PER_TOKEN = 3  # estimate for a reply cut short before the API sent its output count
 _MARKDOWN = re.compile(r"[*#`]+")  # read aloud as "asterisco": never sent to the voice
+OFFER_TTL_S = 60.0  # "Vuoi che usi Sonnet?" waits this long for its answer
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # not strftime: Windows' locale
 
@@ -74,6 +77,9 @@ class ClaudeBrain:
         self._last_turn = -float("inf")
         self._last_contact = -float("inf")  # last time the connection to the API was used
         self._warming: set[asyncio.Task[None]] = set()
+        # Haiku proposed Sonnet and Claudio asked "Vuoi che usi Sonnet?": (messages, language,
+        # when). The next request is the answer.
+        self._offer: tuple[list[dict[str, str]], str, float] | None = None
         self.last_call: dict[str, Any] = {}  # model, tokens, cost of the last call (metrics)
 
     def reset(self) -> None:
@@ -134,32 +140,70 @@ class ClaudeBrain:
                 yield chunk
 
     async def _answer(self, text: str, language: str) -> AsyncGenerator[str, None]:
-        messages = self._messages(text, language)
         start = self.clock()
-        leg = _Leg()
-        smart = self.wants_smart(text, language)
-        if not smart:
-            async with contextlib.aclosing(
-                self._stream(self._params(messages), language, start, leg)
-            ) as haiku:
-                async for chunk in haiku:
-                    yield chunk
-            if not leg.handoff or self.smart_model is None:
-                self._remember(messages, leg)
+        offer = self._take_offer()
+        if offer is not None:
+            answer = parse_answer(text)
+            if answer is not Answer.UNCLEAR:
+                # The reply to "Vuoi che usi Sonnet?": the question it was about, not "sì".
+                messages, language = offer
+                if answer is Answer.YES:
+                    log.info("Sonnet approvato")
+                    self.last_call["escalated"] = "approved"
+                    async for chunk in self._sonnet(messages, language, start):
+                        yield chunk
+                else:
+                    log.info("Sonnet rifiutato: risponde Haiku")
+                    async for chunk in self._haiku(messages, language, start, tools=False):
+                        yield chunk
                 return
-            log.info("Haiku passa la richiesta a Sonnet")
-            said = "".join(leg.parts)
-            if not said.strip():
-                yield in_language(THINKING, language) + " "
-            elif not said[-1].isspace():
-                yield " "  # "attimo.Ecco" would keep the first sentence waiting for Sonnet
-            if self.tracker.check().state is BudgetState.BLOCKED:
-                self.last_call["claude_error"] = "budget"
-                yield in_language(BUDGET_BLOCKED, language)
-                return
-        else:
+        messages = self._messages(text, language)
+        if self.wants_smart(text, language):  # JenJo asked for it: that is the approval
             log.info("Richiesta di ragionare: chiedo direttamente a Sonnet")
-        self.last_call["escalated"] = "tool" if not smart else "asked"
+            self.last_call["escalated"] = "asked"
+            async for chunk in self._sonnet(messages, language, start):
+                yield chunk
+            return
+        leg = _Leg()
+        async with contextlib.aclosing(
+            self._stream(self._params(messages), language, start, leg)
+        ) as haiku:
+            async for chunk in haiku:
+                yield chunk
+        if not leg.handoff or self.smart_model is None:
+            self._remember(messages, leg)
+            return
+        # Never Sonnet without a yes (JenJo, 23/10): ask, and keep the question for the answer.
+        log.info("Haiku propone Sonnet: chiedo conferma")
+        self._offer = (messages, language, self.clock())
+        self.last_call["escalated"] = "offered"
+        said = "".join(leg.parts)
+        yield ("" if not said or said[-1].isspace() else " ") + in_language(OFFER, language)
+
+    def _take_offer(self) -> tuple[list[dict[str, str]], str] | None:
+        offer, self._offer = self._offer, None
+        if offer is None or self.clock() - offer[2] > OFFER_TTL_S:
+            return None
+        return offer[0], offer[1]
+
+    async def _haiku(
+        self, messages: list[dict[str, str]], language: str, start: float, tools: bool = True
+    ) -> AsyncGenerator[str, None]:
+        leg = _Leg()
+        async with contextlib.aclosing(
+            self._stream(self._params(messages, tools), language, start, leg)
+        ) as haiku:
+            async for chunk in haiku:
+                yield chunk
+        self._remember(messages, leg)
+
+    async def _sonnet(
+        self, messages: list[dict[str, str]], language: str, start: float
+    ) -> AsyncGenerator[str, None]:
+        if self.smart_model is None:
+            async for chunk in self._haiku(messages, language, start, tools=False):
+                yield chunk
+            return
         leg = _Leg()
         async with contextlib.aclosing(
             self._stream(self._smart_params(messages), language, start, leg, "smart_first_ms")
@@ -208,13 +252,13 @@ class ClaudeBrain:
             params["cache_control"] = {"type": "ephemeral"}
         return params
 
-    def _params(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+    def _params(self, messages: list[dict[str, str]], tools: bool = True) -> dict[str, Any]:
         s = self.settings
         params = self._common(s.model, s.max_tokens, messages)
         params["output_config"] = {"effort": s.effort}
         if not s.thinking:
             params["thinking"] = {"type": "disabled"}
-        if s.escalate and self.smart_model is not None:
+        if tools and s.escalate and self.smart_model is not None:
             params["tools"] = [ASK_SONNET_TOOL]
         return params
 
