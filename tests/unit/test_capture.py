@@ -122,3 +122,53 @@ def test_follows_the_windows_microphone(fake_sd, monkeypatch, caplog) -> None:
 
 def test_configured_microphone_is_not_followed() -> None:
     assert capture.AudioCapture(16000, 4, device="C270").windows_default is None
+
+
+# -- input_device = "auto": the microphone that hears the most (JenJo, 23/10) --
+
+
+def test_choose_input_keeps_windows_one_unless_another_is_clearly_louder() -> None:
+    from claudio.audio.devices import choose_input
+
+    assert choose_input({1: -40.0, 2: -35.0}, default=1) == 1  # room noise: no jump
+    assert choose_input({1: -40.0, 2: -20.0}, default=1) == 2  # someone talks into 2
+    assert choose_input({1: -120.0, 2: -60.0}, default=1) == 2  # 1 is switched off
+    assert choose_input({1: -120.0, 2: -120.0}, default=1) == 1  # nothing alive: Windows'
+    assert choose_input({}, default=None) is None
+
+
+def test_candidates_skip_loopbacks_and_prefer_wasapi() -> None:
+    from claudio.audio.devices import candidate_inputs
+
+    hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+    devices = [
+        {"name": "Microfono (C270)", "hostapi": 0, "max_input_channels": 1},
+        {"name": "Microfono (C270)", "hostapi": 1, "max_input_channels": 1},
+        {"name": "Missaggio stereo (Realtek)", "hostapi": 1, "max_input_channels": 2},
+        {"name": "Cuffie", "hostapi": 1, "max_input_channels": 0},
+        {"name": "Microfono (Headset)", "hostapi": 1, "max_input_channels": 1},
+    ]
+    assert candidate_inputs(devices, hostapis) == [1, 4]
+
+
+def test_auto_microphone_is_chosen_again_when_it_goes_silent(fake_sd, monkeypatch) -> None:
+    sd = fake_sd(failures=0)
+    monkeypatch.setattr(capture, "DEAD_S", 0.0)  # every frame of the fake is quiet
+    chosen = iter([3, 5, 5, 5])
+    picks: list[int] = []
+
+    def chooser() -> int | None:
+        picks.append(next(chosen))
+        return picks[-1]
+
+    mic = capture.AudioCapture(16000, 4, device="auto", chooser=chooser)
+
+    async def run() -> None:
+        n = 0
+        async for _ in mic.frames():
+            n += 1
+            if n == 2:
+                return
+
+    asyncio.run(run())
+    assert picks[:2] == [3, 5] and sd.opened >= 2

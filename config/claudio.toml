@@ -10,7 +10,8 @@ data_dir = "data"          # what Claudio keeps between runs (microphone level..
 [audio]
 # Device name (or part of it) or index; empty = Windows default.
 # List devices with: uv run python scripts/list_audio_devices.py
-input_device = ""          # e.g. "C270"
+input_device = "auto"      # "auto": the microphone that hears the most (re-chosen when it goes silent);
+                           # "": Windows' default, followed; or a name/index, e.g. "C270"
 output_device = ""         # empty = whatever Windows is using when Claudio speaks
 sample_rate = 16000        # required by openWakeWord, Silero and Whisper
 block_ms = 80              # openWakeWord works on 80 ms frames

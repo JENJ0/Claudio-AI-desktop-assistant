@@ -10,9 +10,13 @@ from collections.abc import AsyncIterator, Callable
 import numpy as np
 
 from claudio.audio.devices import (
+    AUTO,
     WindowsDefaultInput,
+    choose_input,
+    default_device,
     describe_device,
     pick_device,
+    probe_inputs,
     stream_settings,
 )
 
@@ -20,6 +24,12 @@ log = logging.getLogger(__name__)
 
 RETRY_S = 1.0
 FOLLOW_S = 2.0  # how often the Windows default microphone is checked (no device configured)
+# input_device = "auto": the microphone is chosen again when the one in use hears nothing
+# (switched off, muted: below DEAD_PEAK for DEAD_S) or only a very quiet room for QUIET_S.
+DEAD_PEAK = 3  # int16: about -80 dBFS
+DEAD_S = 5.0
+QUIET_PEAK = 100  # int16: about -50 dBFS
+QUIET_S = 60.0
 STILL_MISSING_EVERY = 30  # retries between two "still missing" warnings (~30 s)
 
 
@@ -42,6 +52,7 @@ class AudioCapture:
         queue_size: int = 64,
         gain_db: float = 0.0,
         windows_default: Callable[[], str | None] | None = None,
+        chooser: Callable[[], int | None] | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.block_size = block_size
@@ -53,6 +64,18 @@ class AudioCapture:
         # With no device configured: the microphone Windows uses, followed while running
         # (checked every FOLLOW_S; a change reopens the stream on the new one).
         self.windows_default = (windows_default or WindowsDefaultInput()) if device == "" else None
+        # "auto": every microphone is listened to and the one hearing the most is used.
+        self.chooser = (chooser or self._choose) if device == AUTO else None
+
+    def _choose(self) -> int | None:
+        levels = probe_inputs(self.sample_rate)
+        default = default_device("input")
+        index = choose_input(levels, default)
+        log.info(
+            "Microfoni sentiti: %s",
+            ", ".join(f"{i} {db:.0f} dBFS" for i, db in sorted(levels.items())) or "nessuno",
+        )
+        return index
 
     def _windows_default(self) -> str | None:
         return self.windows_default() if self.windows_default is not None else None
@@ -87,7 +110,9 @@ class AudioCapture:
             index = None
             opened_on = self._windows_default()
             try:
-                if not portaudio_default:
+                if self.chooser is not None:
+                    index = await asyncio.to_thread(self.chooser)
+                elif not portaudio_default:
                     index = pick_device(self.device, "input", opened_on)
                 with sd.InputStream(
                     samplerate=self.sample_rate,
@@ -103,7 +128,7 @@ class AudioCapture:
                         describe_device(index, "input"),
                         f", guadagno +{20 * np.log10(self.gain):.0f} dB" if self.gain > 1 else "",
                     )
-                    checked = time.monotonic()
+                    checked = alive = loud = time.monotonic()
                     while True:
                         # No frame for 2 s means the device stopped delivering audio.
                         frame = await asyncio.wait_for(queue.get(), timeout=2.0)
@@ -120,7 +145,15 @@ class AudioCapture:
                             )
                             lost_at, retries = None, 0
                         yield frame
-                # Windows switched microphone: re-scan, a just-plugged one is not listed yet.
+                        if self.chooser is not None:
+                            now_t = time.monotonic()
+                            peak = int(np.abs(frame.astype(np.int32)).max())
+                            alive = now_t if peak > DEAD_PEAK else alive
+                            loud = now_t if peak > QUIET_PEAK else loud
+                            if now_t - alive >= DEAD_S or now_t - loud >= QUIET_S:
+                                log.info("Il microfono non sente niente: ne scelgo un altro")
+                                break  # the stream reopens on the one that hears the most
+                # Another microphone: re-scan, a just-plugged one is not listed yet.
                 portaudio_default = False
                 sd._terminate()
                 sd._initialize()

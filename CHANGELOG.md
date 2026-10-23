@@ -18,6 +18,18 @@
 - `logging.retention_days` also deletes old `logs/sessions/`, `logs/audio/` WAVs and rotated
   `logs/metrics.jsonl.*` at startup.
 
+### Fixed / changed after JenJo's test (23/10)
+- Self-activation (a 0.34 detection right after a reply): a wake below `[wakeword]
+  confirm_below` (0.45) wakes only if Whisper hears the name or a local command.
+- "Spiegami in dettaglio..." was answered by Haiku: `[claude] offer_phrases` propose Sonnet
+  at once ("Lo uso?"), without a Haiku call; the tool description mentions detail too.
+- Jack is the default voice (`engine = "jack"`, `effect = "none"`), 10% slower
+  (`[tts] jack_speed = 0.9`: stretched before RVC, RVC raises the pitch back).
+- Microphone: `input_device = "auto"` listens to every microphone for 0.6 s and uses the one
+  that hears the most (Windows' own unless another is 10 dB louder or it is silent), and
+  chooses again when it hears nothing for 5 s or only a very quiet room for 60 s.
+  `input_device = ""` follows Windows' default microphone while running.
+
 ## 0.2.2
 
 ### Added
