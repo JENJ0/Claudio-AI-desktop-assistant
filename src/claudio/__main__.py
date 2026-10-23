@@ -141,28 +141,18 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
     With engine "jack" that voice is the fallback of Jack's worker, started here."""
     if settings.tts.engine != "jack":
         return build_base_synth(settings)
-    from claudio.tts.jack import JackSynth, WorkerError
+    from claudio.tts.jack import JackSynth, WorkerError, worker_command
 
     fallback, fallback_name = build_base_synth(settings)
     tts = settings.tts
     models = settings.resolve(settings.models_dir)
-    worker = Path(__file__).parent / "tts" / "jack_worker.py"
     synth = JackSynth(
-        [
-            str(models / tts.jack_python),
-            str(worker),
-            "--checkpoint",
-            str(models / tts.jack_checkpoint),
-            "--rvc-model",
-            str(models / tts.jack_rvc_model),
-            "--applio",
-            str(models / tts.jack_applio),
-            "--speed",
-            str(tts.jack_speed),
-        ],
+        worker_command(models, tts),
         fallback,
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
+        language=tts.jack_language,
+        rvc=tts.jack_rvc,
     )
     try:
         synth.start()

@@ -2,6 +2,16 @@
 
 ## [Unreleased] - 0.3.1
 
+### Jack's pronunciation (after JenJo's test, 23/10)
+- `[tts] jack_language` ("Auto"/"Italian"), `jack_temperature` (Qwen3 sampling) and `jack_rvc`:
+  "blocks" (as before), "sentence" (Applio's offline pipeline on the whole sentence, rmvpe:
+  fewer mangled words) or "auto" (blocks for a reply's first sentence, whole for the rest).
+- Text for Jack goes through `tts/spoken_text.py`: symbols (%, €, °, &, +), acronyms (PC, USB,
+  PDF), Markdown, links and emoji become Italian words before the numbers.
+- The speaker renders up to 16 pieces ahead of playback (was 2), so whole-sentence RVC is
+  ready before the sentence is due.
+- `scripts/jack_variants.py`: the same replies in 5 settings, with WER, first audio and pauses.
+
 ### Added
 - Claude acts on the PC (`src/claudio/pc/`, `[pc]` in `config/claudio.toml`): Haiku's tools
   `open_app` (Start menu apps, classic and Store), `open_path`, `search_files` (Windows Search

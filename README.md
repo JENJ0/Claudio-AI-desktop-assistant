@@ -155,6 +155,14 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
 2. Build the worker venv once: `powershell -File scripts\setup_jack_worker.ps1`.
 3. Try it alone: `models\voices\jack\worker\env\Scripts\python.exe scripts\try_jack.py --play`.
 4. In `.env`: `CLAUDIO_TTS__ENGINE=jack` and `CLAUDIO_TTS__EFFECT=none`.
+5. Pick the pronunciation settings by ear: `uv run python scripts/jack_variants.py` (close
+   Claudio first) makes every variant speak the same replies and writes the WAVs plus a
+   report (Whisper's word error rate, first audio, longest pause) to `logs/jack-variants/`.
+   The keys: `jack_language` ("Italian" stops per-sentence language guessing),
+   `jack_temperature` (lower = steadier), `jack_rvc` ("blocks", "sentence" or "auto").
+
+Before Jack speaks, symbols, acronyms, Markdown and emoji become Italian words ("50%" ->
+"cinquanta per cento", "PC" -> "pi ci"): `src/claudio/tts/spoken_text.py`.
 
 Startup takes 10-30 s more (models are loaded once). Kokoro (Piper if Kokoro is missing) is
 the fallback for English and for any sentence the worker cannot speak. If the worker does not

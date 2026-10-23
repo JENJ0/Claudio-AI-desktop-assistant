@@ -92,6 +92,11 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
 jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pitch stays the same
+jack_language = "Auto"     # "Auto" guesses the language per sentence; "Italian" fixes it
+jack_temperature = 0.9     # Qwen3 sampling: lower = steadier pronunciation, higher = livelier
+jack_rvc = "blocks"        # "blocks" (fast, more mangled words), "sentence" (clearer, waits for the
+                           # sentence) or "auto" (blocks for a reply's first sentence, then whole)
+# Compare settings by ear: uv run python scripts/jack_variants.py (WAVs + WER in logs/jack-variants/)
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
 [tts.voices.en]            # the voices for English replies (same engine, same effect)
