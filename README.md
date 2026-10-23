@@ -31,7 +31,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
-uv sync --extra gpu                       # without a GPU: uv sync
+uv sync                                   # without a GPU: uv sync --no-group gpu
 uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper turbo + small
 uv run claudio --check                    # every line must say OK
 uv run python scripts/check_gpu.py        # checks that Whisper really runs on the RTX
@@ -134,11 +134,18 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
 4. In `.env`: `CLAUDIO_TTS__ENGINE=jack` and `CLAUDIO_TTS__EFFECT=none`.
 
 Startup takes 10-30 s more (models are loaded once). Kokoro (Piper if Kokoro is missing) is
-the fallback for English and for any sentence the worker cannot speak.
+the fallback for English and for any sentence the worker cannot speak. If the worker does not
+start, Claudio says so out loud at startup ("La voce di Jack non è partita") and the reason is in
+`console.log` (`Jack non disponibile (...)`). The same happens when Whisper cannot use the GPU.
 
 ## Chat window
 
-`uv run claudio --ui` opens the conversations in a window: pick a session on the left, search
+With Claudio running (`uv run claudio`), say **"apri la chat"**, "chat" or "fammi scrivere"
+("open the chat"): the window opens, Claudio keeps listening. "chiudi la chat" closes it, and it
+closes with Claudio. The phrases are in `config/commands.toml` (`open_chat`, `close_chat`), matched
+locally at no cost. `uv run claudio --ui` opens the same window alone (read-only, no voice).
+
+The window shows the conversations: pick a session on the left, search
 all of them at the top, see what each answer cost. It reads `data/claudio.db`, so it works with
 Claudio running (it updates by itself) or not. Messages older than `logging.retention_days`
 (30) are deleted when Claudio starts.

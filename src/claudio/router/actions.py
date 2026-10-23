@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from claudio.chat.launcher import ChatLauncher
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.cost.tracker import CostTracker
 from claudio.i18n import tr
@@ -197,10 +198,12 @@ class ActionRunner:
         ctx: ActionContext | None = None,
         system: SystemControl | None = None,
         tracker: CostTracker | None = None,
+        chat: ChatLauncher | None = None,
     ) -> None:
         self.ctx = ctx or ActionContext()
         self.system = system or SystemControl()
         self.tracker = tracker  # the spending counter ("quanto ho speso oggi")
+        self.chat = chat  # the chat window ("apri la chat")
         self._handlers: dict[str, Handler] = {
             "open_app": self._open_app,
             "open_folder": self._open_folder,
@@ -210,6 +213,7 @@ class ActionRunner:
             "system": self._system,
             "tell_spend": self._tell_spend,
             "close_window": self._close_window,
+            "chat": self._chat,
         }
 
     def execute(self, match: Match, language: str = DEFAULT_LANGUAGE) -> str:
@@ -260,6 +264,16 @@ class ActionRunner:
     def _close_window(self, match: Match, language: str) -> None:
         """Level 2: the responder has already asked and heard a yes."""
         self.ctx.press_combo((VK_MENU, VK_F4))
+
+    def _chat(self, match: Match, language: str) -> str | None:
+        """params["do"]: open or close; params["already"] when there is nothing to do."""
+        if self.chat is None:
+            return str(match.command.param_in("unavailable", language) or "")
+        what = match.command.params["do"]
+        if what not in ("open", "close"):
+            raise ValueError(tr("Comando chat sconosciuto '{command}'", command=what))
+        changed = self.chat.open() if what == "open" else self.chat.close()
+        return None if changed else str(match.command.param_in("already", language) or "")
 
     def _tell_spend(self, match: Match, language: str) -> str:
         if self.tracker is None:

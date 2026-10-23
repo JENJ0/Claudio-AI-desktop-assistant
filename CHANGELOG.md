@@ -10,10 +10,21 @@
 - `src/claudio/chat/`: `ChatStore` (SQLite, WAL) fed by `MetricsWriter`; also the base for the
   Phase 4 memory.
 - `logging.retention_days` (30): the chat database forgets older messages at startup (privacy).
+- The running assistant opens the chat window by voice: "apri la chat", "chat", "fammi
+  scrivere" (and "chiudi la chat"), local commands at no cost (`action = "chat"`,
+  `src/claudio/chat/launcher.py`). The window is `claudio --ui` in a child process and closes
+  with Claudio; `--ui` alone still works, read-only. It logs to `logs/chat-window.log.jsonl`.
+- Spoken notice at startup when Claudio runs degraded: Jack's worker did not start, or Whisper
+  fell back to the CPU.
 
 ### Fixed
+- Jack's worker died at startup (`ImportError: cannot import name 'Number' from 'numbers'`):
+  `tts/numbers.py` shadowed the standard library for the worker script, so Claudio spoke with
+  Kokoro. Renamed to `tts/number_words.py`; a test keeps stdlib names out of `tts/`.
+- The CUDA libraries are a default dependency group (`gpu`): a plain `uv sync` removed the old
+  `--extra gpu` and Whisper ran on the CPU (STT 1.5-2.9 s instead of 0.1-0.3 s). CI skips them.
 - Jack read some numbers in Spanish ("22", "51" with language Auto): digits are now spelled out
-  in Italian before the worker (`tts/numbers.py`).
+  in Italian before the worker (`tts/number_words.py`).
 
 ## 0.2.0
 

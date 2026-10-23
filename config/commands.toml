@@ -7,7 +7,7 @@
 # voice). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
 # Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system,
-# repeat, stop.
+# chat, repeat, stop.
 
 [[command]]
 id = "open_chrome"
@@ -166,6 +166,30 @@ confirm = "Chiudo la finestra in primo piano. Confermi?"
 confirm_en = "I'll close the window in front. Do you confirm?"
 reply = "Fatto."
 reply_en = "Done."
+
+# The chat window (the same as `claudio --ui`), opened by the running assistant. Add your own
+# phrases here: they are matched locally, at no cost.
+[[command]]
+id = "open_chat"
+phrases = ["apri la chat", "apri chat", "chat", "la chat", "fammi scrivere", "voglio scrivere", "mostra la chat", "apri la finestra della chat", "fammi vedere la chat"]
+phrases_en = ["open the chat", "open chat", "chat", "show the chat", "let me type", "i want to type", "open the chat window"]
+keywords = ["chat", "scrivere"]
+keywords_en = ["chat", "type"]
+action = "chat"
+params = { do = "open", already = "La chat è già aperta.", already_en = "The chat is already open.", unavailable = "Qui la chat non si può aprire.", unavailable_en = "I can't open the chat here." }
+reply = "Apro la chat."
+reply_en = "Opening the chat."
+
+[[command]]
+id = "close_chat"
+phrases = ["chiudi la chat", "chiudi chat", "chiudi la finestra della chat", "nascondi la chat"]
+phrases_en = ["close the chat", "close chat", "hide the chat", "close the chat window"]
+keywords = ["chat"]
+keywords_en = ["chat"]
+action = "chat"
+params = { do = "close", already = "La chat non è aperta.", already_en = "The chat isn't open.", unavailable = "Qui la chat non si può aprire.", unavailable_en = "I can't open the chat here." }
+reply = "Chiudo la chat."
+reply_en = "Closing the chat."
 
 # Conversation: "ripeti" says the last reply again; "basta" ends the conversation (CLAUDIO
 # stops listening without the wake word) and, said while CLAUDIO speaks, interrupts it.

@@ -25,17 +25,17 @@ dependencies = [
     "pywebview>=5.3; sys_platform == 'win32'",  # the chat window (Windows WebView2)
 ]
 
-[project.optional-dependencies]
-# CUDA 12.8+ runtime libraries for faster-whisper on the RTX 5070 Ti (Blackwell).
-gpu = [
-    "nvidia-cublas-cu12>=12.8",
-    "nvidia-cudnn-cu12>=9.8,<10",
-]
-
 [project.scripts]
 claudio = "claudio.__main__:main"
 
 [dependency-groups]
+# CUDA 12.8+ runtime libraries for faster-whisper on the RTX 5070 Ti (Blackwell). A default
+# group (see [tool.uv]): a plain `uv sync` keeps them. As an `--extra` they vanished the first
+# time `uv sync` ran without the flag, and Whisper fell back to the CPU (23/10).
+gpu = [
+    "nvidia-cublas-cu12>=12.8",
+    "nvidia-cudnn-cu12>=9.8,<10",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
@@ -54,6 +54,7 @@ packages = ["src/claudio"]
 [tool.uv]
 # CLAUDIO targets Windows only: resolve the lockfile for Windows.
 environments = ["sys_platform == 'win32'"]
+default-groups = ["dev", "gpu"]  # without a GPU: uv sync --no-group gpu
 
 [tool.ruff]
 line-length = 100

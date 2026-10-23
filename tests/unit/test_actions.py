@@ -196,3 +196,41 @@ def test_tell_spend_without_and_with_a_counter(matcher, rec) -> None:
     en = matcher.match("how much did I spend today")
     assert en is not None
     assert runner.execute(en, "en") == "Today you spent 0.25 dollars, 25 percent of the budget."
+
+
+class FakeChat:
+    def __init__(self) -> None:
+        self.open_now = False
+        self.calls: list[str] = []
+
+    def open(self) -> bool:
+        self.calls.append("open")
+        changed, self.open_now = not self.open_now, True
+        return changed
+
+    def close(self) -> bool:
+        self.calls.append("close")
+        changed, self.open_now = self.open_now, False
+        return changed
+
+
+def test_chat_opens_once_and_closes(matcher, rec) -> None:
+    chat = FakeChat()
+    runner = ActionRunner(rec.ctx(), chat=chat)  # type: ignore[arg-type]
+
+    def say(text: str, language: str = "it") -> str:
+        match = matcher.match(text, language)
+        assert match is not None
+        return runner.execute(match, match.language)
+
+    assert say("apri la chat") == "Apro la chat."
+    assert say("fammi scrivere") == "La chat è già aperta."
+    assert say("chiudi la chat") == "Chiudo la chat."
+    assert say("close the chat", "en") == "The chat isn't open."
+    assert chat.calls == ["open", "open", "close", "close"]
+
+
+def test_chat_without_launcher_says_so(matcher, rec) -> None:
+    match = matcher.match("apri la chat")
+    assert match is not None
+    assert ActionRunner(rec.ctx()).execute(match) == "Qui la chat non si può aprire."

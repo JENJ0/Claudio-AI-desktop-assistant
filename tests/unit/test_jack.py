@@ -217,3 +217,16 @@ def test_digits_reach_the_worker_as_italian_words(tmp_path, synths) -> None:
     synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
     synth.synthesize("Sono le 20 e 13.")
     assert [m["text"] for m in sent if m["op"] == "speak"] == ["Sono le venti e tredici."]
+
+
+def test_no_module_next_to_the_worker_shadows_the_standard_library() -> None:
+    """jack_worker.py runs as a script, so its folder comes first on sys.path: a tts/numbers.py
+    once hid the standard `numbers` and the worker died at import (Claudio fell back to Kokoro)."""
+    tts = Path(__file__).parents[2] / "src" / "claudio" / "tts"
+    shadowing = sorted(
+        p.name
+        for p in tts.iterdir()
+        if (p.suffix == ".py" or (p.is_dir() and (p / "__init__.py").exists()))
+        and p.stem in sys.stdlib_module_names
+    )
+    assert shadowing == []
