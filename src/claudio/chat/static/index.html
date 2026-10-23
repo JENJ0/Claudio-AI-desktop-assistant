@@ -217,8 +217,8 @@ $("send").addEventListener("submit", async (e) => {
     chat.append(el); chat.scrollTop = chat.scrollHeight;
     pending = { id, text, el, since: Date.now() };
     $("status").textContent = "Inviato.";
-  } catch {
-    $("status").textContent = "Invio non riuscito.";
+  } catch (err) {
+    $("status").textContent = `Invio non riuscito (${err.message}): riapri la finestra.`;
   } finally {
     $("go").disabled = false;
     box.focus();

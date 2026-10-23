@@ -7,6 +7,7 @@ cannot send one), no foreign Origin, and the random token this server put in its
 
 from __future__ import annotations
 
+import logging
 import secrets
 import socket
 import threading
@@ -21,6 +22,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from claudio.chat.store import MAX_TYPED_CHARS, ChatStore
+
+log = logging.getLogger(__name__)
 
 STATIC = Path(__file__).parent / "static"
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
@@ -82,9 +85,14 @@ def create_app(store: ChatStore, token: str | None = None) -> FastAPI:
         if not _local_origin(request.headers.get("origin")) or not secrets.compare_digest(
             message.token, token
         ):
+            log.warning(
+                "Messaggio dalla finestra rifiutato (origine %s)", request.headers.get("origin")
+            )
             raise HTTPException(status_code=403, detail="forbidden")
         try:
-            return {"id": store.enqueue(message.text)}
+            message_id = store.enqueue(message.text)
+            log.info("Messaggio dalla finestra in coda: %d", message_id)
+            return {"id": message_id}
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="empty") from exc
 

@@ -368,6 +368,7 @@ async def run_assistant(
         ),
         closed_list_max_words=settings.stt.closed_list_max_words,
         claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
+        only_addressed=settings.conversation.only_addressed,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

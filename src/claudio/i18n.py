@@ -265,7 +265,9 @@ EN: dict[str, str] = {
         "Claude: %s (reasoning: %s), max %d tokens, cache %s, budget %.2f a day"
     ),
     "Sonnet spento, solo Haiku: %s": "Sonnet off, Haiku only: %s",
-    "Haiku passa la richiesta a Sonnet": "Haiku hands the request to Sonnet",
+    "Haiku propone Sonnet: chiedo conferma": "Haiku proposes Sonnet: asking first",
+    "Sonnet approvato": "Sonnet approved",
+    "Sonnet rifiutato: risponde Haiku": "Sonnet declined: Haiku answers",
     "Richiesta di ragionare: chiedo direttamente a Sonnet": (
         "Asked to reason: asking Sonnet directly"
     ),
@@ -274,6 +276,9 @@ EN: dict[str, str] = {
     "Scritto nella finestra: %r": "Written in the window: %r",
     "Errore rispondendo al messaggio scritto": "Error answering the written message",
     "Messaggi della finestra non letti": "Window messages not read",
+    "Messaggio dalla finestra rifiutato (origine %s)": "Window message refused (origin %s)",
+    "Messaggio dalla finestra in coda: %d": "Window message queued: %d",
+    "Finestra della chat non portata in primo piano": "Chat window not brought to the front",
     "Claude spento ([claude] enabled = false): solo comandi locali": (
         "Claude off ([claude] enabled = false): local commands only"
     ),

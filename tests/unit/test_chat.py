@@ -179,3 +179,24 @@ def test_send_accepts_the_local_origin(store) -> None:
     client = TestClient(create_app(store, token="T"), base_url="http://127.0.0.1:8000")
     headers = {"origin": "http://127.0.0.1:8000"}
     assert client.post("/api/send", json={"text": "ok", "token": "T"}, headers=headers).is_success
+
+
+def test_the_window_is_raised_without_staying_on_top() -> None:
+    import ctypes
+    from types import SimpleNamespace
+
+    from claudio.chat.window import HWND_NOTOPMOST, HWND_TOPMOST, bring_to_front
+
+    calls: list[tuple] = []
+    user32 = SimpleNamespace(SetWindowPos=lambda *a: calls.append(a))
+    handle = SimpleNamespace(ToInt64=lambda: 1234)
+    bring_to_front(SimpleNamespace(native=SimpleNamespace(Handle=handle)), user32)
+    assert [c[0].value for c in calls] == [1234, 1234]
+    # c_void_p keeps the -1/-2 sentinels as their unsigned bit pattern, as Win32 reads them
+    expected = [ctypes.c_void_p(h).value for h in (HWND_TOPMOST, HWND_NOTOPMOST)]
+    assert [c[1].value for c in calls] == expected
+    assert all(c[6] & 0x4000 for c in calls)  # asynchronous: posted to the window's thread
+    bring_to_front(SimpleNamespace(native=None), user32)  # not created yet: nothing
+    broken = SimpleNamespace(native=SimpleNamespace(Handle=None))
+    bring_to_front(broken, user32)  # never raises
+    assert len(calls) == 2

@@ -120,8 +120,8 @@ reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
 `config/claudio.toml` (`enabled = false` for local only). A Haiku question costs about
 0.0002 USD.
 
-What needs reasoning goes to **Sonnet**: Haiku hands it over by itself (you hear "Ci penso un
-attimo."), or start the request with "pensaci bene" / "think hard". A Sonnet answer costs about
+What needs reasoning can go to **Sonnet**, never without your yes: Haiku proposes it and Claudio
+asks "Lo uso?" ("sì" / "no"), or start the request with "pensaci bene" / "think hard". A Sonnet answer costs about
 0.004 USD. From the second turn of a conversation the history is read from the prompt cache
 (10 % of the price). Claude also knows the current date and time. `smart_model = ""` keeps
 Haiku only.

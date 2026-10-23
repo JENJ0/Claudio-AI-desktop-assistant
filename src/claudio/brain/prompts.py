@@ -24,23 +24,24 @@ say briefly that you cannot do it yet.
 - Your tone is friendly, direct and a little ironic. Never pretend to know things you do not \
 know, such as today's news or live data."""
 
-# Haiku's tool: hands the request to Sonnet. No input, so the call costs a handful of tokens.
+# Haiku's tool: proposes Sonnet (Claudio then asks JenJo). No input: a handful of tokens.
 ASK_SONNET_TOOL = {
     "name": "ask_sonnet",
     "description": (
-        "Hand this request to a stronger model that answers JenJo directly. Use it only when a "
-        "good answer needs careful reasoning: multi-step maths or logic, comparing options, "
-        "planning, technical or detailed explanations, advice with trade-offs. Never use it for "
-        "greetings, small talk, simple facts or short questions. Before calling it, say one "
-        "very short sentence in the user's language, such as 'Ci penso un attimo.'"
+        "Propose handing this request to a stronger, more expensive model; JenJo is asked first. "
+        "Use it only when a good answer needs careful reasoning: multi-step maths or logic, "
+        "comparing options, planning, technical or detailed explanations, advice with "
+        "trade-offs. Never use it for greetings, small talk, simple facts, short questions, or "
+        "a request that is short or unclear (ask JenJo yourself what they mean). When you call "
+        "it, write nothing else."
     ),
     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 
-# Said when Haiku hands over without a word: the voice never stays silent while Sonnet starts.
-THINKING = {
-    "it": "Ci penso un attimo.",
-    "en": "Let me think.",
+# Haiku proposed Sonnet: Claudio asks before spending more (JenJo, 23/10).
+OFFER = {
+    "it": "Per questa serve Sonnet, il modello più potente, che costa di più. Lo uso?",
+    "en": "This one needs Sonnet, the stronger model, which costs more. Shall I use it?",
 }
 
 # Said before the answer, once a day, when today's spending reaches the warning level.
