@@ -65,6 +65,9 @@ EN: dict[str, str] = {
     "Microfono: %s%s": "Microphone: %s%s",
     "Microfono di Windows cambiato: %s": "Windows microphone changed: %s",
     "Microfoni sentiti: %s": "Microphones heard: %s",
+    "WARN voce di Jack non installata (%s): parlerà Kokoro": (
+        "WARN Jack's voice is not installed (%s): Kokoro will speak"
+    ),
     "Il microfono non sente niente: ne scelgo un altro": (
         "The microphone hears nothing: choosing another one"
     ),
