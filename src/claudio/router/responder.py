@@ -24,6 +24,8 @@ from claudio.safety.confirmation import (
 
 log = logging.getLogger(__name__)
 
+QUESTION_TAIL_CHARS = 60  # a "?" this close to the end of a reply asks something
+
 # Asked with (request, reply language): Claude's reply, streamed.
 Fallback = Callable[[str, str], AsyncGenerator[str, None]]
 
@@ -98,11 +100,12 @@ class LocalResponder:
 
     @property
     def asked_question(self) -> bool:
-        """Claude's last reply ended with a question: the next phrase is its answer."""
+        """Claude's last reply ended with a question, maybe followed by a short sentence
+        ("Che tema vuoi? Dimmelo e la scrivo."): the next phrase is its answer."""
         return (
             self.last_route.get("route") == "claude"
             and self._last_reply is not None
-            and self._last_reply[0].rstrip().endswith("?")
+            and "?" in self._last_reply[0].rstrip()[-QUESTION_TAIL_CHARS:]
         )
 
     def cancel_pending(self) -> None:

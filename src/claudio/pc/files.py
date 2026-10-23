@@ -29,6 +29,9 @@ KINDS = ("document", "picture", "music", "video", "folder")
 INDEX_KINDS = {"document": "document", "picture": "picture", "music": "music", "video": "video"}
 _TERM = re.compile(r"[^\w.\- ]+", re.UNICODE)  # what a search may contain: no quotes, no SQL
 MAX_TERMS = 5
+# Where a name said without its folder ("apri la cartella Progetti") is looked for, in order
+# (v0.3.2: JenJo had to dictate ~\Desktop\PROGETTI). The Desktop may live in OneDrive.
+NEAR_HOME = ("", "Desktop", "Documents", "Downloads", "OneDrive/Desktop", "OneDrive/Documents")
 SKIP_DIRS = frozenset({"appdata", "node_modules", ".git", "$recycle.bin", "__pycache__", ".venv"})
 
 
@@ -76,6 +79,28 @@ class PathPolicy:
         if not self.allowed(path):
             raise PathRefused(f"outside the allowed folders: {raw}")
         return path
+
+    def find_near(self, raw: str) -> Path | None:
+        """A path that does not exist, given as a bare name or as ~\\name: the item with that
+        name (any case) in the user folder, on the Desktop, in Documents or Downloads."""
+        text = raw.strip().strip('"').strip().replace("/", "\\")
+        home = str(self.home).replace("/", "\\").casefold() + "\\"
+        if text.startswith("~\\"):
+            text = text[2:]
+        elif text.casefold().startswith(home):  # C:\Users\JenJo\Progetti
+            text = text[len(home) :]
+        if not text or "\\" in text or ":" in text:
+            return None  # a real path that is wrong: not guessed
+        wanted = text.casefold()
+        for sub in NEAR_HOME:
+            folder = self.home / sub if sub else self.home
+            try:
+                for child in folder.iterdir():
+                    if child.name.casefold() == wanted and self.allowed(child.resolve()):
+                        return child.resolve()
+            except OSError:
+                continue
+        return None
 
     def allowed(self, path: Path) -> bool:
         if self.anywhere:

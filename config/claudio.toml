@@ -157,6 +157,11 @@ read_chars = 1500              # window text sent to Claude (~500 tokens)
 read_timeout_s = 2.0
 search_limit = 8
 private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password"]
+screenshot_side = 1024         # last-resort screenshot to Haiku: long side in pixels (~1000 tokens)
+commands = true                # PowerShell commands: always "confermo" said aloud, never as admin
+command_timeout_s = 30
+command_output_chars = 2000    # command output sent back to Claude
+bridge = true                  # say "Ci guardo" before a slow action
 # safe_keys = [...]            # keys pressed without asking: see PcSettings in config.py
 
 # The chat window (uv run claudio --ui): what you write there reaches the running assistant.

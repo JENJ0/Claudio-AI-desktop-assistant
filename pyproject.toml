@@ -1,6 +1,6 @@
 [project]
 name = "claudio"
-version = "0.3.1"
+version = "0.3.2"
 description = "CLAUDIO: local Italian voice assistant for Windows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -25,6 +25,7 @@ dependencies = [
     "pywebview>=5.3; sys_platform == 'win32'",  # the chat window (Windows WebView2)
     "pywinauto>=0.6.9; sys_platform == 'win32'",  # reads and drives windows (UI Automation, Phase 3)
     "psutil>=5.9; sys_platform == 'win32'",  # the program behind each window
+    "pillow>=10.4",  # the last-resort screenshot to Haiku, shrunk to JPEG (v0.3.2)
 ]
 
 [project.scripts]

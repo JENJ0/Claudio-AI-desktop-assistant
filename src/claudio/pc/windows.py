@@ -5,7 +5,9 @@ single worker thread (COM is initialised there once, single-threaded apartment).
   (pywinauto), walked breadth-first with a time and character budget (Chrome can hold
   thousands of elements);
 - apps: the Start menu "All apps" folder (shell:AppsFolder), classic and Store apps alike;
-- files: the Windows Search index (the same one as the Start menu search), via OLE DB."""
+- files: the Windows Search index (the same one as the Start menu search), via OLE DB;
+- screen: a screenshot of a window or of the primary screen (Pillow), in physical pixels;
+- commands: PowerShell without profile, never elevated (pc/terminal.py)."""
 
 from __future__ import annotations
 
@@ -19,7 +21,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from claudio.pc import terminal
 from claudio.pc.files import INDEX_KINDS, Found
+from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import App, Window
 
 log = logging.getLogger(__name__)
@@ -29,6 +33,9 @@ GW_OWNER = 4
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 DWMWA_CLOAKED = 14
+PASTE_SETTLE_S = 0.3
+DWMWA_EXTENDED_FRAME_BOUNDS = 9  # the visible frame, without the invisible resize border
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
 UIA_VALUE_PROPERTY = 30045
 TEXT_TYPES = frozenset({"Edit", "Document"})  # their value is the text, not their name
 
@@ -175,6 +182,48 @@ class WindowsDesktop:
 
         send_keys(sequence, pause=0.02, with_spaces=True, with_tabs=True, with_newlines=True)
 
+    def paste(self, text: str) -> None:
+        """Ctrl+V of `text`; JenJo's clipboard (text only) is put back afterwards."""
+        import win32clipboard
+        from pywinauto.keyboard import send_keys
+
+        old = _clipboard_text()
+        _set_clipboard(text.replace("\r\n", "\n").replace("\n", "\r\n"))
+        try:
+            send_keys("^v", pause=0.02)
+            time.sleep(PASTE_SETTLE_S)  # the app reads the clipboard after the key press
+        finally:
+            if old is not None:
+                _set_clipboard(old)
+            else:
+                win32clipboard.OpenClipboard()
+                try:
+                    win32clipboard.EmptyClipboard()
+                finally:
+                    win32clipboard.CloseClipboard()
+
+    # --- screen and commands (v0.3.2) -----------------------------------------------------
+
+    def screenshot(self, window: Window | None) -> Any:
+        from PIL import ImageGrab
+
+        if window is None:
+            return ImageGrab.grab()  # the primary screen
+        box = _window_box(window.handle)
+        if box is None:  # minimised or off screen: what JenJo sees is the screen
+            log.info("Finestra %r non visibile: screenshot dello schermo", window.title)
+            return ImageGrab.grab()
+        return ImageGrab.grab(bbox=box, all_screens=True)
+
+    def is_admin(self) -> bool:
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return True  # unknown: treated as elevated, so commands stay off
+
+    def run_command(self, command: str, timeout_s: float, cwd: Path) -> CommandResult:
+        return terminal.run_process(terminal.powershell_argv(command), timeout_s, cwd)
+
 
 def _alt_tab_window(hwnd: int) -> bool:
     """Visible, not owned, not a tool window and not cloaked (hidden Store apps)."""
@@ -192,6 +241,64 @@ def _alt_tab_window(hwnd: int) -> bool:
     except Exception:
         return True
     return cloaked.value == 0
+
+
+def _clipboard_text() -> str | None:
+    import win32clipboard
+
+    win32clipboard.OpenClipboard()
+    try:
+        if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
+            return str(win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT))
+        return None
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+def _set_clipboard(text: str) -> None:
+    import win32clipboard
+
+    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+def _window_box(hwnd: int) -> tuple[int, int, int, int] | None:
+    """The window's visible frame in physical pixels (Pillow grabs per-monitor DPI aware, so
+    the rectangle must be read the same way), or None when minimised or empty."""
+    import ctypes.wintypes
+
+    import win32gui
+
+    if win32gui.IsIconic(hwnd):
+        return None
+    user32 = ctypes.windll.user32
+    previous = None
+    try:
+        user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p  # a handle, not an int
+        previous = user32.SetThreadDpiAwarenessContext(
+            ctypes.c_void_p(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+        )
+    except Exception:
+        pass  # older Windows: coordinates may be scaled, the crop is then approximate
+    try:
+        rect = ctypes.wintypes.RECT()
+        ok = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)
+        )
+        if ok != 0:
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        else:
+            left, top, right, bottom = rect.left, rect.top, rect.right, rect.bottom
+    finally:
+        if previous:
+            user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(previous))
+    if right - left < 10 or bottom - top < 10:
+        return None
+    return left, top, right, bottom
 
 
 def _element_text(info: Any) -> str:

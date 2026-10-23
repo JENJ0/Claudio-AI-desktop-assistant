@@ -23,8 +23,8 @@ LEVELS = (LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT)
 # Said when a command does not carry its own question (`confirm` in commands.toml).
 ASK_LEVEL_2 = {"it": "Confermi?", "en": "Do you confirm?"}
 ASK_LEVEL_3 = {
-    "it": "Questa azione è delicata. Per procedere dì: confermo.",
-    "en": "This action is sensitive. To go ahead, say: I confirm.",
+    "it": "Per procedere dì: confermo.",  # short (JenJo, 23/10): the summary comes before
+    "en": "To go ahead, say: I confirm.",
 }
 CANCELLED = {"it": "Va bene, non lo faccio.", "en": "Okay, I won't do it."}
 NOT_UNDERSTOOD = {"it": "Non ho capito: non lo faccio.", "en": "I didn't catch that: not doing it."}

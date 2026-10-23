@@ -11,7 +11,12 @@ day, nothing sent at 100 %) and `record()` after, also when the reply is cut sho
 With the PC tools (Phase 3), Haiku also acts: open, search, read windows, type... Several
 tools may come in one reply, up to `[pc] max_rounds` round trips per request. A level 2-3
 action stops the loop: Claudio says what it will do and asks; the next request is the answer
-(the responder reports `awaiting`, so the assistant listens without the wake word)."""
+(the responder reports `awaiting`, so the assistant listens without the wake word).
+
+v0.3.2: Haiku may also look at the screen (a small screenshot) and run one PowerShell command
+per reply, always at level 3. A command on the deny list is refused before JenJo is asked;
+the exact command is shown in the chat window (opened if needed), never read aloud. Before a
+slow action Claudio says "Ci guardo" when Haiku said nothing yet."""
 
 from __future__ import annotations
 
@@ -29,6 +34,8 @@ from claudio.brain.prompts import (
     API_ERROR,
     ASK_SONNET_TOOL,
     BAD_KEY,
+    BRIDGE,
+    BRIDGE_RUN,
     BUDGET_BLOCKED,
     BUDGET_WARNING,
     NETWORK_ERROR,
@@ -52,6 +59,9 @@ from claudio.safety.confirmation import (
 
 if TYPE_CHECKING:
     from claudio.pc.tools import PcTools, ToolCall
+
+# Tools that may take a while (pc/tools.py SLOW; repeated here: no import of the PC package).
+SLOW_TOOLS = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +88,7 @@ class ClaudeBrain:
         wall: Callable[[], datetime] = datetime.now,
         tools: PcTools | None = None,
         pc: PcSettings | None = None,
+        on_show: Callable[[], object] | None = None,
         personality: str = "",
     ) -> None:
         self.client = client
@@ -104,6 +115,7 @@ class ClaudeBrain:
         self.system = system_prompt(tools is not None, personality)
         self.pc = pc or PcSettings()
         self._action: _Action | None = None  # a level 2-3 tool call waiting for its yes
+        self.on_show = on_show  # opens the chat window, where the exact command is written
 
     def reset(self) -> None:
         self._history.clear()
@@ -245,12 +257,17 @@ class ClaudeBrain:
                 self._remember(turn)
                 return
             messages = [*messages, {"role": "assistant", "content": leg.content}]
-            confirm = [c for c in leg.calls if self.tools.level(c) > LEVEL_SAFE]
+            refused = {c.id: why for c in leg.calls if (why := self.tools.refusal(c, leg.calls))}
+            active = [c for c in leg.calls if c.id not in refused]
+            await self.tools.prepare(active)
+            confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
             if confirm:
                 level = max(self.tools.level(c) for c in confirm)
                 ask = await self.tools.question(confirm, language)
                 self._action = _Action(messages, leg.calls, turn, language, level, round_no)
+                self._action.refused = refused
                 self._action.asked = self.clock()
+                self._show(confirm)
                 self._note_tools(confirm, "ask")
                 log.info(
                     "Conferma richiesta (livello %d): %s",
@@ -262,7 +279,13 @@ class ClaudeBrain:
                 turn.parts.append(said)
                 yield said
                 return
-            results = await self._run_calls(leg.calls)
+            slow = any(c.name in SLOW_TOOLS for c in active)
+            if self.pc.bridge and slow and not "".join(leg.parts).strip():
+                # The trailing space ends the sentence: the voice says it now.
+                said = _space(turn) + in_language(BRIDGE, language) + " "
+                turn.parts.append(said)
+                yield said
+            results = await self._run_calls(leg.calls, refused)
             messages = [*messages, {"role": "user", "content": results}]
             round_no += 1
 
@@ -282,7 +305,13 @@ class ClaudeBrain:
             yield said
             return
         log.info("Conferma data (livello %d): eseguo", action.level)
-        results = await self._run_calls(action.calls)
+        if self.pc.bridge and any(
+            c.name in SLOW_TOOLS and c.id not in action.refused for c in action.calls
+        ):
+            said = in_language(BRIDGE_RUN, action.language) + " "  # a new reply: no lead space
+            action.turn.parts.append(_space(action.turn) + said)
+            yield said
+        results = await self._run_calls(action.calls, action.refused)
         messages = [*action.messages, {"role": "user", "content": results}]
         async with contextlib.aclosing(
             self._loop(messages, action.language, start, action.turn, action.round_no + 1)
@@ -290,26 +319,58 @@ class ClaudeBrain:
             async for chunk in haiku:
                 yield chunk
 
-    async def _run_calls(self, calls: list[ToolCall]) -> list[dict[str, Any]]:
+    async def _run_calls(
+        self, calls: list[ToolCall], refused: dict[str, str] | None = None
+    ) -> list[dict[str, Any]]:
+        """One tool_result per call, in order; a refused call is answered without running."""
         assert self.tools is not None
+        refused = refused or {}
         results = []
         for call in calls:
+            if call.id in refused:
+                self._note_tools([call], "refused")
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call.id,
+                        "content": refused[call.id],
+                        "is_error": True,
+                    }
+                )
+                continue
             outcome = await self.tools.run(call)
-            self._note_tools([call], "error" if outcome.error else "ok")
+            self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
             block: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": call.id,
-                "content": outcome.text,
+                "content": outcome.content(),
             }
             if outcome.error:
                 block["is_error"] = True
             results.append(block)
         return results
 
-    def _note_tools(self, calls: list[ToolCall], outcome: str) -> None:
-        """For metrics.jsonl and conversazione.md: what was done, and how it went."""
+    def _note_tools(self, calls: list[ToolCall], outcome: str, ms: int | None = None) -> None:
+        """For metrics.jsonl and conversazione.md: what was done, how it went, how long."""
         done = self.last_call.setdefault("tools", [])
         done.extend(f"{c.brief()} {outcome}" for c in calls)
+        if ms is not None:
+            self.last_call["tool_ms"] = self.last_call.get("tool_ms", 0) + ms
+
+    def _show(self, calls: list[ToolCall]) -> None:
+        """A command waits for "confermo": its exact text goes to the chat (with the spoken
+        question), and the chat window opens so JenJo can read it."""
+        assert self.tools is not None
+        shown = self.tools.shown(calls)
+        if not shown:
+            return
+        self.last_call["shown"] = shown
+        log.info("Comando proposto: %s", shown, extra={"route": "confirm"})
+        if self.on_show is not None:
+            try:
+                self.on_show()
+            except Exception:
+                log.exception("Finestra della chat non aperta")
 
     def _take_action(self) -> _Action | None:
         action, self._action = self._action, None
@@ -581,6 +642,7 @@ class _Action:
         self.language = language
         self.level = level
         self.round_no = round_no
+        self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
 
 
