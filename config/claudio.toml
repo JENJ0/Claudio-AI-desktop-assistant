@@ -53,7 +53,7 @@ fallback_compute_type = "int8"
 # A single language (languages = ["it"]) skips the detection.
 languages = ["it", "en"]
 language_confidence = 0.6
-other_confidence = 0.8         # English (not the first language) must be at least this sure
+other_confidence = 0.9         # English (not the first language) must be at least this sure (JenJo: Italian unless plainly English)
 retry_in_first_language = true # an English request no command understands is retried in Italian
 closed_list = true             # a request not understood: Whisper proposes 5 transcriptions, the first known command wins
 closed_list_max_words = 5      # longer requests skip it (~150 ms saved): a question for Claude, not a misheard command
@@ -83,6 +83,7 @@ effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
+# jack_language = "Italian"  # "Auto" (default) guesses the language per sentence; try "Italian" if accent/pace drift
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
 [tts.voices.en]            # the voices for English replies (same engine, same effect)
@@ -133,6 +134,8 @@ conversation_min_words = 3     # without the wake word: shorter phrases are not 
 cache = true                   # prompt caching: from the 2nd turn the conversation costs 10 %
 tell_time = true               # Claude gets the local date and time with each request
 keepalive_s = 60               # the connection to the API stays open this long between requests
+personality_file = "data/CLAUDIO.md"  # Claudio's personality, yours to edit (made from config/CLAUDIO.md)
+personality_max_chars = 3000   # it goes with every request (cached): keep it short; 0 = none
 # Sonnet for reasoning: Haiku hands a request over by itself (escalate), or say "pensaci bene".
 smart_model = "claude-sonnet-5-5"  # must be in config/pricing.toml; "" = Haiku only
 smart_effort = "low"           # low | medium | high
@@ -147,6 +150,7 @@ smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su
 enabled = true                 # false: Claude answers but does not act on the PC
 max_rounds = 4                 # tool round trips per request
 max_tokens = 400
+confirm_brief = true           # level 2 asks only "Confermi?"; false: it reads the action out first
 roots = ["~"]                  # folders Claudio may search, open and move in ("~" = C:\Users\you)
 type_max_chars = 500
 read_chars = 1500              # window text sent to Claude (~500 tokens)

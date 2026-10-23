@@ -107,7 +107,7 @@ class SttSettings(BaseModel):
     language: str = ""  # one fixed language (overrides `languages`)
     language_confidence: float = Field(0.6, ge=0, le=1)  # below this: the last language spoken
     # A language other than the first must be this sure (fast Italian often sounds English).
-    other_confidence: float = Field(0.8, ge=0, le=1)
+    other_confidence: float = Field(0.9, ge=0, le=1)
     # A request in another language that no command understands is transcribed again in the
     # first one (~120 ms on the GPU, only then): "cue the calculator" -> "apri la calcolatrice".
     retry_in_first_language: bool = True
@@ -169,6 +169,9 @@ class TtsSettings(BaseModel):
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
     jack_sentence_timeout_s: float = Field(15.0, gt=0)
+    # The language Qwen3 is told. "Auto" guesses it per sentence (accent and pace may drift);
+    # "Italian" fixes it. "Italian" is untested on the fine-tuned model: JenJo picks by ear.
+    jack_language: Literal["Auto", "Italian"] = "Auto"
     # The first piece of a reply may end at a comma once it is this long: the voice starts
     # before the whole first sentence has arrived from Claude (0 = whole sentences only).
     first_clause_chars: int = Field(25, ge=0, le=200)
@@ -267,6 +270,10 @@ class ClaudeSettings(BaseModel):
     smart_max_tokens: int = Field(1024, ge=64, le=8192)  # its thinking counts here too
     smart_effort: Literal["low", "medium", "high"] = "low"
     escalate: bool = True  # Haiku may call Sonnet by itself (one short tool definition per call)
+    # The personality (CLAUDIO.md), after the system prompt: read once at start, so it is
+    # cached. Missing: copied from config/CLAUDIO.md. Longer than the limit: cut (it costs).
+    personality_file: Path = Path("data/CLAUDIO.md")
+    personality_max_chars: int = Field(3000, ge=0, le=20000)  # 0 = no personality
     smart_phrases: dict[str, list[str]] = Field(
         default_factory=lambda: {
             "it": ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"],
@@ -282,6 +289,9 @@ class PcSettings(BaseModel):
     enabled: bool = True  # false (or not Windows): Claude answers but cannot act
     max_rounds: int = Field(4, ge=1, le=10)  # tool round trips per request
     max_tokens: int = Field(400, ge=64, le=4096)  # per call when tools are offered
+    # Level 2: only "Confermi?" (JenJo, 23/10). False: the action is read out first. Level 3
+    # always says what will run: an explicit yes needs to know to what.
+    confirm_brief: bool = True
     roots: list[str] = Field(default_factory=lambda: ["~"])  # "*" = any local drive
     safe_keys: list[str] = Field(
         default_factory=lambda: [

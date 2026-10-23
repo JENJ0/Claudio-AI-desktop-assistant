@@ -103,6 +103,7 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
     """Claude for what no command understands; None when it is switched off. A missing key
     still builds it: Claudio then says where the key goes instead of "I can't do that"."""
     from claudio.brain.claude import ClaudeBrain, make_client
+    from claudio.brain.personality import load_personality
     from claudio.cost.pricing import PricingError
 
     claude = settings.claude
@@ -118,7 +119,17 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
     if not key.strip():
         log.warning("ANTHROPIC_API_KEY mancante nel file .env: Claude non risponderà")
     client = make_client(key.strip(), claude.timeout_s, claude.keepalive_s) if key.strip() else None
-    brain = ClaudeBrain(client, tracker, claude, tools=build_pc_tools(settings), pc=settings.pc)
+    personality = load_personality(
+        settings.resolve(claude.personality_file), claude.personality_max_chars
+    )
+    brain = ClaudeBrain(
+        client,
+        tracker,
+        claude,
+        tools=build_pc_tools(settings),
+        pc=settings.pc,
+        personality=personality,
+    )
     if brain.smart_model is not None:
         try:
             tracker.pricing.price(brain.smart_model)
@@ -126,12 +137,14 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
             log.error("Sonnet spento, solo Haiku: %s", exc)
             brain.smart_model = None
     log.info(
-        "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno",
+        "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno, "
+        "personalità %d caratteri",
         claude.model,
         brain.smart_model or "-",
         claude.max_tokens,
         "on" if claude.cache else "off",
         tracker.daily_budget,
+        len(personality),
     )
     return brain
 
@@ -161,6 +174,7 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
         fallback,
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
+        tts.jack_language,
     )
     try:
         synth.start()

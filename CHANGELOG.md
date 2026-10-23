@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased] - personality
+
+### Added
+- CLAUDIO.md personality (`config/CLAUDIO.md`, copied to `data/CLAUDIO.md` at first start,
+  never overwritten): Handsome Jack, "full but helpful", free swearing (JenJo's choices). Read
+  once and sent after the system prompt (frozen, cached); HTML comments are stripped, the text
+  is cut at `[claude] personality_max_chars`.
+- `[tts] jack_language` ("Auto" or "Italian") for Qwen3: try "Italian" if accent or pace drift.
+
+### Changed
+- Replies: one short sentence, two at most; questions to JenJo in a few words.
+- Language: Italian unless the request is plainly English or JenJo asks for English; never two
+  languages in one reply. `[stt] other_confidence` 0.8 -> 0.9.
+- Level 2 confirmation is just "Confermi?" (`[pc] confirm_brief`); level 3 still says what runs.
+
 ## [Unreleased] - 0.3.1
 
 ### Added

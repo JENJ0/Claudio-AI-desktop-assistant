@@ -44,11 +44,13 @@ class JackSynth:
         fallback: Any,
         startup_timeout_s: float = 90.0,
         sentence_timeout_s: float = 15.0,
+        language: str = "Auto",
     ) -> None:
         self.command = command
         self.fallback = fallback
         self.startup_timeout_s = startup_timeout_s
         self.sentence_timeout_s = sentence_timeout_s
+        self.language = language  # told to Qwen3: "Auto" or "Italian"
         # Read by StreamingSpeaker right after synthesize(): the rate of the voice that spoke.
         self.sample_rate = SAMPLE_RATE
         self.load_s = 0.0
@@ -197,9 +199,9 @@ class JackSynth:
         self._next_id += 1
         rid = self._next_id
         # Digits are spelled out: with language "Auto" a bare "22" or "51" is sometimes read in
-        # Spanish. ("Italian" instead of "Auto" is untested on the fine-tuned model.)
+        # Spanish.
         spoken_text = digits_to_words_it(text)
-        self._send({"op": "speak", "id": rid, "text": spoken_text, "language": "Auto"})
+        self._send({"op": "speak", "id": rid, "text": spoken_text, "language": self.language})
         deadline = time.monotonic() + self.sentence_timeout_s
         finished = False
         try:
