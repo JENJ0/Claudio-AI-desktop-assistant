@@ -68,6 +68,9 @@ class AudioSettings(BaseModel):
 class WakeWordModel(BaseModel):
     name: str
     threshold: float = Field(0.5, gt=0, lt=1)
+    # Every detection of this model is checked by Whisper first (the name must be heard): for
+    # a model that fires often on noise, like "claudio" alone. No near misses are logged.
+    confirm: bool = False
 
 
 class WakeWordSettings(BaseModel):
@@ -78,6 +81,9 @@ class WakeWordSettings(BaseModel):
     # A peak between this and the threshold is a missed wake word: it is logged and, with
     # second_chance, Whisper listens to the last 1.5 s and wakes CLAUDIO if it hears the name.
     near_miss_floor: float = Field(0.15, gt=0, lt=1)
+    # A wake scoring below this is confirmed by Whisper first (the second chance, ~130 ms):
+    # a weak detection on Claudio's own voice or the TV stays silent. 0 = off.
+    confirm_below: float = Field(0.45, ge=0, lt=1)
     second_chance: bool = True
     # After a wake, keep the request only if Whisper heard the name at the start or it is a
     # local command: "Hey, ciao, come stai?" wakes the model but ends in silence.
@@ -169,6 +175,9 @@ class TtsSettings(BaseModel):
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
     jack_sentence_timeout_s: float = Field(15.0, gt=0)
+    # Jack's pace: < 1 slower (0.9 = 10% slower, JenJo 23/10). The audio is stretched before
+    # RVC and RVC raises the pitch back by the same amount, so the voice does not get deeper.
+    jack_speed: float = Field(0.9, ge=0.7, le=1.3)
     # The first piece of a reply may end at a comma once it is this long: the voice starts
     # before the whole first sentence has arrived from Claude (0 = whole sentences only).
     first_clause_chars: int = Field(25, ge=0, le=200)
@@ -271,6 +280,13 @@ class ClaudeSettings(BaseModel):
         default_factory=lambda: {
             "it": ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"],
             "en": ["think hard", "think carefully", "think it through"],
+        }
+    )
+    # A request for detail: Claudio proposes Sonnet at once ("Lo uso?"), no Haiku call.
+    offer_phrases: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "it": ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"],
+            "en": ["in detail", "in depth", "explain thoroughly"],
         }
     )
 

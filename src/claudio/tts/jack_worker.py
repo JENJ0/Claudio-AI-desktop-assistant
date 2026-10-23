@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import queue
 import sys
 import threading
 import time
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -51,10 +53,19 @@ def emit(header: dict[str, Any], payload: bytes = b"") -> None:
         PROTOCOL_OUT.flush()
 
 
+def speed_plan(speed: float) -> tuple[int, int, int]:
+    """How to change Jack's pace: Qwen3's 24 kHz goes to RVC at 48 kHz / speed (up/down of
+    resample_poly), so it plays slower (< 1) or faster, and its pitch moves by the inverse;
+    RVC takes it back with f0_up_key semitones (an integer: 0.9 leaves +0.2 semitones)."""
+    ratio = Fraction(2 / speed).limit_denominator(50)
+    semitones = round(-12 * math.log2(speed))
+    return ratio.numerator, ratio.denominator, semitones
+
+
 class RvcStream:
     """Applio's realtime VoiceChanger fed with Qwen3 chunks; yields converted int16 PCM."""
 
-    def __init__(self, model_path: Path, applio: Path) -> None:
+    def __init__(self, model_path: Path, applio: Path, speed: float = 1.0) -> None:
         import numpy as np
 
         os.chdir(applio)  # Applio resolves its assets and logs relative to its own folder
@@ -74,7 +85,13 @@ class RvcStream:
             embedder_model="contentvec",
             silent_threshold=-60,
         )
-        self.kw = {"index_rate": INDEX_RATE, "protect": PROTECT, "volume_envelope": 1}
+        self.up, self.down, semitones = speed_plan(speed)
+        self.kw = {
+            "index_rate": INDEX_RATE,
+            "protect": PROTECT,
+            "volume_envelope": 1,
+            "f0_up_key": semitones,
+        }
         self.vc.warmup(**self.kw)
         self.begin()
 
@@ -109,8 +126,9 @@ class RvcStream:
 
         np = self.np
         chunk = np.asarray(chunk, dtype=np.float32).reshape(-1)
-        wide = resample_poly(np.concatenate([self.tail, chunk]), 2, 1).astype(np.float32)
-        wide = wide[2 * len(self.tail) :]
+        joined = np.concatenate([self.tail, chunk])
+        wide = resample_poly(joined, self.up, self.down).astype(np.float32)
+        wide = wide[len(wide) - round(len(chunk) * self.up / self.down) :]
         self.tail = chunk[-CONTEXT:]
         self.fed += len(wide)
         self.pending = np.concatenate([self.pending, wide])
@@ -143,7 +161,7 @@ class Worker:
         self.torch = torch
         t0 = time.perf_counter()
         self.tts = FasterQwen3TTS.from_pretrained(str(args.checkpoint))
-        self.rvc = RvcStream(args.rvc_model, args.applio)
+        self.rvc = RvcStream(args.rvc_model, args.applio, args.speed)
         for _ in self.generate("Prova.", "Auto", 60):  # captures the CUDA graph
             pass
         self.load_s = time.perf_counter() - t0
@@ -236,6 +254,7 @@ def main() -> None:
     )
     parser.add_argument("--rvc-model", type=Path, required=True, help="Jack's RVC .pth")
     parser.add_argument("--applio", type=Path, required=True, help="Applio folder (rvc package)")
+    parser.add_argument("--speed", type=float, default=1.0, help="pace: < 1 slower")
     args = parser.parse_args()
     for path in (args.checkpoint, args.rvc_model, args.applio):
         if not path.exists():

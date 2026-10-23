@@ -87,10 +87,8 @@ class ClaudeBrain:
         self.wall = wall  # local date and time, told to Claude with each request
         # Sonnet, when it has prices (the builder clears it otherwise): None = Haiku only.
         self.smart_model: str | None = settings.smart_model or None
-        self._smart_phrases = {
-            lang: [normalize(p, drop_fillers=False) for p in phrases if p.strip()]
-            for lang, phrases in settings.smart_phrases.items()
-        }
+        self._smart_phrases = _normalized(settings.smart_phrases)
+        self._offer_phrases = _normalized(settings.offer_phrases)
         self._history: deque[tuple[str, str]] = deque(maxlen=settings.history_turns or None)
         self._last_turn = -float("inf")
         self._last_contact = -float("inf")  # last time the connection to the API was used
@@ -141,13 +139,12 @@ class ClaudeBrain:
 
     def wants_smart(self, text: str, language: str) -> bool:
         """JenJo asked for Sonnet in words ("pensaci bene...")."""
-        if self.smart_model is None:
-            return False
-        said = f" {normalize(text, drop_fillers=False)} "
-        phrases = self._smart_phrases.get(language, []) + [
-            p for lang, ps in self._smart_phrases.items() if lang != language for p in ps
-        ]
-        return any(f" {p} " in said for p in phrases)
+        return self.smart_model is not None and _says(text, language, self._smart_phrases)
+
+    def wants_offer(self, text: str, language: str) -> bool:
+        """JenJo asked for detail ("spiegami in dettaglio..."): Sonnet is proposed at once,
+        without a Haiku call (Haiku at low effort often answered these itself)."""
+        return self.smart_model is not None and _says(text, language, self._offer_phrases)
 
     async def ask(self, text: str, language: str) -> AsyncGenerator[str, None]:
         """Claude's reply to `text`, in `language`, as it arrives. Problems become one short
@@ -201,6 +198,12 @@ class ClaudeBrain:
             self.last_call["escalated"] = "asked"
             async for chunk in self._sonnet(messages, language, start):
                 yield chunk
+            return
+        if self.settings.escalate and self.wants_offer(text, language):
+            log.info("Richiesta dettagliata: propongo Sonnet")
+            self._offer = (messages, language, self.clock())
+            self.last_call["escalated"] = "offered"
+            yield in_language(OFFER, language)
             return
         turn = _Turn(messages[-1]["content"])
         async with contextlib.aclosing(
@@ -601,3 +604,19 @@ def make_client(api_key: str, timeout_s: float, keepalive_s: float = 60.0) -> An
     return anthropic.AsyncAnthropic(
         api_key=api_key, timeout=timeout_s, max_retries=1, http_client=http
     )
+
+
+def _normalized(phrases: dict[str, list[str]]) -> dict[str, list[str]]:
+    return {
+        lang: [normalize(p, drop_fillers=False) for p in items if p.strip()]
+        for lang, items in phrases.items()
+    }
+
+
+def _says(text: str, language: str, phrases: dict[str, list[str]]) -> bool:
+    """One of the phrases is in `text`: those of its language first, then the others."""
+    said = f" {normalize(text, drop_fillers=False)} "
+    ordered = phrases.get(language, []) + [
+        p for lang, ps in phrases.items() if lang != language for p in ps
+    ]
+    return any(f" {p} " in said for p in ordered)
