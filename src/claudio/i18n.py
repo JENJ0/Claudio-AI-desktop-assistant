@@ -63,6 +63,7 @@ EN: dict[str, str] = {
     # audio
     "Stato audio in ingresso: %s": "Audio input status: %s",
     "Microfono: %s%s": "Microphone: %s%s",
+    "Microfono di Windows cambiato: %s": "Windows microphone changed: %s",
     "Microfono non disponibile (%s): riprovo tra 1 s": (
         "Microphone not available (%s): retrying in 1 s"
     ),

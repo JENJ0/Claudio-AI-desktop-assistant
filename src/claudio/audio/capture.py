@@ -5,15 +5,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import numpy as np
 
-from claudio.audio.devices import describe_device, resolve_device, stream_settings
+from claudio.audio.devices import (
+    WindowsDefaultInput,
+    describe_device,
+    pick_device,
+    stream_settings,
+)
 
 log = logging.getLogger(__name__)
 
 RETRY_S = 1.0
+FOLLOW_S = 2.0  # how often the Windows default microphone is checked (no device configured)
 STILL_MISSING_EVERY = 30  # retries between two "still missing" warnings (~30 s)
 
 
@@ -35,6 +41,7 @@ class AudioCapture:
         device: str | int = "",
         queue_size: int = 64,
         gain_db: float = 0.0,
+        windows_default: Callable[[], str | None] | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.block_size = block_size
@@ -43,6 +50,12 @@ class AudioCapture:
         self.gain = 1.0
         self.set_gain_db(gain_db)
         self.overflows = 0
+        # With no device configured: the microphone Windows uses, followed while running
+        # (checked every FOLLOW_S; a change reopens the stream on the new one).
+        self.windows_default = (windows_default or WindowsDefaultInput()) if device == "" else None
+
+    def _windows_default(self) -> str | None:
+        return self.windows_default() if self.windows_default is not None else None
 
     def set_gain_db(self, gain_db: float) -> None:
         """Takes effect from the next frame (the callback reads it every time)."""
@@ -72,9 +85,10 @@ class AudioCapture:
         retries = 0
         while True:
             index = None
+            opened_on = self._windows_default()
             try:
                 if not portaudio_default:
-                    index = resolve_device(self.device, "input")
+                    index = pick_device(self.device, "input", opened_on)
                 with sd.InputStream(
                     samplerate=self.sample_rate,
                     blocksize=self.block_size,
@@ -89,9 +103,16 @@ class AudioCapture:
                         describe_device(index, "input"),
                         f", guadagno +{20 * np.log10(self.gain):.0f} dB" if self.gain > 1 else "",
                     )
+                    checked = time.monotonic()
                     while True:
                         # No frame for 2 s means the device stopped delivering audio.
                         frame = await asyncio.wait_for(queue.get(), timeout=2.0)
+                        if time.monotonic() - checked >= FOLLOW_S:
+                            checked = time.monotonic()
+                            now = self._windows_default()
+                            if now and now != opened_on:
+                                log.info("Microfono di Windows cambiato: %s", now)
+                                break  # the stream reopens on the new one
                         if lost_at is not None:  # back only once audio flows again
                             log.info(
                                 "Microfono di nuovo disponibile dopo %.0f s",
@@ -99,6 +120,10 @@ class AudioCapture:
                             )
                             lost_at, retries = None, 0
                         yield frame
+                # Windows switched microphone: re-scan, a just-plugged one is not listed yet.
+                portaudio_default = False
+                sd._terminate()
+                sd._initialize()
             except (sd.PortAudioError, TimeoutError, ValueError) as exc:
                 # Unplugged, it fails every second: warn once, then every ~30 s, not 3600 lines/h.
                 if lost_at is None:

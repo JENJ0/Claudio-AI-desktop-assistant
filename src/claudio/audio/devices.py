@@ -64,15 +64,19 @@ def match_endpoint(
     return None
 
 
-def pick_output(spec: str | int, windows_default: str | None = None) -> int | None:
-    """The configured output; with none configured, the one Windows is using right now."""
+def pick_device(spec: str | int, kind: str, windows_default: str | None = None) -> int | None:
+    """The configured device; with none configured, the one Windows is using right now."""
     if spec != "" and spec is not None:
-        return resolve_device(spec, "output")
+        return resolve_device(spec, kind)
     if windows_default:
-        index = match_endpoint(windows_default, "output")
+        index = match_endpoint(windows_default, kind)
         if index is not None:
             return index
-    return resolve_device("", "output")
+    return resolve_device("", kind)
+
+
+def pick_output(spec: str | int, windows_default: str | None = None) -> int | None:
+    return pick_device(spec, "output", windows_default)
 
 
 class WindowsDefaultOutput:
@@ -80,6 +84,8 @@ class WindowsDefaultOutput:
 
     PortAudio reads the default device once at start-up; asking Windows directly follows a
     change made while CLAUDIO runs. Returns None off Windows or if Core Audio is unavailable."""
+
+    FLOW = 0  # eRender
 
     def __init__(self) -> None:
         self._local = threading.local()  # COM objects belong to the thread that made them
@@ -103,11 +109,17 @@ class WindowsDefaultOutput:
                 comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
             local.enumerator = AudioUtilities.GetDeviceEnumerator()
             local.id, local.name = None, None
-        device = local.enumerator.GetDefaultAudioEndpoint(0, 1)  # render, multimedia
+        device = local.enumerator.GetDefaultAudioEndpoint(self.FLOW, 1)  # multimedia role
         device_id = device.GetId()
         if device_id != local.id:
             local.id, local.name = device_id, AudioUtilities.CreateDevice(device).FriendlyName
         return local.name
+
+
+class WindowsDefaultInput(WindowsDefaultOutput):
+    """Name of the microphone Windows uses right now (Settings > Sound > Input)."""
+
+    FLOW = 1  # eCapture
 
 
 def resolve_device(

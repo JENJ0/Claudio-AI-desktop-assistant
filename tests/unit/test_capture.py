@@ -51,7 +51,7 @@ def fake_sd(monkeypatch: pytest.MonkeyPatch):
     def install(failures: int) -> FakeSd:
         sd = FakeSd(failures)
         monkeypatch.setitem(sys.modules, "sounddevice", sd)
-        monkeypatch.setattr(capture, "resolve_device", lambda spec, kind: 1)
+        monkeypatch.setattr(capture, "pick_device", lambda spec, kind, default=None: 1)
         monkeypatch.setattr(capture, "describe_device", lambda index, kind: "Webcam C270")
         monkeypatch.setattr(capture, "stream_settings", lambda index: None)
         monkeypatch.setattr(capture, "RETRY_S", 0.0)
@@ -89,3 +89,36 @@ def test_working_microphone_logs_no_warning(fake_sd, caplog: pytest.LogCaptureFi
         asyncio.run(take(2))
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert not any("di nuovo" in r.getMessage() for r in caplog.records)
+
+
+def test_follows_the_windows_microphone(fake_sd, monkeypatch, caplog) -> None:
+    """No device configured: when Windows switches microphone the stream reopens on it."""
+    sd = fake_sd(failures=0)
+    monkeypatch.setattr(capture, "FOLLOW_S", 0.0)
+    names = iter(["Webcam C270", "Webcam C270", "Cuffie", "Cuffie", "Cuffie", "Cuffie"])
+    opened_on: list[str | None] = []
+
+    def pick(spec, kind, default=None):
+        opened_on.append(default)
+        return 1
+
+    monkeypatch.setattr(capture, "pick_device", pick)
+    mic = capture.AudioCapture(16000, 4, device="", windows_default=lambda: next(names, "Cuffie"))
+
+    async def run() -> int:
+        n = 0
+        async for _ in mic.frames():
+            n += 1
+            if n == 4:
+                return n
+        return n
+
+    with caplog.at_level(logging.INFO, logger=capture.__name__):
+        asyncio.run(run())
+    assert opened_on == ["Webcam C270", "Cuffie"]
+    assert sd.opened == 2 and sd.rescans == 1
+    assert any("cambiato" in r.getMessage() for r in caplog.records)
+
+
+def test_configured_microphone_is_not_followed() -> None:
+    assert capture.AudioCapture(16000, 4, device="C270").windows_default is None
