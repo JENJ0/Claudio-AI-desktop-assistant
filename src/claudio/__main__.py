@@ -65,6 +65,7 @@ def build_responder(settings: Settings, system: SystemControl | None = None) -> 
         settings.router.error_reply,
         fallback=brain.ask if brain else None,
         fallback_info=(lambda: brain.last_call) if brain else None,
+        on_prepare=brain.warm_up if brain else None,
     )
 
 
@@ -86,14 +87,23 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
     key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else ""
     if not key.strip():
         log.warning("ANTHROPIC_API_KEY mancante nel file .env: Claude non risponderà")
-    client = make_client(key.strip(), claude.timeout_s) if key.strip() else None
+    client = make_client(key.strip(), claude.timeout_s, claude.keepalive_s) if key.strip() else None
+    brain = ClaudeBrain(client, tracker, claude)
+    if brain.smart_model is not None:
+        try:
+            tracker.pricing.price(brain.smart_model)
+        except PricingError as exc:
+            log.error("Sonnet spento, solo Haiku: %s", exc)
+            brain.smart_model = None
     log.info(
-        "Claude: %s, max %d token, budget %.2f al giorno",
+        "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno",
         claude.model,
+        brain.smart_model or "-",
         claude.max_tokens,
+        "on" if claude.cache else "off",
         tracker.daily_budget,
     )
-    return ClaudeBrain(client, tracker, claude)
+    return brain
 
 
 def build_synth(settings: Settings) -> tuple[Any, str]:
@@ -187,6 +197,7 @@ def build_speaker(settings: Settings) -> StreamingSpeaker:
         settings.audio.beep_volume,
         effect,
         {language: voice for language, (voice, _) in voices.items()},
+        first_clause_chars=settings.tts.first_clause_chars,
     )
     speaker.warm_up()
     others = "".join(f", {lang}: {label}" for lang, (_, label) in voices.items())
@@ -332,10 +343,29 @@ async def run_assistant(settings: Settings, session: Path) -> None:
         time.perf_counter() - t0,
         tr('" o "').join(wake.names),
     )
+    inbox = (
+        asyncio.create_task(serve_inbox(assistant, chat, settings)) if settings.chat.typed else None
+    )
     try:
         await assistant.run(capture.frames())
     finally:
+        if inbox is not None:
+            inbox.cancel()
         speaker.player.close()
+
+
+async def serve_inbox(assistant: Any, chat: Any, settings: Settings) -> None:
+    """Answer what is written in the chat window (`claudio --ui`), one message at a time.
+    Typed text has no detected language: the first configured one is used."""
+    language = settings.stt.languages[0] if settings.stt.languages else DEFAULT_LANGUAGE
+    while True:
+        try:
+            pending = await asyncio.to_thread(chat.take_pending, settings.chat.max_age_s)
+            for _, text in pending:
+                await assistant.handle_typed(text, language, speak=settings.chat.speak_typed)
+        except Exception:  # a locked or broken database: try again at the next poll
+            log.exception("Messaggi della finestra non letti")
+        await asyncio.sleep(settings.chat.poll_s)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -38,6 +38,7 @@ class LocalResponder:
         voiced: Collection[str] | None = None,
         fallback: Fallback | None = None,
         fallback_info: Callable[[], dict[str, Any]] | None = None,
+        on_prepare: Callable[[], None] | None = None,
     ) -> None:
         self.matcher = matcher
         self.actions = actions
@@ -46,10 +47,21 @@ class LocalResponder:
         self.voiced = voiced  # languages with their own voice (None: all of them)
         self.fallback = fallback  # None: "Questo non lo so ancora fare"
         self.fallback_info = fallback_info  # details of the last fallback call, for the metrics
+        self.on_prepare = on_prepare  # a request is coming: get ready (Claude's connection)
         self.last_route: dict[str, Any] = {}
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
         self._last_reply: tuple[str, str] | None = None  # (text, language) for "ripeti"
+
+    def prepare(self) -> None:
+        """JenJo started speaking to Claudio: whatever the request needs can get ready now.
+        Never raises: a slow or failed preparation only loses the head start."""
+        if self.on_prepare is None or self.actions.system.paused:
+            return
+        try:
+            self.on_prepare()
+        except Exception:
+            log.exception("Preparazione della risposta non riuscita")
 
     def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
         """A local command matches `text` (the assistant retries in Italian when not)."""

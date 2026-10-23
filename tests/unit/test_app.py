@@ -67,6 +67,10 @@ class FakeResponder:
         self.language = "it"
         self.awaiting = False
         self.asked_question = False
+        self.prepared = 0
+
+    def prepare(self) -> None:
+        self.prepared += 1
 
     def understands(self, text: str, language: str = "it") -> bool:
         return True
@@ -175,6 +179,7 @@ async def test_normal_path(fake_vad, vad_settings, make_frames, tmp_path) -> Non
     assert speaker.beeps == ["wake"]
     assert speaker.spoken == ["Apro Chrome."]
     assert responder.seen == ["apri chrome"]
+    assert responder.prepared == 1  # at the wake word: Claude's connection opens early
     assert stt.audio is not None and len(stt.audio) > 16000
     assert assistant.state is State.IDLE
     assert wake.resets == 1
@@ -628,3 +633,62 @@ def test_history_is_bounded(fake_vad, vad_settings) -> None:
         assistant.history.append({"n": i})
     assert len(assistant.history) == HISTORY_MAX
     assert assistant.history[-1] == {"n": HISTORY_MAX + 49}
+
+
+# --- v0.2.2: messages written in the chat window --------------------------------------
+
+
+async def test_typed_message_is_answered_in_silence(fake_vad, vad_settings, tmp_path) -> None:
+    assistant, _, speaker, responder = build(fake_vad, vad_settings, FakeStt(), set(), tmp_path)
+    reply = await assistant.handle_typed("apri chrome", "it")
+    assert reply == "Apro Chrome." and responder.seen == ["apri chrome"]
+    assert speaker.spoken == [] and speaker.beeps == []  # JenJo's choice: written reply only
+    row = assistant.history[-1]
+    assert row["wake_word"] == "typed" and row["text"] == "apri chrome"
+    assert row["reply"] == "Apro Chrome." and row["outcome"] == "ok"
+    assert assistant.state is State.IDLE
+
+
+async def test_typed_message_can_be_spoken(fake_vad, vad_settings) -> None:
+    assistant, _, speaker, _ = build(fake_vad, vad_settings, FakeStt(), set())
+    await assistant.handle_typed("apri chrome", "it", speak=True)
+    assert speaker.spoken == ["Apro Chrome."]
+
+
+async def test_typed_message_waits_for_the_spoken_request(fake_vad, vad_settings) -> None:
+    assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt(), set())
+    assistant.state = State.SPEAKING
+    task = asyncio.create_task(assistant.handle_typed("apri chrome", "it"))
+    await asyncio.sleep(0.12)
+    assert responder.seen == []  # not while Claudio speaks
+    assistant.state = State.IDLE
+    await task
+    assert responder.seen == ["apri chrome"]
+
+
+async def test_typed_actions_to_confirm_need_the_voice(fake_vad, vad_settings) -> None:
+    assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt(), set())
+    cancelled: list[bool] = []
+    responder.awaiting = True  # the router asked "Confermi?"
+    responder.cancel_pending = lambda: cancelled.append(True)  # type: ignore[method-assign]
+    reply = await assistant.handle_typed("chiudi la finestra", "it")
+    assert "a voce" in reply and cancelled
+    assert assistant.history[-1]["outcome"] == "needs_voice"
+
+
+async def test_serve_inbox_answers_the_window(fake_vad, vad_settings, tmp_path) -> None:
+    from claudio.__main__ import serve_inbox
+    from claudio.chat.store import ChatStore
+    from claudio.config import Settings
+
+    store = ChatStore(tmp_path / "claudio.db", "s")
+    assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt(), set())
+    store.enqueue("apri chrome")
+    settings = Settings(chat={"poll_s": 0.05})
+    task = asyncio.create_task(serve_inbox(assistant, store, settings))
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if responder.seen:
+            break
+    task.cancel()
+    assert responder.seen == ["apri chrome"]

@@ -43,23 +43,43 @@ _ABBREV_TAIL = re.compile(r"([A-Za-zÀ-ÿ]+)\.$")
 
 
 class SentenceSplitter:
-    """Incremental: feed() chunks, get complete sentences; flush() returns the rest."""
+    """Incremental: feed() chunks, get complete sentences; flush() returns the rest.
 
-    def __init__(self, max_chars: int = 220) -> None:
+    `first_clause_chars` > 0: the FIRST piece may end at a comma once it is at least that
+    long ("Se in Italia sono le 22 e 51," is spoken while Claude writes the rest), so the
+    voice starts sooner. 0: whole sentences only."""
+
+    def __init__(self, max_chars: int = 220, first_clause_chars: int = 0) -> None:
         self.max_chars = max_chars
+        self.first_clause_chars = first_clause_chars
         self._buf = ""
+        self._first = True
 
     def feed(self, chunk: str) -> list[str]:
         self._buf += chunk
         out = []
         while True:
             cut = self._find_cut()
+            if self._first and self.first_clause_chars:
+                clause = self._clause_cut()
+                if clause is not None and (cut is None or clause < cut):
+                    cut = clause
             if cut is None:
                 break
             sentence, self._buf = self._buf[:cut].strip(), self._buf[cut:]
             if sentence:
                 out.append(sentence)
+                self._first = False
         return out
+
+    def _clause_cut(self) -> int | None:
+        """After the first comma followed by a space (not "3,5") past first_clause_chars."""
+        start = self.first_clause_chars
+        while (i := self._buf.find(",", start)) != -1 and i + 1 < len(self._buf):
+            if self._buf[i + 1].isspace():
+                return i + 1
+            start = i + 1
+        return None
 
     def flush(self) -> list[str]:
         rest, self._buf = self._buf.strip(), ""
@@ -100,8 +120,10 @@ class SentenceSplitter:
         return word.lower() in ABBREVIATIONS
 
 
-async def split_stream(chunks: AsyncIterator[str], max_chars: int = 220) -> AsyncIterator[str]:
-    splitter = SentenceSplitter(max_chars)
+async def split_stream(
+    chunks: AsyncIterator[str], max_chars: int = 220, first_clause_chars: int = 0
+) -> AsyncIterator[str]:
+    splitter = SentenceSplitter(max_chars, first_clause_chars)
     async for chunk in chunks:
         for sentence in splitter.feed(chunk):
             yield sentence

@@ -1,6 +1,28 @@
 # Changelog
 
-## [Unreleased] - 0.2.1
+## [Unreleased] - 0.2.2
+
+### Added
+- Sonnet when a request needs reasoning: Haiku hands it over with the `ask_sonnet` tool (after a
+  short "Ci penso un attimo."), or JenJo asks directly ("pensaci bene", "think hard").
+  `[claude] smart_model`, `smart_effort`, `smart_max_tokens`, `escalate`, `smart_phrases`; both
+  calls are counted by the spending counter. Sonnet without prices in `pricing.toml` stays off.
+- Prompt caching (automatic `cache_control`): from the second turn of a conversation the history
+  is read from the cache. `[claude] cache`.
+- Claude knows the local date and time (in the user message, after the cached prefix).
+- Writing to Claudio from the chat window: a text box under the chat. The window puts the message
+  in the `inbox` table of `data/claudio.db`, the assistant answers it between spoken requests
+  (written reply only, `[chat] speak_typed`). `POST /api/send` needs JSON, no foreign Origin and
+  the random token of the page. Level 2-3 actions written there need a spoken confirmation.
+
+### Changed (latency)
+- The HTTPS connection to the API opens at the wake word (free models lookup) and stays open 60 s
+  (`[claude] keepalive_s`; httpx closed it after 5 s): no TCP/TLS handshake on the request.
+- The first piece of a reply may end at a comma once it is 25 characters long
+  (`[tts] first_clause_chars`), and the prompt asks for a short first sentence: the voice starts
+  before the whole first sentence has arrived.
+
+## 0.2.1
 
 ### Added (chat window)
 - `claudio --ui` opens the chat in its own window (pywebview/WebView2 over a local FastAPI

@@ -11,7 +11,7 @@ Microphone ─► openWakeWord ("Hey Claudio") ─► beep
            └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router ─► Kokoro, Nicola's voice (sentence by sentence)
 ```
 
-Status: **v0.2.0**, Phase 2 (Claude), first iteration. The wake word is our own "Hey Claudio", trained
+Status: **v0.2.2**, Phase 2 (Claude), third iteration. The wake word is our own "Hey Claudio", trained
 on the owner's voice (see [scripts/wakeword/README.md](scripts/wakeword/README.md); the model
 file is not in Git). "Claudio" alone is trained too but not reliable enough yet, so it is off.
 Full specification (in Italian): [CLAUDE.md](CLAUDE.md).
@@ -120,6 +120,12 @@ reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
 `config/claudio.toml` (`enabled = false` for local only). A Haiku question costs about
 0.0002 USD.
 
+What needs reasoning goes to **Sonnet**: Haiku hands it over by itself (you hear "Ci penso un
+attimo."), or start the request with "pensaci bene" / "think hard". A Sonnet answer costs about
+0.004 USD. From the second turn of a conversation the history is read from the prompt cache
+(10 % of the price). Claude also knows the current date and time. `smart_model = ""` keeps
+Haiku only.
+
 ## Jack's voice (optional, personal use)
 
 `engine = "jack"` in `[tts]` speaks with a Qwen3-TTS model fine-tuned on Handsome Jack's Italian
@@ -142,6 +148,10 @@ the fallback for English and for any sentence the worker cannot speak.
 all of them at the top, see what each answer cost. It reads `data/claudio.db`, so it works with
 Claudio running (it updates by itself) or not. Messages older than `logging.retention_days`
 (30) are deleted when Claudio starts.
+
+You can also **write to Claudio** in the box at the bottom (Enter sends): with Claudio running,
+it answers in the chat, in silence (`[chat] speak_typed = true` to hear it too). Commands work
+as well ("apri chrome"); actions that need a confirmation must be asked by voice.
 
 ## Session logs
 

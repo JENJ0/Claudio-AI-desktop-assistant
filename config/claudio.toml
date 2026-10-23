@@ -83,6 +83,7 @@ effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
+first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
 [tts.voices.en]            # the voices for English replies (same engine, same effect)
 kokoro_voice = "am_michael"
@@ -117,6 +118,22 @@ timeout_s = 10.0
 history_turns = 6              # question/answer pairs sent back as context (0 = none)
 history_reset_s = 300          # after 5 minutes of silence the context starts over
 conversation_min_words = 3     # without the wake word: shorter phrases are not sent to Claude
+cache = true                   # prompt caching: from the 2nd turn the conversation costs 10 %
+tell_time = true               # Claude gets the local date and time with each request
+keepalive_s = 60               # the connection to the API stays open this long between requests
+# Sonnet for reasoning: Haiku hands a request over by itself (escalate), or say "pensaci bene".
+smart_model = "claude-sonnet-5-5"  # must be in config/pricing.toml; "" = Haiku only
+smart_effort = "low"           # low | medium | high
+smart_max_tokens = 1024        # its thinking counts here too
+escalate = true
+smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"], en = ["think hard", "think carefully", "think it through"] }
+
+# The chat window (uv run claudio --ui): what you write there reaches the running assistant.
+[chat]
+typed = true                   # answer the messages written in the window
+speak_typed = false            # true: say the reply aloud too
+poll_s = 0.3
+max_age_s = 120                # messages written while Claudio was off are dropped
 
 [logging]
 level = "INFO"

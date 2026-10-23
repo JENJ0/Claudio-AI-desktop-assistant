@@ -55,6 +55,11 @@ class Responder(Protocol):
         """Claude's last reply ended with a question: the next phrase is its answer."""
         ...
 
+    def prepare(self) -> None:
+        """A request is coming (wake word, or speech in the conversation window): open
+        connections now, while JenJo is still talking."""
+        ...
+
     def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
         """A local command matches `text`."""
         ...

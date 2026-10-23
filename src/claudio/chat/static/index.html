@@ -47,6 +47,16 @@
   mark { background: var(--mark); color: inherit; border-radius: 3px; }
   .day { align-self: center; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
   .empty { margin: auto; color: var(--muted); text-align: center; }
+  .msg.pending { opacity: .6; }
+  form#send { display: flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line);
+              background: var(--panel); align-items: flex-end; }
+  form#send textarea { flex: 1; resize: none; max-height: 160px; padding: 9px 12px; border-radius: 10px;
+                       border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  form#send textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  form#send button { padding: 9px 16px; border: 0; border-radius: 10px; background: var(--accent);
+                     color: #fff; font: inherit; cursor: pointer; }
+  form#send button:disabled { opacity: .5; cursor: default; }
+  #status { padding: 0 20px 8px; color: var(--muted); font-size: 12px; min-height: 8px; background: var(--panel); }
   @media (max-width: 700px) { aside { display: none; } }
 </style>
 </head>
@@ -62,6 +72,11 @@
     <span id="title"></span>
   </header>
   <div id="chat"></div>
+  <form id="send" autocomplete="off">
+    <textarea id="text" rows="1" maxlength="1000" placeholder="Scrivi a Claudio… (Invio per inviare, Maiusc+Invio per andare a capo)"></textarea>
+    <button id="go" type="submit">Invia</button>
+  </form>
+  <div id="status" aria-live="polite"></div>
 </main>
 <script>
 "use strict";
@@ -71,6 +86,8 @@ let session = null;      // selected session (null = the newest)
 let lastId = 0;          // newest message shown, for polling
 let query = "";
 let lastDay = "";
+const TOKEN = "__CLAUDIO_TOKEN__";  // put here by the local server: only this page can send
+let pending = null;      // {id, text, el, since}: a typed message waiting for its answer
 
 const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 const fmtDay = (ts) => new Date(ts * 1000).toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
@@ -99,6 +116,7 @@ function highlight(el, text) {
 }
 
 function addMessage(m) {
+  if (pending && m.role === "user" && m.text === pending.text) clearPending();
   const day = fmtDay(m.ts);
   if (day !== lastDay) {
     lastDay = day;
@@ -154,6 +172,63 @@ async function poll() {           // new messages of the open session, no search
   if (atBottom) chat.scrollTop = chat.scrollHeight;
 }
 
+function clearPending() {
+  if (pending) { pending.el.remove(); pending = null; }
+}
+
+async function send(text) {
+  const r = await fetch("/api/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, token: TOKEN }),
+  });
+  if (!r.ok) throw new Error(r.status);
+  return (await r.json()).id;
+}
+
+async function followPending() {    // fast while waiting: is the assistant taking it?
+  if (!pending) return;
+  const { state } = await api(`/api/inbox/${pending.id}`);
+  const waited = (Date.now() - pending.since) / 1000;
+  if (state === "pending" && waited > 4) {
+    $("status").textContent = "Claudio non sta rispondendo: è avviato? (uv run claudio)";
+  } else if (state === "taken") {
+    $("status").textContent = "Claudio sta rispondendo…";
+  } else if (state === "expired") {
+    $("status").textContent = "Messaggio scaduto: Claudio non era avviato.";
+    clearPending();
+  }
+}
+
+$("send").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const box = $("text");
+  const text = box.value.replace(/\s+/g, " ").trim();
+  if (!text || pending) return;
+  $("go").disabled = true;
+  try {
+    const id = await send(text);
+    box.value = "";
+    if (query.trim() || chat.querySelector(".empty")) { $("q").value = ""; query = ""; }
+    session = null;              // the answer goes in the running session: the newest
+    await start();
+    const el = document.createElement("div");
+    el.className = "msg user pending"; el.textContent = text;
+    chat.append(el); chat.scrollTop = chat.scrollHeight;
+    pending = { id, text, el, since: Date.now() };
+    $("status").textContent = "Inviato.";
+  } catch {
+    $("status").textContent = "Invio non riuscito.";
+  } finally {
+    $("go").disabled = false;
+    box.focus();
+  }
+});
+
+$("text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("send").requestSubmit(); }
+});
+
 async function refreshSessions() {
   const [list, today] = await Promise.all([api("/api/sessions"), api("/api/today")]);
   $("today").textContent = `Oggi: ${today.cost.toFixed(4)} $`;
@@ -190,6 +265,10 @@ $("q").addEventListener("input", (e) => {
 
 start().catch(() => showEmpty("Impossibile leggere le conversazioni."));
 setInterval(() => { poll().then(refreshSessions).catch(() => {}); }, 2000);
+setInterval(() => {
+  if (!pending) return;
+  followPending().then(poll).then(() => { if (!pending) $("status").textContent = ""; }).catch(() => {});
+}, 500);
 </script>
 </body>
 </html>
