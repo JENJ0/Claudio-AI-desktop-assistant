@@ -99,3 +99,7 @@ class Speaker(Protocol):
     def interrupt(self) -> None:
         """Stop the reply being spoken."""
         ...
+
+    def duck(self, volume: float | None) -> None:
+        """Lower the reply being spoken to `volume` (0-1); None: full volume again."""
+        ...

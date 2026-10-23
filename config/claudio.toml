@@ -40,7 +40,9 @@ min_speech_ms = 64         # speech needed to consider the phrase started
 end_silence_ms = 400       # silence that closes the phrase
 pre_roll_ms = 800          # audio kept before the detected start (soft first words)
 no_speech_timeout_s = 4.0  # nothing said after the wake word -> back to idle
-max_utterance_s = 8.0
+max_utterance_s = 15.0    # a long question for Claude fits
+long_end_silence_ms = 800  # after long_after_s of speech the phrase needs this pause to end (thinking mid-sentence)
+long_after_s = 1.5         # shorter phrases (commands) still end after end_silence_ms
 
 [stt]
 model = "large-v3-turbo"
@@ -97,8 +99,13 @@ error_reply = { it = "Non ci sono riuscito.", en = "I couldn't do it." }
 
 [conversation]
 window_s = 6.0             # after a reply, listen this long without the wake word (0 = off)
-barge_in = true            # "basta" / "stop" while CLAUDIO speaks interrupts it (best with headphones)
-barge_in_max_s = 2.0       # speech heard while speaking is checked in slices this long
+barge_in = true            # talking while CLAUDIO speaks interrupts it: "basta" ends, anything else is the next request
+barge_in_max_s = 1.2       # speech heard while speaking is checked in slices this long
+barge_in_mode = "duck"     # duck: lower the reply at once, stop on real words | stop: stop at once | confirm: wait for words
+barge_in_min_dbfs = -30.0  # the voice must be this loud (JenJo at the microphone: -11..-30; the TV and the echo: quieter)
+barge_in_vad = 0.6         # speech probability needed while speaking (stricter than [vad] threshold)
+barge_in_min_speech_ms = 300  # voice this long before anything happens (a cough is shorter)
+duck_volume = 0.3          # the reply's volume while Whisper checks what was said
 only_addressed = false     # true: without the wake word only questions, "dimmi..." or the name reach Claude
 
 # Noise transcribed as words (the TV, a cough): what never reaches Claude. Local commands are

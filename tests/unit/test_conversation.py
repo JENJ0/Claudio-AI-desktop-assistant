@@ -143,7 +143,8 @@ def test_is_stop(matcher: CommandMatcher, text: str, stop: bool) -> None:
 def test_conversation_settings_are_shipped() -> None:
     s = load_settings()
     assert s.conversation.window_s == 6.0
-    assert s.conversation.barge_in and s.conversation.barge_in_max_s == 2.0
+    assert s.conversation.barge_in and s.conversation.barge_in_max_s == 1.2
+    assert s.conversation.barge_in_mode == "duck"
 
 
 def test_endpointer_timeout_can_be_changed_per_phrase(fake_vad, vad_settings) -> None:
@@ -365,13 +366,14 @@ class LongSpeaker(FakeSpeaker):
         self.spoken.append(text)
 
 
-def barge(vad_settings: VadSettings, heard: list[str]) -> BargeIn:
+def barge(vad_settings: VadSettings, heard: list[str], **kwargs) -> BargeIn:
     from tests.conftest import FakeVad
 
     texts = iter(heard)
     return BargeIn(
         Endpointer(FakeVad(), vad_settings.model_copy(update={"max_utterance_s": 2.0})),
         lambda audio: next(texts, ""),
+        **kwargs,
     )
 
 
@@ -457,3 +459,154 @@ async def test_basta_cancels_a_question_being_asked(
     await speak_over(assistant, make_frames, speaker)
     assert speaker.cut and not r.awaiting and rec.combos == []
     assert len(assistant.history) == 1
+
+
+# --- v0.3.2: any request said over the reply stops it and is heard ----------------------
+
+
+async def test_a_request_over_the_reply_stops_it_and_is_answered(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut
+    first, second = list(assistant.history)[:2]
+    assert first["outcome"] == "interrupted" and first["barge_in"] == "che giorno è oggi"
+    assert second["wake_word"] == "barge_in" and second["text"] == "che giorno è oggi"
+    assert second["outcome"] == "ok"
+    assert speaker.ducks[:2] == [0.3, None]  # lowered at once, full volume for the next reply
+    assert speaker.beeps[0] == "wake" and speaker.beeps.count("wake") >= 1
+
+
+async def test_noise_over_the_reply_only_lowers_it_for_a_moment(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono"],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["eh"]),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert not speaker.cut
+    assert speaker.ducks == [0.3, None]
+    assert [r["outcome"] for r in assistant.history] == ["ok"]
+
+
+async def test_a_quiet_voice_over_the_reply_is_not_even_transcribed(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    heard: list[str] = []
+    b = barge(vad_settings, ["che giorno è oggi"], min_dbfs=0.0)  # nothing is that loud
+    transcribe = b.transcribe
+    b.transcribe = lambda audio: heard.append("x") or transcribe(audio)
+    assistant, _, _, _ = build(
+        fake_vad, vad_settings, matcher, ["che ore sono"], window_s=0.0, speaker=speaker, barge_in=b
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert not speaker.cut and heard == [] and speaker.ducks == []
+
+
+async def test_stop_mode_cuts_the_reply_as_soon_as_a_voice_starts(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, [], mode="stop"),  # Whisper is not even asked
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut and speaker.ducks == [None]
+    rows = list(assistant.history)
+    assert rows[0]["barge_in"] == "voice" and rows[1]["wake_word"] == "barge_in"
+    assert rows[1]["text"] == "che giorno è oggi"
+
+
+async def test_confirm_mode_does_not_lower_the_reply(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"], mode="confirm"),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut and speaker.ducks == [None]
+
+
+def test_the_reply_echo_is_not_a_request(fake_vad, vad_settings, matcher) -> None:
+    assistant, _, _, _ = build(fake_vad, vad_settings, matcher, ["x"])
+    assistant._reply_parts = ["Sono le 14 ", "e 5, capo."]
+    assert not assistant._is_talking_to_me("sono le 14 e 5")
+    assert assistant._is_talking_to_me("aspetta, che giorno è oggi?")
+    assert assistant._is_talking_to_me("Claudio")  # the name alone
+    assert not assistant._is_talking_to_me("eh")
+    assert not assistant._is_talking_to_me("")
+
+
+# --- a longer pause closes a longer phrase ------------------------------------------------
+
+
+def test_a_long_phrase_gets_a_longer_pause(fake_vad, vad_settings, make_frames) -> None:
+    settings = vad_settings.model_copy(update={"long_end_silence_ms": 800, "long_after_s": 1.5})
+    ep = Endpointer(fake_vad, settings)
+    events = [ep.process(f) for f in make_frames("speech", 640) + make_frames("silence", 480)]
+    assert EndpointEvent.END in events  # a command: 0.4 s of pause is enough
+
+    ep.reset()
+    events = [ep.process(f) for f in make_frames("speech", 2000) + make_frames("silence", 560)]
+    assert EndpointEvent.END not in events  # a question: a short pause to think
+    events = [ep.process(f) for f in make_frames("speech", 400) + make_frames("silence", 960)]
+    assert EndpointEvent.END in events
+    assert len(ep.audio()) > 16000 * 2.4
+
+
+def test_resume_continues_a_phrase_already_begun(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    start = np.concatenate(make_frames("speech", 480)).astype(np.float32) / 32768.0
+    ep.resume(start)
+    assert ep.started
+    assert ep.stats()["speech_dbfs"] > -20  # its level counts (not "too far away")
+    events = [ep.process(f) for f in make_frames("silence", 480)]
+    assert EndpointEvent.END in events and EndpointEvent.TIMEOUT not in events
+    assert len(ep.audio()) >= len(start)
+
+
+def test_player_lowers_only_replies(monkeypatch) -> None:
+    import claudio.audio.player as player_module
+
+    written: list[np.ndarray] = []
+
+    class Stream:
+        def write(self, data: np.ndarray) -> None:
+            written.append(data)
+
+    p = player_module.AudioPlayer(10000, device=0)
+    p._stream = Stream()
+    p.gain = 0.5
+    p.write(np.full(2000, 1000, np.int16), cancel=threading.Event())
+    assert all(int(chunk.max()) == 500 for chunk in written)
+    written.clear()
+    p.write(np.full(2000, 1000, np.int16))  # a beep: never lowered
+    assert int(written[0].max()) == 1000

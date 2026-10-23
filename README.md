@@ -99,9 +99,12 @@ question and answer goes to the log.
 After a reply CLAUDIO keeps listening for 6 seconds without the wake word (a beep says so):
 another command needs no "Hey Claudio". The window closes on silence, on "basta", or on
 anything that is not a command (the TV, someone else talking), with a low beep and no reply.
-While it speaks, CLAUDIO also listens for "basta" / "stop" and stops at once: with speakers its
-own voice reaches the microphone too, so headphones work best. Both are in `[conversation]`
-(`window_s = 0` turns the window off, `barge_in = false` the listening while speaking).
+While it speaks, CLAUDIO keeps listening. A voice close to the microphone (`barge_in_min_dbfs`,
+at least 0.3 s) lowers the reply at once; when Whisper hears words the reply stops and what you
+said becomes the next request, without "Hey Claudio" ("basta" / "stop" only stops). Noise brings
+the volume back. Its own voice coming back through speakers is recognised and ignored, but
+headphones still work best. All of it is in `[conversation]` (`window_s = 0` turns the window
+off, `barge_in = false` the listening while speaking, `barge_in_mode` how it reacts).
 
 ## Claude (questions)
 

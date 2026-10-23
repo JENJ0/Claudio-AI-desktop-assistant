@@ -89,6 +89,7 @@ class Endpointer:
         self._silence_run = 0
         self._elapsed = 0
         self._utterance_len = 0
+        self._start_len = 0  # the utterance's length when the speech began (pre-roll, lead-in)
         self._listened: list[np.ndarray] = []
         self._max_prob = 0.0
         self._energy = 0.0
@@ -137,6 +138,7 @@ class Endpointer:
                 if self._elapsed <= ONE_BREATH_S * self.sample_rate and self._lead_in.size:
                     self._chunks.insert(0, self._lead_in)
                 self._utterance_len = sum(len(c) for c in self._chunks)
+                self._start_len = self._utterance_len
                 return EndpointEvent.START
             if self._elapsed >= self._timeout_s * self.sample_rate:
                 self._finished = True
@@ -147,12 +149,42 @@ class Endpointer:
         self._utterance_len += self._win
         self._silence_run = self._silence_run + self._win if prob < self._neg_threshold else 0
         if (
-            self._silence_run * 1000 >= s.end_silence_ms * self.sample_rate
+            self._silence_run * 1000 >= self._end_silence_ms() * self.sample_rate
             or self._utterance_len >= s.max_utterance_s * self.sample_rate
         ):
             self._finished = True
             return EndpointEvent.END
         return EndpointEvent.NONE
+
+    def _end_silence_ms(self) -> int:
+        """The pause that closes the phrase: short for a command ("apri Chrome"), longer once
+        the phrase has gone on for long_after_s (a question: people stop to think)."""
+        s = self.settings
+        spoken = self._utterance_len - self._start_len - self._silence_run
+        if s.long_end_silence_ms > s.end_silence_ms and spoken >= s.long_after_s * self.sample_rate:
+            return s.long_end_silence_ms
+        return s.end_silence_ms
+
+    def resume(self, audio: np.ndarray, timeout_s: float | None = None) -> None:
+        """Start a new phrase that has already begun: `audio` (float32) is its start, heard by
+        another listener (the barge-in while CLAUDIO spoke). The next frames continue it."""
+        self.reset(timeout_s=timeout_s)
+        self._started = True
+        self._chunks = [audio.astype(np.float32, copy=False)]
+        self._listened = [self._chunks[0]]  # the saved WAV has the whole request
+        self._utterance_len = len(audio)
+        self._start_len = 0
+        # Its level counts, so the noise filter does not take it for someone far away.
+        win = self._win
+        for i in range(len(audio) // win):
+            window = audio[i * win : (i + 1) * win]
+            self._loudest = max(self._loudest, float(np.dot(window, window)) / win)
+
+    def partial(self) -> np.ndarray:
+        """The phrase heard so far (pre-roll included), float32; empty before it starts."""
+        if not self._chunks:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._chunks)
 
     def _speech_tail(self, audio: np.ndarray) -> np.ndarray:
         """The speech at the end of `audio`, back to the last pause; empty if it ends in a pause."""

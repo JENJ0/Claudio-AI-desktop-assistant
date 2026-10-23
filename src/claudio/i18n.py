@@ -196,6 +196,9 @@ EN: dict[str, str] = {
     "Sentito mentre parlo: %r": "Heard while speaking: %r",
     "Interrotto a voce: %r": "Interrupted by voice: %r",
     "Risposta interrotta": "Reply interrupted",
+    "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
+    "La mia voce rientra nel microfono, la ignoro: %r": "My own voice came back through the microphone, ignored: %r",
+    "Voce troppo debole mentre parlo: ignorata": "Voice too quiet while speaking: ignored",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"
