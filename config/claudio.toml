@@ -151,6 +151,21 @@ smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su
 # A request for detail: Claudio asks "Lo uso?" for Sonnet at once (no Haiku call).
 offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"], en = ["in detail", "in depth", "explain thoroughly"] }
 
+# Claude acts on the PC with tools (Phase 3). Level 1 runs at once (open, search, read the
+# windows, harmless keys); type, close a window, move a file and other keys ask "Confermi?"
+# first, by voice only. Levels are fixed in code (src/claudio/pc/tools.py), never by Claude.
+[pc]
+enabled = true                 # false: Claude answers but does not act on the PC
+max_rounds = 4                 # tool round trips per request
+max_tokens = 400
+roots = ["~"]                  # folders Claudio may search, open and move in ("~" = C:\Users\you)
+type_max_chars = 500
+read_chars = 1500              # window text sent to Claude (~500 tokens)
+read_timeout_s = 2.0
+search_limit = 8
+private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password"]
+# safe_keys = [...]            # keys pressed without asking: see PcSettings in config.py
+
 # The chat window (uv run claudio --ui): what you write there reaches the running assistant.
 [chat]
 typed = true                   # answer the messages written in the window

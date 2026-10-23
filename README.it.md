@@ -120,6 +120,22 @@ conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a l
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
 (`enabled = false` per solo comandi locali). Una domanda a Haiku costa circa 0,0002 USD.
 
+## Azioni sul PC
+
+Con Claude acceso, Claudio agisce anche su Windows (`[pc]` in `config/claudio.toml`): apre app
+dal menu Start, file e cartelle, cerca file con l'indice di Windows, elenca e legge le finestre
+(UI Automation, solo testo, ~1500 caratteri), porta una finestra davanti, preme tasti, digita
+testo, chiude finestre e sposta file. Più azioni in una risposta, fino a 4 giri per richiesta.
+
+I livelli di sicurezza sono fissi nel codice (`src/claudio/pc/tools.py`), mai scelti da Claude:
+aprire, cercare, leggere e i tasti innocui (frecce, Pagina giù, Ctrl+C, Ctrl+T...) partono
+subito; digitare, chiudere una finestra, spostare un file e ogni altro tasto fanno dire a
+Claudio cosa farà, con "Confermi?". Solo un sì breve detto a voce lo esegue (mai dalla chat).
+File: solo dentro la tua cartella utente (`roots = ["~"]`), mai sovrascritti; programmi e
+script non si aprono come file. I gestori di password non vengono mai letti. Ogni azione
+finisce nei log (`tools` in `metrics.jsonl`, "Azioni" in `conversazione.md`). Un'azione con un
+tool costa circa 0,0003-0,0007 USD.
+
 ## Finestra con la chat
 
 Con Claudio acceso (`uv run claudio`) di' **"apri la chat"**, "chat" o "fammi scrivere": la

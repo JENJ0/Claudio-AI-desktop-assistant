@@ -126,6 +126,23 @@ asks "Lo uso?" ("sì" / "no"), or start the request with "pensaci bene" / "think
 (10 % of the price). Claude also knows the current date and time. `smart_model = ""` keeps
 Haiku only.
 
+## Acting on the PC
+
+With Claude on, Claudio also acts on Windows (`[pc]` in `config/claudio.toml`): it opens apps
+from the Start menu and files or folders, searches files with the Windows Search index, lists
+and reads windows (UI Automation, text only, ~1500 characters), brings a window to the front,
+presses keys, types text, closes windows and moves files. Several actions can come in one
+reply, up to 4 round trips per request.
+
+Safety levels are fixed in the code (`src/claudio/pc/tools.py`), never chosen by Claude:
+opening, searching, reading and harmless keys (arrows, Page Down, Ctrl+C, Ctrl+T...) run at once;
+typing, closing a window, moving a file and every other key make Claudio say exactly what it
+will do and ask "Confermi?". Only a short spoken yes runs it (never from the chat window).
+Files: only inside your user folder (`roots = ["~"]`), never overwritten; programs and scripts
+are never opened as files. Password managers are never read. Every action is logged
+(`metrics.jsonl` field `tools`, "Azioni" in `conversazione.md`). An action with one tool costs
+about 0.0003-0.0007 USD.
+
 ## Jack's voice (optional, personal use)
 
 `engine = "jack"` in `[tts]` speaks with a Qwen3-TTS model fine-tuned on Handsome Jack's Italian

@@ -1,5 +1,38 @@
 # Changelog
 
+## [Unreleased] - 0.3.1
+
+### Added
+- Claude acts on the PC (`src/claudio/pc/`, `[pc]` in `config/claudio.toml`): Haiku's tools
+  `open_app` (Start menu apps, classic and Store), `open_path`, `search_files` (Windows Search
+  index, folder walk as fallback), `list_windows`, `read_window` (UI Automation text, cut at
+  `read_chars`, marked as data), `focus_window`, `press_keys`, `type_text`, `close_window`,
+  `move_file`. Several tools per reply, up to `max_rounds` (4) round trips; the last round
+  answers in words only. Tool definitions are part of the cached prefix.
+- Safety levels fixed in code: level 1 runs at once; level 2 (type, close, move, any key not in
+  `safe_keys`) makes Claudio say exactly what will run and ask "Confermi?"; the answer goes
+  through the same checks as a local command's (short yes, voice near the microphone, voice
+  only). JenJo's choice "Equilibrata": harmless keys without asking, apps from the Start menu,
+  files only inside the user folder (`roots`), never overwritten, no programs opened as files,
+  password managers never read.
+- Every action is logged with level, outcome and `tool_ms`; `metrics.jsonl` gets `tools`,
+  `conversazione.md` an "Azioni" line.
+- Dependencies (Windows only): `pywinauto`, `psutil`.
+
+### Fixed after JenJo's test of v0.3.0 (23/10)
+- Self-activation (a 0.34 detection right after a reply): a wake below `[wakeword]
+  confirm_below` (0.45) wakes only if Whisper hears the name or a local command.
+- "Spiegami in dettaglio..." was answered by Haiku: `[claude] offer_phrases` propose Sonnet
+  at once ("Lo uso?"), without a Haiku call; the tool description mentions detail too.
+- Jack is the default voice (`engine = "jack"`, `effect = "none"`), 10% slower
+  (`[tts] jack_speed = 0.9`: stretched before RVC, RVC raises the pitch back).
+- Microphone: `input_device = "auto"` listens to every microphone for 0.6 s and uses the one
+  that hears the most (Windows' own unless another is 10 dB louder or it is silent), and
+  chooses again when it hears nothing for 5 s or only a very quiet room for 60 s.
+  `input_device = ""` follows Windows' default microphone while running.
+- "Claudio" alone wakes again: the `claudio` model is back (`threshold = 0.25`, `confirm =
+  true`): Whisper checks every detection, so its noise costs a Whisper pass, not a wake.
+
 ## [Unreleased] - 0.3.0
 
 ### Changed
@@ -17,20 +50,6 @@
   "noise"`; every request now logs `stt_no_speech` and `stt_logprob` to tune the thresholds.
 - `logging.retention_days` also deletes old `logs/sessions/`, `logs/audio/` WAVs and rotated
   `logs/metrics.jsonl.*` at startup.
-
-### Fixed / changed after JenJo's test (23/10)
-- Self-activation (a 0.34 detection right after a reply): a wake below `[wakeword]
-  confirm_below` (0.45) wakes only if Whisper hears the name or a local command.
-- "Spiegami in dettaglio..." was answered by Haiku: `[claude] offer_phrases` propose Sonnet
-  at once ("Lo uso?"), without a Haiku call; the tool description mentions detail too.
-- Jack is the default voice (`engine = "jack"`, `effect = "none"`), 10% slower
-  (`[tts] jack_speed = 0.9`: stretched before RVC, RVC raises the pitch back).
-- Microphone: `input_device = "auto"` listens to every microphone for 0.6 s and uses the one
-  that hears the most (Windows' own unless another is 10 dB louder or it is silent), and
-  chooses again when it hears nothing for 5 s or only a very quiet room for 60 s.
-  `input_device = ""` follows Windows' default microphone while running.
-- "Claudio" alone wakes again: the `claudio` model is back (`threshold = 0.25`, `confirm =
-  true`): Whisper checks every detection, so its noise costs a Whisper pass, not a wake.
 
 ## 0.2.2
 

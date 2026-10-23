@@ -110,6 +110,8 @@ def format_row(row: dict[str, Any]) -> str:
         lines.append(f"**JenJo:** {row['text']}")
     if row.get("reply"):
         lines.append(f"**Claudio:** {row['reply']}")
+    if row.get("tools"):
+        lines.append("**Azioni:** " + "; ".join(row["tools"]))
     details = []
     for key, label in (("m1_ms", "M1"), ("m2_ms", "M2"), ("stt_ms", "STT")):
         if row.get(key) is not None:
