@@ -120,6 +120,13 @@ conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a l
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
 (`enabled = false` per solo comandi locali). Una domanda a Haiku costa circa 0,0002 USD.
 
+## Finestra con la chat
+
+`uv run claudio --ui` apre le conversazioni in una finestra: scegli una sessione a sinistra,
+cerca in tutte dalla barra in alto, vedi quanto è costata ogni risposta. Legge `data/claudio.db`,
+quindi funziona con Claudio acceso (si aggiorna da sola) o spento. I messaggi più vecchi di
+`logging.retention_days` (30) vengono cancellati all'avvio di Claudio.
+
 ## Log delle sessioni
 
 Ogni avvio scrive `logs/sessions/<data>_<ora>/console.log` e `conversazione.md` (richieste,

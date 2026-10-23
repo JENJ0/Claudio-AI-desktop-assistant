@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claudio</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f27; --muted: #6a7280; --line: #e3e6ec;
+    --me: #dbe7ff; --bot: #ffffff; --accent: #3b6df2; --mark: #fff0a8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161b; --panel: #1b1e25; --text: #e8eaf0; --muted: #98a0b0; --line: #2b2f39;
+      --me: #27395f; --bot: #232731; --accent: #7a9bff; --mark: #6b5b12;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
+         display: flex; }
+  aside { width: 280px; background: var(--panel); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; flex-shrink: 0; }
+  aside h1 { font-size: 17px; margin: 0; padding: 16px 16px 8px; }
+  #today { padding: 0 16px 12px; color: var(--muted); font-size: 13px; }
+  #sessions { overflow-y: auto; flex: 1; }
+  .session { padding: 10px 16px; border-top: 1px solid var(--line); cursor: pointer; }
+  .session:hover, .session.active { background: var(--bg); }
+  .session.active { box-shadow: inset 3px 0 var(--accent); }
+  .session .when { font-weight: 600; font-size: 13px; }
+  .session .prev { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden;
+                   text-overflow: ellipsis; }
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+           display: flex; gap: 12px; align-items: center; }
+  header input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+                 background: var(--bg); color: var(--text); font: inherit; }
+  header input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  #title { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 6px; }
+  .msg { max-width: min(640px, 82%); padding: 9px 13px; border-radius: 14px; border: 1px solid var(--line);
+         white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--me); border-bottom-right-radius: 4px; }
+  .msg.claudio { align-self: flex-start; background: var(--bot); border-bottom-left-radius: 4px; }
+  .meta { font-size: 12px; color: var(--muted); margin: 0 4px 8px; }
+  .meta.user { align-self: flex-end; }
+  mark { background: var(--mark); color: inherit; border-radius: 3px; }
+  .day { align-self: center; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+  .empty { margin: auto; color: var(--muted); text-align: center; }
+  @media (max-width: 700px) { aside { display: none; } }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Claudio</h1>
+  <div id="today"></div>
+  <div id="sessions"></div>
+</aside>
+<main>
+  <header>
+    <input id="q" type="search" placeholder="Cerca in tutte le conversazioni…" autocomplete="off">
+    <span id="title"></span>
+  </header>
+  <div id="chat"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const chat = $("chat");
+let session = null;      // selected session (null = the newest)
+let lastId = 0;          // newest message shown, for polling
+let query = "";
+let lastDay = "";
+
+const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+const fmtDay = (ts) => new Date(ts * 1000).toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+const fmtCost = (c) => (c ? `${c < 0.01 ? c.toFixed(5) : c.toFixed(3)} $` : "");
+
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+function highlight(el, text) {
+  el.textContent = "";
+  const q = query.trim().toLowerCase();
+  if (!q) { el.textContent = text; return; }
+  const low = text.toLowerCase();
+  let i = 0, j;
+  while ((j = low.indexOf(q, i)) !== -1) {
+    el.append(text.slice(i, j));
+    const m = document.createElement("mark");
+    m.textContent = text.slice(j, j + q.length);
+    el.append(m);
+    i = j + q.length;
+  }
+  el.append(text.slice(i));
+}
+
+function addMessage(m) {
+  const day = fmtDay(m.ts);
+  if (day !== lastDay) {
+    lastDay = day;
+    const d = document.createElement("div");
+    d.className = "day"; d.textContent = day;
+    chat.append(d);
+  }
+  const b = document.createElement("div");
+  b.className = `msg ${m.role}`;
+  highlight(b, m.text);
+  chat.append(b);
+  const meta = document.createElement("div");
+  meta.className = `meta ${m.role}`;
+  const parts = [fmtTime(m.ts)];
+  if (m.role === "claudio") {
+    if (m.route) parts.push(m.route === "claude" ? (m.model || "claude") : m.route);
+    if (m.cost) parts.push(fmtCost(m.cost));
+    if (m.m2_ms) parts.push(`${Math.round(m.m2_ms)} ms`);
+  }
+  meta.textContent = parts.join(" · ");
+  chat.append(meta);
+  lastId = Math.max(lastId, m.id);
+}
+
+function showEmpty(text) {
+  chat.textContent = "";
+  const e = document.createElement("div");
+  e.className = "empty"; e.textContent = text;
+  chat.append(e);
+}
+
+async function load() {          // full reload: session or search changed
+  chat.textContent = ""; lastId = 0; lastDay = "";
+  const p = new URLSearchParams({ limit: "300" });
+  if (query.trim()) p.set("q", query.trim()); else if (session) p.set("session", session);
+  const msgs = await api(`/api/messages?${p}`);
+  if (!msgs.length) {
+    showEmpty(query.trim() ? "Nessun risultato." : "Ancora nessuna conversazione. Di' \"Hey Claudio\"!");
+  }
+  msgs.forEach(addMessage);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function poll() {           // new messages of the open session, no search
+  if (query.trim()) return;
+  const p = new URLSearchParams({ after_id: String(lastId) });
+  if (session) p.set("session", session);
+  const msgs = await api(`/api/messages?${p}`);
+  if (!msgs.length) return;
+  if (!lastId) chat.textContent = "";
+  const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+  msgs.forEach(addMessage);
+  if (atBottom) chat.scrollTop = chat.scrollHeight;
+}
+
+async function refreshSessions() {
+  const [list, today] = await Promise.all([api("/api/sessions"), api("/api/today")]);
+  $("today").textContent = `Oggi: ${today.cost.toFixed(4)} $`;
+  const box = $("sessions");
+  box.textContent = "";
+  if (session === null && list.length) session = list[0].session;
+  for (const s of list) {
+    const el = document.createElement("div");
+    el.className = "session" + (s.session === session ? " active" : "");
+    const when = document.createElement("div");
+    when.className = "when";
+    when.textContent = `${fmtDay(s.started)}, ${fmtTime(s.started)} · ${s.messages} msg`;
+    const prev = document.createElement("div");
+    prev.className = "prev"; prev.textContent = s.preview || "";
+    el.append(when, prev);
+    el.onclick = () => { session = s.session; $("q").value = ""; query = ""; start(); };
+    box.append(el);
+  }
+  const cur = list.find((s) => s.session === session);
+  $("title").textContent = query.trim() ? "Risultati della ricerca"
+    : cur ? `${cur.messages} messaggi${cur.cost ? " · " + fmtCost(cur.cost) : ""}` : "";
+}
+
+async function start() {
+  await refreshSessions();
+  await load();
+}
+
+let timer;
+$("q").addEventListener("input", (e) => {
+  clearTimeout(timer);
+  timer = setTimeout(async () => { query = e.target.value; await refreshSessions(); await load(); }, 250);
+});
+
+start().catch(() => showEmpty("Impossibile leggere le conversazioni."));
+setInterval(() => { poll().then(refreshSessions).catch(() => {}); }, 2000);
+</script>
+</body>
+</html>

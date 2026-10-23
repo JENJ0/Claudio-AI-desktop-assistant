@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from claudio.i18n import tr
+from claudio.tts.numbers import digits_to_words_it
 
 log = logging.getLogger(__name__)
 
@@ -195,7 +196,10 @@ class JackSynth:
     def _speak(self, text: str) -> Iterator[np.ndarray]:
         self._next_id += 1
         rid = self._next_id
-        self._send({"op": "speak", "id": rid, "text": text, "language": "Auto"})
+        # Digits are spelled out: with language "Auto" a bare "22" or "51" is sometimes read in
+        # Spanish. ("Italian" instead of "Auto" is untested on the fine-tuned model.)
+        spoken_text = digits_to_words_it(text)
+        self._send({"op": "speak", "id": rid, "text": spoken_text, "language": "Auto"})
         deadline = time.monotonic() + self.sentence_timeout_s
         finished = False
         try:

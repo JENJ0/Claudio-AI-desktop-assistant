@@ -136,6 +136,13 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
 Startup takes 10-30 s more (models are loaded once). Kokoro (Piper if Kokoro is missing) is
 the fallback for English and for any sentence the worker cannot speak.
 
+## Chat window
+
+`uv run claudio --ui` opens the conversations in a window: pick a session on the left, search
+all of them at the top, see what each answer cost. It reads `data/claudio.db`, so it works with
+Claudio running (it updates by itself) or not. Messages older than `logging.retention_days`
+(30) are deleted when Claudio starts.
+
 ## Session logs
 
 Every run writes `logs/sessions/<date>_<time>/console.log` and `conversazione.md` (requests,

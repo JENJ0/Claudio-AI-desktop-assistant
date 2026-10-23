@@ -64,6 +64,7 @@ class MetricsWriter:
         self,
         path: Path,
         conversation: Any = None,
+        chat: Any = None,
         max_bytes: int = 5_000_000,
         backups: int = 3,
     ) -> None:
@@ -71,6 +72,7 @@ class MetricsWriter:
         self.max_bytes = max_bytes
         self.backups = backups
         self.conversation = conversation  # session_log.ConversationLog: the readable copy
+        self.chat = chat  # chat.store.ChatStore: what the chat window shows
         path.parent.mkdir(parents=True, exist_ok=True)
 
     def _rotate(self) -> None:
@@ -93,6 +95,8 @@ class MetricsWriter:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         if self.conversation is not None:
             self.conversation.add(row)
+        if self.chat is not None:
+            self.chat.add(row)
         if row["m2_ms"] is None:  # timeout, near miss...: nothing was said back
             log.debug("Metriche: %s", row.get("outcome"), extra={"metrics": row})
             return row

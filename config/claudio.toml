@@ -122,3 +122,4 @@ conversation_min_words = 3     # without the wake word: shorter phrases are not 
 level = "INFO"
 save_audio = true          # keep a WAV of what CLAUDIO heard after each wake word (logs/audio/)
 keep_audio = 50            # how many to keep
+retention_days = 30        # the chat (data/claudio.db) forgets what is older than this many days

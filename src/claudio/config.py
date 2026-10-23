@@ -244,6 +244,8 @@ class LoggingSettings(BaseModel):
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
     keep_audio: int = Field(50, ge=1)
     keep_sessions: int = Field(30, ge=1)  # logs/sessions/<date_time>/: console + conversation
+    # Privacy: the chat database (data/claudio.db) forgets what is older than this many days.
+    retention_days: int = Field(30, ge=1)
 
 
 class Settings(BaseSettings):

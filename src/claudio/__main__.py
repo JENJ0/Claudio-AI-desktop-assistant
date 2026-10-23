@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("claudio")
 
+CHAT_DB = "claudio.db"  # in data_dir: every conversation, shown by `claudio --ui`
+
 
 def build_tracker(settings: Settings) -> CostTracker:
     from claudio.cost.pricing import load_pricing
@@ -241,6 +243,7 @@ async def run_assistant(settings: Settings, session: Path) -> None:
     from claudio.audio.level import AutoGain
     from claudio.audio.recorder import UtteranceRecorder
     from claudio.audio.vad import Endpointer, SileroVad
+    from claudio.chat.store import ChatStore
     from claudio.metrics import MetricsWriter
     from claudio.session_log import ConversationLog
     from claudio.stt.transcriber import WhisperTranscriber
@@ -281,6 +284,13 @@ async def run_assistant(settings: Settings, session: Path) -> None:
     )
 
     logs = settings.resolve(settings.logs_dir)
+    chat = ChatStore(settings.resolve(settings.data_dir) / CHAT_DB, session.name)
+    if purged := chat.purge_older_than(settings.logging.retention_days):
+        log.info(
+            "Chat: %d messaggi più vecchi di %d giorni eliminati",
+            purged,
+            settings.logging.retention_days,
+        )
     recorder = (
         UtteranceRecorder(logs / "audio", settings.logging.keep_audio, settings.audio.sample_rate)
         if settings.logging.save_audio
@@ -292,7 +302,7 @@ async def run_assistant(settings: Settings, session: Path) -> None:
         transcriber=transcriber,
         responder=responder,
         speaker=speaker,
-        metrics=MetricsWriter(logs / "metrics.jsonl", ConversationLog(session)),
+        metrics=MetricsWriter(logs / "metrics.jsonl", ConversationLog(session), chat),
         audio_sink=recorder,
         level=level,
         system=system,
@@ -335,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check", action="store_true", help="verifica configurazione, comandi e modelli, poi esci"
     )
+    parser.add_argument("--ui", action="store_true", help="apri la finestra con le conversazioni")
     parser.add_argument("--version", action="version", version=f"CLAUDIO {__version__}")
     args = parser.parse_args(argv)
 
@@ -347,6 +358,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     set_language(settings.language)
     setup_logging(settings.resolve(settings.logs_dir), settings.logging.level)
+    if args.ui:
+        from claudio.chat.window import open_window
+
+        open_window(settings.resolve(settings.data_dir) / CHAT_DB)
+        return 0
     session = None
     if not args.check and not args.text:
         from claudio.session_log import start_session
