@@ -206,3 +206,14 @@ def test_a_worker_that_fails_after_some_audio_is_not_repeated_by_the_fallback(
     synth.start()
     pieces = list(synth.stream("Ciao."))
     assert len(pieces) == 1 and fallback.texts == []
+
+
+def test_digits_reach_the_worker_as_italian_words(tmp_path, synths) -> None:
+    synth, _ = make(tmp_path, "ok", startup_timeout_s=10, sentence_timeout_s=2)
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    synth.synthesize("Sono le 20 e 13.")
+    assert [m["text"] for m in sent if m["op"] == "speak"] == ["Sono le venti e tredici."]
