@@ -224,6 +224,21 @@ class ConversationSettings(BaseModel):
     only_addressed: bool = False
 
 
+class NoiseSettings(BaseModel):
+    """Noise transcribed as words (the TV, a cough, "Tremi un podcast"): a phrase no command
+    understands is not sent to Claude when it is short and Whisper was unsure of all of it, or
+    when it was too quiet to be someone talking to the microphone. Local commands are free and
+    never judged. Every drop is logged as drop_reason=noise with the figures, to tune these."""
+
+    enabled: bool = True
+    max_words: int = Field(4, ge=0)  # only phrases this short are judged on Whisper's confidence
+    no_speech_prob: float = Field(0.5, ge=0, le=1)  # a segment is unsure above this...
+    avg_logprob: float = Field(-0.8, le=0)  # ...or below this
+    min_speech_dbfs: float = Field(-45.0, le=0)  # loudest 32 ms below this: not a request
+    # The answer to "Confermi?": quieter than this is the TV, not JenJo (treated as unclear).
+    answer_min_dbfs: float = Field(-35.0, le=0)
+
+
 class CostSettings(BaseModel):
     pricing_file: Path = Path("config/pricing.toml")  # prices and cache multipliers
     db_file: Path = Path("data/spend.db")  # the ledger: one row per Claude call
@@ -274,7 +289,8 @@ class LoggingSettings(BaseModel):
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
     keep_audio: int = Field(50, ge=1)
     keep_sessions: int = Field(30, ge=1)  # logs/sessions/<date_time>/: console + conversation
-    # Privacy: the chat database (data/claudio.db) forgets what is older than this many days.
+    # Privacy: the chat (data/claudio.db), logs/sessions/ and logs/audio/ forget what is older
+    # than this many days (at startup).
     retention_days: int = Field(30, ge=1)
 
 
@@ -300,6 +316,7 @@ class Settings(BaseSettings):
     tts: TtsSettings = TtsSettings()
     router: RouterSettings = RouterSettings()
     conversation: ConversationSettings = ConversationSettings()
+    noise: NoiseSettings = NoiseSettings()
     cost: CostSettings = CostSettings()
     claude: ClaudeSettings = ClaudeSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).

@@ -154,7 +154,8 @@ locally at no cost. `uv run claudio --ui` opens the same window alone (read-only
 The window shows the conversations: pick a session on the left, search
 all of them at the top, see what each answer cost. It reads `data/claudio.db`, so it works with
 Claudio running (it updates by itself) or not. Messages older than `logging.retention_days`
-(30) are deleted when Claudio starts.
+(30) are deleted when Claudio starts, and so are the older session logs (`logs/sessions/`), the
+recordings in `logs/audio/` (missed wake words too) and the rotated `logs/metrics.jsonl.*`.
 
 You can also **write to Claudio** in the box at the bottom (Enter sends): with Claudio running,
 it answers in the chat, in silence (`[chat] speak_typed = true` to hear it too). Commands work

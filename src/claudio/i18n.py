@@ -183,6 +183,12 @@ EN: dict[str, str] = {
     "Fine della conversazione: torno in attesa della wake word": (
         "End of the conversation: waiting for the wake word again"
     ),
+    "Log: %d file più vecchi di %d giorni eliminati": "Logs: %d files older than %d days deleted",
+    "Impossibile eliminare il vecchio log %s": "Could not delete the old log %s",
+    "Risposta troppo lontana dal microfono, non la conto: %r": (
+        "Answer too far from the microphone, not counted: %r"
+    ),
+    "Rumore scambiato per parole (%s), ignoro: %r": "Noise heard as words (%s), ignored: %r",
     "Non è una richiesta, fine della conversazione: %r": (
         "Not a request, end of the conversation: %r"
     ),

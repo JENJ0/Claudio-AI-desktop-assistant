@@ -5,7 +5,8 @@ close an app, move a file). Level 3: CLAUDIO reads a summary of what will happen
 explicit "confermo" / "confirm" runs it (delete, terminal, install, network).
 
 Anything that is not a clear yes cancels: a TV in the background, a cough or a wrong word
-never confirms an action."""
+never confirms an action. A level 2 yes is also short (YES_MAX_WORDS), and the Assistant does
+not count an answer said far from the microphone (intake.py, noise.answer_min_dbfs)."""
 
 from __future__ import annotations
 
@@ -42,6 +43,8 @@ YES_WORDS = frozenset(
 # Level 3 accepts only the explicit words (a plain "sì" is too easy to say by accident).
 EXPLICIT_WORDS = frozenset({"confermo", "conferma", "confirm", "confirmed"})
 YES_PHRASES = ("va bene", "fai pure", "go ahead", "do it", "i confirm")
+# A level 2 yes is short ("sì", "sì, va bene"): "sì, ma poi è andato via" is the TV talking.
+YES_MAX_WORDS = 3
 EXPLICIT_PHRASES = ("i confirm", "yes i confirm", "si confermo")
 
 
@@ -64,9 +67,16 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     if level >= LEVEL_EXPLICIT:
         explicit = EXPLICIT_WORDS.intersection(words) or any(p in joined for p in EXPLICIT_PHRASES)
         return Answer.YES if explicit else Answer.UNCLEAR
+    if len(_deduped(words)) > YES_MAX_WORDS:
+        return Answer.UNCLEAR
     if YES_WORDS.intersection(words) or any(p in joined for p in YES_PHRASES):
         return Answer.YES
     return Answer.UNCLEAR
+
+
+def _deduped(words: list[str]) -> list[str]:
+    """A word said twice in a row counts once ("sì sì, va bene")."""
+    return [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
 
 
 @dataclass(frozen=True)

@@ -101,6 +101,17 @@ barge_in = true            # "basta" / "stop" while CLAUDIO speaks interrupts it
 barge_in_max_s = 2.0       # speech heard while speaking is checked in slices this long
 only_addressed = false     # true: without the wake word only questions, "dimmi..." or the name reach Claude
 
+# Noise transcribed as words (the TV, a cough): what never reaches Claude. Local commands are
+# never judged. Every drop is logged in logs/metrics.jsonl as drop_reason = "noise" with
+# stt_no_speech, stt_logprob and speech_dbfs: tune the values below on those rows.
+[noise]
+enabled = true
+max_words = 4              # only phrases this short are judged on Whisper's confidence
+no_speech_prob = 0.5       # a phrase is noise when every segment is above this...
+avg_logprob = -0.8         # ...or below this
+min_speech_dbfs = -45.0    # loudest 32 ms quieter than this: nobody is talking to the microphone
+answer_min_dbfs = -35.0    # a "sì" to "Confermi?" quieter than this is the TV: not confirmed
+
 [cost]
 pricing_file = "config/pricing.toml"  # prices per model and cache multipliers (never in the code)
 db_file = "data/spend.db"             # SQLite ledger of every Claude call (tokens, cache, cost)
@@ -140,4 +151,4 @@ max_age_s = 120                # messages written while Claudio was off are drop
 level = "INFO"
 save_audio = true          # keep a WAV of what CLAUDIO heard after each wake word (logs/audio/)
 keep_audio = 50            # how many to keep
-retention_days = 30        # the chat (data/claudio.db) forgets what is older than this many days
+retention_days = 30        # the chat (data/claudio.db), logs/sessions/ and logs/audio/ forget what is older (at startup)

@@ -15,6 +15,7 @@ import numpy as np
 
 from claudio.config import SttSettings
 from claudio.i18n import tr
+from claudio.intake import Segment
 from claudio.router.normalizer import normalize, only_wake_words
 
 log = logging.getLogger(__name__)
@@ -105,6 +106,8 @@ class WhisperTranscriber:
         # never that of the warm-up noise, a lone wake word or a dropped hallucination.
         self.last_language = settings.languages[0]
         self._encoded: tuple[np.ndarray, Any] | None = None
+        # Whisper's confidence in each segment of the last request (the noise filter).
+        self.last_segments: list[Segment] = []
         self._reused = 0  # encoder passes saved, for the tests
         self._model = self._load()
         self.language, self.language_confidence = settings.languages[0], 1.0
@@ -198,6 +201,8 @@ class WhisperTranscriber:
         of a request not understood in the language Whisper guessed)."""
         s = self.settings
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
+            if not quick:
+                self.last_segments = []
             return ""  # silence: Whisper would invent something ("Buon appetito!")
         audio = audio.astype(np.float32, copy=False)
         if language is None:
@@ -221,6 +226,7 @@ class WhisperTranscriber:
                 max_new_tokens=QUICK_NEW_TOKENS if quick else MAX_NEW_TOKENS,
             )
             parts = []
+            kept: list[Segment] = []
             for seg in segments:  # a generator: Whisper runs while it is consumed
                 if seg.no_speech_prob > s.no_speech_threshold and seg.avg_logprob < -1.0:
                     continue
@@ -228,11 +234,14 @@ class WhisperTranscriber:
                     log.info("Trascrizione scartata (ripetizione): %r", seg.text[:80])
                     continue
                 parts.append(seg.text.strip())
+                kept.append(Segment(float(seg.no_speech_prob), float(seg.avg_logprob)))
         finally:
             if reuse:
                 del self._model.encode
             self._encoded = None
         text = " ".join(p for p in parts if p).strip()
+        if not quick:  # the second chance must not overwrite the request's own figures
+            self.last_segments = kept
         if text and is_hallucination(text, prompt):
             log.info("Trascrizione scartata (allucinazione nota): %r", text)
             return ""

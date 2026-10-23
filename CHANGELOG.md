@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased] - 0.2.2
+## [Unreleased] - 0.3.0
+
+### Changed
+- The rules that decide whether a phrase is a request (false wake, conversation window, retry,
+  closed list) moved from `app.py` to `src/claudio/intake.py` (`RequestFilter.decide()` returns
+  answer, relisten or drop and why). `Assistant` is the audio state machine only.
+- Phrases ending with "?" skip the closed list (~100 ms): a question is for Claude.
+- A level 2 "yes" is at most 3 words ("sì, va bene"): "sì, ma poi è andato via" is the TV.
+  An answer to "Confermi?" quieter than `[noise] answer_min_dbfs` is not counted.
+
+### Added
+- Noise filter (`[noise]` in `config/claudio.toml`): a phrase no command understands does not
+  reach Claude when it is short and Whisper was unsure of all of it, or when its speech is
+  quieter than `min_speech_dbfs`. Drops are logged as `outcome = "noise"`, `drop_reason =
+  "noise"`; every request now logs `stt_no_speech` and `stt_logprob` to tune the thresholds.
+- `logging.retention_days` also deletes old `logs/sessions/`, `logs/audio/` WAVs and rotated
+  `logs/metrics.jsonl.*` at startup.
+
+## 0.2.2
 
 ### Added
 - Sonnet when a request needs reasoning: Haiku hands it over with the `ask_sonnet` tool (after a

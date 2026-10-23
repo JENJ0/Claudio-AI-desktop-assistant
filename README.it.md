@@ -131,7 +131,9 @@ lettura, senza voce).
 La finestra mostra le conversazioni: scegli una sessione a sinistra,
 cerca in tutte dalla barra in alto, vedi quanto è costata ogni risposta. Legge `data/claudio.db`,
 quindi funziona con Claudio acceso (si aggiorna da sola) o spento. I messaggi più vecchi di
-`logging.retention_days` (30) vengono cancellati all'avvio di Claudio.
+`logging.retention_days` (30) vengono cancellati all'avvio di Claudio, insieme ai log delle
+sessioni più vecchi (`logs/sessions/`), alle registrazioni in `logs/audio/` (anche le wake word
+mancate) e ai vecchi `logs/metrics.jsonl.*`.
 
 ## Log delle sessioni
 

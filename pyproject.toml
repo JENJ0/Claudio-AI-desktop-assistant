@@ -1,6 +1,6 @@
 [project]
 name = "claudio"
-version = "0.2.2"
+version = "0.3.0"
 description = "CLAUDIO: local Italian voice assistant for Windows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
