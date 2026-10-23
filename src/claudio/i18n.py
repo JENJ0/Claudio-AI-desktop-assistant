@@ -278,6 +278,7 @@ EN: dict[str, str] = {
     "Messaggi della finestra non letti": "Window messages not read",
     "Messaggio dalla finestra rifiutato (origine %s)": "Window message refused (origin %s)",
     "Messaggio dalla finestra in coda: %d": "Window message queued: %d",
+    "Finestra della chat non portata in primo piano": "Chat window not brought to the front",
     "Claude spento ([claude] enabled = false): solo comandi locali": (
         "Claude off ([claude] enabled = false): local commands only"
     ),
