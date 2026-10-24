@@ -77,15 +77,18 @@ def run_checks(settings: Settings) -> bool:
         from claudio.tts.kokoro import KOKORO_FILES
 
         wanted += [models / "kokoro" / name for name in KOKORO_FILES]
-    if settings.tts.engine == "jack":
-        tts = settings.tts
-        wanted += [
-            models / path
-            for path in (tts.jack_python, tts.jack_checkpoint, tts.jack_rvc_model, tts.jack_applio)
-        ]
     wanted += [models / "wakeword" / f for f in FEATURE_MODELS]
     for path in wanted:
         report(path.exists(), tr("modello {path}", path=path.relative_to(models)))
+    if (
+        settings.tts.engine == "jack"
+    ):  # optional: without it Kokoro speaks (a warning, not an error)
+        tts = settings.tts
+        for rel in (tts.jack_python, tts.jack_checkpoint, tts.jack_rvc_model, tts.jack_applio):
+            if (models / rel).exists():
+                report(True, tr("modello {path}", path=rel))
+            else:
+                log.warning("WARN voce di Jack non installata (%s): parlerà Kokoro", rel)
     for language in settings.stt.languages:
         if settings.tts.engine in ("kokoro", "jack"):  # one model, a voice per language inside it
             voice = settings.tts.kokoro_voice_for(language)
