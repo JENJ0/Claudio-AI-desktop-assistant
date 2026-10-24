@@ -584,7 +584,7 @@ class Assistant:
         reply = set(normalize("".join(self._reply_parts), drop_fillers=False).split())
         echo = sum(word in reply for word in heard) / len(heard)
         if echo >= ECHO_SHARE:
-            log.info("La mia voce rientra nel microfono, la ignoro: %r", text)
+            log.info("La mia voce nel microfono, la ignoro: %r", text)
             return False
         return True
 
