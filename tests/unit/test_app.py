@@ -100,9 +100,13 @@ class FakeSpeaker:
         self.spoken: list[str] = []
         self.languages: list[str] = []
         self.beeps: list[str] = []
+        self.ducks: list[float | None] = []
 
     def interrupt(self) -> None:
         pass
+
+    def duck(self, volume: float | None) -> None:
+        self.ducks.append(volume)
 
     async def beep(self, kind: str = "wake") -> None:
         self.beeps.append(kind)

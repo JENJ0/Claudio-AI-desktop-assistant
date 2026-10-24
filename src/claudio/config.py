@@ -96,7 +96,11 @@ class VadSettings(BaseModel):
     end_silence_ms: int = Field(400, gt=0)
     pre_roll_ms: int = Field(800, ge=0)
     no_speech_timeout_s: float = Field(4.0, gt=0)
-    max_utterance_s: float = Field(8.0, gt=0)
+    max_utterance_s: float = Field(15.0, gt=0)
+    # A longer phrase (a question for Claude) gets a longer pause before it is closed: people
+    # stop to think mid-sentence. 0 = always end_silence_ms.
+    long_end_silence_ms: int = Field(800, ge=0)
+    long_after_s: float = Field(1.5, ge=0)  # speech after which the longer pause applies
 
 
 class SttSettings(BaseModel):
@@ -227,7 +231,15 @@ class ConversationSettings(BaseModel):
     window_s: float = Field(6.0, ge=0, le=30)
     # Listen while speaking: "basta" / "stop" cuts the reply short (best with headphones).
     barge_in: bool = True
-    barge_in_max_s: float = Field(2.0, gt=0, le=8)  # longer speech is checked in slices this long
+    barge_in_max_s: float = Field(1.2, gt=0, le=8)  # longer speech is checked in slices this long
+    # What a voice heard while speaking does: "duck" lowers the reply at once and stops it when
+    # Whisper hears real words (back to full volume if it was noise); "stop" stops at once;
+    # "confirm" keeps speaking until Whisper hears words. Then what was said is the next request.
+    barge_in_mode: Literal["duck", "stop", "confirm"] = "duck"
+    barge_in_min_dbfs: float = Field(-30.0, le=0)  # quieter voices (the TV, the echo) are ignored
+    barge_in_vad: float = Field(0.6, gt=0, lt=1)  # speech probability needed (stricter than [vad])
+    barge_in_min_speech_ms: int = Field(300, ge=0)  # voice this long before anything happens
+    duck_volume: float = Field(0.3, ge=0, le=1)  # the reply's volume while Whisper checks
     # true: in the window only questions, "dimmi..." or the name reach Claude (the TV costs
     # nothing). false: everything is answered until "basta" or silence.
     only_addressed: bool = False
