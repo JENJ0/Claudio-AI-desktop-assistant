@@ -219,7 +219,9 @@ async def test_folder_found_near_home(tools: PcTools, desk: FakeDesktop, home: P
     out = await tools.run(call("open_path", path="~\\Progetti"))
     assert not out.error and ("open", (home / "Desktop" / "PROGETTI").resolve()) in desk.done
     out = await tools.run(call("open_path", path="~/Desktop/Manca/Progetti"))
-    assert out.error  # a wrong full path is not guessed
+    assert not out.error  # a wrong folder: the name is looked for everywhere (24/10)
+    out = await tools.run(call("open_path", path="~/Nessuna"))
+    assert out.error  # a name that exists nowhere
 
 
 # --- running --------------------------------------------------------------------------------
@@ -507,7 +509,8 @@ async def test_history_keeps_only_words(pricing: Pricing, tools: PcTools) -> Non
     await ask(b, "grazie")
     history = client.calls[2]["messages"]
     assert [m["role"] for m in history] == ["user", "assistant", "user"]
-    assert history[1]["content"] == "Hai tre finestre."
+    # Only the words, plus a note of what really ran (no tool blocks, no window text).
+    assert history[1]["content"] == "Hai tre finestre. [Claudio ran: list_windows ok]"
 
 
 async def test_without_tools_the_old_prompt(pricing: Pricing) -> None:

@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import time
+from collections import deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,7 +33,10 @@ MAX_TERMS = 5
 # Where a name said without its folder ("apri la cartella Progetti") is looked for, in order
 # (v0.3.2: JenJo had to dictate ~\Desktop\PROGETTI). The Desktop may live in OneDrive.
 NEAR_HOME = ("", "Desktop", "Documents", "Downloads", "OneDrive/Desktop", "OneDrive/Documents")
-SKIP_DIRS = frozenset({"appdata", "node_modules", ".git", "$recycle.bin", "__pycache__", ".venv"})
+SKIP_DIRS = frozenset(
+    {"appdata", "node_modules", ".git", "$recycle.bin", "__pycache__", ".venv", "venv"}
+    | {"miniconda3", "anaconda3", "npm-cache", "site-packages", "curseforge", "saved games"}
+)
 
 
 class PathRefused(ValueError):
@@ -142,27 +146,44 @@ def walk_search(
     kind: str | None,
     limit: int,
     budget_s: float,
+    first: Sequence[Path] = (),
 ) -> list[Found]:
-    """Without the Windows index: walk the roots for names holding every term, within
-    `budget_s` seconds (most recent first)."""
+    """Walk the folders for names holding every term, within `budget_s` seconds. Breadth
+    first, starting from `first` (Desktop, Documents...): a folder JenJo keeps at hand, like
+    Desktop\\UNIVERSITA'\\TESI, is found before the walk drowns in a big tree (24/10: miniconda3).
+    Exact names come first, then the most recent."""
     wanted = [t.casefold() for t in terms]
+    exact = " ".join(wanted)
     deadline = time.monotonic() + budget_s
     found: list[Found] = []
-    for root in roots:
-        for folder, dirs, files in os.walk(root):
-            if time.monotonic() > deadline:
-                break
-            dirs[:] = [d for d in dirs if d.casefold() not in SKIP_DIRS and not d.startswith(".")]
-            names = dirs if kind == "folder" else files
-            for name in names:
-                low = name.casefold()
-                if all(t in low for t in wanted) and _kind_ok(name, kind):
-                    path = Path(folder) / name
-                    try:
-                        found.append(Found(path, path.stat().st_mtime))
-                    except OSError:
-                        continue
-    found.sort(key=lambda f: f.modified, reverse=True)
+    queue: deque[Path] = deque(p for p in [*first, *roots] if p.is_dir())
+    seen: set[Path] = set()
+    while queue and time.monotonic() < deadline:
+        folder = queue.popleft()
+        if folder in seen:
+            continue
+        seen.add(folder)
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            name = entry.name
+            if is_dir and name.casefold() not in SKIP_DIRS and not name.startswith((".", "$")):
+                queue.append(Path(entry.path))
+            if is_dir != (kind == "folder"):
+                continue
+            low = name.casefold()
+            if all(t in low for t in wanted) and _kind_ok(name, kind):
+                try:
+                    found.append(Found(Path(entry.path), entry.stat().st_mtime))
+                except OSError:
+                    continue
+    found.sort(key=lambda f: (Path(f.path).stem.casefold() != exact, -f.modified))
     return found[:limit]
 
 

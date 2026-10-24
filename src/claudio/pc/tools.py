@@ -507,11 +507,29 @@ class PcTools:
         try:
             return self.policy.check(raw)
         except PathRefused:
-            near = self.policy.find_near(raw)
+            near = self.policy.find_near(raw) or self._find_by_name(raw)
             if near is None:
                 raise
             log.info("Percorso %r non trovato: uso %s", raw, near)
             return self.policy.check(str(near))
+
+    def _find_by_name(self, raw: str) -> Path | None:
+        """The folder (or else file) named exactly like the last part of `raw`, anywhere in
+        the allowed folders, Desktop and Documents first ("Tesi" -> Desktop\\UNIVERSITA'\\TESI)."""
+        name = raw.replace("/", "\\").rstrip("\\").rsplit("\\", 1)[-1].strip().strip('"')
+        try:
+            terms = files.search_terms(name)
+        except PathRefused:
+            return None
+        first = [self.policy.home / sub for sub in files.NEAR_HOME if sub]
+        for kind in ("folder", None):
+            found = files.walk_search(
+                terms, self.policy.search_roots(), kind, 5, self.settings.search_timeout_s, first
+            )
+            for f in found:
+                if f.path.name.casefold() == name.casefold() and self.policy.allowed(f.path):
+                    return f.path
+        return None
 
     def _open_app(self, name: str) -> str:
         if not name.strip():
@@ -546,8 +564,11 @@ class PcTools:
         roots = self.policy.search_roots()
         limit = self.settings.search_limit
         found = self.desktop.search_index(terms, kind, roots, limit)
-        if found is None:  # no index: walk the folders, with a time limit
-            found = files.walk_search(terms, roots, kind, limit, self.settings.search_timeout_s)
+        if not found:  # no index, or nothing in it (24/10: TESI not indexed): walk the folders
+            first = [self.policy.home / sub for sub in files.NEAR_HOME if sub]
+            found = files.walk_search(
+                terms, roots, kind, limit, self.settings.search_timeout_s, first=first
+            )
         found = [f for f in found if self.policy.allowed(f.path)]
         if not found:
             return f"No files found for: {' '.join(terms)}."

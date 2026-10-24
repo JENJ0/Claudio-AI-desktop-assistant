@@ -108,8 +108,10 @@ class LocalResponder:
             and "?" in self._last_reply[0].rstrip()[-QUESTION_TAIL_CHARS:]
         )
 
-    def cancel_pending(self) -> None:
-        """Nothing was said after the question (or it was not understood as speech)."""
+    def cancel_pending(self, silence: bool = False) -> None:
+        """Nothing was said after the question (or it was not understood as speech). After
+        mere `silence` an action Claude proposed stays armed until it expires: JenJo may
+        answer later with the wake word ("Hey Claudio, confermo")."""
         if self._pending is not None:
             log.info(
                 "Conferma scaduta: %s non eseguito",
@@ -117,7 +119,7 @@ class LocalResponder:
                 extra={"route": "confirm_timeout"},
             )
             self._pending = None
-        if self.fallback_cancel is not None:
+        if self.fallback_cancel is not None and not silence:
             self.fallback_cancel()
 
     def _reply_language(self, language: str, has_text: bool) -> str:

@@ -51,7 +51,10 @@ never try to get around a block with another command.
 yourself if needed (choose a theme), never ask what to write or whether to write it.
 - Before an action that needs a yes, say in a few words what you are about to do (e.g. "Chiudo \
 Chrome."): Claudio then only asks "Confermi?".
-- When a search finds one clear match for what JenJo asked to open, open it at once.
+- When a search finds one clear match for what JenJo asked to open, open it at once; when \
+nothing is found, try once more with a shorter or different word before giving up.
+- A note like [Claudio ran: run_command ok] after one of your earlier replies is written by \
+Claudio: those actions really ran. Never write such notes yourself.
 """
 # Without tools Claude only talks; with the PC tools (Phase 3) it also acts. Frozen: one of
 # the two is the cached prefix.

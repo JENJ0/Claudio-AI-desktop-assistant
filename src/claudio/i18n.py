@@ -330,6 +330,9 @@ EN: dict[str, str] = {
     "[pc] safe_keys: tasto non valido ignorato: %r": "[pc] safe_keys: invalid key ignored: %r",
     "Azione PC fallita: %s": "PC action failed: %s",
     "Comando proposto: %s": "Command proposed: %s",
+    "Nuova richiesta al posto della conferma: azione annullata": (
+        "A new request instead of the confirmation: action dropped"
+    ),
     "Percorso %r non trovato: uso %s": "Path %r not found: using %s",
     "Incolla non riuscito (%s): scrivo tasto per tasto": "Paste failed (%s): typing key by key",
     "Finestra della chat non aperta": "Chat window not opened",

@@ -48,7 +48,7 @@ from claudio.config import ClaudeSettings, PcSettings, in_language
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.i18n import tr
-from claudio.router.normalizer import normalize
+from claudio.router.normalizer import normalize, strip_wake_words
 from claudio.safety.confirmation import (
     CANCELLED,
     LEVEL_SAFE,
@@ -70,6 +70,8 @@ CHARS_PER_TOKEN = 3  # estimate for a reply cut short before the API sent its ou
 _MARKDOWN = re.compile(r"[*#`]+")  # read aloud as "asterisco": never sent to the voice
 OFFER_TTL_S = 60.0  # "Vuoi che usi Sonnet?" waits this long for its answer
 ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
+ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: open_app ok]"
+NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # not strftime: Windows' locale
 
@@ -189,6 +191,12 @@ class ClaudeBrain:
     async def _answer(self, text: str, language: str) -> AsyncGenerator[str, None]:
         start = self.clock()
         action = self._take_action()
+        if action is not None and _new_request(text, action.level):
+            # Not an answer but another request (said with the wake word after the window
+            # closed): the action is dropped and the request answered.
+            log.info("Nuova richiesta al posto della conferma: azione annullata")
+            self._note_tools(action.calls, "refused")
+            action = None
         if action is not None:
             async for chunk in self._confirm(action, text, start):
                 yield chunk
@@ -285,7 +293,7 @@ class ClaudeBrain:
                 said = _space(turn) + in_language(BRIDGE, language) + " "
                 turn.parts.append(said)
                 yield said
-            results = await self._run_calls(leg.calls, refused)
+            results = await self._run_calls(leg.calls, refused, turn)
             messages = [*messages, {"role": "user", "content": results}]
             round_no += 1
 
@@ -311,7 +319,7 @@ class ClaudeBrain:
             said = in_language(BRIDGE_RUN, action.language) + " "  # a new reply: no lead space
             action.turn.parts.append(_space(action.turn) + said)
             yield said
-        results = await self._run_calls(action.calls, action.refused)
+        results = await self._run_calls(action.calls, action.refused, action.turn)
         messages = [*action.messages, {"role": "user", "content": results}]
         async with contextlib.aclosing(
             self._loop(messages, action.language, start, action.turn, action.round_no + 1)
@@ -320,7 +328,10 @@ class ClaudeBrain:
                 yield chunk
 
     async def _run_calls(
-        self, calls: list[ToolCall], refused: dict[str, str] | None = None
+        self,
+        calls: list[ToolCall],
+        refused: dict[str, str] | None = None,
+        turn: _Turn | None = None,
     ) -> list[dict[str, Any]]:
         """One tool_result per call, in order; a refused call is answered without running."""
         assert self.tools is not None
@@ -340,6 +351,8 @@ class ClaudeBrain:
                 continue
             outcome = await self.tools.run(call)
             self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
+            if turn is not None:
+                turn.done.append(f"{call.name} {'failed' if outcome.error else 'ok'}")
             block: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": call.id,
@@ -412,8 +425,12 @@ class ClaudeBrain:
 
     def _remember(self, turn: _Turn) -> None:
         """Only the words go into the history: tool calls and window text stay out of it
-        (they cost tokens at every later turn, and the history is plain text)."""
+        (they cost tokens at every later turn, and the history is plain text). A short note of
+        the actions that really ran is added: without it Haiku, reading only its own words,
+        later "admitted" that a command it had run never ran (24/10)."""
         answer = "".join(turn.parts).strip()
+        if turn.done:
+            answer = f"{answer} {ACTIONS_NOTE}{', '.join(turn.done)}]".strip()
         if turn.complete and answer:
             self._history.append((turn.question, answer))
             self._last_turn = self.clock()
@@ -622,6 +639,7 @@ class _Turn:
         self.question = question
         self.parts = list(parts or [])
         self.complete = complete
+        self.done: list[str] = []  # tools that ran in this request, for the history note
 
 
 class _Action:
@@ -644,6 +662,13 @@ class _Action:
         self.round_no = round_no
         self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
+
+
+def _new_request(text: str, level: int) -> bool:
+    """A phrase that is neither yes nor no and longer than any answer: a new request."""
+    if parse_answer(text, level) is not Answer.UNCLEAR:
+        return False
+    return len(strip_wake_words(normalize(text, drop_fillers=False).split())) > NEW_REQUEST_WORDS
 
 
 def _space(turn: _Turn) -> str:
