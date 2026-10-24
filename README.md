@@ -151,6 +151,24 @@ are never opened as files. Password managers are never read. Every action is log
 (`metrics.jsonl` field `tools`, "Azioni" in `conversazione.md`). An action with one tool costs
 about 0.0003-0.0007 USD.
 
+Since v0.3.2: typing in Notepad needs no yes (`free_typing`), long text is pasted (one Ctrl+V,
+your clipboard is put back), and a folder said by name ("apri la cartella Progetti") is found on
+the Desktop, in Documents or Downloads. Before a slow action Claudio says "Ci guardo".
+
+**Screen (last resort):** when a window cannot be read as text, Claude may look at a small
+screenshot (long side 1024 px, JPEG, ~0.0001 USD with Haiku; never saved). Password managers are
+never photographed.
+
+**Terminal:** Claude may run one PowerShell command per reply, always at level 3: Claudio says
+the purpose, shows the exact command in the chat window (opened if needed) and runs it only after
+you say "confermo" aloud (never from the chat, never with a plain "sì"). PowerShell without
+profile, never as administrator (if Claudio itself runs elevated, commands are off), stopped
+after 30 s with its whole process tree, output cut at 2000 characters. A deny list in
+`src/claudio/pc/terminal.py` refuses, before asking, formatting, recursive deletes of drives
+and system folders, machine registry writes, Defender/firewall changes, download-and-run,
+encoded commands and elevation. It is a safety net, not a sandbox: read the command before
+saying "confermo". `commands = false` in `[pc]` removes the tool.
+
 ## Jack's voice (optional, personal use)
 
 `engine = "jack"` in `[tts]` speaks with a Qwen3-TTS model fine-tuned on Handsome Jack's Italian

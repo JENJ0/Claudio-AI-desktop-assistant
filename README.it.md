@@ -135,6 +135,16 @@ dal menu Start, file e cartelle, cerca file con l'indice di Windows, elenca e le
 (UI Automation, solo testo, ~1500 caratteri), porta una finestra davanti, preme tasti, digita
 testo, chiude finestre e sposta file. Più azioni in una risposta, fino a 4 giri per richiesta.
 
+Dalla v0.3.2: nel Blocco note scrive senza chiedere (`free_typing`), il testo lungo viene
+incollato (Ctrl+V, gli appunti tornano come prima), una cartella detta per nome viene cercata in
+Scrivania, Documenti e Download, e prima di un'azione lenta dice "Ci guardo". Se una finestra
+non si legge come testo, Claude guarda uno screenshot piccolo (1024 px, ~0,0001 USD, mai
+salvato). Comandi PowerShell: sempre livello 3, scopo detto a voce, comando esatto nella chat,
+eseguito solo dopo "confermo" detto a voce; mai da amministratore, stop dopo 30 s, lista nera
+in `src/claudio/pc/terminal.py` (formattare, cancellare dischi o cartelle di sistema, registro
+di sistema, Defender e firewall, scaricare ed eseguire). La lista nera è una rete di
+sicurezza, non una gabbia: leggi il comando prima di dire "confermo".
+
 I livelli di sicurezza sono fissi nel codice (`src/claudio/pc/tools.py`), mai scelti da Claude:
 aprire, cercare, leggere e i tasti innocui (frecce, Pagina giù, Ctrl+C, Ctrl+T...) partono
 subito; digitare, chiudere una finestra, spostare un file e ogni altro tasto fanno chiedere a

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.2] - screen and terminal
+
+### Added
+- `look_at_screen` (level 1, last resort): a screenshot of the active window or of the screen,
+  shrunk to `[pc] screenshot_side` (1024 px) JPEG, sent to Haiku as an image in the tool result.
+  Never of a password manager, never saved.
+- `run_command` (level 3, always): one PowerShell command per reply (`-NoProfile
+  -NonInteractive`, encoded, never elevated, `command_timeout_s` 30 with the process tree
+  killed, output cut at `command_output_chars` 2000). Deny list in `pc/terminal.py`, checked
+  before asking and again before running. The purpose is spoken, the exact command is shown in
+  the chat window (opened if needed) and in `conversazione.md`; only a spoken "confermo" runs it.
+  `[pc] commands = false` removes the tool; Claudio running as administrator switches it off.
+- "Ci guardo" before a slow action (search, read, screenshot) when Haiku said nothing yet,
+  "Eseguo" after "confermo"; `tool_ms` in `metrics.jsonl`.
+
+### Fixed (JenJo's v0.3.1 test, 24/10)
+- "Apri la cartella Progetti": a name Claude puts in the wrong folder is looked for in the
+  user folder, Desktop, Documents, Downloads (also under OneDrive).
+- Typing in Notepad needs no yes (`[pc] free_typing`); text of 40+ characters or with new
+  lines is pasted (Ctrl+V, the clipboard is put back) instead of typed key by key.
+- Haiku writes at once when asked to write something (no "che tema vuoi?") and says what it is
+  about to do before "Confermi?".
+- Short follow-ups in the conversation window ("Allora scrivi.") are answered, and a reply with
+  a question near its end ("Che tema vuoi? Dimmelo e la scrivo.") waits for the answer.
+- Level 3 question shorter: "Per procedere dì: confermo."
+- (2nd test, 24/10 03:09) "Hey Claudio, confermo" said after the follow-up window closed now
+  answers the pending action (it stays armed for 60 s after silence); a longer new request
+  instead drops the action and is answered.
+- Haiku no longer "admits" that a command it ran never ran: the history keeps a short note of
+  the actions that really ran ("[Claudio ran: run_command ok]").
+- Any folder or file is found by name (24/10: "Tesi" in Desktop\UNIVERSITA'): when the Windows
+  index finds nothing the folders are walked breadth first, Desktop/Documents/Downloads first,
+  skipping big trees (miniconda3, npm-cache...); `open_path` with a wrong folder looks the
+  name up the same way.
+
 ## [Unreleased] - personality
 
 ### Added

@@ -64,7 +64,7 @@ def build_responder(
     matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
     tracker = build_tracker(settings)
-    brain = build_brain(settings, tracker)
+    brain = build_brain(settings, tracker, chat)
     return LocalResponder(
         matcher,
         ActionRunner(system=system, tracker=tracker, chat=chat),
@@ -99,7 +99,9 @@ def build_pc_tools(settings: Settings) -> PcTools | None:
     return tools
 
 
-def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
+def build_brain(
+    settings: Settings, tracker: CostTracker, chat: ChatLauncher | None = None
+) -> ClaudeBrain | None:
     """Claude for what no command understands; None when it is switched off. A missing key
     still builds it: Claudio then says where the key goes instead of "I can't do that"."""
     from claudio.brain.claude import ClaudeBrain, make_client
@@ -129,6 +131,7 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
         tools=build_pc_tools(settings),
         pc=settings.pc,
         personality=personality,
+        on_show=chat.open if chat is not None else None,  # a command is read in the chat
     )
     if brain.smart_model is not None:
         try:

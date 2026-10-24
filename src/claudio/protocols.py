@@ -68,7 +68,7 @@ class Responder(Protocol):
         """`text` is only "basta" / "stop": said while CLAUDIO speaks, it interrupts."""
         ...
 
-    def cancel_pending(self) -> None:
+    def cancel_pending(self, silence: bool = False) -> None:
         """Drop an armed level 2-3 action (nothing was answered)."""
         ...
 
