@@ -293,7 +293,13 @@ FAKE_APPLIO = textwrap.dedent(
     from scipy.signal import resample_poly
 
     class Pipeline:
+        def get_f0(self, x, p_len, *args):
+            f0 = np.full(p_len, np.nan)  # what RMVPE gave on silence
+            return np.full(p_len, -(2**62)), f0
+
         def pipeline(self, *, audio, pitch, f0_method, **kwargs):
+            coarse, f0 = self.get_f0(audio, 4)
+            self.pitch_seen.append((coarse.tolist(), f0.tolist()))
             self.calls.append((len(audio), pitch, f0_method))
             return resample_poly(audio, 2, 1)  # 16 kHz in, 32 kHz out like Jack's model
 
@@ -301,6 +307,7 @@ FAKE_APPLIO = textwrap.dedent(
         def __init__(self):
             self.vc = Pipeline()
             self.vc.calls = []
+            self.vc.pitch_seen = []
             self.tgt_sr = 32000
             self.hubert_model = self.net_g = self.use_f0 = self.version = None
 
@@ -341,3 +348,5 @@ def test_whole_sentence_rvc_converts_once_at_the_end(tmp_path, monkeypatch) -> N
     expected = (1 + TAIL_S) / 0.9 * 24_000
     assert abs(len(pcm) // 2 - expected) < 50
     assert rvc.flush() == []  # nothing left
+    # A NaN pitch is unvoiced, never an index outside the 256-entry pitch embedding.
+    assert rvc.vc.vc.pitch_seen[-1] == ([1, 1, 1, 1], [0.0, 0.0, 0.0, 0.0])

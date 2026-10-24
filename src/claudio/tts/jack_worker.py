@@ -177,8 +177,28 @@ class RvcSentence:
         self.vc.get_vc(str(model_path), 0)
         self.vc.load_hubert("contentvec")
         self.up, self.down, self.semitones = speed_plan(speed, SENTENCE_RATE / QWEN_RATE)
+        self._guard_f0()
         self.begin()
-        self._convert(np.zeros(QWEN_RATE // 2, dtype=np.float32))  # loads the f0 model
+        # Loads the f0 model. A quiet voice-like tone, not zeros: on pure silence RMVPE gave
+        # NaN pitch and the CUDA embedding asserted (JenJo's PC, 24/10).
+        t = np.arange(QWEN_RATE // 2, dtype=np.float32) / QWEN_RATE
+        self._convert(0.1 * np.sin(2 * np.pi * 130 * t).astype(np.float32))
+
+    def _guard_f0(self) -> None:
+        """Applio quantizes the pitch with comparisons that NaN slips through, so a NaN f0
+        became a huge index into the 256-entry pitch embedding (device-side assert, and the
+        CUDA context is lost for good). Unvoiced (0) and bounded pitch only."""
+        np = self.np
+        get_f0 = self.vc.vc.get_f0
+
+        def safe_get_f0(*args: Any, **kwargs: Any) -> Any:
+            coarse, f0 = get_f0(*args, **kwargs)
+            bad = ~np.isfinite(f0)
+            f0 = np.where(bad, 0.0, f0)
+            coarse = np.where(bad, 1, np.clip(coarse, 1, 255)).astype(int)
+            return coarse, f0
+
+        self.vc.vc.get_f0 = safe_get_f0
 
     def begin(self) -> None:
         self.parts: list[Any] = []
