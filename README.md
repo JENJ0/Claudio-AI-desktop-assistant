@@ -158,8 +158,8 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
 5. Pick the pronunciation settings by ear: `uv run python scripts/jack_variants.py` (close
    Claudio first) makes every variant speak the same replies and writes the WAVs plus a
    report (Whisper's word error rate, first audio, longest pause) to `logs/jack-variants/`.
-   The keys: `jack_language` ("Italian" stops per-sentence language guessing),
-   `jack_temperature` (lower = steadier), `jack_rvc` ("blocks", "sentence" or "auto").
+   The keys: `jack_temperature` (lower = steadier), `jack_rvc` ("blocks", "sentence" or
+   "auto"). Qwen3 is always told "Italian" (with "Auto" it guessed the language per sentence).
 
 Before Jack speaks, symbols, acronyms, Markdown and emoji become Italian words ("50%" ->
 "cinquanta per cento", "PC" -> "pi ci"): `src/claudio/tts/spoken_text.py`.

@@ -151,7 +151,6 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
         fallback,
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
-        language=tts.jack_language,
         rvc=tts.jack_rvc,
     )
     try:

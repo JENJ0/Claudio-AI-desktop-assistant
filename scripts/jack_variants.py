@@ -42,21 +42,20 @@ GAP_S = 0.12  # silence between the sentences of a reply in the WAV (like the pl
 
 # name -> (what it is, [tts] overrides, first_clause_chars or None for the configured one)
 VARIANTS: dict[str, tuple[str, dict[str, Any], int | None]] = {
-    "A": ("attuale: Auto, temperatura 0.9, RVC a blocchi", {}, None),
+    "A": ("prima: Auto, temperatura 0.9, RVC a blocchi", {"language": "Auto"}, None),
     "B": (
-        "Italian, temperatura 0.7, RVC a blocchi",
-        {"jack_language": "Italian", "jack_temperature": 0.7},
+        "Italian (ora fisso), temperatura 0.7, RVC a blocchi",
+        {"jack_temperature": 0.7},
         None,
     ),
     "C": (
         "B + RVC sulla frase intera (prima frase a blocchi)",
-        {"jack_language": "Italian", "jack_temperature": 0.7, "jack_rvc": "auto"},
+        {"jack_temperature": 0.7, "jack_rvc": "auto"},
         None,
     ),
     "D": (
         "C con il checkpoint dell'epoca 3",
         {
-            "jack_language": "Italian",
             "jack_temperature": 0.7,
             "jack_rvc": "auto",
             "jack_checkpoint": Path("voices/jack/ft/0.6B/checkpoint-epoch-3"),
@@ -65,7 +64,7 @@ VARIANTS: dict[str, tuple[str, dict[str, Any], int | None]] = {
     ),
     "E": (
         "C senza taglio alla prima virgola",
-        {"jack_language": "Italian", "jack_temperature": 0.7, "jack_rvc": "auto"},
+        {"jack_temperature": 0.7, "jack_rvc": "auto"},
         0,
     ),
 }
@@ -140,7 +139,7 @@ def run_variant(settings: Any, name: str, out: Path) -> list[dict]:
         Silent(),
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
-        language=overrides.get("jack_language", tts.jack_language),
+        language=overrides.get("language", "Italian"),
         rvc=overrides.get("jack_rvc", tts.jack_rvc),
     )
     print(f"{name}: {label} - avvio del worker...")

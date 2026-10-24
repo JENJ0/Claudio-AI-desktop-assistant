@@ -3,7 +3,10 @@
 ## [Unreleased] - 0.3.1
 
 ### Jack's pronunciation (after JenJo's test, 23/10)
-- `[tts] jack_language` ("Auto"/"Italian"), `jack_temperature` (Qwen3 sampling) and `jack_rvc`:
+- Italian only for now (JenJo, 24/10): `[stt] languages = ["it"]` (no language detection, no
+  English replies; the English voices are commented out), and Qwen3 is always told "Italian"
+  (with "Auto" it guessed the language per sentence: Spanish/English stresses).
+- `[tts] jack_temperature` (Qwen3 sampling) and `jack_rvc`:
   "blocks" (as before), "sentence" (Applio's offline pipeline on the whole sentence, rmvpe:
   fewer mangled words) or "auto" (blocks for a reply's first sentence, whole for the rest).
 - Text for Jack goes through `tts/spoken_text.py`: symbols (%, €, °, &, +), acronyms (PC, USB,

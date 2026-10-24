@@ -178,9 +178,6 @@ class TtsSettings(BaseModel):
     # Jack's pace: < 1 slower (0.9 = 10% slower, JenJo 23/10). The audio is stretched before
     # RVC and RVC raises the pitch back by the same amount, so the voice does not get deeper.
     jack_speed: float = Field(0.9, ge=0.7, le=1.3)
-    # The language Qwen3 is told: "Auto" guesses it per sentence (accent and pace may drift),
-    # "Italian" fixes it.
-    jack_language: Literal["Auto", "Italian"] = "Auto"
     # Qwen3 sampling: lower is steadier (fewer odd stresses), higher is livelier.
     jack_temperature: float = Field(0.9, ge=0.1, le=1.5)
     # How RVC turns Qwen3's voice into Jack's: "blocks" of 250 ms as it is generated (first

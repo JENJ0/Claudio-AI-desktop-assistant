@@ -245,7 +245,8 @@ def test_symbols_and_acronyms_reach_the_worker_as_italian_words(tmp_path, synths
 
 def test_language_and_rvc_mode_reach_the_worker(tmp_path, synths) -> None:
     synth, _ = make(tmp_path, "ok", startup_timeout_s=10, sentence_timeout_s=2)
-    synth.language, synth.rvc = "Italian", "sentence"
+    assert synth.language == "Italian"  # never "Auto": it drifted to other accents
+    synth.rvc = "sentence"
     synths.append(synth)
     synth.start()
     sent: list[dict] = []

@@ -72,11 +72,13 @@ class JackSynth:
         fallback: Any,
         startup_timeout_s: float = 90.0,
         sentence_timeout_s: float = 15.0,
-        language: str = "Auto",
+        language: str = "Italian",
         rvc: str = "blocks",
     ) -> None:
         self.command = command
-        self.language = language  # told to Qwen3: "Auto" guesses per sentence, or "Italian"
+        # Told to Qwen3. Always Italian (JenJo, 24/10): "Auto" guessed the language per
+        # sentence and drifted to Spanish/English accents and stresses.
+        self.language = language
         self.rvc = rvc  # "blocks", "sentence" or "auto" (see REPLY_GAP_S)
         self._last_done = 0.0
         self.fallback = fallback
