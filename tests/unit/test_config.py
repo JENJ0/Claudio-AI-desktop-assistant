@@ -63,7 +63,7 @@ def test_resolve_relative_to_project_root() -> None:
 
 def test_languages_voices_and_replies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     s = load_settings(DEFAULT_CONFIG)
-    assert s.stt.languages == ["it", "en"] and s.language == "it"
+    assert s.stt.languages == ["it"] and s.language == "it"  # Italian only for now (JenJo)
     assert "Hey Claudio" in s.stt.prompt("it") and "open Chrome" in s.stt.prompt("en")
     assert s.tts.piper_voice_for("en") == "en_US-ryan-low"
     assert s.tts.piper_voice_for("it") == s.tts.voice == s.tts.piper_voice_for("de")

@@ -129,7 +129,9 @@ class StreamingSpeaker:
         """`language` may be a callable, read at every sentence: the responder only knows the
         language of its reply once it has matched the request."""
         self._cancel.clear()
-        queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=2)
+        # Rendering runs ahead of playback: the next sentences are ready before they are due
+        # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued.
+        queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=16)
 
         async def produce() -> None:
             try:

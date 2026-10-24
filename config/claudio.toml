@@ -59,7 +59,7 @@ fallback_compute_type = "int8"
 # Whisper picks the language of every request among these (the encoder pass is shared, so
 # it costs almost nothing); when it is unsure (< language_confidence) it keeps the last one.
 # A single language (languages = ["it"]) skips the detection.
-languages = ["it", "en"]
+languages = ["it"]          # Italian only for now (JenJo, 24/10); ["it", "en"] brings English back
 language_confidence = 0.6
 other_confidence = 0.8         # English (not the first language) must be at least this sure
 retry_in_first_language = true # an English request no command understands is retried in Italian
@@ -92,11 +92,16 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
 jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pitch stays the same
+jack_temperature = 0.9     # Qwen3 sampling: lower = steadier pronunciation, higher = livelier
+jack_rvc = "blocks"        # "blocks" (fast, more mangled words), "sentence" (clearer, waits for the
+                           # sentence) or "auto" (blocks for a reply's first sentence, then whole)
+# Compare settings by ear: uv run python scripts/jack_variants.py (WAVs + WER in logs/jack-variants/)
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
-[tts.voices.en]            # the voices for English replies (same engine, same effect)
-kokoro_voice = "am_michael"
-voice = "en_US-ryan-low"
+# English replies are off while languages = ["it"]; their voices, if it comes back:
+# [tts.voices.en]
+# kokoro_voice = "am_michael"
+# voice = "en_US-ryan-low"
 
 [router]
 commands_file = "config/commands.toml"
