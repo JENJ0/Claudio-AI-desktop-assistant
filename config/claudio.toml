@@ -10,7 +10,8 @@ data_dir = "data"          # what Claudio keeps between runs (microphone level..
 [audio]
 # Device name (or part of it) or index; empty = Windows default.
 # List devices with: uv run python scripts/list_audio_devices.py
-input_device = ""          # e.g. "C270"
+input_device = "auto"      # "auto": the microphone that hears the most (re-chosen when it goes silent);
+                           # "": Windows' default, followed; or a name/index, e.g. "C270"
 output_device = ""         # empty = whatever Windows is using when Claudio speaks
 sample_rate = 16000        # required by openWakeWord, Silero and Whisper
 block_ms = 80              # openWakeWord works on 80 ms frames
@@ -21,18 +22,25 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 
 # Wake words: any of the models below wakes CLAUDIO, each with its own threshold.
 # "hey_claudio" is trained on JenJo's voice (scripts/wakeword/, models/wakeword/hey_claudio.onnx,
-# not in Git). Its threshold comes from scripts/benchmark_wakeword.py. "claudio" alone is trained
-# too but hears only 9 takes in 50 and wakes 60 times an hour in the room noise: it stays out
-# (add it with its own [[wakeword.models]] block) until it is retrained. v0.1.0 used the
-# pre-trained "hey_jarvis" (threshold 0.22).
+# not in Git). Its threshold comes from scripts/benchmark_wakeword.py. "claudio" alone (below)
+# is weaker: Whisper confirms each of its detections. v0.1.0 used the pre-trained "hey_jarvis".
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
+confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more)
 second_chance = true       # after one, Whisper listens to the last 1.5 s (~130 ms) and wakes CLAUDIO if it hears the name
 verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
 
 [[wakeword.models]]
 name = "hey_claudio"
 threshold = 0.30           # benchmark on JenJo's 50 takes: 44 heard, 0 false wakes in the room noise
+
+# "Claudio" alone (JenJo, 23/10): the model is weak (9 takes in 50 at 0.5, ~60 false wakes an
+# hour), so every detection is checked by Whisper (~130 ms): it wakes only if the name is heard.
+# A low threshold catches more; the noise it lets through costs a Whisper pass, not a wake.
+[[wakeword.models]]
+name = "claudio"
+threshold = 0.25
+confirm = true
 
 [vad]
 threshold = 0.4            # speech probability to count a window as speech (lower = more sensitive)
@@ -68,13 +76,13 @@ it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora fi
 en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it, pause the music, next song, repeat, stop."
 
 [tts]
-engine = "kokoro"          # "kokoro" (Nicola, male), "piper" or "jack" (see below); Piper is the last fallback
+engine = "jack"            # "jack" (Claudio's voice, JenJo 23/10), "kokoro" (Nicola) or "piper"; the others are fallbacks
 kokoro_voice = "im_nicola" # Kokoro Italian voices: im_nicola, if_sara
 voice = "it_IT-paola-medium" # Piper voice
 length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% faster)
 # noise_scale / noise_w_scale (Piper): voice variation (0 = identical every time); unset = default
 use_cuda = false           # Piper only
-effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (robotic tone)
+effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (robotic tone; "none" with Jack)
 
 # engine = "jack": Handsome Jack's voice (Qwen3-TTS + RVC) in a worker process with its own venv.
 # If the worker cannot start or answer, Kokoro/Piper speaks. Paths are relative to models/;
@@ -85,6 +93,7 @@ effect = "ultron_estremo"  # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
+jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pitch stays the same
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
 [tts.voices.en]            # the voices for English replies (same engine, same effect)
@@ -146,6 +155,8 @@ smart_effort = "low"           # low | medium | high
 smart_max_tokens = 1024        # its thinking counts here too
 escalate = true
 smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"], en = ["think hard", "think carefully", "think it through"] }
+# A request for detail: Claudio asks "Lo uso?" for Sonnet at once (no Haiku call).
+offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"], en = ["in detail", "in depth", "explain thoroughly"] }
 
 # Claude acts on the PC with tools (Phase 3). Level 1 runs at once (open, search, read the
 # windows, harmless keys); type, close a window, move a file and other keys ask "Confermi?"
