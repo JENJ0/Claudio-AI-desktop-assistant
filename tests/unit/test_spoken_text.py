@@ -29,3 +29,21 @@ def test_text_becomes_italian_words(text: str, spoken: str) -> None:
 
 def test_a_snake_case_name_keeps_its_underscores() -> None:
     assert to_spoken_it("il file note_spesa.txt") == "il file note_spesa.txt"
+
+
+def test_respellings_win_over_the_acronym_rule_and_keep_other_words() -> None:
+    from claudio.tts.spoken_text import respell
+
+    words = {"PC": "pi-ci", "file": "fàil"}
+    assert to_spoken_it("Il PC ha tre file, anzi tre FILE.", words) == (
+        "Il pi-ci ha tre fàil, anzi tre fàil."
+    )
+    assert respell("profile e pc-gaming", words) == "profile e pc-gaming"  # whole words only
+    assert respell("niente", {}) == "niente"
+
+
+def test_the_default_config_respells_the_words_jenjo_heard_wrong() -> None:
+    from claudio.config import DEFAULT_CONFIG, load_settings
+
+    words = load_settings(DEFAULT_CONFIG).tts.jack_words
+    assert {"PC", "file", "download"} <= set(words)

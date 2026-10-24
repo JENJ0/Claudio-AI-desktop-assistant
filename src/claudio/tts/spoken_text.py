@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 
 from claudio.tts.number_words import digits_to_words_it
 
@@ -101,16 +102,33 @@ def _caps(match: re.Match[str]) -> str:
     return word.lower()
 
 
-def to_spoken_it(text: str) -> str:
-    """ "Il **PC** è al 50%! 😎" -> "Il pi ci è al cinquanta per cento!" """
+def respell(text: str, words: Mapping[str, str]) -> str:
+    """Whole words (any case) written the way the voice says them right: "file" -> "fàil".
+    The keys are matched as written, so "PC" also catches "pc" and "Pc"."""
+    if not words:
+        return text
+    lookup = {key.lower(): value for key, value in words.items()}
+    pattern = re.compile(
+        r"(?<![\w-])("
+        + "|".join(re.escape(k) for k in sorted(lookup, key=len, reverse=True))
+        + r")(?![\w-])",
+        re.IGNORECASE,
+    )
+    return pattern.sub(lambda m: lookup[m.group(0).lower()], text)
+
+
+def to_spoken_it(text: str, words: Mapping[str, str] | None = None) -> str:
+    """ "Il **PC** è al 50%! 😎" -> "Il pi ci è al cinquanta per cento!"
+    `words`: respellings applied first (see respell), e.g. [tts] jack_words."""
+    text = respell(text, words or {})
     text = _LINK.sub(r"\1", text)
     text = _URL.sub("il link", text)
     text = _MARKDOWN.sub("", text)
     text = _EMPHASIS.sub(r"\1", text)
     text = _CURRENCY_BEFORE.sub(lambda m: f"{m.group(2)} {_CURRENCY[m.group(1)]}", text)
     text = _CURRENCY_AFTER.sub(lambda m: f"{m.group(1)} {_CURRENCY[m.group(2)]}", text)
-    for pattern, words in _SYMBOLS:
-        text = pattern.sub(words, text)
+    for pattern, replacement in _SYMBOLS:
+        text = pattern.sub(replacement, text)
     text = _strip_emoji(text)  # after the symbols: "°" is a symbol to Unicode too
     text = _CAPS.sub(_caps, text)
     text = digits_to_words_it(text)

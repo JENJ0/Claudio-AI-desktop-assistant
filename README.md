@@ -162,7 +162,8 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
    "auto"). Qwen3 is always told "Italian" (with "Auto" it guessed the language per sentence).
 
 Before Jack speaks, symbols, acronyms, Markdown and emoji become Italian words ("50%" ->
-"cinquanta per cento", "PC" -> "pi ci"): `src/claudio/tts/spoken_text.py`.
+"cinquanta per cento") and the words in `[tts.jack_words]` are respelled ("file" -> "fàil"):
+`src/claudio/tts/spoken_text.py`. Add a word there when Jack says it wrong.
 
 Startup takes 10-30 s more (models are loaded once). Kokoro (Piper if Kokoro is missing) is
 the fallback for English and for any sentence the worker cannot speak. If the worker does not

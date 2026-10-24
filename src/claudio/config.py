@@ -179,11 +179,14 @@ class TtsSettings(BaseModel):
     # RVC and RVC raises the pitch back by the same amount, so the voice does not get deeper.
     jack_speed: float = Field(0.9, ge=0.7, le=1.3)
     # Qwen3 sampling: lower is steadier (fewer odd stresses), higher is livelier.
-    jack_temperature: float = Field(0.9, ge=0.1, le=1.5)
+    jack_temperature: float = Field(0.7, ge=0.1, le=1.5)  # JenJo's pick by ear, 24/10
     # How RVC turns Qwen3's voice into Jack's: "blocks" of 250 ms as it is generated (first
     # audio ~0.3 s, more mangled words), "sentence" whole (clearer, the audio waits for the
     # sentence), "auto" blocks for a reply's first sentence and whole for the next ones.
-    jack_rvc: Literal["blocks", "sentence", "auto"] = "blocks"
+    jack_rvc: Literal["blocks", "sentence", "auto"] = "auto"  # JenJo's pick, 24/10
+    # Words Jack says wrong, written as he should say them (any case): English words read
+    # in English, "PC" merged into "pace". Edit in claudio.toml [tts.jack_words].
+    jack_words: dict[str, str] = Field(default_factory=dict)
     # The first piece of a reply may end at a comma once it is this long: the voice starts
     # before the whole first sentence has arrived from Claude (0 = whole sentences only).
     first_clause_chars: int = Field(25, ge=0, le=200)

@@ -13,7 +13,13 @@
   PDF), Markdown, links and emoji become Italian words before the numbers.
 - The speaker renders up to 16 pieces ahead of playback (was 2), so whole-sentence RVC is
   ready before the sentence is due.
-- `scripts/jack_variants.py`: the same replies in 5 settings, with WER, first audio and pauses.
+- `scripts/jack_variants.py`: the same replies in 5 settings, with WER, first audio and pauses;
+  `--words` speaks candidate spellings of hard words.
+- JenJo's pick by ear (24/10, variant C): `jack_temperature = 0.7`, `jack_rvc = "auto"`.
+- `[tts.jack_words]`: respellings for words Jack said wrong ("PC" heard as "pace", English
+  words like "file" read in English): `PC = "pi-ci"`, `file = "fàil"`, ...
+- Fixed: the whole-sentence RVC warm-up on silence gave a NaN pitch and a CUDA assert at worker
+  startup; the pitch is now clamped (NaN = unvoiced).
 
 ### Added
 - Claude acts on the PC (`src/claudio/pc/`, `[pc]` in `config/claudio.toml`): Haiku's tools

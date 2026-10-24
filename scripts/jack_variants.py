@@ -3,6 +3,7 @@ split into sentences as Claudio does, then Whisper writes down what it hears (WE
 
   uv run python scripts/jack_variants.py                 # all variants (~5 min of GPU)
   uv run python scripts/jack_variants.py --only A C      # some of them
+  uv run python scripts/jack_variants.py --words         # spellings of hard words (~1 min)
 
 Output in logs/jack-variants/ (not committed, personal use only): <variant>/<n>.wav and
 report.md (WER, first audio, gaps). The worker needs the GPU alone: close Claudio first."""
@@ -42,10 +43,14 @@ GAP_S = 0.12  # silence between the sentences of a reply in the WAV (like the pl
 
 # name -> (what it is, [tts] overrides, first_clause_chars or None for the configured one)
 VARIANTS: dict[str, tuple[str, dict[str, Any], int | None]] = {
-    "A": ("prima: Auto, temperatura 0.9, RVC a blocchi", {"language": "Auto"}, None),
+    "A": (
+        "prima: Auto, temperatura 0.9, RVC a blocchi",
+        {"language": "Auto", "jack_temperature": 0.9, "jack_rvc": "blocks"},
+        None,
+    ),
     "B": (
         "Italian (ora fisso), temperatura 0.7, RVC a blocchi",
-        {"jack_temperature": 0.7},
+        {"jack_temperature": 0.7, "jack_rvc": "blocks"},
         None,
     ),
     "C": (
@@ -141,6 +146,7 @@ def run_variant(settings: Any, name: str, out: Path) -> list[dict]:
         tts.jack_sentence_timeout_s,
         language=overrides.get("language", "Italian"),
         rvc=overrides.get("jack_rvc", tts.jack_rvc),
+        words=tts.jack_words,
     )
     print(f"{name}: {label} - avvio del worker...")
     synth.start()
@@ -201,13 +207,64 @@ def report(results: dict[str, list[dict]], out: Path) -> str:
     return text
 
 
+# Ways to write a word Jack says wrong; each goes in a sentence, with the configured settings.
+# The winner goes in [tts.jack_words] of claudio.toml.
+SPELLINGS = {
+    "PC": ["pi ci", "pi-ci", "pì cì", "picì"],
+    "file": ["fàil", "fail", "fàiil", "fàyl"],
+    "download": ["dàunlod", "daunlòd", "dàunlòud"],
+}
+SPELLING_SENTENCE = {
+    "PC": "Il {} è al trentacinque per cento di batteria.",
+    "file": "Ho trovato tre {} nella cartella documenti.",
+    "download": "Apro la cartella {}, eroe.",
+}
+
+
+def run_spellings(settings: Any, out: Path) -> None:
+    from claudio.tts.jack import worker_command
+
+    tts = settings.tts
+    models = settings.resolve(settings.models_dir)
+    synth = JackSynth(
+        worker_command(models, tts),
+        Silent(),
+        tts.jack_startup_timeout_s,
+        tts.jack_sentence_timeout_s,
+        rvc="sentence",  # the whole sentence: how most sentences of a reply are spoken
+    )  # no respellings: the candidates are sent as written
+    print("Parole difficili - avvio del worker...")
+    synth.start()
+    folder = out / "parole"
+    folder.mkdir(parents=True, exist_ok=True)
+    lines = ["# Parole difficili", ""]
+    try:
+        synth.synthesize("Pronto.")
+        for word, candidates in SPELLINGS.items():
+            for n, spelling in enumerate(candidates, 1):
+                sentence = SPELLING_SENTENCE[word].format(spelling)
+                audio = synth.synthesize(sentence)
+                name = f"{word.lower()}_{n}.wav"
+                sf.write(folder / name, audio, synth.sample_rate)
+                lines.append(f"- {name}: {sentence}")
+                print(f"  {name}: {sentence}")
+    finally:
+        synth.close()
+    (folder / "elenco.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--only", nargs="+", choices=sorted(VARIANTS), default=sorted(VARIANTS))
+    parser.add_argument("--words", action="store_true", help="only the hard-word spellings")
     args = parser.parse_args()
     settings = load_settings()
     out = ROOT / "logs" / "jack-variants"
     out.mkdir(parents=True, exist_ok=True)
+    if args.words:
+        run_spellings(settings, out)
+        print(f"WAV in {out / 'parole'}")
+        return
     results = {name: run_variant(settings, name, out) for name in args.only}
     if Silent.used:
         print(f"ATTENZIONE: {Silent.used} frasi non dette da Jack (worker caduto)")

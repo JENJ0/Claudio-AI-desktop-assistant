@@ -152,6 +152,7 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
         rvc=tts.jack_rvc,
+        words=tts.jack_words,
     )
     try:
         synth.start()

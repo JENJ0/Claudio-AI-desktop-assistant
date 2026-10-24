@@ -74,7 +74,9 @@ class JackSynth:
         sentence_timeout_s: float = 15.0,
         language: str = "Italian",
         rvc: str = "blocks",
+        words: dict[str, str] | None = None,
     ) -> None:
+        self.words = dict(words or {})  # respellings: "file" -> "fàil" (see spoken_text)
         self.command = command
         # Told to Qwen3. Always Italian (JenJo, 24/10): "Auto" guessed the language per
         # sentence and drifted to Spanish/English accents and stresses.
@@ -231,13 +233,13 @@ class JackSynth:
     def _speak(self, text: str) -> Iterator[np.ndarray]:
         self._next_id += 1
         rid = self._next_id
-        # Digits, symbols and acronyms become Italian words: left alone, the model guesses
-        # them, sometimes in Spanish or English.
+        # Digits, symbols, acronyms and English words become Italian spelling: left alone,
+        # the model guesses them, sometimes in Spanish or English.
         self._send(
             {
                 "op": "speak",
                 "id": rid,
-                "text": to_spoken_it(text),
+                "text": to_spoken_it(text, self.words),
                 "language": self.language,
                 "rvc": self._rvc_for_next(),
             }
