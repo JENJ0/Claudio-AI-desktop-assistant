@@ -102,9 +102,9 @@ first_clause_chars = 25    # the first piece of a reply may end at a comma once 
 # words get read in English: an accent on the stressed vowel keeps them Italian-sounding.
 # Hear candidates with: uv run python scripts/jack_variants.py --words
 [tts.jack_words]
-PC = "pi-ci"
-file = "fàil"
-download = "dàunlod"
+PC = "pì cì"               # JenJo's pick by ear (24/10), as file and download
+file = "fàiil"
+download = "dàunlòud"
 upload = "àplod"
 Chrome = "cròm"
 mouse = "màus"
