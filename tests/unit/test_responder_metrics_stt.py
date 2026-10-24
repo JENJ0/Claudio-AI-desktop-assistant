@@ -268,7 +268,9 @@ def test_language_detection_reuses_the_encoder_pass() -> None:
 
     stt = make_stt()
     stt.settings = SttSettings(
-        languages=["it", "en"], prompts={"it": "Apri Chrome.", "en": "Open Chrome."}
+        languages=["it", "en"],
+        prompts={"it": "Apri Chrome.", "en": "Open Chrome."},
+        other_confidence=0.8,
     )
     stt._model = FakeMultilingualWhisper([("<|en|>", 0.8), ("<|it|>", 0.15), ("<|de|>", 0.05)])
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)

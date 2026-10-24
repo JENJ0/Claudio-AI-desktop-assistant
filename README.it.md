@@ -120,6 +120,14 @@ conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a l
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
 (`enabled = false` per solo comandi locali). Una domanda a Haiku costa circa 0,0002 USD.
 
+## Personalità (CLAUDIO.md)
+
+Il carattere di Claudio sta in `data/CLAUDIO.md`, creato al primo avvio da `config/CLAUDIO.md`
+(Jack il Bello di Borderlands: spaccone, ironico, utile). Modificalo a mano e riavvia; gli
+aggiornamenti non lo toccano e i `<!-- commenti -->` non vengono inviati. Viene letto una volta
+e va dopo il prompt di sistema, quindi in cache: tienilo corto (`personality_max_chars = 3000`).
+Claudio risponde in italiano, in inglese solo se la frase è chiaramente inglese o glielo chiedi.
+
 ## Azioni sul PC
 
 Con Claude acceso, Claudio agisce anche su Windows (`[pc]` in `config/claudio.toml`): apre app
@@ -129,8 +137,8 @@ testo, chiude finestre e sposta file. Più azioni in una risposta, fino a 4 giri
 
 I livelli di sicurezza sono fissi nel codice (`src/claudio/pc/tools.py`), mai scelti da Claude:
 aprire, cercare, leggere e i tasti innocui (frecce, Pagina giù, Ctrl+C, Ctrl+T...) partono
-subito; digitare, chiudere una finestra, spostare un file e ogni altro tasto fanno dire a
-Claudio cosa farà, con "Confermi?". Solo un sì breve detto a voce lo esegue (mai dalla chat).
+subito; digitare, chiudere una finestra, spostare un file e ogni altro tasto fanno chiedere a
+Claudio solo "Confermi?" (`confirm_brief = false` gli fa prima dire cosa farà). Solo un sì breve detto a voce lo esegue (mai dalla chat).
 File: solo dentro la tua cartella utente (`roots = ["~"]`), mai sovrascritti; programmi e
 script non si aprono come file. I gestori di password non vengono mai letti. Ogni azione
 finisce nei log (`tools` in `metrics.jsonl`, "Azioni" in `conversazione.md`). Un'azione con un

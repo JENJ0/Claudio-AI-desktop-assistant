@@ -278,8 +278,18 @@ EN: dict[str, str] = {
     ),
     "Il motivo è nel log.": "The reason is in the log.",
     # Claude (brain/, Phase 2)
-    "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno": (
-        "Claude: %s (reasoning: %s), max %d tokens, cache %s, budget %.2f a day"
+    "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno, "
+    "personalità %d caratteri": (
+        "Claude: %s (reasoning: %s), max %d tokens, cache %s, budget %.2f a day, "
+        "personality %d characters"
+    ),
+    "Personalità creata in %s (modificala quando vuoi)": (
+        "Personality created in %s (edit it whenever you like)"
+    ),
+    "Non riesco a creare %s (%s): uso %s": "Cannot create %s (%s): using %s",
+    "Personalità non letta (%s): tono neutro": "Personality not read (%s): neutral tone",
+    "%s supera %d caratteri: tengo solo l'inizio (ogni carattere costa a ogni richiesta)": (
+        "%s is over %d characters: keeping only the start (every character costs on every request)"
     ),
     "Sonnet spento, solo Haiku: %s": "Sonnet off, Haiku only: %s",
     "Haiku propone Sonnet: chiedo conferma": "Haiku proposes Sonnet: asking first",

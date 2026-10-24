@@ -217,6 +217,19 @@ def test_digits_reach_the_worker_as_italian_words(tmp_path, synths) -> None:
     synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
     synth.synthesize("Sono le 20 e 13.")
     assert [m["text"] for m in sent if m["op"] == "speak"] == ["Sono le venti e tredici."]
+    assert [m["language"] for m in sent if m["op"] == "speak"] == ["Auto"]
+
+
+def test_the_configured_language_reaches_the_worker(tmp_path, synths) -> None:
+    """[tts] jack_language = "Italian": Qwen3 stops guessing the language per sentence."""
+    synth, _ = make(tmp_path, "ok", startup_timeout_s=10, sentence_timeout_s=2, language="Italian")
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    synth.synthesize("Ciao socio.")
+    assert [m["language"] for m in sent if m["op"] == "speak"] == ["Italian"]
 
 
 def test_no_module_next_to_the_worker_shadows_the_standard_library() -> None:
