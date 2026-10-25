@@ -309,6 +309,7 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
         mode=c.barge_in_mode,
         min_dbfs=c.barge_in_min_dbfs,
         duck_volume=c.duck_volume,
+        resume_s=c.resume_s,
     )
 
 

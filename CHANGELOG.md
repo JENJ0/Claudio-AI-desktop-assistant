@@ -14,6 +14,13 @@
   800 ms of silence to end (`long_end_silence_ms`, `long_after_s`); commands still end after
   400 ms. `max_utterance_s` 8 -> 15 s.
 
+### Added
+- A reply cut by a new request goes on after it is answered (JenJo, 25/10): "raccontami una
+  storia" ... "che ore sono?" ... "Sono le 19 e 44. Dicevo: ..." from the sentence that was cut.
+  The cut reply is still read to its end from Claude (at most `max_tokens`, no extra call); not
+  resumed after "basta", after a closer ("ok, va bene, grazie"), after a question it was asking
+  ("Lo uso?"), or after `[conversation] resume_s` (60 s; 0 = never).
+
 ### Fixed (JenJo's test, 25/10)
 - A noise Whisper writes as an interjection ("Mm-hmm.", "Ehm, mh.") no longer stops the reply:
   interjections do not count among the two words needed to take over.

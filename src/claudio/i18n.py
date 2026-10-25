@@ -208,6 +208,7 @@ EN: dict[str, str] = {
     "Interrotto a voce: %r": "Interrupted by voice: %r",
     "Risposta interrotta": "Reply interrupted",
     "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
+    "Riprendo la risposta interrotta: %r": "Resuming the interrupted reply: %r",
     "La mia voce nel microfono, la ignoro: %r": "My own voice heard again, ignored: %r",
     "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
         "Voice too quiet while speaking (%.0f dBFS): ignored"

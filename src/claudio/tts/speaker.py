@@ -76,6 +76,9 @@ class StreamingSpeaker:
         self.effect = effect
         self._earcons = make_earcons(player.sample_rate, beep_volume)
         self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
+        # The sentences of the current reply that started playing; the last one may have been
+        # cut short. Where an interrupted reply resumes.
+        self.played: list[str] = []
 
     def interrupt(self) -> None:
         """Stop the reply being spoken ("basta" heard while speaking)."""
@@ -135,9 +138,11 @@ class StreamingSpeaker:
         language of its reply once it has matched the request."""
         self._cancel.clear()
         self.duck(None)  # every reply starts at full volume
+        self.played = []
         # Rendering runs ahead of playback: the next sentences are ready before they are due
-        # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued.
-        queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=16)
+        # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued. The first
+        # piece of each sentence carries its text.
+        queue: asyncio.Queue[tuple[np.ndarray, int, str | None] | None] = asyncio.Queue(maxsize=16)
 
         async def produce() -> None:
             try:
@@ -146,8 +151,10 @@ class StreamingSpeaker:
                 ):
                     lang = language() if callable(language) else language
                     log.debug("TTS (%s): %s", lang, sentence)
-                    async for item in self.render_stream(sentence, lang):
-                        await queue.put(item)
+                    text: str | None = sentence
+                    async for audio, rate in self.render_stream(sentence, lang):
+                        await queue.put((audio, rate, text))
+                        text = None
             finally:
                 await queue.put(None)
 
@@ -158,7 +165,10 @@ class StreamingSpeaker:
                 if first and on_first_audio is not None:
                     on_first_audio()
                 first = False
-                done = await asyncio.to_thread(self.player.write, *item, self._cancel)
+                audio, rate, sentence = item
+                if sentence is not None:
+                    self.played.append(sentence)
+                done = await asyncio.to_thread(self.player.write, audio, rate, self._cancel)
                 if done is False or self._cancel.is_set():
                     log.info("Risposta interrotta")
                     break
