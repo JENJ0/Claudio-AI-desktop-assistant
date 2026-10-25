@@ -78,7 +78,12 @@ _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _URL = re.compile(r"https?://\S+|www\.\S+")
 _MARKDOWN = re.compile(r"\*\*|__|`+|^\s{0,3}#{1,6}\s+|^\s*[-*•]\s+", re.MULTILINE)
 _EMPHASIS = re.compile(r"(?<!\w)[*_](\S[^*_]*?)[*_](?!\w)")
-_CAPS = re.compile(r"\b[A-Z][A-Z0-9]{1,5}\b")
+_CAPS = re.compile(r"\b[A-Z][A-Z0-9]+\b")
+# A capital vowel with an apostrophe is an accent typed without the key: "UNIVERSITA'".
+_APOSTROPHE_ACCENT = re.compile(r"(?<=[A-Za-z])([AEIOUaeiou])'(?![A-Za-zÀ-ÿ])")
+_ACCENTED = dict(zip("AEIOUaeiou", "àèìòùàèìòù", strict=True))
+# Sentences glued without a space ("Cerco il nome.Nessuna"): the voice runs them together.
+_GLUED = re.compile(r"(?<=[a-zà-ÿ])([.!?])(?=[A-ZÀ-Ý])")
 _VOWELS = set("AEIOU")
 _SPACES = re.compile(r"[ \t]{2,}")
 
@@ -130,6 +135,8 @@ def to_spoken_it(text: str, words: Mapping[str, str] | None = None) -> str:
     for pattern, replacement in _SYMBOLS:
         text = pattern.sub(replacement, text)
     text = _strip_emoji(text)  # after the symbols: "°" is a symbol to Unicode too
+    text = _GLUED.sub(r"\1 ", text)
     text = _CAPS.sub(_caps, text)
+    text = _APOSTROPHE_ACCENT.sub(lambda m: _ACCENTED[m.group(1)], text)
     text = digits_to_words_it(text)
     return _SPACES.sub(" ", text).strip()
