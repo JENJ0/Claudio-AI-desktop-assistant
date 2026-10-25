@@ -13,7 +13,7 @@ import pytest
 
 from claudio.app import addressed_to_claudio
 from claudio.brain.claude import CUT_NOTE, ClaudeBrain
-from claudio.brain.prompts import SYSTEM_PROMPT
+from claudio.brain.prompts import ASK_SONNET_TOOL, SYSTEM_PROMPT
 from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
 from claudio.router.actions import ActionRunner
@@ -503,6 +503,34 @@ async def test_haiku_words_before_the_offer_get_a_space(pricing: Pricing) -> Non
     client = ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF))
     reply = await ask(brain(pricing, client), "spiegami il mutuo variabile")
     assert reply.startswith("Domanda complessa. Per questa serve Sonnet")
+
+
+async def test_no_offer_for_a_story(pricing: Pricing) -> None:
+    """JenJo, 25/10: Sonnet is the exception, never for stories. Haiku tells it, no question."""
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["C'era una volta."], "end_turn", []))
+    b = brain(pricing, client)
+    assert await ask(b, "raccontami una storia lunga sui pirati") == "C'era una volta."
+    first, second = client.calls
+    assert [c["model"] for c in client.calls] == ["claude-haiku-5-5"] * 2
+    assert "tools" not in second and second["messages"] == first["messages"]
+    assert b._offer is None and b.last_call["escalated"] == "skipped"
+
+
+async def test_detail_words_do_not_offer_sonnet_for_a_joke(pricing: Pricing) -> None:
+    client = ScriptedClient((["Allora."], "end_turn", []))
+    b = brain(pricing, client)
+    assert not b.wants_offer("dimmi una barzelletta nel dettaglio", "it")
+    assert b.wants_offer("spiegami nel dettaglio il mutuo variabile", "it")
+    assert await ask(b, "tell me a joke in detail", "en") == "Allora."
+    assert b._offer is None
+
+
+def test_ask_sonnet_is_a_rare_exception() -> None:
+    """The tool text keeps stories and chat out, and stays short (it is in the cached prefix)."""
+    text = ASK_SONNET_TOOL["description"]
+    for word in ("stories", "jokes", "chat", "code", "maths", "rare"):
+        assert word in text
+    assert len(text) < 500
 
 
 async def test_asking_to_think_goes_straight_to_sonnet(pricing: Pricing) -> None:

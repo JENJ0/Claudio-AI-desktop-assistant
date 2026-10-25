@@ -106,6 +106,7 @@ class ClaudeBrain:
         self.smart_model: str | None = settings.smart_model or None
         self._smart_phrases = _normalized(settings.smart_phrases)
         self._offer_phrases = _normalized(settings.offer_phrases)
+        self._no_offer_phrases = _normalized(settings.no_offer_phrases)
         self._history: deque[tuple[str, str]] = deque(maxlen=settings.history_turns or None)
         self._last_turn = -float("inf")
         self._last_contact = -float("inf")  # last time the connection to the API was used
@@ -171,7 +172,15 @@ class ClaudeBrain:
     def wants_offer(self, text: str, language: str) -> bool:
         """JenJo asked for detail ("spiegami in dettaglio..."): Sonnet is proposed at once,
         without a Haiku call (Haiku at low effort often answered these itself)."""
-        return self.smart_model is not None and _says(text, language, self._offer_phrases)
+        return (
+            self.smart_model is not None
+            and _says(text, language, self._offer_phrases)
+            and not self.never_offer(text, language)
+        )
+
+    def never_offer(self, text: str, language: str) -> bool:
+        """A story, a joke, a poem: Haiku is good enough, even for a long one (JenJo, 25/10)."""
+        return _says(text, language, self._no_offer_phrases)
 
     async def ask(self, text: str, language: str) -> AsyncGenerator[str, None]:
         """Claude's reply to `text`, in `language`, as it arrives. Problems become one short
@@ -279,6 +288,18 @@ class ClaudeBrain:
                         yield chunk
                 turn.parts.extend(leg.parts)
                 streaming = None
+                if (
+                    leg.handoff
+                    and not leg.calls
+                    and offer_from is not None
+                    and self.never_offer(offer_from[-1]["content"], language)
+                ):
+                    # Haiku asked for Sonnet for a story: it tells it itself, no question.
+                    log.info("Sonnet chiesto per una storia: risponde Haiku")
+                    self.last_call["escalated"] = "skipped"
+                    async for chunk in self._haiku(offer_from, language, start, tools=False):
+                        yield chunk
+                    return
                 if leg.handoff and not leg.calls and self.smart_model and offer_from is not None:
                     # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question.
                     log.info("Haiku propone Sonnet: chiedo conferma")

@@ -18,6 +18,15 @@
   the list has nothing (a folder made after the last read, files). `open_path` with a wrong
   folder name uses the same list.
 
+## [Unreleased] - Sonnet only when needed
+
+### Changed
+- `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
+  analysis or plans); Haiku answers stories, jokes, chat and explanations itself.
+- New `[claude] no_offer_phrases` (storia, barzelletta, poesia, raccontami...): if Haiku still
+  asks for Sonnet on such a request, or a detail phrase matches, Claudio does not ask "Lo uso?"
+  and Haiku answers (log "Sonnet chiesto per una storia", metric `escalated = skipped`).
+
 ## [0.3.2] - screen and terminal
 
 ### Added

@@ -334,6 +334,25 @@ class ClaudeSettings(BaseModel):
             "en": ["in detail", "in depth", "explain thoroughly"],
         }
     )
+    # Stories, jokes, poems: Haiku tells them itself, never "Lo uso?" (JenJo, 25/10).
+    no_offer_phrases: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "it": [
+                "storia",
+                "storie",
+                "storiella",
+                "favola",
+                "fiaba",
+                "barzelletta",
+                "barzellette",
+                "poesia",
+                "filastrocca",
+                "racconta",
+                "raccontami",
+            ],
+            "en": ["story", "stories", "joke", "jokes", "poem", "fairy tale"],
+        }
+    )
 
 
 class PcSettings(BaseModel):
