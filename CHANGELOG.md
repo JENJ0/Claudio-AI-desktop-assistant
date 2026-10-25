@@ -21,8 +21,11 @@
   dBFS of each phrase ignored as too quiet) to tune `barge_in_min_dbfs` on real data; what is
   heard but not taken as a request is logged at INFO.
 - `scripts/compare_stt.py --engines turbo frase large-v3 --details`: the `frase` engine is turbo
-  with a natural-sentence prompt (`--prompt` to try another), to decide whether it should
-  replace the command list in `[stt.prompts]`.
+  with a natural-sentence prompt (`--prompt` to try another).
+- Whisper's prompt is now a few natural sentences instead of a list of commands: on JenJo's 23
+  requests it fixed "pure sono" / "Chiaro son" -> "che ore sono", "Il punto è" -> "raccontami",
+  "Projecti" -> "Progetti", at the same speed (108 ms). large-v3 understood about as much at
+  twice the time (232 ms): turbo stays.
 
 ## [Unreleased] - personality
 
