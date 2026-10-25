@@ -215,6 +215,11 @@ EN: dict[str, str] = {
     "Risposta interrotta": "Reply interrupted",
     "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
     "Riprendo la risposta interrotta: %r": "Resuming the interrupted reply: %r",
+    "Frase lasciata a metà, ascolto il resto: %r": "Phrase left halfway, waiting for the rest: %r",
+    "Vocabolario di Whisper: %d cartelle, %d programmi (%.0f ms)": (
+        "Whisper vocabulary: %d folders, %d programs (%.0f ms)"
+    ),
+    "Lettura dei nomi per Whisper non riuscita": "Could not read the names for Whisper",
     "La mia voce nel microfono, la ignoro: %r": "My own voice heard again, ignored: %r",
     "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
         "Voice too quiet while speaking (%.0f dBFS): ignored"
