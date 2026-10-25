@@ -103,6 +103,7 @@ jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pit
 jack_temperature = 0.7     # Qwen3 sampling: lower = steadier pronunciation (JenJo's pick C, 24/10)
 jack_rvc = "auto"          # "blocks" (fast, more mangled words), "sentence" (clearer, waits for the
                            # sentence) or "auto" (blocks for a reply's first sentence, then whole)
+jack_pitch_fix = false     # true = RVC pitch cleaned (octave errors, jitter): against the robotic tone
 # Compare settings by ear: uv run python scripts/jack_variants.py (WAVs + WER in logs/jack-variants/)
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 

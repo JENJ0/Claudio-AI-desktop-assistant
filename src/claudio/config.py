@@ -197,6 +197,10 @@ class TtsSettings(BaseModel):
     # audio ~0.3 s, more mangled words), "sentence" whole (clearer, the audio waits for the
     # sentence), "auto" blocks for a reply's first sentence and whole for the next ones.
     jack_rvc: Literal["blocks", "sentence", "auto"] = "auto"  # JenJo's pick, 24/10
+    # RVC pitch cleanup against the "robotic at times" tone: the pitch buckets of the
+    # streamed first sentence as in training (Applio's realtime path had them ~2 semitones
+    # off) and octave errors, jitter and tiny unvoiced holes removed from whole sentences.
+    jack_pitch_fix: bool = False  # off until JenJo's A/B (scripts/jack_variants.py C vs F)
     # Words Jack says wrong, written as he should say them (any case): English words read
     # in English, "PC" merged into "pace". Edit in claudio.toml [tts.jack_words].
     jack_words: dict[str, str] = Field(default_factory=dict)

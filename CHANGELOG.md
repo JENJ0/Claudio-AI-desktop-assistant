@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased] - Jack less robotic
+
+### Added
+- `[tts] jack_pitch_fix` (off until JenJo's A/B): RVC pitch cleanup against Jack's
+  occasional robotic tone. Streamed first sentence: Applio 3.7.0's realtime pipeline bucketed
+  the pitch with Hz limits on mel values (~6 buckets, ~2 semitones above training), now the
+  training scale. Whole sentences: octave errors folded back, 1-2 frame unvoiced holes in a
+  vowel filled, median-of-3 jitter filter (`smooth_f0` in `tts/jack_worker.py`).
+- Worker `rvc: "none"` (Qwen3 alone) for diagnosis.
+- `scripts/jack_variants.py`: variants F (pitch fix), T (F + temperature 0.8), Q (no RVC);
+  `--from-log` now compares C/F/T/Q; the report measures every reply's pitch (octave jumps,
+  flicker, melody spread) and lists the suspicious replies to listen to first.
+
 ## [0.3.2] - screen and terminal
 
 ### Added
