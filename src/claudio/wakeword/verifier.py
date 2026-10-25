@@ -26,3 +26,17 @@ def wake_confirmed(text: str, matched_command: bool) -> bool:
     """Keep the wake when the name was heard at the start or the request is a local command.
     An empty transcript is not judged here: the caller already handles silence."""
     return not text.strip() or matched_command or name_at_start(text)
+
+
+# Whisper's spelling of "Claudio" with the "C" cut off, or said softly ("l'audio", "audio").
+CLIPPED_NAMES = frozenset({"audio"})
+CLIPPED_LEAD = frozenset({"l", "e"})  # "l'audio", "e l'audio" (a fast "hey")
+
+
+def clipped_name(text: str) -> bool:
+    """True when the transcript starts like a clipped name ("L'audio?", "l'audio apri..."): a
+    cut-off name can only be at the start of the audio Whisper gets."""
+    words = normalize(text, drop_fillers=False).split()
+    while words and (words[0] in GREETINGS or words[0] in CLIPPED_LEAD):
+        words = words[1:]
+    return bool(words) and words[0] in CLIPPED_NAMES

@@ -79,7 +79,7 @@ class WakeWordSettings(BaseModel):
         default_factory=lambda: [WakeWordModel(name="hey_jarvis")], min_length=1
     )
     # A peak between this and the threshold is a missed wake word: it is logged and, with
-    # second_chance, Whisper listens to the last 1.5 s and wakes CLAUDIO if it hears the name.
+    # second_chance, Whisper listens to the last 2.5 s and wakes CLAUDIO if it hears the name.
     near_miss_floor: float = Field(0.15, gt=0, lt=1)
     # A wake scoring below this is confirmed by Whisper first (the second chance, ~130 ms):
     # a weak detection on Claudio's own voice or the TV stays silent. 0 = off.

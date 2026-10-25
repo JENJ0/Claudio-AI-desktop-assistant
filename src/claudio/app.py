@@ -35,12 +35,16 @@ from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, Wak
 from claudio.resume import RESUME_PREFIX, DrainedStream, ends_the_reply, remainder
 from claudio.router.normalizer import heard_wake_word, normalize
 from claudio.system import SystemControl
+from claudio.wakeword.verifier import clipped_name
 
 log = logging.getLogger(__name__)
 
 PREWAKE_S = 1.5  # audio kept before the wake word: one-breath phrases and the saved WAV
 HELD_FRAMES = 100  # frames kept while transcribing (~8 s), replayed if we listen again
 LEAD_IN_S = PREWAKE_S  # one breath: how much of the audio before the detection Whisper gets
+# What Whisper hears to check the name. The "claudio" model fires late, on the next word when
+# JenJo speaks in one breath: in 1.5 s the "C" was cut off and Whisper wrote "l'audio" (25/10).
+WAKE_CHECK_S = 2.5
 QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
@@ -176,7 +180,7 @@ class Assistant:
         self._checking = False
         self._checks: set[asyncio.Task[None]] = set()
         self._stt_lock = asyncio.Lock()  # Whisper is used by one thing at a time
-        self._recent = RingBuffer(int(endpointer.sample_rate * PREWAKE_S))
+        self._recent = RingBuffer(int(endpointer.sample_rate * WAKE_CHECK_S))
         self._prewake = np.zeros(0, dtype=np.float32)
         self._wake_audio = np.zeros(0, dtype=np.float32)
         self._held: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
@@ -280,9 +284,10 @@ class Assistant:
         self._interaction.mark("wake")
         log.info("Wake word rilevata: %s (%.2f)", name, score)
         self._beep("wake")
-        self._prewake = self._recent.get()
+        recent = self._recent.get()
+        self._prewake = recent[-int(PREWAKE_S * self.endpointer.sample_rate) :]
         self._recent.clear()
-        self._wake_audio = self._lead_in()  # the wake word itself, for the verifier
+        self._wake_audio = recent  # the wake word itself, for the verifier
         if self.audio_sink is not None:
             sr = self.endpointer.sample_rate
             self._interaction.info["prewake_ms"] = round(len(self._prewake) * 1000 / sr)
@@ -296,6 +301,11 @@ class Assistant:
         return self.second_chance is not None and (
             score < self.confirm_below or name in self.always_confirm
         )
+
+    def _name_in(self, wake_word: str, text: str) -> bool:
+        """Whisper heard the name. After the "claudio" model a clipped "l'audio" at the start
+        counts too: that model only fires on something that already sounds like the name."""
+        return heard_wake_word(text) or (wake_word in self.always_confirm and clipped_name(text))
 
     def _lead_in(self) -> np.ndarray:
         """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
@@ -330,7 +340,7 @@ class Assistant:
         # A weak detection said fast often loses the name ("apri cancolatrice"): a command counts.
         language = self.transcriber.language
         weak = self._weak(name, score) and bool(text) and self.responder.understands(text, language)
-        if self.state is State.IDLE and (heard_wake_word(text) or weak):
+        if self.state is State.IDLE and (self._name_in(name, text) or weak):
             log.info(
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
@@ -514,7 +524,7 @@ class Assistant:
             return False
         inter.info["wake_check_ms"] = round((self.clock() - start) * 1000)
         inter.info["wake_check"] = text
-        if heard_wake_word(text):
+        if self._name_in(str(inter.info.get("wake_word", "")), text):
             log.info("Nome sentito prima della richiesta: %r", text)
             return True
         return False

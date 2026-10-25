@@ -27,7 +27,7 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
 confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more)
-second_chance = true       # after one, Whisper listens to the last 1.5 s (~130 ms) and wakes CLAUDIO if it hears the name
+second_chance = true       # after one, Whisper listens to the last 2.5 s (~130 ms) and wakes CLAUDIO if it hears the name
 verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
 
 [[wakeword.models]]

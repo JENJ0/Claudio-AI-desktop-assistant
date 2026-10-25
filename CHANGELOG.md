@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased] - "Claudio" wake word
+
+### Fixed (JenJo's test, 25/10: "Claudio" alone fires rarely)
+- The "claudio" model fires late, on the word after the name when it is said in one breath:
+  Whisper's check got only the last 1.5 s, the "C" was cut off and it heard "l'audio" (8 of the
+  rejected checks in the logs), so JenJo had to repeat. The check now hears the last
+  `WAKE_CHECK_S` 2.5 s; the request keeps its 1.5 s lead-in.
+- After the "claudio" model, a transcript starting with "l'audio"/"audio" counts as the name
+  (a clipped "Claudio"). Not after "hey claudio", and not in the middle ("alza l'audio").
+
 ## [0.3.2] - screen and terminal
 
 ### Added
