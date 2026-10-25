@@ -336,6 +336,12 @@ uv run python scripts/compare_stt.py                                   # turbo v
 uv run python scripts/compare_stt.py --engines turbo large-v3 lista parakeet --details
 ```
 
+`nomi` is turbo with the names on your PC first in its prompt, as `[stt] vocabulary` does live
+(the most recent folders of Desktop and Documents, two levels deep, and the shortcuts of the
+Desktop and the Start menu: "Cartelle: Tesi, PSS. Programmi: Rocket League."), so short names
+are written right; `--engines frase nomi --details` shows what the names change. Your own words
+go in `[stt] vocabulary_words`.
+
 `lista` is the closed list CLAUDIO uses live (`stt.closed_list`): when no command understands
 the best transcription, Whisper proposes 5 and the first known command wins. `parakeet` needs
 `uv pip install onnx-asr` (NVIDIA Parakeet TDT 0.6B v3, downloaded on first use). The last line

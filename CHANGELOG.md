@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased] - Sonnet only when needed
+## [Unreleased] - Whisper hears names and whole phrases
+
+### Added
+- `[stt] vocabulary`: the names on the PC go first in Whisper's prompt (`stt/vocabulary.py`):
+  the 25 most recent folders of Desktop and Documents (two levels, no generic or long names,
+  "TESI" written "Tesi") and 12 shortcuts of the Desktop and Start menu, read in a thread every
+  10 minutes, plus `vocabulary_words`. Never in the wake word's quick look.
+  `compare_stt.py --engines nomi` measures it on the saved requests.
+- A phrase left halfway (Whisper's "...", or a last word such as "e", "la", "cerca": "Apri
+  Chrome e cerca..." on 26/10) waits up to `[vad] continue_s` (2 s) for the rest; both parts are
+  transcribed together. Nothing more said: the first text is answered, without a second pass.
+  `continued_from` in `metrics.jsonl`.
+
+### Fixed
+- Prompt caching: an explicit marker on the system prompt besides automatic caching. With 6
+  turns of history, every request from the 7th dropped the oldest turn, changed the prefix and
+  wrote ~5,000 tokens again (0.0007 $ instead of ~0.0002 $ with Haiku).
+
+## Sonnet only when needed
 
 ### Changed
 - `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
