@@ -10,7 +10,15 @@ import numpy as np
 import pytest
 
 from claudio.config import NoiseSettings
-from claudio.intake import CONVERSATION, Heard, Kind, RequestFilter, Segment, content_words
+from claudio.intake import (
+    CONVERSATION,
+    Heard,
+    Kind,
+    RequestFilter,
+    Segment,
+    content_words,
+    incomplete,
+)
 from claudio.safety.confirmation import Answer, parse_answer
 from claudio.session_log import purge_old_logs
 from tests.unit.test_app import FakeResponder, FakeStt, build, run_frames
@@ -50,6 +58,38 @@ def test_false_wake_unless_the_name_was_heard() -> None:
     assert decide("Hey, ciao, come stai?", f=f, name_heard=True).kind is Kind.ANSWER
     assert decide("e apri chrome", f=f).kind is Kind.ANSWER  # a command needs no name
     assert decide("ciao come stai", f=f, wake_word=CONVERSATION).kind is not Kind.FALSE_WAKE
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Apri Chrome e cerca...", "Dimmi...", "Claudio, apri la", "Scrivi una mail a", "open the…"],
+)
+def test_phrases_left_halfway(text: str) -> None:
+    assert incomplete(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Apri Chrome e cerca Dainese Moto.",
+        "Claudio apri la cartella tesi.",
+        "Che ore sono?",
+        "La",
+        "Hai cercato e?",
+        "Grazie.",
+    ],
+)
+def test_finished_phrases(text: str) -> None:
+    assert not incomplete(text)
+
+
+def test_a_phrase_left_halfway_waits_once() -> None:
+    f = RequestFilter(continue_incomplete=True)
+    assert decide("Apri Firefox e cerca...", f=f).kind is Kind.CONTINUE
+    assert decide("Apri Firefox e cerca...", f=f, continued=True).kind is Kind.ANSWER
+    assert decide("Apri Firefox e cerca...").kind is Kind.ANSWER  # off by default
+    assert decide("apri chrome e", f=f).kind is Kind.ANSWER  # a command runs at once
+    assert not decide("Dimmi...", f=f).dropped
 
 
 def test_conversation_window_without_claude_keeps_only_commands() -> None:

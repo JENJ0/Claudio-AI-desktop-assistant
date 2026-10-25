@@ -55,6 +55,7 @@ class Kind(enum.StrEnum):
     FALSE_WAKE = "false_wake"  # woke on something that only starts like the name
     NOT_REQUEST = "conversation_end"  # the TV or someone else, in the conversation window
     NOISE = "noise"  # noise transcribed as words: not worth a call to Claude
+    CONTINUE = "continue"  # left halfway ("apri Chrome e cerca..."): listen for the rest
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ class Decision:
 
     @property
     def dropped(self) -> bool:
-        return self.kind not in (Kind.ANSWER, Kind.RELISTEN)
+        return self.kind not in (Kind.ANSWER, Kind.RELISTEN, Kind.CONTINUE)
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class Heard:
     name_heard: bool = False  # Whisper heard the name in the wake word audio itself
     speech_dbfs: float | None = None  # loudest 32 ms of speech; None: not measured
     segments: Sequence[Segment] = ()  # empty: Whisper's confidence is not known
+    continued: bool = False  # already waited once for the rest of a phrase left halfway
 
 
 @dataclass
@@ -92,6 +94,7 @@ class RequestFilter:
     closed_list_max_words: int = 0  # 0: no limit
     retry_language: str | None = None
     noise: NoiseSettings | None = None  # None: noise is never judged
+    continue_incomplete: bool = False  # a phrase left halfway waits for its end
 
     # -- before decide(): is another Whisper pass worth it? --
 
@@ -136,6 +139,13 @@ class RequestFilter:
             return Decision(Kind.NOT_REQUEST, text, "not_a_request")
         if (cause := self.noise_cause(text, heard)) and not responder.understands(text, language):
             return Decision(Kind.NOISE, text, cause)
+        if (
+            self.continue_incomplete
+            and not heard.continued
+            and incomplete(text)
+            and not responder.understands(text, language)
+        ):
+            return Decision(Kind.CONTINUE, text, "incomplete")
         return Decision(Kind.ANSWER, text)
 
     def is_request(self, text: str, language: str, responder: Responder) -> bool:
@@ -256,6 +266,30 @@ def addressed_to_claudio(text: str) -> bool:
 
 def words(text: str) -> int:
     return len(normalize(text, drop_fillers=False).split())
+
+
+# A phrase ending on one of these is not finished: "apri Chrome e cerca", "metti la".
+DANGLING_WORDS = frozenset(
+    {"e", "o", "oppure", "ma", "poi", "di", "del", "della", "dei", "delle", "a", "al", "alla"}
+    | {"da", "dal", "dalla", "in", "nel", "nella", "con", "su", "sul", "sulla", "per", "tra"}
+    | {"fra", "il", "lo", "la", "i", "gli", "le", "un", "uno", "una", "che", "cerca", "apri"}
+    | {"scrivi", "digita", "metti", "chiama", "and", "or", "the", "to", "of", "for", "with"}
+    | {"search", "open", "type"}
+)
+TRAILING_DOTS = ("...", "…")
+
+
+def incomplete(text: str) -> bool:
+    """Whisper's "..." where the voice trailed off, or a last word that needs more after it:
+    on 26/10 "Apri Chrome e cerca..." (twice) and "Dimmi..." were cut by a pause while JenJo
+    thought of the words. A question ("?") is complete."""
+    stripped = text.rstrip()
+    if stripped.endswith(TRAILING_DOTS):
+        return True
+    if stripped.endswith("?"):
+        return False
+    tokens = normalize(text, drop_fillers=False).split()
+    return len(tokens) >= 2 and tokens[-1] in DANGLING_WORDS
 
 
 # Sounds Whisper writes for a cough, a breath or the TV ("Mm-hmm.", "Ehm"): not words.

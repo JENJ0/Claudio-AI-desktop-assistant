@@ -96,6 +96,9 @@ class Endpointer:
         self._loudest = 0.0  # mean square of the loudest window of speech
         self._speech_samples = 0
         self._clipped = 0  # samples of speech at full scale
+        self._wait_ms = 0  # extend(): the pause that ends the phrase until the voice comes back
+        self._extended = False
+        self._spoke_again = False
 
     @property
     def started(self) -> bool:
@@ -147,6 +150,8 @@ class Endpointer:
 
         self._chunks.append(window)
         self._utterance_len += self._win
+        if self._wait_ms and prob >= s.threshold:
+            self._wait_ms, self._spoke_again = 0, True  # the rest of the phrase: usual pauses
         self._silence_run = self._silence_run + self._win if prob < self._neg_threshold else 0
         if (
             self._silence_run * 1000 >= self._end_silence_ms() * self.sample_rate
@@ -160,6 +165,8 @@ class Endpointer:
         """The pause that closes the phrase: short for a command ("apri Chrome"), longer once
         the phrase has gone on for long_after_s (a question: people stop to think)."""
         s = self.settings
+        if self._wait_ms:
+            return self._wait_ms
         spoken = self._utterance_len - self._start_len - self._silence_run
         if s.long_end_silence_ms > s.end_silence_ms and spoken >= s.long_after_s * self.sample_rate:
             return s.long_end_silence_ms
@@ -179,6 +186,25 @@ class Endpointer:
         for i in range(len(audio) // win):
             window = audio[i * win : (i + 1) * win]
             self._loudest = max(self._loudest, float(np.dot(window, window)) / win)
+
+    def extend(self, audio: np.ndarray, wait_s: float) -> None:
+        """The phrase `audio` (float32) was left halfway ("apri Chrome e cerca..."): it goes
+        on. It ends after `wait_s` of silence if nothing more is said, else with the usual
+        pause after the new words; audio() then holds both parts, for one transcription."""
+        self.resume(audio)
+        self._listened = [np.zeros(0, dtype=np.float32)]  # the saved WAV already has the start
+        self._wait_ms = max(int(wait_s * 1000), 1)
+        self._extended = True
+
+    @property
+    def extended(self) -> bool:
+        """This phrase is one left halfway, going on (extend() since the last reset())."""
+        return self._extended
+
+    @property
+    def spoke_again(self) -> bool:
+        """After extend(): more speech was heard (else the phrase is the same as before)."""
+        return self._spoke_again
 
     def partial(self) -> np.ndarray:
         """The phrase heard so far (pre-roll included), float32; empty before it starts."""
