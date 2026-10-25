@@ -103,13 +103,12 @@ def system_prompt(tools: bool, personality: str = "") -> str:
 ASK_SONNET_TOOL = {
     "name": "ask_sonnet",
     "description": (
-        "Propose handing this request to a stronger, more expensive model; JenJo is asked first. "
-        "Use it only when a good answer needs careful reasoning: multi-step maths or logic, "
-        "comparing options, planning, technical or detailed explanations, advice with "
-        "trade-offs, or when JenJo asks for detail or depth. Never use it for greetings, "
-        "small talk, simple facts, short questions, or "
-        "a request that is short or unclear (ask JenJo yourself what they mean). When you call "
-        "it, write nothing else."
+        "Propose handing this request to a stronger, more expensive model; JenJo is asked "
+        "first. A rare exception: use it only when you would likely get it wrong yourself, "
+        "such as multi-step maths or logic, writing or debugging code, or a long analysis or "
+        "plan with trade-offs. Answer yourself everything else, even when long: stories, "
+        "jokes, poems, chat, opinions, facts, explanations, advice. When you call it, write "
+        "nothing else."
     ),
     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
 }

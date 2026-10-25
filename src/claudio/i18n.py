@@ -312,6 +312,7 @@ EN: dict[str, str] = {
     ),
     "Sonnet spento, solo Haiku: %s": "Sonnet off, Haiku only: %s",
     "Haiku propone Sonnet: chiedo conferma": "Haiku proposes Sonnet: asking first",
+    "Sonnet chiesto per una storia: risponde Haiku": "Sonnet asked for a story: Haiku answers",
     "Sonnet approvato": "Sonnet approved",
     "Sonnet rifiutato: risponde Haiku": "Sonnet declined: Haiku answers",
     "Richiesta dettagliata: propongo Sonnet": "Detailed request: proposing Sonnet",

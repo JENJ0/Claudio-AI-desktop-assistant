@@ -18,6 +18,15 @@
 - An empty phrase in the conversation window (noise Whisper drops, like "Grazie a tutti")
   closed it while a question waited: the window now stays open once more.
 
+## [Unreleased] - Sonnet only when needed
+
+### Changed
+- `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
+  analysis or plans); Haiku answers stories, jokes, chat and explanations itself.
+- New `[claude] no_offer_phrases` (storia, barzelletta, poesia, raccontami...): if Haiku still
+  asks for Sonnet on such a request, or a detail phrase matches, Claudio does not ask "Lo uso?"
+  and Haiku answers (log "Sonnet chiesto per una storia", metric `escalated = skipped`).
+
 ## [0.3.2] - screen and terminal
 
 ### Added
