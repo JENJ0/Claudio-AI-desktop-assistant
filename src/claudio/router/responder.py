@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection
 from typing import Any
 
 from claudio.config import DEFAULT_LANGUAGE, ERROR_REPLY, UNKNOWN_REPLY, in_language
+from claudio.intake import Hearing
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import CommandMatcher, Match
 from claudio.router.normalizer import normalize
@@ -43,6 +44,7 @@ class LocalResponder:
         on_prepare: Callable[[], None] | None = None,
         fallback_awaiting: Callable[[], bool] | None = None,
         fallback_cancel: Callable[[], None] | None = None,
+        fallback_heard: Callable[[Hearing], None] | None = None,
     ) -> None:
         self.matcher = matcher
         self.actions = actions
@@ -55,6 +57,7 @@ class LocalResponder:
         # Claude asked "Confermi?" before a PC action: the next phrase is its answer.
         self.fallback_awaiting = fallback_awaiting
         self.fallback_cancel = fallback_cancel
+        self.fallback_heard = fallback_heard  # how sure Whisper was, for Claude's next request
         self.last_route: dict[str, Any] = {}
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
@@ -107,6 +110,11 @@ class LocalResponder:
             and self._last_reply is not None
             and "?" in self._last_reply[0].rstrip()[-QUESTION_TAIL_CHARS:]
         )
+
+    def heard(self, hearing: Hearing) -> None:
+        """How sure Whisper was of the request about to be answered (Claude is told)."""
+        if self.fallback_heard is not None:
+            self.fallback_heard(hearing)
 
     def cancel_pending(self, silence: bool = False) -> None:
         """Nothing was said after the question (or it was not understood as speech). After

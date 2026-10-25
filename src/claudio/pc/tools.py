@@ -37,6 +37,7 @@ from claudio.safety.confirmation import (
 
 log = logging.getLogger(__name__)
 
+SIMILAR = 5  # names that sound like a search that found nothing, sent back to Claude
 APP_CUTOFF = 70  # rapidfuzz WRatio: below this the app name is not a match
 WINDOW_CUTOFF = 60
 SPOKEN_TEXT_CHARS = 80  # the text to type, as read in the confirmation question
@@ -515,16 +516,15 @@ class PcTools:
 
     def _find_by_name(self, raw: str) -> Path | None:
         """The folder (or else file) named exactly like the last part of `raw`, anywhere in
-        the allowed folders, Desktop and Documents first ("Tesi" -> Desktop\\UNIVERSITA'\\TESI)."""
+        the allowed folders, breadth first ("Tesi" -> Desktop\\UNIVERSITA'\\TESI)."""
         name = raw.replace("/", "\\").rstrip("\\").rsplit("\\", 1)[-1].strip().strip('"')
         try:
             terms = files.search_terms(name)
         except PathRefused:
             return None
-        first = [self.policy.home / sub for sub in files.NEAR_HOME if sub]
         for kind in ("folder", None):
             found = files.walk_search(
-                terms, self.policy.search_roots(), kind, 5, self.settings.search_timeout_s, first
+                terms, self.policy.search_roots(), kind, 5, self.settings.search_timeout_s
             )
             for f in found:
                 if f.path.name.casefold() == name.casefold() and self.policy.allowed(f.path):
@@ -563,28 +563,36 @@ class PcTools:
         kind = kind if kind in files.KINDS else None
         roots = self.policy.search_roots()
         limit = self.settings.search_limit
-        indexed = self.desktop.search_index(terms, kind, roots, limit) or []
-        found = [f for f in indexed if self.policy.allowed(f.path)]
-        if len(found) < len(indexed):
-            dropped = len(indexed) - len(found)
-            log.info("Indice: %d risultati fuori dalle cartelle permesse", dropped)
-        if not found:  # no index, nothing in it (24/10: TESI) or nothing allowed: walk the folders
-            first = [self.policy.home / sub for sub in files.NEAR_HOME if sub]
-            near: list[files.Found] = []
-            walked = files.walk_search(
-                terms, roots, kind, limit, self.settings.search_timeout_s, first=first, near=near
+        found = self.desktop.search_index(terms, kind, roots, limit) or []
+        # Outside the allowed folders counts as nothing: on 25/10 the index answered "tesi" only
+        # with paths the policy refused (likely written as C:\Utenti\...) and the walk never ran.
+        allowed = [f for f in found if self.policy.allowed(f.path)]
+        if len(allowed) < len(found):
+            log.info(
+                "Indice: %d risultati fuori dalle cartelle permesse", len(found) - len(allowed)
             )
-            found = [f for f in walked if self.policy.allowed(f.path)]
-            similar = [f for f in near if self.policy.allowed(f.path)]
-            if not found and similar:  # 25/10: "Tesi" heard as "desi"
-                lines = [f.describe(self.policy.home) for f in similar]
-                return (
-                    f"Nothing named {' '.join(terms)}. Similar names (speech may be misheard):\n"
-                    + "\n".join(lines)
-                )
+        found = allowed
+        similar: list[Found] = []
         if not found:
+            # No index, or the index has nothing: a folder not indexed yet (on 25/10 it did not
+            # find Desktop\PROGETTI, then did ten minutes later) or a misheard name. Walk the
+            # folders, with a time limit, and collect the names that sound alike.
+            walked = files.walk(
+                terms, roots, kind, limit, self.settings.search_timeout_s, similar=SIMILAR
+            )
+            found = [f for f in walked.found if self.policy.allowed(f.path)]
+            similar = walked.similar
+        home = self.policy.home
+        if not found:
+            similar = [f for f in similar if self.policy.allowed(f.path)]
+            if similar:
+                lines = [f"- {f.describe(home)}" for f in similar]
+                return (
+                    f"No name contains: {' '.join(terms)}. Similar names (the request may be "
+                    "misheard):\n" + "\n".join(lines)
+                )
             return f"No files found for: {' '.join(terms)}."
-        lines = [f.describe(self.policy.home) for f in found[:limit]]
+        lines = [f.describe(home) for f in found[:limit]]
         return f"{len(lines)} found:\n" + "\n".join(lines)
 
     def _list_windows(self) -> str:

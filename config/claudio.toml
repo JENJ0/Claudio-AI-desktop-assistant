@@ -67,6 +67,8 @@ other_confidence = 0.9         # English (not the first language) must be at lea
 retry_in_first_language = true # an English request no command understands is retried in Italian
 closed_list = true             # a request not understood: Whisper proposes 5 transcriptions, the first known command wins
 closed_list_max_words = 5      # longer requests skip it (~150 ms saved): a question for Claude, not a misheard command
+unsure_logprob = -0.2          # Whisper below this on a request for Claude: Haiku is told it may be misheard
+alternatives = 2               # ...and gets up to 2 other transcriptions (one more Whisper pass, ~120 ms, only then; 0 = note only)
 beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
 no_speech_threshold = 0.6
 cpu_threads = 4

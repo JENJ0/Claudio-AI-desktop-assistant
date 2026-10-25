@@ -81,6 +81,7 @@ def build_responder(
         on_prepare=brain.warm_up if brain else None,
         fallback_awaiting=(lambda: brain.awaiting) if brain else None,
         fallback_cancel=brain.cancel_pending if brain else None,
+        fallback_heard=brain.heard if brain else None,
     )
 
 
@@ -483,6 +484,9 @@ async def run_assistant(
         confirm_below=settings.wakeword.confirm_below,
         always_confirm=wake.confirmed,
         stt_segments=lambda: transcriber.last_segments,
+        unsure_logprob=settings.stt.unsure_logprob if responder.fallback else None,
+        alternatives=settings.stt.alternatives if settings.stt.closed_list else 0,
+        on_heard=responder.heard,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

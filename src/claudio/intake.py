@@ -32,6 +32,20 @@ class Segment(NamedTuple):
     avg_logprob: float
 
 
+class Hearing(NamedTuple):
+    """How sure Whisper was of a request that goes to Claude: Claude is told when it was
+    unsure, with the other transcriptions it considered, to work out what JenJo said."""
+
+    unsure: bool = False
+    alternatives: tuple[str, ...] = ()
+
+
+def unsure(segments: Sequence[Segment], below_logprob: float) -> bool:
+    """Whisper doubted at least one segment. On JenJo's recordings (25/10) the misheard
+    requests scored -0.25..-1.1, the right ones -0.01..-0.17."""
+    return any(s.avg_logprob < below_logprob for s in segments)
+
+
 class Kind(enum.StrEnum):
     """The values are the outcomes written in metrics.jsonl."""
 

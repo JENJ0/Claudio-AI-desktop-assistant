@@ -48,6 +48,7 @@ from claudio.config import ClaudeSettings, PcSettings, in_language
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.i18n import tr
+from claudio.intake import Hearing
 from claudio.router.normalizer import normalize, strip_wake_words
 from claudio.safety.confirmation import (
     CANCELLED,
@@ -73,6 +74,9 @@ ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
 ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: open_app ok]"
 NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
+# What the history keeps of a reply cut short (read by Claude, never said aloud).
+CUT_NOTE = "[cut off: JenJo interrupted here]"
+CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # not strftime: Windows' locale
 
 
@@ -116,9 +120,16 @@ class ClaudeBrain:
         self.pc = pc or PcSettings()
         self._action: _Action | None = None  # a level 2-3 tool call waiting for its yes
         self.on_show = on_show  # opens the chat window, where the exact command is written
+        # How sure Whisper was of the next request: set before every reply, read once.
+        self._hearing = Hearing()
 
     def reset(self) -> None:
         self._history.clear()
+
+    def heard(self, hearing: Hearing) -> None:
+        """Whisper was unsure of the request about to be asked (and what else it heard):
+        told to Claude in the request's tag."""
+        self._hearing = hearing
 
     @property
     def awaiting(self) -> bool:
@@ -247,70 +258,83 @@ class ClaudeBrain:
         """Haiku, with its tools, until it answers in words: each round runs the level-1
         calls and sends their results back; a level 2-3 call stops here and asks first."""
         said_here = said_before
-        while True:
-            last = self.tools is None or round_no >= self.pc.max_rounds - 1
-            leg = _Leg()
-            async with contextlib.aclosing(
-                self._stream(self._params(messages, last_round=last), language, start, leg)
-            ) as haiku:
-                # 25/10: "La apro.Aperta" was read without a pause. Only within this reply:
-                # after a yes the turn holds the question, already spoken.
-                gap = _space(turn) if said_here else ""
-                async for chunk in haiku:
-                    if gap and chunk:
-                        if not chunk[0].isspace():
-                            turn.parts.append(gap)
-                            chunk = gap + chunk
-                        gap = ""
-                    said_here = said_here or bool(chunk.strip())
-                    yield chunk
-            turn.parts.extend(leg.parts)
-            if leg.handoff and not leg.calls and self.smart_model and offer_from is not None:
-                # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question for the answer.
-                log.info("Haiku propone Sonnet: chiedo conferma")
-                self._offer = (offer_from, language, self.clock())
-                self.last_call["escalated"] = "offered"
-                yield _space(turn) + in_language(OFFER, language)
-                return
-            if leg.handoff and leg.calls:  # Sonnet in the middle of an action: not now
-                leg.content = [b for b in leg.content if b.get("name") != ASK_SONNET_TOOL["name"]]
-            if not leg.complete or not leg.calls or self.tools is None:
-                turn.complete = leg.complete
-                self._remember(turn)
-                return
-            messages = [*messages, {"role": "assistant", "content": leg.content}]
-            refused = {c.id: why for c in leg.calls if (why := self.tools.refusal(c, leg.calls))}
-            active = [c for c in leg.calls if c.id not in refused]
-            await self.tools.prepare(active)
-            confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
-            if confirm:
-                level = max(self.tools.level(c) for c in confirm)
-                ask = await self.tools.question(confirm, language)
-                self._action = _Action(messages, leg.calls, turn, language, level, round_no)
-                self._action.refused = refused
-                self._action.asked = self.clock()
-                self._show(confirm)
-                self._note_tools(confirm, "ask")
-                log.info(
-                    "Conferma richiesta (livello %d): %s",
-                    level,
-                    ", ".join(c.brief() for c in confirm),
-                    extra={"route": "confirm", "level": level},
-                )
-                said = _space(turn) + ask
-                turn.parts.append(said)
-                yield said
-                return
-            slow = any(c.name in SLOW_TOOLS for c in active)
-            if self.pc.bridge and slow and not "".join(leg.parts).strip():
-                # The trailing space ends the sentence: the voice says it now.
-                said = (_space(turn) if said_here else "") + in_language(BRIDGE, language) + " "
-                turn.parts.append(said)
-                said_here = True
-                yield said
-            results = await self._run_calls(leg.calls, refused, turn)
-            messages = [*messages, {"role": "user", "content": results}]
-            round_no += 1
+        streaming: _Leg | None = None  # the leg whose words are not in `turn` yet
+        try:
+            while True:
+                last = self.tools is None or round_no >= self.pc.max_rounds - 1
+                leg = streaming = _Leg()
+                async with contextlib.aclosing(
+                    self._stream(self._params(messages, last_round=last), language, start, leg)
+                ) as haiku:
+                    # 25/10: "La apro.Aperta" was read without a pause. Only within this
+                    # reply: after a yes the turn holds the question, already spoken.
+                    gap = _space(turn) if said_here else ""
+                    async for chunk in haiku:
+                        if gap and chunk:
+                            if not chunk[0].isspace():
+                                turn.parts.append(gap)
+                                chunk = gap + chunk
+                            gap = ""
+                        said_here = said_here or bool(chunk.strip())
+                        yield chunk
+                turn.parts.extend(leg.parts)
+                streaming = None
+                if leg.handoff and not leg.calls and self.smart_model and offer_from is not None:
+                    # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question.
+                    log.info("Haiku propone Sonnet: chiedo conferma")
+                    self._offer = (offer_from, language, self.clock())
+                    self.last_call["escalated"] = "offered"
+                    yield _space(turn) + in_language(OFFER, language)
+                    return
+                if leg.handoff and leg.calls:  # Sonnet in the middle of an action: not now
+                    leg.content = [
+                        b for b in leg.content if b.get("name") != ASK_SONNET_TOOL["name"]
+                    ]
+                if not leg.complete or not leg.calls or self.tools is None:
+                    turn.complete = leg.complete
+                    self._remember(turn)
+                    return
+                messages = [*messages, {"role": "assistant", "content": leg.content}]
+                refused = {
+                    c.id: why for c in leg.calls if (why := self.tools.refusal(c, leg.calls))
+                }
+                active = [c for c in leg.calls if c.id not in refused]
+                await self.tools.prepare(active)
+                confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
+                if confirm:
+                    level = max(self.tools.level(c) for c in confirm)
+                    ask = await self.tools.question(confirm, language)
+                    self._action = _Action(messages, leg.calls, turn, language, level, round_no)
+                    self._action.refused = refused
+                    self._action.asked = self.clock()
+                    self._show(confirm)
+                    self._note_tools(confirm, "ask")
+                    log.info(
+                        "Conferma richiesta (livello %d): %s",
+                        level,
+                        ", ".join(c.brief() for c in confirm),
+                        extra={"route": "confirm", "level": level},
+                    )
+                    said = _space(turn) + ask
+                    turn.parts.append(said)
+                    yield said
+                    return
+                slow = any(c.name in SLOW_TOOLS for c in active)
+                if self.pc.bridge and slow and not "".join(leg.parts).strip():
+                    # The trailing space ends the sentence: the voice says it now.
+                    lead = _space(turn) if said_here else ""
+                    said = lead + in_language(BRIDGE, language) + " "
+                    turn.parts.append(said)
+                    said_here = True
+                    yield said
+                results = await self._run_calls(leg.calls, refused, turn)
+                messages = [*messages, {"role": "user", "content": results}]
+                round_no += 1
+        except (GeneratorExit, asyncio.CancelledError):
+            if streaming is not None:
+                turn.parts.extend(streaming.parts)
+            self._remember_cut(turn)  # "continua la storia" must know what was cut
+            raise
 
     async def _confirm(self, action: _Action, text: str, start: float) -> AsyncGenerator[str, None]:
         """The answer to "Confermi?": yes runs the calls and Haiku goes on; anything else
@@ -416,11 +440,15 @@ class ClaudeBrain:
         self, messages: list[dict[str, Any]], language: str, start: float, tools: bool = True
     ) -> AsyncGenerator[str, None]:
         leg = _Leg()
-        async with contextlib.aclosing(
-            self._stream(self._params(messages, tools), language, start, leg)
-        ) as haiku:
-            async for chunk in haiku:
-                yield chunk
+        try:
+            async with contextlib.aclosing(
+                self._stream(self._params(messages, tools), language, start, leg)
+            ) as haiku:
+                async for chunk in haiku:
+                    yield chunk
+        except (GeneratorExit, asyncio.CancelledError):
+            self._remember_cut(_Turn(messages[-1]["content"], leg.parts))
+            raise
         self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
 
     async def _sonnet(
@@ -431,11 +459,15 @@ class ClaudeBrain:
                 yield chunk
             return
         leg = _Leg()
-        async with contextlib.aclosing(
-            self._stream(self._smart_params(messages), language, start, leg, "smart_first_ms")
-        ) as sonnet:
-            async for chunk in sonnet:
-                yield chunk
+        try:
+            async with contextlib.aclosing(
+                self._stream(self._smart_params(messages), language, start, leg, "smart_first_ms")
+            ) as sonnet:
+                async for chunk in sonnet:
+                    yield chunk
+        except (GeneratorExit, asyncio.CancelledError):
+            self._remember_cut(_Turn(messages[-1]["content"], leg.parts))
+            raise
         self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
 
     def _remember(self, turn: _Turn) -> None:
@@ -450,6 +482,15 @@ class ClaudeBrain:
             self._history.append((turn.question, answer))
             self._last_turn = self.clock()
 
+    def _remember_cut(self, turn: _Turn) -> None:
+        """A reply JenJo cut short ("basta", or a new request over it) stays in the history
+        with what was said and a note, so "continua la storia" or "ripeti la storia" make
+        sense to Claude (before, only finished replies were kept and the story was lost)."""
+        said = "".join(turn.parts).strip()
+        note = CUT_NOTE if said else CUT_BEFORE_NOTE
+        self._history.append((turn.question, f"{said} {note}".strip()))
+        self._last_turn = self.clock()
+
     def _messages(self, text: str, language: str) -> list[dict[str, Any]]:
         if self.clock() - self._last_turn > self.settings.history_reset_s:
             self._history.clear()  # a new conversation: old context costs and confuses
@@ -458,16 +499,22 @@ class ClaudeBrain:
             for question, answer in self._history:
                 messages.append({"role": "user", "content": question})
                 messages.append({"role": "assistant", "content": answer})
-        messages.append({"role": "user", "content": f"{self._tag(language)} {text}"})
+        hearing, self._hearing = self._hearing, Hearing()
+        messages.append({"role": "user", "content": f"{self._tag(language, hearing)} {text}"})
         return messages
 
-    def _tag(self, language: str) -> str:
+    def _tag(self, language: str, hearing: Hearing | None = None) -> str:
         """[it] or, with the time, [it | Thu 2026-10-23 17:15]: after the cached prefix, so
-        the time changes nothing that is cached."""
-        if not self.settings.tell_time:
-            return f"[{language}]"
-        now = self.wall()
-        return f"[{language} | {_DAYS[now.weekday()]} {now:%Y-%m-%d %H:%M}]"
+        the time changes nothing that is cached. When Whisper was unsure: [... | unsure:
+        "apri la cartella Tesi" / "apri la cartella tesi?"] (~10-25 tokens, only then)."""
+        fields = [language]
+        if self.settings.tell_time:
+            now = self.wall()
+            fields.append(f"{_DAYS[now.weekday()]} {now:%Y-%m-%d %H:%M}")
+        if hearing is not None and hearing.unsure:
+            others = " / ".join(f'"{_quoted(a)}"' for a in hearing.alternatives)
+            fields.append(f"unsure: {others}" if others else "unsure")
+        return f"[{' | '.join(fields)}]"
 
     def _common(
         self, model: str, max_tokens: int, messages: list[dict[str, Any]]
@@ -684,6 +731,10 @@ def _new_request(text: str, level: int) -> bool:
     if parse_answer(text, level) is not Answer.UNCLEAR:
         return False
     return len(strip_wake_words(normalize(text, drop_fillers=False).split())) > NEW_REQUEST_WORDS
+
+
+def _quoted(text: str) -> str:
+    return text.replace('"', "'").strip()
 
 
 def _space(turn: _Turn) -> str:

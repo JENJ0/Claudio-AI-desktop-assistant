@@ -7,13 +7,14 @@ is refused: launching programs goes through `open_app`, which only knows the Sta
 
 from __future__ import annotations
 
+import heapq
 import os
 import re
 import shutil
 import time
 from collections import deque
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -33,12 +34,15 @@ INDEX_KINDS = {"document": "document", "picture": "picture", "music": "music", "
 _TERM = re.compile(r"[^\w.\- ]+", re.UNICODE)  # what a search may contain: no quotes, no SQL
 MAX_TERMS = 5
 # Where a name said without its folder ("apri la cartella Progetti") is looked for, in order
-# (v0.3.2: JenJo had to dictate ~\Desktop\PROGETTI). The Desktop may live in OneDrive.
+# (v0.3.2: JenJo had to dictate ~\\Desktop\\PROGETTI). The Desktop may live in OneDrive.
 NEAR_HOME = ("", "Desktop", "Documents", "Downloads", "OneDrive/Desktop", "OneDrive/Documents")
 SKIP_DIRS = frozenset(
     {"appdata", "node_modules", ".git", "$recycle.bin", "__pycache__", ".venv", "venv"}
     | {"miniconda3", "anaconda3", "npm-cache", "site-packages", "curseforge", "saved games"}
 )
+# rapidfuzz ratio of a name to a search that found nothing: "desi" and "attesi" -> "TESI" (75,
+# 80). Below this the name does not sound like the search.
+SIMILAR_CUTOFF = 70
 
 
 class PathRefused(ValueError):
@@ -172,20 +176,12 @@ def index_path(url: str) -> Path | None:
     return Path(rest) if rest else None
 
 
-# A name this close to the spoken one is offered when nothing matches exactly: Whisper hears
-# "Tesi" as "desi" or "attesi" (25/10). 75 lets one letter in four differ.
-SIMILAR_CUTOFF = 75
-SIMILAR_MIN_CHARS = 4
-
-
-def similar(spoken: str, name: str) -> bool:
-    """True if a folder or file name is close to what Whisper heard: one wrong letter
-    ("desi" -> "tesi") or the name inside a longer word ("attesi" -> "tesi")."""
-    stem = Path(name).stem.casefold() if "." in name else name.casefold()
-    spoken = spoken.casefold()
-    if len(stem) >= SIMILAR_MIN_CHARS and stem in spoken:
-        return True
-    return fuzz.ratio(spoken, stem) >= SIMILAR_CUTOFF
+@dataclass
+class Walk:
+    found: list[Found] = field(default_factory=list)
+    # Nothing found: names that sound like the search (a misheard "desi" for "Tesi"), best
+    # first. Empty when something was found or `similar` was 0.
+    similar: list[Found] = field(default_factory=list)
 
 
 def walk_search(
@@ -194,57 +190,77 @@ def walk_search(
     kind: str | None,
     limit: int,
     budget_s: float,
-    first: Sequence[Path] = (),
-    near: list[Found] | None = None,
 ) -> list[Found]:
-    """Walk the folders for names holding every term, within `budget_s` seconds. Breadth
-    first, starting from `first` (Desktop, Documents...): a folder JenJo keeps at hand, like
-    Desktop\\UNIVERSITA'\\TESI, is found before the walk drowns in a big tree (24/10: miniconda3).
-    Exact names come first, then the most recent. Names only `similar` to the words go into
-    `near` when given (exact one first), for when nothing matches."""
+    """Without the Windows index: walk the roots for names holding every term, within
+    `budget_s` seconds (most recent first)."""
+    return walk(terms, roots, kind, limit, budget_s).found
+
+
+def walk(
+    terms: Iterable[str],
+    roots: Sequence[Path],
+    kind: str | None,
+    limit: int,
+    budget_s: float,
+    similar: int = 0,
+) -> Walk:
+    """Walk the roots breadth first (Desktop\\UNIVERSITA\\TESI before the depths of a
+    project) for names holding every term, within `budget_s` seconds, most recent first.
+    With nothing found, the `similar` names that sound most like the search."""
     wanted = [t.casefold() for t in terms]
-    exact = " ".join(wanted)
+    query = " ".join(wanted)
     deadline = time.monotonic() + budget_s
     found: list[Found] = []
-    queue: deque[Path] = deque(p for p in [*first, *roots] if p.is_dir())
-    seen: set[Path] = set()
-    while queue and time.monotonic() < deadline:
+    close: list[tuple[float, str, Path]] = []  # a min-heap of the best `similar` scores
+    queue: deque[Path] = deque(roots)
+    while queue and time.monotonic() <= deadline:
         folder = queue.popleft()
-        if folder in seen:
-            continue
-        seen.add(folder)
         try:
-            entries = list(os.scandir(folder))
+            with os.scandir(folder) as entries:
+                listed = list(entries)
         except OSError:
             continue
-        for entry in entries:
+        for entry in listed:
             try:
                 is_dir = entry.is_dir(follow_symlinks=False)
+                # Junctions ("Dati applicazioni", Documents\My Music...) lead to folders seen
+                # elsewhere, or loop: walking them spent the whole budget.
+                if is_dir and _is_link(entry):
+                    continue
             except OSError:
                 continue
             name = entry.name
-            if is_dir and name.casefold() not in SKIP_DIRS and not name.startswith((".", "$")):
+            if is_dir:
+                if name.casefold() in SKIP_DIRS or name.startswith("."):
+                    continue
                 queue.append(Path(entry.path))
-            if is_dir != (kind == "folder"):
+            if is_dir != (kind == "folder") or not _kind_ok(name, kind):
                 continue
             low = name.casefold()
-            if not _kind_ok(name, kind):
-                continue
             if all(t in low for t in wanted):
-                bucket = found
-            elif near is not None and similar(exact, name):
-                bucket = near
-            else:
-                continue
-            try:
-                bucket.append(Found(Path(entry.path), entry.stat().st_mtime))
-            except OSError:
-                continue
-    found.sort(key=lambda f: (Path(f.path).stem.casefold() != exact, -f.modified))
-    if near is not None:
-        near.sort(key=lambda f: -fuzz.ratio(exact, Path(f.path).stem.casefold()))
-        del near[limit:]
-    return found[:limit]
+                try:
+                    found.append(Found(Path(entry.path), entry.stat().st_mtime))
+                except OSError:
+                    continue
+            elif similar and not found:
+                stem = low if is_dir else os.path.splitext(low)[0]
+                score = fuzz.ratio(query, stem)
+                if score >= SIMILAR_CUTOFF:
+                    item = (score, entry.path, Path(entry.path))
+                    if len(close) < similar:
+                        heapq.heappush(close, item)
+                    elif item > close[0]:
+                        heapq.heapreplace(close, item)
+    found.sort(key=lambda f: f.modified, reverse=True)
+    if found:
+        return Walk(found[:limit])
+    alike = []
+    for _score, _key, path in sorted(close, reverse=True):
+        try:
+            alike.append(Found(path, path.stat().st_mtime))
+        except OSError:
+            continue
+    return Walk([], alike)
 
 
 _EXTENSIONS = {
@@ -254,6 +270,17 @@ _EXTENSIONS = {
     "music": {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", ".wma"},
     "video": {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"},
 }
+
+
+REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a symlink or a junction (Windows)
+
+
+def _is_link(entry: os.DirEntry[str]) -> bool:
+    """A symlink or a Windows junction (Python 3.11 has no DirEntry.is_junction)."""
+    if entry.is_symlink():
+        return True
+    attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    return bool(attributes & REPARSE_POINT)
 
 
 def _kind_ok(name: str, kind: str | None) -> bool:

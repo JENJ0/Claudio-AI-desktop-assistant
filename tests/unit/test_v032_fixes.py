@@ -163,22 +163,6 @@ def test_index_path_reads_the_item_url(url: str, wanted: Path | None) -> None:
     assert index_path(url) == wanted
 
 
-@pytest.mark.parametrize(
-    ("spoken", "name", "wanted"),
-    [
-        ("desi", "TESI", True),  # 25/10: Whisper heard "desi"
-        ("attesi", "TESI", True),  # ... and "attesi"
-        ("progett", "PROGETTI", True),
-        ("tesi", "Documents", False),
-        ("pz", "pc", False),
-    ],
-)
-def test_similar_names(spoken: str, name: str, wanted: bool) -> None:
-    from claudio.pc.files import similar
-
-    assert similar(spoken, name) is wanted
-
-
 async def test_a_misheard_folder_offers_the_similar_name(
     tools: PcTools, desk: FakeDesktop, tmp_path: Path
 ) -> None:

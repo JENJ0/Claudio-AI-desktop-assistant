@@ -42,6 +42,8 @@ EN: dict[str, str] = {
         "Wake word not confirmed by Whisper, ignoring: %r"
     ),
     "Lista chiusa: %r -> %r": "Closed list: %r -> %r",
+    "Whisper insicuro: %r, forse %s": "Whisper unsure: %r, maybe %s",
+    "Trascrizioni alternative non riuscite": "Alternative transcriptions failed",
     "Microfono basso: la voce arriva al massimo a %.0f dBFS (meglio tra -20 e -10). Aumenta il "
     "guadagno, per esempio CLAUDIO_AUDIO__INPUT_GAIN_DB=12 in .env": (
         "Microphone too quiet: the voice peaks at %.0f dBFS (best between -20 and -10). Raise "
