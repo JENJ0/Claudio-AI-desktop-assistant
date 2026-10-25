@@ -119,6 +119,8 @@ def test_jack_speed_plan() -> None:
     up, down, semitones = speed_plan(0.9)  # 10% slower: stretched by 1/0.9, pitch +2
     assert up / down == pytest.approx(2 / 0.9) and semitones == 2
     assert speed_plan(1.12)[2] == -2
+    up, down, semitones = speed_plan(0.9, 16_000 / 24_000)  # whole sentence: RVC takes 16 kHz
+    assert up / down == pytest.approx(2 / 3 / 0.9, rel=1e-3) and semitones == 2
 
 
 class ClaudioWake(FakeWake):
