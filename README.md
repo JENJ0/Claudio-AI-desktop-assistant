@@ -167,9 +167,12 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
 3. Try it alone: `models\voices\jack\worker\env\Scripts\python.exe scripts\try_jack.py --play`.
 4. In `.env`: `CLAUDIO_TTS__ENGINE=jack` and `CLAUDIO_TTS__EFFECT=none`.
 
-Startup takes 10-30 s more (models are loaded once). Kokoro (Piper if Kokoro is missing) is
-the fallback for English and for any sentence the worker cannot speak. If the worker does not
-start, Claudio says so out loud at startup ("La voce di Jack non è partita") and the reason is in
+The worker loads in 10-30 s, in the background: Claudio listens as soon as Whisper and the
+wake word are loaded, and a reply asked meanwhile waits for Jack up to `jack_first_wait_s`
+(30 s; 0 = the fallback speaks at once). When Jack is ready Claudio says "Sono pronto"
+(`[startup] announce_ready`). Kokoro (Piper if Kokoro is missing) is the fallback for English
+and for any sentence the worker cannot speak. If the worker does not start, Claudio says so
+out loud ("La voce di Jack non è partita") and the reason is in
 `console.log` (`Jack non disponibile (...)`). The same happens when Whisper cannot use the GPU.
 
 ## Chat window
@@ -247,6 +250,19 @@ Piper, set in `[tts.voices.en]`, with the same effect. `CLAUDIO_TTS__LENGTH_SCAL
 both (lower = faster; 0.77 = +30%, the default). The robotic tone is `CLAUDIO_TTS__EFFECT`:
 `ultron_estremo` (default), `estremo`, `ultron`, `jarvis`, or `none` for the clean voice. The
 effect costs about 5 ms per sentence.
+
+## Startup time
+
+Whisper, the wake word, the voice and Claude load at the same time (`[startup] parallel`;
+`false` = one after the other, if a model misbehaves when loaded so). `console.log` shows what
+each one took and when everything, Jack included, was ready:
+
+```
+Avvio: whisper 3.1 s, wake word 0.4 s, voce 1.2 s, claude 0.6 s (in parallelo: sì)
+Modelli caricati in 3.4 s. Di' "Hey Claudio" per iniziare (Ctrl+C per uscire).
+Worker Jack pronto in 14.2 s (VRAM GPU 1200 MB)
+Avvio completo in 15.0 s
+```
 
 ## Latency
 

@@ -93,6 +93,7 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
+# jack_first_wait_s = 30    # Claudio listens while Jack loads: a reply meanwhile waits this long for Jack (0 = fallback voice at once)
 # jack_language = "Italian"  # "Auto" (default) guesses the language per sentence; try "Italian" if accent/pace drift
 jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pitch stays the same
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
@@ -100,6 +101,10 @@ first_clause_chars = 25    # the first piece of a reply may end at a comma once 
 [tts.voices.en]            # the voices for English replies (same engine, same effect)
 kokoro_voice = "am_michael"
 voice = "en_US-ryan-low"
+
+[startup]
+parallel = true            # load Whisper, wake word, voice and Claude together (false = one after the other, slower)
+announce_ready = true      # say "Sono pronto" once everything, Jack's voice included, has loaded
 
 [router]
 commands_file = "config/commands.toml"
