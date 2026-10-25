@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from rapidfuzz import fuzz
+
 ANYWHERE = "*"
 # Opening one of these runs code: never a level-1 "open".
 RUNNABLE = frozenset(
@@ -150,6 +152,22 @@ def index_path(url: str) -> Path | None:
     return Path(rest) if rest else None
 
 
+# A name this close to the spoken one is offered when nothing matches exactly: Whisper hears
+# "Tesi" as "desi" or "attesi" (25/10). 75 lets one letter in four differ.
+SIMILAR_CUTOFF = 75
+SIMILAR_MIN_CHARS = 4
+
+
+def similar(spoken: str, name: str) -> bool:
+    """True if a folder or file name is close to what Whisper heard: one wrong letter
+    ("desi" -> "tesi") or the name inside a longer word ("attesi" -> "tesi")."""
+    stem = Path(name).stem.casefold() if "." in name else name.casefold()
+    spoken = spoken.casefold()
+    if len(stem) >= SIMILAR_MIN_CHARS and stem in spoken:
+        return True
+    return fuzz.ratio(spoken, stem) >= SIMILAR_CUTOFF
+
+
 def walk_search(
     terms: Iterable[str],
     roots: Sequence[Path],
@@ -157,11 +175,13 @@ def walk_search(
     limit: int,
     budget_s: float,
     first: Sequence[Path] = (),
+    near: list[Found] | None = None,
 ) -> list[Found]:
     """Walk the folders for names holding every term, within `budget_s` seconds. Breadth
     first, starting from `first` (Desktop, Documents...): a folder JenJo keeps at hand, like
     Desktop\\UNIVERSITA'\\TESI, is found before the walk drowns in a big tree (24/10: miniconda3).
-    Exact names come first, then the most recent."""
+    Exact names come first, then the most recent. Names only `similar` to the words go into
+    `near` when given (exact one first), for when nothing matches."""
     wanted = [t.casefold() for t in terms]
     exact = " ".join(wanted)
     deadline = time.monotonic() + budget_s
@@ -188,12 +208,22 @@ def walk_search(
             if is_dir != (kind == "folder"):
                 continue
             low = name.casefold()
-            if all(t in low for t in wanted) and _kind_ok(name, kind):
-                try:
-                    found.append(Found(Path(entry.path), entry.stat().st_mtime))
-                except OSError:
-                    continue
+            if not _kind_ok(name, kind):
+                continue
+            if all(t in low for t in wanted):
+                bucket = found
+            elif near is not None and similar(exact, name):
+                bucket = near
+            else:
+                continue
+            try:
+                bucket.append(Found(Path(entry.path), entry.stat().st_mtime))
+            except OSError:
+                continue
     found.sort(key=lambda f: (Path(f.path).stem.casefold() != exact, -f.modified))
+    if near is not None:
+        near.sort(key=lambda f: -fuzz.ratio(exact, Path(f.path).stem.casefold()))
+        del near[limit:]
     return found[:limit]
 
 

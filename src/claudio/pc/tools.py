@@ -570,10 +570,18 @@ class PcTools:
             log.info("Indice: %d risultati fuori dalle cartelle permesse", dropped)
         if not found:  # no index, nothing in it (24/10: TESI) or nothing allowed: walk the folders
             first = [self.policy.home / sub for sub in files.NEAR_HOME if sub]
+            near: list[files.Found] = []
             walked = files.walk_search(
-                terms, roots, kind, limit, self.settings.search_timeout_s, first=first
+                terms, roots, kind, limit, self.settings.search_timeout_s, first=first, near=near
             )
             found = [f for f in walked if self.policy.allowed(f.path)]
+            similar = [f for f in near if self.policy.allowed(f.path)]
+            if not found and similar:  # 25/10: "Tesi" heard as "desi"
+                lines = [f.describe(self.policy.home) for f in similar]
+                return (
+                    f"Nothing named {' '.join(terms)}. Similar names (speech may be misheard):\n"
+                    + "\n".join(lines)
+                )
         if not found:
             return f"No files found for: {' '.join(terms)}."
         lines = [f.describe(self.policy.home) for f in found[:limit]]
