@@ -80,3 +80,16 @@ def test_first_clause_waits_for_what_follows_the_comma() -> None:
 def test_a_full_sentence_before_the_comma_wins() -> None:
     s = SentenceSplitter(first_clause_chars=5)
     assert s.feed("Certo. Allora, vediamo, ") == ["Certo."]  # only the first piece is cut
+
+
+def test_sentences_glued_without_a_space_are_split() -> None:
+    """Replies with tools join their turns as "Cerco il nome.Nessuna cartella": two sentences."""
+    from claudio.tts.sentence_splitter import SentenceSplitter
+
+    splitter = SentenceSplitter()
+    out = splitter.feed("Cerco il nome.Nessuna cartella, socio. ") + splitter.flush()
+    assert out == ["Cerco il nome.", "Nessuna cartella, socio."]
+    splitter = SentenceSplitter()
+    assert splitter.feed("Gli U.S.A. e 3.5 restano. ") + splitter.flush() == [
+        "Gli U.S.A. e 3.5 restano."
+    ]

@@ -47,3 +47,18 @@ def test_the_default_config_respells_the_words_jenjo_heard_wrong() -> None:
 
     words = load_settings(DEFAULT_CONFIG).tts.jack_words
     assert {"PC", "file", "download"} <= set(words)
+
+
+@pytest.mark.parametrize(
+    ("text", "spoken"),
+    [
+        ("Cerco il nome.Nessuna cartella.", "Cerco il nome. Nessuna cartella."),
+        ("dentro UNIVERSITA'. Aperta TESI", "dentro università. Aperta tesi"),
+        ("la cartella PROGETTI sul Desktop", "la cartella progetti sul Desktop"),
+        ("Aspetta un po' e vedrai.", "Aspetta un pò e vedrai."),
+        ("l'acqua e dell'eroe", "l'acqua e dell'eroe"),
+        ("Visita www.Sito.it", "Visita il link"),
+    ],
+)
+def test_text_from_real_replies(text: str, spoken: str) -> None:
+    assert to_spoken_it(text) == spoken
