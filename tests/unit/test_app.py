@@ -101,6 +101,7 @@ class FakeSpeaker:
         self.languages: list[str] = []
         self.beeps: list[str] = []
         self.ducks: list[float | None] = []
+        self.played: list[str] = []
 
     def interrupt(self) -> None:
         pass

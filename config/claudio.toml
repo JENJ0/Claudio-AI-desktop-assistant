@@ -148,6 +148,7 @@ barge_in_mode = "duck"     # duck: lower the reply at once, stop on real words |
 barge_in_min_dbfs = -30.0  # the voice must be this loud (JenJo at the microphone: -11..-30; the TV and the echo: quieter)
 barge_in_vad = 0.6         # speech probability needed while speaking (stricter than [vad] threshold)
 barge_in_min_speech_ms = 300  # voice this long before anything happens (a cough is shorter)
+resume_s = 60.0            # a reply cut by a question goes on after the answer ("Dicevo: ..."); 0 = never
 duck_volume = 0.3          # the reply's volume while Whisper checks what was said
 only_addressed = false     # true: without the wake word only questions, "dimmi..." or the name reach Claude
 

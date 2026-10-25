@@ -32,6 +32,7 @@ from claudio.intake import (
 from claudio.intake import addressed_to_claudio as addressed_to_claudio  # re-exported
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
+from claudio.resume import RESUME_PREFIX, DrainedStream, ends_the_reply, remainder
 from claudio.router.normalizer import heard_wake_word, normalize
 from claudio.system import SystemControl
 
@@ -43,6 +44,7 @@ LEAD_IN_S = PREWAKE_S  # one breath: how much of the audio before the detection 
 QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
+CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for the rest
 ECHO_SHARE = 0.6  # words heard while speaking that are mostly in the reply: CLAUDIO's own voice
 
 
@@ -69,6 +71,21 @@ class BargeIn:
     mode: str = "duck"
     min_dbfs: float = -30.0
     duck_volume: float = 0.3
+    # A reply cut by a new request goes on ("Dicevo: ...") after that request is answered,
+    # if it took less than this (0: never).
+    resume_s: float = 60.0
+
+
+@dataclass(frozen=True)
+class CutReply:
+    """A reply a new request cut short: the stream still reading it, the sentences that had
+    started playing, when it was cut, its language, and (once read) the part not said."""
+
+    stream: DrainedStream
+    played: list[str]
+    at: float
+    language: str
+    rest: str = ""
 
 
 class Assistant:
@@ -150,6 +167,9 @@ class Assistant:
         # heard until the reply has stopped. None: nobody interrupted.
         self._takeover: tuple[np.ndarray, list[np.ndarray]] | None = None
         self._reply_parts: list[str] = []  # the reply being spoken (to recognise its echo)
+        # A reply cut by a new request, still read to its end: resumed once that request is
+        # answered. None: no reply was cut.
+        self._cut: CutReply | None = None
         # Frames heard since the last phrase went to Whisper: if it was someone talking, they
         # are the rest of the request.
         self._since_check: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
@@ -366,6 +386,7 @@ class Assistant:
         self._interrupted = False
         self._takeover = None
         self._reply_parts = []
+        cut, self._cut = self._cut, None
         self._candidates = None
         try:
             async with self._stt_lock:
@@ -384,6 +405,7 @@ class Assistant:
             decision = await self._decide(text, heard, inter, segments)
             outcome = decision.kind.value
             if decision.kind is Kind.RELISTEN:
+                self._cut, cut = cut, None  # still the same request
                 self._relisten(inter)
                 return
             if decision.dropped:
@@ -393,10 +415,12 @@ class Assistant:
                 return
             await self._tell_hearing(audio, decision.text, heard, segments, inter)
             self._set_state(State.RESPONDING)
-            await self.speaker.speak(
-                self._marked(self.responder.respond(decision.text, heard), inter),
+            resume = await self._unsaid(cut)  # the reply this request cut, read to its end
+            cut = None
+            await self._speak_reply(
+                self.responder.respond(decision.text, heard),
+                inter,
                 on_first_audio=lambda: self._on_first_audio(inter),
-                language=lambda: self.responder.language,
             )
             route = self.responder.last_route
             if route.get("route") == "paused":
@@ -409,6 +433,8 @@ class Assistant:
                 outcome = "interrupted"
             # A confirmation question ("Confermi?"): the answer comes without the wake word.
             follow_up = self.responder.awaiting and not self._interrupted
+            if resume and outcome == "ok" and not follow_up and self._takeover is None:
+                await self._resume_reply(resume, decision.text, inter)
         except Exception:
             outcome = "error"
             log.exception("Errore durante la richiesta")
@@ -417,6 +443,8 @@ class Assistant:
             except Exception:
                 log.exception("Impossibile riprodurre il segnale di errore")
         finally:
+            if cut is not None:  # the request was dropped: the cut reply is not resumed
+                cut.stream.cancel()
             if outcome != "relisten":
                 route = self.responder.last_route
                 if route:
@@ -785,6 +813,67 @@ class Assistant:
             self._set_state(State.IDLE)
         return str(inter.info.get("reply", ""))
 
+    async def _speak_reply(
+        self,
+        stream: AsyncIterator[str],
+        inter: Interaction,
+        on_first_audio: Callable[[], None],
+        language: str | None = None,
+        resumed: bool = False,
+    ) -> None:
+        """Speak a reply. The stream is read in a task of its own: when a new request cuts the
+        reply, the rest still arrives and is kept to be resumed after it. A `resumed` reply
+        is not the request's own (the session log keeps the answer)."""
+        lang = (lambda: self.responder.language) if language is None else language
+        drained = DrainedStream(stream)
+        text = self._echoed(drained.read()) if resumed else self._marked(drained.read(), inter)
+        try:
+            await self.speaker.speak(text, on_first_audio=on_first_audio, language=lang)
+        finally:
+            if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
+                language_now = lang() if callable(lang) else lang
+                self._cut = CutReply(drained, list(self.speaker.played), self.clock(), language_now)
+            else:
+                drained.cancel()
+
+    async def _unsaid(self, cut: CutReply | None) -> CutReply | None:
+        """The reply this request cut, with its last words (Claude is usually done by now):
+        `cut` with only the part that was not said, None when nothing is left."""
+        if cut is None:
+            return None
+        await cut.stream.finish(CUT_FINISH_S)
+        if self.responder.awaiting:
+            return None  # it asked something ("Lo uso?"): not a story to go on with
+        rest = remainder(cut.stream.text, cut.played)
+        return replace(cut, rest=rest) if rest else None
+
+    async def _resume_reply(self, cut: CutReply, request: str, inter: Interaction) -> None:
+        """After answering the request that cut a reply: "Dicevo: ..." and the rest of it."""
+        assert self.barge_in is not None
+        if ends_the_reply(request) or self.clock() - cut.at > self.barge_in.resume_s:
+            return
+        rest, language = cut.rest, cut.language
+        log.info("Riprendo la risposta interrotta: %r", rest[:60])
+        inter.info["resumed"] = True
+        self._reply_parts = []
+
+        async def text() -> AsyncIterator[str]:
+            yield f"{in_language(RESUME_PREFIX, language)} {rest}"
+
+        await self._speak_reply(text(), inter, self._on_resume_audio, language, resumed=True)
+
+    def _on_resume_audio(self) -> None:
+        """The resumed reply can be cut again, like any other."""
+        if self.barge_in is not None:
+            self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
+            self._since_check.clear()
+        self._set_state(State.SPEAKING)
+
+    async def _echoed(self, stream: AsyncIterator[str]) -> AsyncIterator[str]:
+        async for chunk in stream:
+            self._reply_parts.append(chunk)  # its echo is recognised like any reply's
+            yield chunk
+
     async def announce(self, text: str) -> None:
         """Say something of Claudio's own (e.g. "ready" at startup) between two requests,
         never over one."""
@@ -831,7 +920,9 @@ class Assistant:
             inter.info.update(stats)
             if self.level is not None:
                 inter.info["gain_db"] = self.level.gain_db
-            if self.endpointer.started:
+            # Not a phrase said over the reply: louder than usual, with the reply's echo in it
+            # (JenJo 25/10: the gain fell to +0 dB after one and the next requests were -42 dBFS).
+            if self.endpointer.started and inter.info.get("wake_word") != BARGE_IN:
                 if self.level is not None:
                     self.level.observe(stats)
                 else:

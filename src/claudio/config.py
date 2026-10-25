@@ -266,6 +266,9 @@ class ConversationSettings(BaseModel):
     barge_in_vad: float = Field(0.6, gt=0, lt=1)  # speech probability needed (stricter than [vad])
     barge_in_min_speech_ms: int = Field(300, ge=0)  # voice this long before anything happens
     duck_volume: float = Field(0.3, ge=0, le=1)  # the reply's volume while Whisper checks
+    # A reply cut by a new request ("che ore sono?") goes on after it is answered ("Dicevo:
+    # ..."), if that took less than this many seconds (0 = never; JenJo 25/10).
+    resume_s: float = Field(60.0, ge=0, le=600)
     # true: in the window only questions, "dimmi..." or the name reach Claude (the TV costs
     # nothing). false: everything is answered until "basta" or silence.
     only_addressed: bool = False

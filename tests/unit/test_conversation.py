@@ -485,6 +485,38 @@ async def test_a_request_over_the_reply_stops_it_and_is_answered(
     assert second["outcome"] == "ok"
     assert speaker.ducks[:2] == [0.3, None]  # lowered at once, full volume for the next reply
     assert speaker.beeps[0] == "wake" and speaker.beeps.count("wake") >= 1
+    # Then the cut reply goes on (JenJo, 25/10): nothing of it had played in the fake.
+    assert speaker.spoken[-1] == "Dicevo: Sono le 14 e 5." and second["resumed"] is True
+    assert second["reply"] == "Oggi è domenica 18 ottobre 2026."  # the log keeps the answer
+
+
+async def test_resume_s_zero_never_resumes(fake_vad, vad_settings, make_frames, matcher) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"], resume_s=0.0),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut and not any(t.startswith("Dicevo") for t in speaker.spoken)
+
+
+async def test_basta_does_not_resume(fake_vad, vad_settings, make_frames, matcher) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["basta"]),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut and assistant._cut is None
+    assert not any(t.startswith("Dicevo") for t in speaker.spoken)
 
 
 async def test_noise_over_the_reply_only_lowers_it_for_a_moment(
@@ -614,3 +646,34 @@ def test_player_lowers_only_replies(monkeypatch) -> None:
     written.clear()
     p.write(np.full(2000, 1000, np.int16))  # a beep: never lowered
     assert int(written[0].max()) == 1000
+
+
+async def test_a_phrase_over_the_reply_does_not_move_the_gain(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    """Said over the reply, louder and with its echo: the automatic gain ignores it (JenJo
+    25/10: the gain fell to +0 dB after one and the next requests came in at -42 dBFS)."""
+
+    class Level:
+        gain_db = 0.0
+
+        def __init__(self) -> None:
+            self.seen: list[dict] = []
+
+        def observe(self, stats) -> None:
+            self.seen.append(dict(stats))
+
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+    )
+    level = Level()
+    assistant.level = level
+    await speak_over(assistant, make_frames, speaker)
+    wakes = [r["wake_word"] for r in assistant.history]
+    assert "barge_in" in wakes and len(level.seen) == wakes.index("barge_in")

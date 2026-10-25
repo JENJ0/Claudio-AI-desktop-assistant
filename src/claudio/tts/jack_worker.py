@@ -12,7 +12,8 @@ Requests, one JSON line each on stdin:
                              rvc "blocks": audio as it is generated (first audio ~0.3 s);
                              "sentence": the whole sentence through RVC at once, clearer
                              (WER 6% instead of 10%) but the audio waits for the sentence
-  {"op": "interrupt"}        stops every speak received so far, even one in progress
+  {"op": "interrupt", "upto": 7}  stops every speak up to id 7, even one in progress
+                             (no "upto": every speak received so far)
   {"op": "quit"}
 Replies, one JSON line each on stdout:
   {"event": "ready", "sample_rate": 24000, "load_s": 14.2, "vram_mb": 2900}
@@ -288,8 +289,9 @@ class Worker:
             except ValueError:
                 continue
             op = request.get("op")
-            if op == "interrupt":
-                self.cancelled_upto = self.latest_id
+            if op == "interrupt":  # up to the newest sentence the parent knew of when it sent this
+                upto = int(request.get("upto", self.latest_id))
+                self.cancelled_upto = max(self.cancelled_upto, upto)
             elif op == "speak":
                 self.latest_id = int(request["id"])
                 self.requests.put(request)
