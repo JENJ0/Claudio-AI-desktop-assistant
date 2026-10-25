@@ -372,7 +372,9 @@ class Assistant:
             else:
                 log.info("Nessuna richiesta dopo la wake word: torno in attesa")
             self._beep("cancel")
-            self._cancel_pending()
+            # Silence: a Claude action keeps waiting (ACTION_TTL_S) for "Hey Claudio, confermo"
+            # (24/10: JenJo answered 30 s later and the command had already been dropped).
+            self.responder.cancel_pending(silence=True)
             self._finish(outcome="timeout")
         elif event is EndpointEvent.END:
             now = self.clock()

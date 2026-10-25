@@ -15,6 +15,7 @@ from claudio.brain.prompts import SYSTEM_PROMPT_TOOLS
 from claudio.config import ClaudeSettings, PcSettings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.pc.files import Found
+from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import DEFINITIONS, LEVELS, App, PcTools, ToolCall, Window
 from claudio.router.matcher import CommandMatcher
 from tests.unit.test_claude_brain import Monotonic, ScriptedClient, hybrid, say
@@ -73,6 +74,25 @@ class FakeDesktop:
 
     def send_keys(self, sequence: str) -> None:
         self.done.append(("keys", sequence))
+
+    def paste(self, text: str) -> None:
+        self.done.append(("paste", text))
+
+    admin = False
+    result = CommandResult(0, "ok", 5)
+
+    def screenshot(self, window: Window | None) -> Any:
+        from PIL import Image
+
+        self.done.append(("screenshot", window.title if window else None))
+        return Image.new("RGBA", (2560, 1440), (10, 20, 30, 255))
+
+    def is_admin(self) -> bool:
+        return self.admin
+
+    def run_command(self, command: str, timeout_s: float, cwd: Path) -> CommandResult:
+        self.done.append(("command", command))
+        return self.result
 
 
 @pytest.fixture
@@ -173,6 +193,35 @@ async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
 async def test_long_text_is_shortened_in_the_question(verbose: PcTools) -> None:
     q = await verbose.question([call("type_text", text="parola " * 40)], "it")
     assert len(q) < 120 and "..." in q
+
+
+async def test_typing_in_notepad_needs_no_yes(tools: PcTools) -> None:
+    calls = [
+        call("type_text", text="ciao", window="blocco"),
+        ToolCall("t2", "type_text", {"text": "ciao", "window": "chrome"}),
+    ]
+    await tools.prepare(calls)
+    assert tools.level(calls[0]) == 1 and tools.level(calls[1]) == 2
+    new = [ToolCall("t3", "type_text", {"text": "x", "window": "Blocco note"})]
+    await tools.prepare(new)  # a Notepad opened in the same reply: matched by the name
+    assert tools.level(new[0]) == 1 and tools.level(calls[0]) == 2  # reset per reply
+
+
+async def test_long_text_is_pasted(tools: PcTools, desk: FakeDesktop) -> None:
+    await tools.run(call("type_text", text="riga uno\nriga due"))
+    await tools.run(call("type_text", text="ok"))
+    assert ("paste", "riga uno\nriga due") in desk.done and ("keys", "ok") in desk.done
+
+
+async def test_folder_found_near_home(tools: PcTools, desk: FakeDesktop, home: Path) -> None:
+    """JenJo had to dictate the path of Desktop\\PROGETTI (23/10)."""
+    (home / "Desktop" / "PROGETTI").mkdir(parents=True)
+    out = await tools.run(call("open_path", path="~\\Progetti"))
+    assert not out.error and ("open", (home / "Desktop" / "PROGETTI").resolve()) in desk.done
+    out = await tools.run(call("open_path", path="~/Desktop/Manca/Progetti"))
+    assert not out.error  # a wrong folder: the name is looked for everywhere (24/10)
+    out = await tools.run(call("open_path", path="~/Nessuna"))
+    assert out.error  # a name that exists nowhere
 
 
 # --- running --------------------------------------------------------------------------------
@@ -380,18 +429,18 @@ async def test_level_2_asks_and_runs_after_a_yes(
     pricing: Pricing, tools: PcTools, desk: FakeDesktop
 ) -> None:
     client = ScriptedClient(
-        (["Ok. "], "tool_use", [text("Ok. "), use("type_text", text="ciao", window="blocco")]),
+        (["Ok. "], "tool_use", [text("Ok. "), use("type_text", text="ciao", window="chrome")]),
         (["Scritto."], "end_turn", []),
     )
     b = acting_brain(pricing, client, tools)
-    reply = await ask(b, "scrivi ciao nel blocco note")
+    reply = await ask(b, "scrivi ciao su chrome")
     assert reply == "Ok. Confermi?"
     assert b.awaiting and not [d for d in desk.done if d[0] == "keys"]  # nothing typed yet
-    assert b.last_call["tools"] == ["type_text(text=ciao, window=blocco) ask"]
+    assert b.last_call["tools"] == ["type_text(text=ciao, window=chrome) ask"]
     assert await ask(b, "sì") == "Scritto."
     assert ("keys", "ciao") in desk.done and not b.awaiting
     assert client.calls[1]["messages"][-1]["content"][0]["content"] == "Typed 4 characters."
-    assert client.calls[1]["messages"][0]["content"].endswith("scrivi ciao nel blocco note")
+    assert client.calls[1]["messages"][0]["content"].endswith("scrivi ciao su chrome")
 
 
 @pytest.mark.parametrize(("answer", "reply"), [("no", "Va bene"), ("boh forse", "Non ho capito")])
@@ -460,7 +509,8 @@ async def test_history_keeps_only_words(pricing: Pricing, tools: PcTools) -> Non
     await ask(b, "grazie")
     history = client.calls[2]["messages"]
     assert [m["role"] for m in history] == ["user", "assistant", "user"]
-    assert history[1]["content"] == "Hai tre finestre."
+    # Only the words, plus a note of what really ran (no tool blocks, no window text).
+    assert history[1]["content"] == "Hai tre finestre. [Claudio ran: list_windows ok]"
 
 
 async def test_without_tools_the_old_prompt(pricing: Pricing) -> None:

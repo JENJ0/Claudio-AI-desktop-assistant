@@ -78,7 +78,7 @@ class FakeResponder:
     def is_stop(self, text: str) -> bool:
         return False
 
-    def cancel_pending(self) -> None:
+    def cancel_pending(self, silence: bool = False) -> None:
         pass
 
     async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:

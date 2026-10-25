@@ -202,6 +202,8 @@ escalate = true
 smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"], en = ["think hard", "think carefully", "think it through"] }
 # A request for detail: Claudio asks "Lo uso?" for Sonnet at once (no Haiku call).
 offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"], en = ["in detail", "in depth", "explain thoroughly"] }
+# Stories, jokes, poems: Haiku tells them itself, never "Lo uso?" (even if it asks for Sonnet).
+no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "barzelletta", "barzellette", "poesia", "filastrocca", "racconta", "raccontami"], en = ["story", "stories", "joke", "jokes", "poem", "fairy tale"] }
 
 # Claude acts on the PC with tools (Phase 3). Level 1 runs at once (open, search, read the
 # windows, harmless keys); type, close a window, move a file and other keys ask "Confermi?"
@@ -217,6 +219,11 @@ read_chars = 1500              # window text sent to Claude (~500 tokens)
 read_timeout_s = 2.0
 search_limit = 8
 private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password"]
+screenshot_side = 1024         # last-resort screenshot to Haiku: long side in pixels (~1000 tokens)
+commands = true                # PowerShell commands: always "confermo" said aloud, never as admin
+command_timeout_s = 30
+command_output_chars = 2000    # command output sent back to Claude
+bridge = true                  # say "Ci guardo" before a slow action
 # safe_keys = [...]            # keys pressed without asking: see PcSettings in config.py
 
 # The chat window (uv run claudio --ui): what you write there reaches the running assistant.

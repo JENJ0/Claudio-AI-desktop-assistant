@@ -33,7 +33,13 @@ KINDS = ("document", "picture", "music", "video", "folder")
 INDEX_KINDS = {"document": "document", "picture": "picture", "music": "music", "video": "video"}
 _TERM = re.compile(r"[^\w.\- ]+", re.UNICODE)  # what a search may contain: no quotes, no SQL
 MAX_TERMS = 5
-SKIP_DIRS = frozenset({"appdata", "node_modules", ".git", "$recycle.bin", "__pycache__", ".venv"})
+# Where a name said without its folder ("apri la cartella Progetti") is looked for, in order
+# (v0.3.2: JenJo had to dictate ~\\Desktop\\PROGETTI). The Desktop may live in OneDrive.
+NEAR_HOME = ("", "Desktop", "Documents", "Downloads", "OneDrive/Desktop", "OneDrive/Documents")
+SKIP_DIRS = frozenset(
+    {"appdata", "node_modules", ".git", "$recycle.bin", "__pycache__", ".venv", "venv"}
+    | {"miniconda3", "anaconda3", "npm-cache", "site-packages", "curseforge", "saved games"}
+)
 # rapidfuzz ratio of a name to a search that found nothing: "desi" and "attesi" -> "TESI" (75,
 # 80). Below this the name does not sound like the search.
 SIMILAR_CUTOFF = 70
@@ -84,6 +90,28 @@ class PathPolicy:
             raise PathRefused(f"outside the allowed folders: {raw}")
         return path
 
+    def find_near(self, raw: str) -> Path | None:
+        """A path that does not exist, given as a bare name or as ~\\name: the item with that
+        name (any case) in the user folder, on the Desktop, in Documents or Downloads."""
+        text = raw.strip().strip('"').strip().replace("/", "\\")
+        home = str(self.home).replace("/", "\\").casefold() + "\\"
+        if text.startswith("~\\"):
+            text = text[2:]
+        elif text.casefold().startswith(home):  # C:\Users\JenJo\Progetti
+            text = text[len(home) :]
+        if not text or "\\" in text or ":" in text:
+            return None  # a real path that is wrong: not guessed
+        wanted = text.casefold()
+        for sub in NEAR_HOME:
+            folder = self.home / sub if sub else self.home
+            try:
+                for child in folder.iterdir():
+                    if child.name.casefold() == wanted and self.allowed(child.resolve()):
+                        return child.resolve()
+            except OSError:
+                continue
+        return None
+
     def allowed(self, path: Path) -> bool:
         if self.anywhere:
             return True
@@ -116,6 +144,36 @@ def search_terms(query: str) -> list[str]:
     if not terms:
         raise PathRefused("nothing to search for")
     return terms[:MAX_TERMS]
+
+
+SHORTCUTS = {".lnk", ".url"}
+
+
+def shortcuts(folders: Iterable[Path], deep: bool) -> list[tuple[str, Path]]:
+    """(name, file) of the shortcuts in these folders. Games from Steam or Epic are .url
+    shortcuts that the Start menu app list leaves out (25/10: Rocket League)."""
+    out: list[tuple[str, Path]] = []
+    for folder in folders:
+        try:
+            items = folder.rglob("*") if deep else folder.iterdir()
+            for item in items:
+                if item.suffix.lower() in SHORTCUTS and item.is_file():
+                    name = item.stem
+                    if not name.casefold().startswith(("uninstall", "disinstalla")):
+                        out.append((name, item))
+        except OSError:
+            continue
+    return out
+
+
+def index_path(url: str) -> Path | None:
+    """The real path of a Windows Search result from its System.ItemUrl ("file:C:/Users/...").
+    Not System.ItemPathDisplay: on an Italian Windows it reads "C:\\Utenti\\..." (25/10: every
+    folder found was then outside ~ and dropped). Other stores (mapi:, iehistory:) are skipped."""
+    if not url.casefold().startswith("file:"):
+        return None
+    rest = url[len("file:") :].lstrip("/")
+    return Path(rest) if rest else None
 
 
 @dataclass

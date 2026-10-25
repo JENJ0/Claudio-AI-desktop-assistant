@@ -155,8 +155,10 @@ class RequestFilter:
             return True
         if self.claude_min_words is not None and responder.asked_question:
             return True  # Claude asked "da dove parti?": "Milano." is the answer
-        if self.claude_min_words is None or words(text) < self.claude_min_words:
+        if self.claude_min_words is None:
             return False
+        if words(text) < self.claude_min_words:
+            return short_request(text)  # "Allora scrivi." (23/10: dropped, now answered)
         return not self.only_addressed or addressed_to_claudio(text)
 
     def noise_cause(self, text: str, heard: Heard) -> str:
@@ -220,6 +222,20 @@ REQUEST_STARTS = frozenset(
         "continua",
         "aiutami",
         "scrivi",
+        "scrivila",
+        "scrivilo",
+        "scrivimi",
+        "apri",
+        "aprila",
+        "aprilo",
+        "chiudi",
+        "cerca",
+        "trova",
+        "leggi",
+        "leggimi",
+        "mostrami",
+        "fallo",
+        "procedi",
         "perche",
         "come",
         "cosa",
@@ -242,6 +258,11 @@ REQUEST_STARTS = frozenset(
         "continue",
         "help",
         "write",
+        "open",
+        "close",
+        "find",
+        "read",
+        "look",
         "why",
         "how",
         "what",
@@ -262,6 +283,12 @@ def addressed_to_claudio(text: str) -> bool:
         or (bool(tokens) and tokens[0] in REQUEST_STARTS)
         or heard_wake_word(text)
     )
+
+
+def short_request(text: str) -> bool:
+    """Two words with a request verb after the fillers: "allora scrivi", "aprila pure"."""
+    tokens = normalize(text, drop_fillers=True).split()
+    return len(tokens) >= 1 and words(text) >= 2 and tokens[0] in REQUEST_STARTS
 
 
 def words(text: str) -> int:

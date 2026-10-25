@@ -25,6 +25,8 @@ from claudio.safety.confirmation import (
 
 log = logging.getLogger(__name__)
 
+QUESTION_TAIL_CHARS = 60  # a "?" this close to the end of a reply asks something
+
 # Asked with (request, reply language): Claude's reply, streamed.
 Fallback = Callable[[str, str], AsyncGenerator[str, None]]
 
@@ -101,11 +103,12 @@ class LocalResponder:
 
     @property
     def asked_question(self) -> bool:
-        """Claude's last reply ended with a question: the next phrase is its answer."""
+        """Claude's last reply ended with a question, maybe followed by a short sentence
+        ("Che tema vuoi? Dimmelo e la scrivo."): the next phrase is its answer."""
         return (
             self.last_route.get("route") == "claude"
             and self._last_reply is not None
-            and self._last_reply[0].rstrip().endswith("?")
+            and "?" in self._last_reply[0].rstrip()[-QUESTION_TAIL_CHARS:]
         )
 
     def heard(self, hearing: Hearing) -> None:
@@ -113,8 +116,10 @@ class LocalResponder:
         if self.fallback_heard is not None:
             self.fallback_heard(hearing)
 
-    def cancel_pending(self) -> None:
-        """Nothing was said after the question (or it was not understood as speech)."""
+    def cancel_pending(self, silence: bool = False) -> None:
+        """Nothing was said after the question (or it was not understood as speech). After
+        mere `silence` an action Claude proposed stays armed until it expires: JenJo may
+        answer later with the wake word ("Hey Claudio, confermo")."""
         if self._pending is not None:
             log.info(
                 "Conferma scaduta: %s non eseguito",
@@ -122,7 +127,7 @@ class LocalResponder:
                 extra={"route": "confirm_timeout"},
             )
             self._pending = None
-        if self.fallback_cancel is not None:
+        if self.fallback_cancel is not None and not silence:
             self.fallback_cancel()
 
     def _reply_language(self, language: str, has_text: bool) -> str:
