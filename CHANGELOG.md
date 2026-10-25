@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased] - "Claudio" wake word
+## [Unreleased] - Sonnet only when needed, "Claudio" wake word
+
+### Changed
+- `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
+  analysis or plans); Haiku answers stories, jokes, chat and explanations itself.
+- New `[claude] no_offer_phrases` (storia, barzelletta, poesia, raccontami...): if Haiku still
+  asks for Sonnet on such a request, or a detail phrase matches, Claudio does not ask "Lo uso?"
+  and Haiku answers (log "Sonnet chiesto per una storia", metric `escalated = skipped`).
 
 ### Fixed (JenJo's test, 25/10: "Claudio" alone fires rarely)
 - The "claudio" model fires late, on the word after the name when it is said in one breath:
