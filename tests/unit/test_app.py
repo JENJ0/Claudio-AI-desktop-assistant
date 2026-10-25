@@ -696,3 +696,18 @@ async def test_serve_inbox_answers_the_window(fake_vad, vad_settings, tmp_path) 
             break
     task.cancel()
     assert responder.seen == ["apri chrome"]
+
+
+# --- startup: "Sono pronto" once Jack has loaded, between two requests -------------------
+
+
+async def test_announce_waits_for_the_request_in_progress(fake_vad, vad_settings) -> None:
+    assistant, _, speaker, _ = build(fake_vad, vad_settings, FakeStt(), set())
+    assistant.state = State.SPEAKING
+    task = asyncio.create_task(assistant.announce("Sono pronto."))
+    await asyncio.sleep(0.12)
+    assert speaker.spoken == []  # never over a reply
+    assistant.state = State.IDLE
+    await task
+    assert speaker.spoken == ["Sono pronto."]
+    assert assistant.state is State.IDLE

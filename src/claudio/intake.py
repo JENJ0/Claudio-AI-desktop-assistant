@@ -256,3 +256,15 @@ def addressed_to_claudio(text: str) -> bool:
 
 def words(text: str) -> int:
     return len(normalize(text, drop_fillers=False).split())
+
+
+# Sounds Whisper writes for a cough, a breath or the TV ("Mm-hmm.", "Ehm"): not words.
+INTERJECTIONS = frozenset(
+    {"mm", "mmm", "mmh", "mh", "mhm", "hm", "hmm", "hmmm", "uh", "huh", "um", "uhm", "ehm"}
+    | {"eh", "ah", "oh", "uhh", "ahh", "ohh"}
+)
+
+
+def content_words(text: str) -> int:
+    """The words in `text` that are not interjections: "Mm-hmm." has none."""
+    return sum(w not in INTERJECTIONS for w in normalize(text, drop_fillers=False).split())

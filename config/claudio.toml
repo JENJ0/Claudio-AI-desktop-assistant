@@ -61,7 +61,7 @@ fallback_compute_type = "int8"
 # Whisper picks the language of every request among these (the encoder pass is shared, so
 # it costs almost nothing); when it is unsure (< language_confidence) it keeps the last one.
 # A single language (languages = ["it"]) skips the detection.
-languages = ["it", "en"]
+languages = ["it"]          # Italian only for now (JenJo, 24/10); ["it", "en"] brings English back
 language_confidence = 0.6
 other_confidence = 0.9         # English (not the first language) must be at least this sure (JenJo: Italian unless plainly English)
 retry_in_first_language = true # an English request no command understands is retried in Italian
@@ -73,9 +73,12 @@ beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14
 no_speech_threshold = 0.6
 cpu_threads = 4
 
-[stt.prompts]              # Whisper's prompt per language: names it would otherwise misspell
-it = "Hey Claudio, apri Chrome, apri la cartella Download, Documenti, Esplora file, Blocco note, calcolatrice, alza il volume, abbassa il volume, muto, che ore sono, che giorno è oggi, metti in pausa la musica, canzone successiva, ripeti, basta."
-en = "Hey Claudio, open Chrome, open the Downloads folder, Documents, File Explorer, Notepad, calculator, turn up the volume, turn down the volume, mute, what time is it, what day is it, pause the music, next song, repeat, stop."
+[stt.prompts]              # Whisper's prompt per language, read as the words said just before
+# Whole sentences, as JenJo talks (25/10, scripts/compare_stt.py on 23 of his requests): fixed
+# "pure sono", "Chiaro son" -> "che ore sono", "Il punto è" -> "raccontami", "Projecti" ->
+# "Progetti", which a list of commands got wrong; same speed.
+it = "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. Apri Chrome e la cartella Download, poi alza il volume. Basta, grazie."
+en = "Hey Claudio, what time is it? Claudio, tell me a short story. Open Chrome and the Downloads folder, then turn up the volume. Stop, thanks."
 
 [tts]
 engine = "jack"            # "jack" (Claudio's voice, JenJo 23/10), "kokoro" (Nicola) or "piper"; the others are fallbacks
@@ -95,13 +98,39 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
-# jack_language = "Italian"  # "Auto" (default) guesses the language per sentence; try "Italian" if accent/pace drift
+# jack_first_wait_s = 30    # Claudio listens while Jack loads: a reply meanwhile waits this long for Jack (0 = fallback voice at once)
 jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pitch stays the same
+jack_temperature = 0.7     # Qwen3 sampling: lower = steadier pronunciation (JenJo's pick C, 24/10)
+jack_rvc = "auto"          # "blocks" (fast, more mangled words), "sentence" (clearer, waits for the
+                           # sentence) or "auto" (blocks for a reply's first sentence, then whole)
+# Compare settings by ear: uv run python scripts/jack_variants.py (WAVs + WER in logs/jack-variants/)
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
-[tts.voices.en]            # the voices for English replies (same engine, same effect)
-kokoro_voice = "am_michael"
-voice = "en_US-ryan-low"
+# Words Jack says wrong, written the way he should say them (whole words, any case). English
+# words get read in English: an accent on the stressed vowel keeps them Italian-sounding.
+# Hear candidates with: uv run python scripts/jack_variants.py --words
+[tts.jack_words]
+PC = "pì cì"               # JenJo's pick by ear (24/10), as file and download
+file = "fàiil"
+download = "dàunlòud"
+upload = "àplod"
+Chrome = "cròm"
+mouse = "màus"
+computer = "compiùter"
+online = "onlàin"
+email = "imèil"
+mail = "mèil"
+browser = "bràuser"
+password = "pàssuord"
+
+# English replies are off while languages = ["it"]; their voices, if it comes back:
+# [tts.voices.en]
+# kokoro_voice = "am_michael"
+# voice = "en_US-ryan-low"
+
+[startup]
+parallel = true            # load Whisper, wake word, voice and Claude together (false = one after the other, slower)
+announce_ready = true      # say "Sono pronto" once everything, Jack's voice included, has loaded
 
 [router]
 commands_file = "config/commands.toml"

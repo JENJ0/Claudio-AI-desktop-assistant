@@ -28,7 +28,11 @@ EN: dict[str, str] = {
     "Voce per '%s' non disponibile (%s): uso quella principale": (
         "Voice for '%s' not available (%s): using the main one"
     ),
+    "Avvio: %s (in parallelo: %s)": "Startup: %s (in parallel: %s)",
+    "Sono pronto.": "I'm ready.",
+    "Avvio completo in %.1f s": "Fully started in %.1f s",
     # app
+    "Avviso a voce non riuscito": "Spoken notice failed",
     "Pronto: in ascolto della wake word": "Ready: listening for the wake word",
     "Wake word rilevata: %s (%.2f)": "Wake word detected: %s (%.2f)",
     "Solo la wake word: ascolto la richiesta": "Only the wake word: listening for the request",
@@ -206,12 +210,14 @@ EN: dict[str, str] = {
         "Not a request, end of the conversation: %r"
     ),
     "Ascolto durante la risposta non riuscito": "Listening while speaking failed",
-    "Sentito mentre parlo: %r": "Heard while speaking: %r",
+    "Sentito mentre parlo, non è per me: %r": "Heard while speaking, not for me: %r",
     "Interrotto a voce: %r": "Interrupted by voice: %r",
     "Risposta interrotta": "Reply interrupted",
     "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
     "La mia voce nel microfono, la ignoro: %r": "My own voice heard again, ignored: %r",
-    "Voce troppo debole mentre parlo: ignorata": "Voice too quiet while speaking: ignored",
+    "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
+        "Voice too quiet while speaking (%.0f dBFS): ignored"
+    ),
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"
@@ -275,6 +281,9 @@ EN: dict[str, str] = {
     "Chat chiusa": "Chat closed",
     "Comando chat sconosciuto '{command}'": "Unknown chat command '{command}'",
     "Avviso a voce: %s": "Spoken notice: %s",
+    "Jack si sta ancora caricando: questa frase la dice la voce di riserva": (
+        "Jack is still loading: the fallback voice says this sentence"
+    ),
     "La voce di Jack non è partita: uso quella di riserva.": (
         "Jack's voice did not start: using the backup voice."
     ),

@@ -26,8 +26,8 @@ from claudio.intake import (
     Kind,
     RequestFilter,
     Segment,
+    content_words,
     unsure,
-    words,
 )
 from claudio.intake import addressed_to_claudio as addressed_to_claudio  # re-exported
 from claudio.metrics import Interaction, MetricsWriter
@@ -607,16 +607,17 @@ class Assistant:
             barge.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
         elif event is EndpointEvent.END:
             audio = barge.endpointer.audio()
-            loud = self._barge_loud(barge)
+            dbfs = barge.endpointer.stats()["speech_dbfs"]
             barge.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
-            if not loud:
-                log.debug("Voce troppo debole mentre parlo: ignorata")
+            if dbfs < barge.min_dbfs:
+                # Logged with its level: the data barge_in_min_dbfs is tuned on.
+                log.info("Voce troppo debole mentre parlo (%.0f dBFS): ignorata", dbfs)
                 return
             if self._barge_checking:
                 return  # still looking at the last phrase: this one is skipped
             self._barge_checking = True
             self._since_check.clear()
-            task = asyncio.create_task(self._check_barge_in(audio, barge))
+            task = asyncio.create_task(self._check_barge_in(audio, barge, dbfs))
             self._checks.add(task)
             task.add_done_callback(self._checks.discard)
 
@@ -624,7 +625,9 @@ class Assistant:
     def _barge_loud(barge: BargeIn) -> bool:
         return barge.endpointer.stats()["speech_dbfs"] >= barge.min_dbfs
 
-    async def _check_barge_in(self, audio: np.ndarray, barge: BargeIn) -> None:
+    async def _check_barge_in(
+        self, audio: np.ndarray, barge: BargeIn, dbfs: float | None = None
+    ) -> None:
         """Whisper on what was heard while speaking: "basta" stops the reply, other words
         stop it and become the next request, noise or CLAUDIO's own echo change nothing."""
         text = ""
@@ -637,6 +640,8 @@ class Assistant:
             self._barge_checking = False
         if self.state is not State.SPEAKING or self._takeover is not None:
             return  # the reply had already ended, or someone already took over
+        if self._interaction is not None and dbfs is not None:
+            self._interaction.info["barge_dbfs"] = round(dbfs, 1)
         if text and self.responder.is_stop(text):
             log.info("Interrotto a voce: %r", text)
             self._interrupted = True
@@ -647,14 +652,14 @@ class Assistant:
         elif self._is_talking_to_me(text):
             self._take_over(audio, text)
         else:
-            log.debug("Sentito mentre parlo: %r", text)
+            log.info("Sentito mentre parlo, non è per me: %r", text)
             self.speaker.duck(None)
 
     def _is_talking_to_me(self, text: str) -> bool:
         """Words said over the reply: two or more, the name or a command, and not mostly the
         reply's own words (its echo, with speakers instead of headphones)."""
         if not text or not (
-            words(text) >= 2 or heard_wake_word(text) or self.responder.understands(text)
+            content_words(text) >= 2 or heard_wake_word(text) or self.responder.understands(text)
         ):
             return False
         heard = normalize(text, drop_fillers=False).split()
@@ -779,6 +784,24 @@ class Assistant:
             self.wake.reset()
             self._set_state(State.IDLE)
         return str(inter.info.get("reply", ""))
+
+    async def announce(self, text: str) -> None:
+        """Say something of Claudio's own (e.g. "ready" at startup) between two requests,
+        never over one."""
+        while self.state is not State.IDLE:
+            await asyncio.sleep(0.05)
+        self._set_state(State.RESPONDING)  # the wake word waits until this is said
+
+        async def once() -> AsyncIterator[str]:
+            yield text
+
+        try:
+            await self.speaker.speak(once())
+        except Exception:
+            log.exception("Avviso a voce non riuscito")
+        finally:
+            self.wake.reset()
+            self._set_state(State.IDLE)
 
     async def _marked(self, stream: AsyncIterator[str], inter: Interaction) -> AsyncIterator[str]:
         parts: list[str] = []

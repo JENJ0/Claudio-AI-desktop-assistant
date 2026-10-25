@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased] - faster startup
+
+### Changed
+- Claudio listens much sooner (JenJo: "ci mette troppo tempo ad avviarsi"). Jack's worker
+  (8-30 s) starts first and loads in the background instead of blocking everything; Whisper,
+  wake word, voice and Claude load at the same time (`[startup] parallel`). A reply asked
+  while Jack is still loading waits for him up to `[tts] jack_first_wait_s` (30 s), then the
+  fallback voice speaks it; "basta" stops the wait.
+- Once everything is loaded Claudio says "Sono pronto" (`[startup] announce_ready`), with the
+  notices of a degraded start before it, between two requests, never over one.
+- `console.log`: `Avvio: whisper 3.1 s, ...` (each loader) and `Avvio completo in N s`.
+
 ## [Unreleased] - 0.3.2 (understanding and interrupting)
 
 ### Added
@@ -34,6 +46,19 @@
   800 ms of silence to end (`long_end_silence_ms`, `long_after_s`); commands still end after
   400 ms. `max_utterance_s` 8 -> 15 s.
 
+### Fixed (JenJo's test, 25/10)
+- A noise Whisper writes as an interjection ("Mm-hmm.", "Ehm, mh.") no longer stops the reply:
+  interjections do not count among the two words needed to take over.
+- The level of the voice heard over the reply is logged (`barge_dbfs` in metrics.jsonl, and the
+  dBFS of each phrase ignored as too quiet) to tune `barge_in_min_dbfs` on real data; what is
+  heard but not taken as a request is logged at INFO.
+- `scripts/compare_stt.py --engines turbo frase large-v3 --details`: the `frase` engine is turbo
+  with a natural-sentence prompt (`--prompt` to try another).
+- Whisper's prompt is now a few natural sentences instead of a list of commands: on JenJo's 23
+  requests it fixed "pure sono" / "Chiaro son" -> "che ore sono", "Il punto è" -> "raccontami",
+  "Projecti" -> "Progetti", at the same speed (108 ms). large-v3 understood about as much at
+  twice the time (232 ms): turbo stays.
+
 ## [Unreleased] - personality
 
 ### Added
@@ -50,6 +75,25 @@
 - Level 2 confirmation is just "Confermi?" (`[pc] confirm_brief`); level 3 still says what runs.
 
 ## [Unreleased] - 0.3.1
+
+### Jack's pronunciation (after JenJo's test, 23/10)
+- Italian only for now (JenJo, 24/10): `[stt] languages = ["it"]` (no language detection, no
+  English replies; the English voices are commented out), and Qwen3 is always told "Italian"
+  (with "Auto" it guessed the language per sentence: Spanish/English stresses).
+- `[tts] jack_temperature` (Qwen3 sampling) and `jack_rvc`:
+  "blocks" (as before), "sentence" (Applio's offline pipeline on the whole sentence, rmvpe:
+  fewer mangled words) or "auto" (blocks for a reply's first sentence, whole for the rest).
+- Text for Jack goes through `tts/spoken_text.py`: symbols (%, €, °, &, +), acronyms (PC, USB,
+  PDF), Markdown, links and emoji become Italian words before the numbers.
+- The speaker renders up to 16 pieces ahead of playback (was 2), so whole-sentence RVC is
+  ready before the sentence is due.
+- `scripts/jack_variants.py`: the same replies in 5 settings, with WER, first audio and pauses;
+  `--words` speaks candidate spellings of hard words.
+- JenJo's pick by ear (24/10, variant C): `jack_temperature = 0.7`, `jack_rvc = "auto"`.
+- `[tts.jack_words]`: respellings for words Jack said wrong ("PC" heard as "pace", English
+  words like "file" read in English): `PC = "pì cì"`, `file = "fàiil"`, `download = "dàunlòud"` (JenJo's picks by ear), ...
+- Fixed: the whole-sentence RVC warm-up on silence gave a NaN pitch and a CUDA assert at worker
+  startup; the pitch is now clamped (NaN = unvoiced).
 
 ### Added
 - Claude acts on the PC (`src/claudio/pc/`, `[pc]` in `config/claudio.toml`): Haiku's tools

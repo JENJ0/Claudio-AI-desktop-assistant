@@ -1,4 +1,5 @@
-"""Jack's voice, as a separate process: Qwen3-TTS (fine-tuned) -> RVC, blocks of 250 ms.
+"""Jack's voice, as a separate process: Qwen3-TTS (fine-tuned) -> RVC, in blocks of 250 ms
+or on the whole sentence.
 
 Run by claudio.tts.jack with the worker venv's interpreter (torch, faster-qwen3-tts and
 Applio live there, not in Claudio's venv), so this file imports nothing from claudio:
@@ -7,7 +8,10 @@ Applio live there, not in Claudio's venv), so this file imports nothing from cla
 
 Protocol (the real stdout carries it, nothing else; library prints go to stderr).
 Requests, one JSON line each on stdin:
-  {"op": "speak", "id": 7, "text": "...", "language": "Auto"}
+  {"op": "speak", "id": 7, "text": "...", "language": "Italian", "rvc": "blocks"}
+                             rvc "blocks": audio as it is generated (first audio ~0.3 s);
+                             "sentence": the whole sentence through RVC at once, clearer
+                             (WER 6% instead of 10%) but the audio waits for the sentence
   {"op": "interrupt"}        stops every speak received so far, even one in progress
   {"op": "quit"}
 Replies, one JSON line each on stdout:
@@ -40,6 +44,7 @@ OUT_RATE = 24_000  # what is sent: the player's rate, so nothing is resampled wi
 BLOCK_S = 0.25
 CONTEXT = 480  # Qwen samples of the previous chunk kept to resample a chunk without edge ripple
 TAIL_S = 0.15  # speech ends this long after the input: RVC output follows the input by ~70 ms
+SENTENCE_RATE = 16_000  # what Applio's offline pipeline takes
 SPEAK_TOKENS = 300
 INDEX_RATE = 0.0
 PROTECT = 0.33
@@ -53,11 +58,13 @@ def emit(header: dict[str, Any], payload: bytes = b"") -> None:
         PROTOCOL_OUT.flush()
 
 
-def speed_plan(speed: float) -> tuple[int, int, int]:
-    """How to change Jack's pace: Qwen3's 24 kHz goes to RVC at 48 kHz / speed (up/down of
+def speed_plan(speed: float, rate_ratio: float = RVC_RATE / QWEN_RATE) -> tuple[int, int, int]:
+    """How to change Jack's pace: Qwen3's 24 kHz goes to RVC at its rate / speed (up/down of
     resample_poly), so it plays slower (< 1) or faster, and its pitch moves by the inverse;
-    RVC takes it back with f0_up_key semitones (an integer: 0.9 leaves +0.2 semitones)."""
-    ratio = Fraction(2 / speed).limit_denominator(50)
+    RVC takes it back with f0_up_key semitones (an integer: 0.9 leaves +0.2 semitones).
+    `rate_ratio` is RVC's input rate over Qwen3's: 2 for the realtime path (48 kHz), 2/3 for
+    the whole-sentence one (16 kHz)."""
+    ratio = Fraction(rate_ratio / speed).limit_denominator(50)
     semitones = round(-12 * math.log2(speed))
     return ratio.numerator, ratio.denominator, semitones
 
@@ -153,6 +160,91 @@ class RvcStream:
         return blocks
 
 
+class RvcSentence:
+    """Applio's offline converter on a whole sentence: the same model as RvcStream, but it
+    sees the sentence at once, so words are not cut at block edges (WER 6% against 10%)."""
+
+    def __init__(self, model_path: Path, applio: Path, speed: float = 1.0) -> None:
+        import numpy as np
+
+        os.chdir(applio)
+        if str(applio) not in sys.path:
+            sys.path.insert(0, str(applio))
+        from rvc.infer.infer import VoiceConverter
+
+        self.np = np
+        self.vc = VoiceConverter()
+        self.vc.get_vc(str(model_path), 0)
+        self.vc.load_hubert("contentvec")
+        self.up, self.down, self.semitones = speed_plan(speed, SENTENCE_RATE / QWEN_RATE)
+        self._guard_f0()
+        self.begin()
+        # Loads the f0 model. A quiet voice-like tone, not zeros: on pure silence RMVPE gave
+        # NaN pitch and the CUDA embedding asserted (JenJo's PC, 24/10).
+        t = np.arange(QWEN_RATE // 2, dtype=np.float32) / QWEN_RATE
+        self._convert(0.1 * np.sin(2 * np.pi * 130 * t).astype(np.float32))
+
+    def _guard_f0(self) -> None:
+        """Applio quantizes the pitch with comparisons that NaN slips through, so a NaN f0
+        became a huge index into the 256-entry pitch embedding (device-side assert, and the
+        CUDA context is lost for good). Unvoiced (0) and bounded pitch only."""
+        np = self.np
+        get_f0 = self.vc.vc.get_f0
+
+        def safe_get_f0(*args: Any, **kwargs: Any) -> Any:
+            coarse, f0 = get_f0(*args, **kwargs)
+            bad = ~np.isfinite(f0)
+            f0 = np.where(bad, 0.0, f0)
+            coarse = np.where(bad, 1, np.clip(coarse, 1, 255)).astype(int)
+            return coarse, f0
+
+        self.vc.vc.get_f0 = safe_get_f0
+
+    def begin(self) -> None:
+        self.parts: list[Any] = []
+
+    def feed(self, chunk: Any) -> list[bytes]:
+        self.parts.append(self.np.asarray(chunk, dtype=self.np.float32).reshape(-1))
+        return []
+
+    def flush(self) -> list[bytes]:
+        if not self.parts:
+            return []
+        audio, self.parts = self.np.concatenate(self.parts), []
+        return [self._convert(audio)]
+
+    def _convert(self, audio: Any) -> bytes:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+
+        np = self.np
+        audio = np.pad(audio, (0, int(TAIL_S * QWEN_RATE)))  # room for the last syllable
+        wide = resample_poly(audio, self.up, self.down).astype(np.float32)
+        out = self.vc.vc.pipeline(
+            model=self.vc.hubert_model,
+            net_g=self.vc.net_g,
+            sid=0,
+            audio=wide,
+            pitch=self.semitones,
+            f0_method="rmvpe",
+            file_index="",
+            index_rate=INDEX_RATE,
+            pitch_guidance=self.vc.use_f0,
+            volume_envelope=1,
+            version=self.vc.version,
+            protect=PROTECT,
+            f0_autotune=False,
+            f0_autotune_strength=1,
+            proposed_pitch=False,
+            proposed_pitch_threshold=155.0,
+        )
+        rate = int(self.vc.tgt_sr)
+        g = gcd(OUT_RATE, rate)
+        pcm = resample_poly(np.asarray(out, dtype=np.float32), OUT_RATE // g, rate // g)
+        return (np.clip(pcm, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+
+
 class Worker:
     def __init__(self, args: argparse.Namespace) -> None:
         import torch
@@ -161,8 +253,13 @@ class Worker:
         self.torch = torch
         t0 = time.perf_counter()
         self.tts = FasterQwen3TTS.from_pretrained(str(args.checkpoint))
-        self.rvc = RvcStream(args.rvc_model, args.applio, args.speed)
-        for _ in self.generate("Prova.", "Auto", 60):  # captures the CUDA graph
+        self.temperature = args.temperature
+        # Both converters stay loaded (~0.3 GB more): each sentence says which one it wants.
+        self.rvc: dict[str, RvcStream | RvcSentence] = {
+            "blocks": RvcStream(args.rvc_model, args.applio, args.speed),
+            "sentence": RvcSentence(args.rvc_model, args.applio, args.speed),
+        }
+        for _ in self.generate("Prova.", "Italian", 60):  # captures the CUDA graph
             pass
         self.load_s = time.perf_counter() - t0
         self.requests: queue.Queue[dict[str, Any] | None] = queue.Queue()
@@ -171,7 +268,12 @@ class Worker:
 
     def generate(self, text: str, language: str, max_tokens: int = SPEAK_TOKENS) -> Any:
         return self.tts.generate_custom_voice_streaming(
-            text=text, speaker="jack", language=language, chunk_size=8, max_new_tokens=max_tokens
+            text=text,
+            speaker="jack",
+            language=language,
+            chunk_size=8,
+            max_new_tokens=max_tokens,
+            temperature=self.temperature,
         )
 
     def vram_mb(self) -> int:
@@ -209,17 +311,18 @@ class Worker:
                 emit({"event": "audio", "id": rid, "bytes": len(data)}, data)
 
         cancelled = rid <= self.cancelled_upto
-        self.rvc.begin()
+        rvc = self.rvc.get(request.get("rvc", "blocks"), self.rvc["blocks"])
+        rvc.begin()
         if not cancelled:
             for chunk, _rate, _timing in self.generate(
                 request["text"], request.get("language", "Auto")
             ):
-                send(self.rvc.feed(chunk))
+                send(rvc.feed(chunk))
                 if rid <= self.cancelled_upto:
                     cancelled = True
                     break
         if not cancelled:
-            send(self.rvc.flush())
+            send(rvc.flush())
         emit(
             {
                 "event": "done",
@@ -255,6 +358,9 @@ def main() -> None:
     parser.add_argument("--rvc-model", type=Path, required=True, help="Jack's RVC .pth")
     parser.add_argument("--applio", type=Path, required=True, help="Applio folder (rvc package)")
     parser.add_argument("--speed", type=float, default=1.0, help="pace: < 1 slower")
+    parser.add_argument(
+        "--temperature", type=float, default=0.9, help="Qwen3 sampling: lower = steadier"
+    )
     args = parser.parse_args()
     for path in (args.checkpoint, args.rvc_model, args.applio):
         if not path.exists():

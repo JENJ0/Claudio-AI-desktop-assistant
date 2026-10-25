@@ -118,7 +118,12 @@ class StreamingSpeaker:
                 chunks.close()  # an abandoned stream stops the worker
 
     def warm_up(self) -> None:
-        self.render("Ciao.")
+        """The first sentence of a voice is slow: say one now. Jack's worker warms up by
+        itself, so its fallback is warmed instead (it speaks if Jack is not there in time)."""
+        base = getattr(self.synth, "fallback", self.synth)
+        audio = base.synthesize("Ciao.")
+        if self.effect:
+            self.effect(audio, int(base.sample_rate))
         for language in self.voices:
             self.render("Hi.", language)
 
@@ -135,7 +140,9 @@ class StreamingSpeaker:
         language of its reply once it has matched the request."""
         self._cancel.clear()
         self.duck(None)  # every reply starts at full volume
-        queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=2)
+        # Rendering runs ahead of playback: the next sentences are ready before they are due
+        # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued.
+        queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=16)
 
         async def produce() -> None:
             try:
