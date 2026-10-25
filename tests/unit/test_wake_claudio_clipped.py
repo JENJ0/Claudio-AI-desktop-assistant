@@ -21,6 +21,9 @@ RATE = 16000
         ("L'audio?", True),
         ("l'audio apri...", True),
         ("Audio.", True),
+        ("Fraudio.", True),  # 26/10, said at 0.88
+        ("Radio Italia", False),
+        ("Studio", False),
         ("Alza l'audio della TV", False),  # the name is never cut in the middle of the audio
         ("Grazie.", False),
         ("", False),

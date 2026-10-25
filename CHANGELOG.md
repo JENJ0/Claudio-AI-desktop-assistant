@@ -7,8 +7,9 @@
   Whisper's check got only the last 1.5 s, the "C" was cut off and it heard "l'audio" (8 of the
   rejected checks in the logs), so JenJo had to repeat. The check now hears the last
   `WAKE_CHECK_S` 2.5 s; the request keeps its 1.5 s lead-in.
-- After the "claudio" model, a transcript starting with "l'audio"/"audio" counts as the name
-  (a clipped "Claudio"). Not after "hey claudio", and not in the middle ("alza l'audio").
+- After the "claudio" model, a transcript starting with a word at most 2 edits from "claudio"
+  ("l'audio", "audio", "fraudio") counts as the name. Not after "hey claudio", not in the middle
+  ("alza l'audio"), not "radio" or "studio".
 
 ## [0.3.2] - screen and terminal
 

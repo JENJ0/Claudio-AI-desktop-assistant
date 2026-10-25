@@ -28,15 +28,18 @@ def wake_confirmed(text: str, matched_command: bool) -> bool:
     return not text.strip() or matched_command or name_at_start(text)
 
 
-# Whisper's spelling of "Claudio" with the "C" cut off, or said softly ("l'audio", "audio").
-CLIPPED_NAMES = frozenset({"audio"})
+# What Whisper makes of a "Claudio" with a soft or cut "C" (JenJo's logs, 25-26/10): "l'audio",
+# "audio", "fraudio". Two edits away at most: "radio" and "studio" (three) are not the name.
+CLIPPED_MAX_EDITS = 2
 CLIPPED_LEAD = frozenset({"l", "e"})  # "l'audio", "e l'audio" (a fast "hey")
 
 
 def clipped_name(text: str) -> bool:
-    """True when the transcript starts like a clipped name ("L'audio?", "l'audio apri..."): a
-    cut-off name can only be at the start of the audio Whisper gets."""
+    """True when the transcript starts with something close to the name ("L'audio?", "Fraudio.",
+    "l'audio apri..."): a cut-off name can only be at the start of the audio Whisper gets."""
+    from rapidfuzz.distance import Levenshtein
+
     words = normalize(text, drop_fillers=False).split()
     while words and (words[0] in GREETINGS or words[0] in CLIPPED_LEAD):
         words = words[1:]
-    return bool(words) and words[0] in CLIPPED_NAMES
+    return bool(words) and Levenshtein.distance(words[0], "claudio") <= CLIPPED_MAX_EDITS
