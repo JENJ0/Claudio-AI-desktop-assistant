@@ -239,6 +239,46 @@ SPELLING_SENTENCE = {
 }
 
 
+def log_replies(path: Path, limit: int = 15) -> list[str]:
+    """Claudio's replies in a conversazione.md (a session folder or the file itself;
+    "latest" = the newest session in logs/sessions/)."""
+    if str(path) == "latest":
+        sessions = sorted((ROOT / "logs" / "sessions").glob("*/conversazione.md"))
+        if not sessions:
+            sys.exit("nessuna sessione in logs/sessions/")
+        path = sessions[-1]
+    elif path.is_dir():
+        path = path / "conversazione.md"
+    replies = [
+        line.split("**Claudio:**", 1)[1].strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("**Claudio:**")
+    ]
+    replies = [r for r in dict.fromkeys(replies) if len(words(r)) >= 3]  # once each
+    print(f"{len(replies)} risposte da {path} (uso le ultime {limit})")
+    return replies[-limit:]
+
+
+def misheard_words(results: dict[str, list[dict]]) -> list[tuple[str, int, list[str]]]:
+    """Words of the replies Whisper did not hear as written, most frequent first, with what
+    it heard instead: the candidates for [tts.jack_words]."""
+    from collections import Counter, defaultdict
+    from difflib import SequenceMatcher
+
+    counts: Counter[str] = Counter()
+    heard_as: dict[str, list[str]] = defaultdict(list)
+    for rows in results.values():
+        for row in rows:
+            ref, hyp = words(row["reply"]), words(row["heard"])
+            for op, i1, i2, j1, j2 in SequenceMatcher(a=ref, b=hyp).get_opcodes():
+                if op in ("replace", "delete"):
+                    got = " ".join(hyp[j1:j2]) or "(niente)"
+                    for word in ref[i1:i2]:
+                        counts[word] += 1
+                        heard_as[word].append(got)
+    return [(w, n, heard_as[w][:3]) for w, n in counts.most_common()]
+
+
 def run_spellings(settings: Any, out: Path) -> None:
     from claudio.tts.jack import worker_command
 
