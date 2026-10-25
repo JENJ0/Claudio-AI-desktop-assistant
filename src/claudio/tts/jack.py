@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +75,7 @@ class JackSynth:
         language: str = "Italian",
         rvc: str = "blocks",
         words: dict[str, str] | None = None,
+        first_wait_s: float = 30.0,
     ) -> None:
         self.words = dict(words or {})  # respellings: "file" -> "fàil" (see spoken_text)
         self.command = command
@@ -85,6 +86,9 @@ class JackSynth:
         self._last_done = 0.0
         self.fallback = fallback
         self.startup_timeout_s = startup_timeout_s
+        # A sentence spoken while the worker is still loading waits this long for it, so
+        # that Claudio speaks with Jack's voice from the first reply (0 = fallback at once).
+        self.first_wait_s = first_wait_s
         self.sentence_timeout_s = sentence_timeout_s
         self.language = language  # told to Qwen3: "Auto" or "Italian"
         # Read by StreamingSpeaker right after synthesize(): the rate of the voice that spoke.
@@ -100,6 +104,9 @@ class JackSynth:
         self._next_id = 0
         self._restart_at = 0.0
         self._restarting = False
+        self._started = threading.Event()  # set = no first start in progress
+        self._started.set()
+        self._abort_wait = threading.Event()  # "basta" while waiting for the first start
         atexit.register(self.close)
 
     # -- process ----------------------------------------------------------------------------
@@ -135,6 +142,38 @@ class JackSynth:
         self.vram_mb = int(event.get("vram_mb", 0))
         self._ready = True
         log.info("Worker Jack pronto in %.1f s (VRAM GPU %d MB)", self.load_s, self.vram_mb)
+
+    def start_in_background(
+        self, on_done: Callable[[WorkerError | None], None] | None = None
+    ) -> None:
+        """Start the worker without waiting for it: its models load (8-30 s) while Claudio
+        loads the rest and listens. `on_done` gets None once it is ready, or the error. A
+        worker that fails here is not retried: its fallback speaks, as with start()."""
+        self._restarting = True  # a sentence meanwhile must not start a second worker
+        self._started.clear()
+
+        def run() -> None:
+            error: WorkerError | None = None
+            try:
+                self.start()
+            except WorkerError as exc:
+                error = exc
+                self._restart_at = float("inf")
+            finally:
+                self._restarting = False
+                self._started.set()
+            if on_done is not None:
+                on_done(error)
+
+        threading.Thread(target=run, daemon=True, name="jack-start").start()
+
+    @property
+    def starting(self) -> bool:
+        return not self._started.is_set()
+
+    def wait_started(self, timeout: float | None = None) -> bool:
+        """Wait until a background start has ended (ready or failed); False on timeout."""
+        return self._started.wait(timeout)
 
     def close(self) -> None:
         proc, self._proc, self._ready = self._proc, None, False
@@ -201,6 +240,7 @@ class JackSynth:
 
     def cancel(self) -> None:
         """ "basta": stop the sentence being generated (the audio already sent is dropped)."""
+        self._abort_wait.set()
         if self.alive():
             with contextlib.suppress(WorkerError):
                 self._send({"op": "interrupt"})
@@ -214,6 +254,8 @@ class JackSynth:
         """int16 chunks as the worker produces them; the first one arrives in ~0.3 s.
         A worker that fails before any audio leaves the sentence to the fallback voice."""
         spoken = False
+        if self.starting and not self._wait_for_start():
+            return  # "basta" while waiting: nothing to say
         if self.alive():
             try:
                 self.sample_rate = SAMPLE_RATE
@@ -230,6 +272,18 @@ class JackSynth:
         audio = self.fallback.synthesize(text)
         self.sample_rate = int(self.fallback.sample_rate)
         yield audio
+
+    def _wait_for_start(self) -> bool:
+        """Wait up to first_wait_s for the worker still loading. False if cancelled."""
+        self._abort_wait.clear()
+        deadline = time.monotonic() + self.first_wait_s
+        while not self._started.wait(0.05):
+            if self._abort_wait.is_set():
+                return False
+            if time.monotonic() >= deadline:
+                log.info("Jack si sta ancora caricando: questa frase la dice la voce di riserva")
+                break
+        return True
 
     def _speak(self, text: str) -> Iterator[np.ndarray]:
         self._next_id += 1

@@ -8,7 +8,8 @@ import contextlib
 import logging
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from claudio.pc.tools import PcTools
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
+    from claudio.tts.jack import JackSynth
     from claudio.tts.speaker import StreamingSpeaker
 
 log = logging.getLogger("claudio")
@@ -55,7 +57,10 @@ def build_responder(
     settings: Settings,
     system: SystemControl | None = None,
     chat: ChatLauncher | None = None,
+    tracker: CostTracker | None = None,
 ) -> LocalResponder:
+    """`tracker`: open it on the thread that runs the requests (its SQLite connection only
+    works there) when this runs in a loader thread."""
     from claudio.router.actions import ActionRunner
     from claudio.router.matcher import CommandMatcher, load_commands
     from claudio.router.responder import LocalResponder
@@ -63,7 +68,8 @@ def build_responder(
     commands = load_commands(settings.resolve(settings.router.commands_file))
     matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
-    tracker = build_tracker(settings)
+    if tracker is None:
+        tracker = build_tracker(settings)
     brain = build_brain(settings, tracker, chat)
     return LocalResponder(
         matcher,
@@ -152,30 +158,42 @@ def build_brain(
     return brain
 
 
-def build_synth(settings: Settings) -> tuple[Any, str]:
-    """The configured voice; Piper if Kokoro cannot start, so Claudio always speaks.
-    With engine "jack" that voice is the fallback of Jack's worker, started here."""
-    if settings.tts.engine != "jack":
-        return build_base_synth(settings)
-    from claudio.tts.jack import JackSynth, WorkerError, worker_command
+def make_jack(settings: Settings) -> JackSynth:
+    """Jack's worker, not started yet; its fallback voice is set by build_synth()."""
+    from claudio.tts.jack import JackSynth, worker_command
 
-    fallback, fallback_name = build_base_synth(settings)
     tts = settings.tts
     models = settings.resolve(settings.models_dir)
-    synth = JackSynth(
+    return JackSynth(
         worker_command(models, tts),
-        fallback,
+        None,
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
         rvc=tts.jack_rvc,
         words=tts.jack_words,
+        first_wait_s=tts.jack_first_wait_s,
     )
-    try:
-        synth.start()
-    except WorkerError as exc:
-        log.warning("Jack non disponibile (%s): uso %s", exc, fallback_name)
-        return fallback, fallback_name
-    return synth, f"Jack (fallback {fallback_name})"
+
+
+def build_synth(settings: Settings, jack: JackSynth | None = None) -> tuple[Any, str]:
+    """The configured voice; Piper if Kokoro cannot start, so Claudio always speaks.
+    With engine "jack" that voice is the fallback of Jack's worker. `jack` is a worker
+    already starting in the background (run_assistant); without it one is started here and
+    waited for (--text)."""
+    if settings.tts.engine != "jack":
+        return build_base_synth(settings)
+    from claudio.tts.jack import WorkerError
+
+    fallback, fallback_name = build_base_synth(settings)
+    if jack is None:
+        jack = make_jack(settings)
+        try:
+            jack.start()
+        except WorkerError as exc:
+            log.warning("Jack non disponibile (%s): uso %s", exc, fallback_name)
+            return fallback, fallback_name
+    jack.fallback = fallback
+    return jack, f"Jack (fallback {fallback_name})"
 
 
 def build_base_synth(settings: Settings) -> tuple[Any, str]:
@@ -219,15 +237,20 @@ def build_voices(settings: Settings, synth: Any) -> dict[str, tuple[Any, str]]:
     return voices
 
 
-def build_speaker(settings: Settings) -> StreamingSpeaker:
+def build_speaker(
+    settings: Settings, jack: JackSynth | None = None, start_player: bool = True
+) -> StreamingSpeaker:
+    """`start_player` False: the caller opens the audio output (run_assistant does it on the
+    main thread, as this runs in a loader thread there)."""
     from claudio.audio.player import AudioPlayer
     from claudio.tts.effects import VoiceEffect
     from claudio.tts.speaker import StreamingSpeaker
 
-    synth, name = build_synth(settings)
+    synth, name = build_synth(settings, jack)
     voices = build_voices(settings, synth)
     player = AudioPlayer(settings.audio.output_sample_rate, settings.audio.output_device)
-    player.start()
+    if start_player:
+        player.start()
     effect = VoiceEffect(settings.tts.effect) if settings.tts.effect != "none" else None
     speaker = StreamingSpeaker(
         synth,
@@ -262,11 +285,32 @@ def startup_notices(settings: Settings, jack_running: bool, stt_device: str) -> 
     return notices
 
 
-async def say(speaker: StreamingSpeaker, text: str) -> None:
-    async def once() -> AsyncIterator[str]:
-        yield text
+def load_all(tasks: dict[str, Callable[[], Any]], parallel: bool = True) -> dict[str, Any]:
+    """Run the loaders, at the same time when `parallel` (threads: the models load in C code
+    that releases the GIL, so they overlap), and log how long each took. An error is raised
+    once every loader has ended, so none is left half way."""
+    took: dict[str, float] = {}
 
-    await speaker.speak(once())
+    def timed(name: str, load: Callable[[], Any]) -> Any:
+        start = time.perf_counter()
+        try:
+            return load()
+        finally:
+            took[name] = time.perf_counter() - start
+
+    if parallel:
+        with ThreadPoolExecutor(max_workers=len(tasks), thread_name_prefix="load") as pool:
+            futures = {name: pool.submit(timed, name, load) for name, load in tasks.items()}
+            wait(futures.values())
+        results = {name: future.result() for name, future in futures.items()}
+    else:
+        results = {name: timed(name, load) for name, load in tasks.items()}
+    log.info(
+        "Avvio: %s (in parallelo: %s)",
+        ", ".join(f"{name} {took[name]:.1f} s" for name in tasks),
+        "sì" if parallel else "no",
+    )
+    return results
 
 
 async def run_text(settings: Settings, text: str) -> None:
@@ -333,22 +377,40 @@ async def run_assistant(
 
     models = settings.resolve(settings.models_dir)
     t0 = time.perf_counter()
-    vad = SileroVad(models / "vad" / "silero_vad.onnx", settings.audio.sample_rate)
-    wake = OpenWakeWordDetector(settings.wakeword, models / "wakeword", settings.audio.block_size)
-    transcriber = WhisperTranscriber(settings.stt, models / "whisper")
+    # Jack's worker is a process of its own: it loads (8-30 s) while everything else does,
+    # and Claudio listens without waiting for it (a reply meanwhile waits jack_first_wait_s).
+    jack = make_jack(settings) if settings.tts.engine == "jack" else None
+    jack_error: list[Exception | None] = []
+    if jack is not None:
+        jack.start_in_background(jack_error.append)
+    system = SystemControl()
+    tracker = build_tracker(settings)  # SQLite: opened on the thread that uses it
+    loaded = load_all(
+        {
+            "whisper": lambda: WhisperTranscriber(settings.stt, models / "whisper"),
+            "wake word": lambda: (
+                SileroVad(models / "vad" / "silero_vad.onnx", settings.audio.sample_rate),
+                OpenWakeWordDetector(
+                    settings.wakeword, models / "wakeword", settings.audio.block_size
+                ),
+            ),
+            "voce": lambda: build_speaker(settings, jack, start_player=False),
+            "claude": lambda: build_responder(settings, system, chat_window, tracker),
+        },
+        parallel=settings.startup.parallel,
+    )
+    transcriber: WhisperTranscriber = loaded["whisper"]
+    vad, wake = loaded["wake word"]
+    speaker: StreamingSpeaker = loaded["voce"]
+    responder: LocalResponder = loaded["claude"]
+    speaker.player.start()
     log.info(
         "STT: %s su %s, lingue %s",
         transcriber.model_name,
         transcriber.device.upper(),
         ", ".join(settings.stt.languages),
     )
-    system = SystemControl()
-    responder = build_responder(settings, system, chat_window)
-    speaker = build_speaker(settings)
     responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}  # no English text in Italian voice
-    from claudio.tts.jack import JackSynth
-
-    notices = startup_notices(settings, isinstance(speaker.synth, JackSynth), transcriber.device)
     resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
     capture = AudioCapture(
         settings.audio.sample_rate,
@@ -430,18 +492,45 @@ async def run_assistant(
     inbox = (
         asyncio.create_task(serve_inbox(assistant, chat, settings)) if settings.chat.typed else None
     )
+    ready = asyncio.create_task(
+        announce_ready(assistant, settings, jack, jack_error, transcriber.device, t0)
+    )
     try:
-        for notice in notices:
-            log.warning("Avviso a voce: %s", notice)
-        if notices:
-            await say(speaker, " ".join(notices))
         await assistant.run(capture.frames())
     finally:
+        ready.cancel()
         if inbox is not None:
             inbox.cancel()
         speaker.player.close()
         if chat_window is not None:
             chat_window.close()  # "spegniti" or Ctrl+C: the window goes with Claudio
+
+
+async def announce_ready(
+    assistant: Any,
+    settings: Settings,
+    jack: JackSynth | None,
+    jack_error: list[Exception | None],
+    stt_device: str,
+    t0: float,
+) -> None:
+    """Once Jack's worker has loaded too (or failed), say so: the notices of a degraded start
+    and a short "ready", in Jack's voice when it is there. Claudio already listens by then."""
+    if jack is not None:
+        await asyncio.to_thread(jack.wait_started)
+    jack_running = jack is not None and not (jack_error and jack_error[0])
+    if jack is not None and not jack_running:
+        log.warning(
+            "Jack non disponibile (%s): uso %s", jack_error[0], type(jack.fallback).__name__
+        )
+    log.info("Avvio completo in %.1f s", time.perf_counter() - t0)
+    notices = startup_notices(settings, jack_running, stt_device)
+    for notice in notices:
+        log.warning("Avviso a voce: %s", notice)
+    if settings.startup.announce_ready:
+        notices.append(tr("Sono pronto."))
+    if notices:
+        await assistant.announce(" ".join(notices))
 
 
 async def serve_inbox(assistant: Any, chat: Any, settings: Settings) -> None:

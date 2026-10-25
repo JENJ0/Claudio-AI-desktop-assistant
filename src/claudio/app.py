@@ -708,6 +708,24 @@ class Assistant:
             self._set_state(State.IDLE)
         return str(inter.info.get("reply", ""))
 
+    async def announce(self, text: str) -> None:
+        """Say something of Claudio's own (e.g. "ready" at startup) between two requests,
+        never over one."""
+        while self.state is not State.IDLE:
+            await asyncio.sleep(0.05)
+        self._set_state(State.RESPONDING)  # the wake word waits until this is said
+
+        async def once() -> AsyncIterator[str]:
+            yield text
+
+        try:
+            await self.speaker.speak(once())
+        except Exception:
+            log.exception("Avviso a voce non riuscito")
+        finally:
+            self.wake.reset()
+            self._set_state(State.IDLE)
+
     async def _marked(self, stream: AsyncIterator[str], inter: Interaction) -> AsyncIterator[str]:
         parts: list[str] = []
         try:

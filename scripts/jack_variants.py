@@ -226,14 +226,16 @@ def report(results: dict[str, list[dict]], out: Path) -> str:
 # Ways to write a word Jack says wrong; each goes in a sentence, with the configured settings.
 # The winner goes in [tts.jack_words] of claudio.toml.
 SPELLINGS = {
-    "PC": ["pi ci", "pi-ci", "pì cì", "picì"],
-    "file": ["fàil", "fail", "fàiil", "fàyl"],
-    "download": ["dàunlod", "daunlòd", "dàunlòud"],
+    "socio": ["socio", "sòcio", "sòccio", "sò-cio"],
+    "desktop": ["dèsktop", "dèschtop", "dèsk-top"],
+    "Claude": ["clòd", "clòod", "clàud"],
+    "blocco note": ["blocco note", "blòcco nòte", "blocco-note"],
 }
 SPELLING_SENTENCE = {
-    "PC": "Il {} è al trentacinque per cento di batteria.",
-    "file": "Ho trovato tre {} nella cartella documenti.",
-    "download": "Apro la cartella {}, eroe.",
+    "socio": "Fatto, {}, ho trovato la cartella.",
+    "desktop": "La cartella è sul {}, dentro università.",
+    "Claude": "È una cartella di sistema di {}, non la tua.",
+    "blocco note": "Apro il {} e scrivo qualcosa.",
 }
 
 
@@ -300,7 +302,7 @@ def run_spellings(settings: Any, out: Path) -> None:
             for n, spelling in enumerate(candidates, 1):
                 sentence = SPELLING_SENTENCE[word].format(spelling)
                 audio = synth.synthesize(sentence)
-                name = f"{word.lower()}_{n}.wav"
+                name = f"{word.lower().replace(' ', '-')}_{n}.wav"
                 sf.write(folder / name, audio, synth.sample_rate)
                 lines.append(f"- {name}: {sentence}")
                 print(f"  {name}: {sentence}")

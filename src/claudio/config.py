@@ -179,6 +179,9 @@ class TtsSettings(BaseModel):
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
     jack_sentence_timeout_s: float = Field(15.0, gt=0)
+    # Claudio listens while Jack's worker is still loading: a reply in that time waits this
+    # long for Jack, then the fallback voice speaks it (0 = fallback at once).
+    jack_first_wait_s: float = Field(30.0, ge=0)
     # Jack's pace: < 1 slower (0.9 = 10% slower, JenJo 23/10). The audio is stretched before
     # RVC and RVC raises the pitch back by the same amount, so the voice does not get deeper.
     jack_speed: float = Field(0.9, ge=0.7, le=1.3)
@@ -233,6 +236,14 @@ class RouterSettings(BaseModel):
     @classmethod
     def _error_reply(cls, value: Any) -> Any:
         return _json_or(value, lambda text: {**ERROR_REPLY, DEFAULT_LANGUAGE: text})
+
+
+class StartupSettings(BaseModel):
+    # Load Whisper, wake word, voice and Claude at the same time (threads) instead of one
+    # after the other. Off = the old sequential start, if a model misbehaves when loaded so.
+    parallel: bool = True
+    # Say a short "ready" once everything, Jack's voice included, has loaded.
+    announce_ready: bool = True
 
 
 class ConversationSettings(BaseModel):
@@ -400,6 +411,7 @@ class Settings(BaseSettings):
     tts: TtsSettings = TtsSettings()
     router: RouterSettings = RouterSettings()
     conversation: ConversationSettings = ConversationSettings()
+    startup: StartupSettings = StartupSettings()
     noise: NoiseSettings = NoiseSettings()
     cost: CostSettings = CostSettings()
     claude: ClaudeSettings = ClaudeSettings()
