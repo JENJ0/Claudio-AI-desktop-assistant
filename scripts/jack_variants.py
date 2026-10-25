@@ -4,6 +4,7 @@ split into sentences as Claudio does, then Whisper writes down what it hears (WE
   uv run python scripts/jack_variants.py                 # all variants (~5 min of GPU)
   uv run python scripts/jack_variants.py --only A C      # some of them
   uv run python scripts/jack_variants.py --words         # spellings of hard words (~1 min)
+  uv run python scripts/jack_variants.py --from-log latest   # Claudio's real replies, C/S/V
 
 Output in logs/jack-variants/ (not committed, personal use only): <variant>/<n>.wav and
 report.md (WER, first audio, gaps). The worker needs the GPU alone: close Claudio first."""
@@ -67,6 +68,16 @@ VARIANTS: dict[str, tuple[str, dict[str, Any], int | None]] = {
         },
         None,
     ),
+    "S": (
+        "C con RVC sulla frase intera anche per la prima frase",
+        {"jack_temperature": 0.7, "jack_rvc": "sentence"},
+        None,
+    ),
+    "V": (
+        "C a velocità normale (senza rallentare del 10%)",
+        {"jack_temperature": 0.7, "jack_rvc": "auto", "jack_speed": 1.0},
+        None,
+    ),
     "E": (
         "C senza taglio alla prima virgola",
         {"jack_temperature": 0.7, "jack_rvc": "auto"},
@@ -86,8 +97,11 @@ class Silent:
         return np.zeros(2400, dtype=np.int16)
 
 
+_CLOCK = re.compile(r"\b(\d{1,2})\.(\d{2})\b")  # Whisper writes "22 e 51" as "22.51"
+
+
 def words(text: str) -> list[str]:
-    text = digits_to_words_it(to_spoken_it(text)).lower()
+    text = digits_to_words_it(to_spoken_it(_CLOCK.sub(r"\1:\2", text))).lower()
     return re.findall(r"[a-zàèéìòóù]+", text)
 
 
@@ -129,7 +143,9 @@ def speak_reply(synth: JackSynth, reply: str, first_clause: int) -> tuple[np.nda
     return audio, {"first_ms": first_ms or 0.0, "gap_ms": 1000 * gap, "pieces": sentences}
 
 
-def run_variant(settings: Any, name: str, out: Path) -> list[dict]:
+def run_variant(
+    settings: Any, name: str, out: Path, replies: list[str] | None = None
+) -> list[dict]:
     label, overrides, first_clause = VARIANTS[name]
     from claudio.tts.jack import worker_command
 
@@ -156,7 +172,7 @@ def run_variant(settings: Any, name: str, out: Path) -> list[dict]:
     try:
         synth.synthesize("Pronto.")  # warm path, not measured
         clause = tts.first_clause_chars if first_clause is None else first_clause
-        for n, reply in enumerate(REPLIES, 1):
+        for n, reply in enumerate(replies or REPLIES, 1):
             time.sleep(1.5)  # a new reply each time, as after a question
             audio, info = speak_reply(synth, reply, clause)
             sf.write(folder / f"{n}.wav", audio, synth.sample_rate)
@@ -221,6 +237,46 @@ SPELLING_SENTENCE = {
 }
 
 
+def log_replies(path: Path, limit: int = 15) -> list[str]:
+    """Claudio's replies in a conversazione.md (a session folder or the file itself;
+    "latest" = the newest session in logs/sessions/)."""
+    if str(path) == "latest":
+        sessions = sorted((ROOT / "logs" / "sessions").glob("*/conversazione.md"))
+        if not sessions:
+            sys.exit("nessuna sessione in logs/sessions/")
+        path = sessions[-1]
+    elif path.is_dir():
+        path = path / "conversazione.md"
+    replies = [
+        line.split("**Claudio:**", 1)[1].strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("**Claudio:**")
+    ]
+    replies = [r for r in dict.fromkeys(replies) if len(words(r)) >= 3]  # once each
+    print(f"{len(replies)} risposte da {path} (uso le ultime {limit})")
+    return replies[-limit:]
+
+
+def misheard_words(results: dict[str, list[dict]]) -> list[tuple[str, int, list[str]]]:
+    """Words of the replies Whisper did not hear as written, most frequent first, with what
+    it heard instead: the candidates for [tts.jack_words]."""
+    from collections import Counter, defaultdict
+    from difflib import SequenceMatcher
+
+    counts: Counter[str] = Counter()
+    heard_as: dict[str, list[str]] = defaultdict(list)
+    for rows in results.values():
+        for row in rows:
+            ref, hyp = words(row["reply"]), words(row["heard"])
+            for op, i1, i2, j1, j2 in SequenceMatcher(a=ref, b=hyp).get_opcodes():
+                if op in ("replace", "delete"):
+                    got = " ".join(hyp[j1:j2]) or "(niente)"
+                    for word in ref[i1:i2]:
+                        counts[word] += 1
+                        heard_as[word].append(got)
+    return [(w, n, heard_as[w][:3]) for w, n in counts.most_common()]
+
+
 def run_spellings(settings: Any, out: Path) -> None:
     from claudio.tts.jack import worker_command
 
@@ -257,6 +313,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--only", nargs="+", choices=sorted(VARIANTS), default=sorted(VARIANTS))
     parser.add_argument("--words", action="store_true", help="only the hard-word spellings")
+    parser.add_argument(
+        "--from-log",
+        type=Path,
+        help='speak Claudio\'s replies of a session (folder, conversazione.md or "latest")',
+    )
     args = parser.parse_args()
     settings = load_settings()
     out = ROOT / "logs" / "jack-variants"
@@ -265,12 +326,21 @@ def main() -> None:
         run_spellings(settings, out)
         print(f"WAV in {out / 'parole'}")
         return
-    results = {name: run_variant(settings, name, out) for name in args.only}
+    replies = log_replies(args.from_log) if args.from_log else None
+    names = args.only if (args.only != sorted(VARIANTS) or not replies) else ["C", "S", "V"]
+    results = {name: run_variant(settings, name, out, replies) for name in names}
     if Silent.used:
         print(f"ATTENZIONE: {Silent.used} frasi non dette da Jack (worker caduto)")
     print("Whisper ascolta le frasi...")
     transcribe(settings, results)
-    print(report(results, out))
+    text = report(results, out)
+    hard = misheard_words(results)
+    if hard:
+        lines = ["", "## Parole sentite male (parola: volte, sentita come)", ""]
+        lines += [f"- {w}: {n}, {' / '.join(got)}" for w, n, got in hard[:40]]
+        text += "\n".join(lines) + "\n"
+        (out / "report.md").write_text(text, encoding="utf-8")
+    print(text)
     print(f"WAV e report in {out}")
 
 
