@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from claudio.pc import terminal
-from claudio.pc.files import INDEX_KINDS, Found
+from claudio.pc.files import INDEX_KINDS, Found, index_path
 from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import App, Window
 
@@ -98,7 +98,7 @@ class WindowsDesktop:
         elif kind in INDEX_KINDS:
             where.append(f"System.Kind = '{INDEX_KINDS[kind]}'")
         sql = (
-            f"SELECT TOP {int(limit)} System.ItemPathDisplay, System.DateModified "
+            f"SELECT TOP {int(limit)} System.ItemUrl, System.DateModified "
             f"FROM SystemIndex WHERE {' AND '.join(where)} ORDER BY System.DateModified DESC"
         )
         conn = win32com.client.Dispatch("ADODB.Connection")
@@ -108,10 +108,11 @@ class WindowsDesktop:
             rs.Open(sql, conn)
             found = []
             while not rs.EOF:
-                path = Path(str(rs.Fields.Item("System.ItemPathDisplay").Value))
+                path = index_path(str(rs.Fields.Item("System.ItemUrl").Value))
                 modified = rs.Fields.Item("System.DateModified").Value
                 stamp = modified.timestamp() if isinstance(modified, datetime) else 0.0
-                found.append(Found(path, stamp))
+                if path is not None:
+                    found.append(Found(path, stamp))
                 rs.MoveNext()
             rs.Close()
             return found

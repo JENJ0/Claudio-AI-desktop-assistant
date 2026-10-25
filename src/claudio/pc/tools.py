@@ -563,13 +563,17 @@ class PcTools:
         kind = kind if kind in files.KINDS else None
         roots = self.policy.search_roots()
         limit = self.settings.search_limit
-        found = self.desktop.search_index(terms, kind, roots, limit)
-        if not found:  # no index, or nothing in it (24/10: TESI not indexed): walk the folders
+        indexed = self.desktop.search_index(terms, kind, roots, limit) or []
+        found = [f for f in indexed if self.policy.allowed(f.path)]
+        if len(found) < len(indexed):
+            dropped = len(indexed) - len(found)
+            log.info("Indice: %d risultati fuori dalle cartelle permesse", dropped)
+        if not found:  # no index, nothing in it (24/10: TESI) or nothing allowed: walk the folders
             first = [self.policy.home / sub for sub in files.NEAR_HOME if sub]
-            found = files.walk_search(
+            walked = files.walk_search(
                 terms, roots, kind, limit, self.settings.search_timeout_s, first=first
             )
-        found = [f for f in found if self.policy.allowed(f.path)]
+            found = [f for f in walked if self.policy.allowed(f.path)]
         if not found:
             return f"No files found for: {' '.join(terms)}."
         lines = [f.describe(self.policy.home) for f in found[:limit]]

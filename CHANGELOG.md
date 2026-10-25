@@ -16,6 +16,9 @@
   "Eseguo" after "confermo"; `tool_ms` in `metrics.jsonl`.
 
 ### Fixed (JenJo's v0.3.1 test, 24/10)
+- File search read the Windows index display path, which on an Italian Windows is
+  `C:\Utenti\...`: every result looked outside the home folder and was dropped, and the folder
+  walk never ran. It now reads `System.ItemUrl` and walks whenever nothing allowed is left (25/10).
 - "Apri la cartella Progetti": a name Claude puts in the wrong folder is looked for in the
   user folder, Desktop, Documents, Downloads (also under OneDrive).
 - Typing in Notepad needs no yes (`[pc] free_typing`); text of 40+ characters or with new

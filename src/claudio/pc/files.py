@@ -140,6 +140,16 @@ def search_terms(query: str) -> list[str]:
     return terms[:MAX_TERMS]
 
 
+def index_path(url: str) -> Path | None:
+    """The real path of a Windows Search result from its System.ItemUrl ("file:C:/Users/...").
+    Not System.ItemPathDisplay: on an Italian Windows it reads "C:\\Utenti\\..." (25/10: every
+    folder found was then outside ~ and dropped). Other stores (mapi:, iehistory:) are skipped."""
+    if not url.casefold().startswith("file:"):
+        return None
+    rest = url[len("file:") :].lstrip("/")
+    return Path(rest) if rest else None
+
+
 def walk_search(
     terms: Iterable[str],
     roots: Sequence[Path],

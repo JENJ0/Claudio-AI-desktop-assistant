@@ -334,6 +334,9 @@ EN: dict[str, str] = {
         "A new request instead of the confirmation: action dropped"
     ),
     "Percorso %r non trovato: uso %s": "Path %r not found: using %s",
+    "Indice: %d risultati fuori dalle cartelle permesse": (
+        "Index: %d results outside the allowed folders"
+    ),
     "Incolla non riuscito (%s): scrivo tasto per tasto": "Paste failed (%s): typing key by key",
     "Finestra della chat non aperta": "Chat window not opened",
     "Comando: albero di processi non chiuso, chiudo solo PowerShell": (

@@ -129,3 +129,35 @@ async def test_any_folder_is_found_by_name(
     desk.index = []  # the index knows nothing of it: the folders are walked
     out = await tools.run(ToolCall("t2", "search_files", {"query": "tesi", "kind": "folder"}))
     assert "TESI" in out.text and "miniconda3" not in out.text
+
+
+async def test_index_results_outside_home_still_walk_the_folders(
+    tools: PcTools, desk: FakeDesktop, tmp_path: Path
+) -> None:
+    """25/10: an Italian Windows index gave "C:\\Utenti\\..." paths, all dropped as outside ~,
+    and the walk never ran: "Apri la cartella Progetti" found nothing."""
+    from claudio.pc.files import Found
+
+    progetti = tmp_path / "Desktop" / "PROGETTI"
+    progetti.mkdir(parents=True)
+    desk.index = [Found(Path("/Utenti/JenJo/Desktop/PROGETTI"), 0.0)]
+    out = await tools.run(ToolCall("t1", "search_files", {"query": "Progetti", "kind": "folder"}))
+    assert "PROGETTI" in out.text and "Utenti" not in out.text
+
+
+@pytest.mark.parametrize(
+    ("url", "wanted"),
+    [
+        ("file:C:/Users/JenJo/Desktop/PROGETTI", Path("C:/Users/JenJo/Desktop/PROGETTI")),
+        (
+            "FILE:C:/Users/JenJo/Desktop/UNIVERSITA'/TESI",
+            Path("C:/Users/JenJo/Desktop/UNIVERSITA'/TESI"),
+        ),
+        ("mapi://{S-1-5}/Inbox", None),
+        ("file:", None),
+    ],
+)
+def test_index_path_reads_the_item_url(url: str, wanted: Path | None) -> None:
+    from claudio.pc.files import index_path
+
+    assert index_path(url) == wanted
