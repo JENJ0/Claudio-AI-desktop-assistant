@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased] - faster startup
+
+### Changed
+- Claudio listens much sooner (JenJo: "ci mette troppo tempo ad avviarsi"). Jack's worker
+  (8-30 s) starts first and loads in the background instead of blocking everything; Whisper,
+  wake word, voice and Claude load at the same time (`[startup] parallel`). A reply asked
+  while Jack is still loading waits for him up to `[tts] jack_first_wait_s` (30 s), then the
+  fallback voice speaks it; "basta" stops the wait.
+- Once everything is loaded Claudio says "Sono pronto" (`[startup] announce_ready`), with the
+  notices of a degraded start before it, between two requests, never over one.
+- `console.log`: `Avvio: whisper 3.1 s, ...` (each loader) and `Avvio completo in N s`.
+
 ## [Unreleased] - 0.3.2 (understanding and interrupting)
 
 ### Changed

@@ -28,7 +28,11 @@ EN: dict[str, str] = {
     "Voce per '%s' non disponibile (%s): uso quella principale": (
         "Voice for '%s' not available (%s): using the main one"
     ),
+    "Avvio: %s (in parallelo: %s)": "Startup: %s (in parallel: %s)",
+    "Sono pronto.": "I'm ready.",
+    "Avvio completo in %.1f s": "Fully started in %.1f s",
     # app
+    "Avviso a voce non riuscito": "Spoken notice failed",
     "Pronto: in ascolto della wake word": "Ready: listening for the wake word",
     "Wake word rilevata: %s (%.2f)": "Wake word detected: %s (%.2f)",
     "Solo la wake word: ascolto la richiesta": "Only the wake word: listening for the request",
@@ -275,6 +279,9 @@ EN: dict[str, str] = {
     "Chat chiusa": "Chat closed",
     "Comando chat sconosciuto '{command}'": "Unknown chat command '{command}'",
     "Avviso a voce: %s": "Spoken notice: %s",
+    "Jack si sta ancora caricando: questa frase la dice la voce di riserva": (
+        "Jack is still loading: the fallback voice says this sentence"
+    ),
     "La voce di Jack non è partita: uso quella di riserva.": (
         "Jack's voice did not start: using the backup voice."
     ),
