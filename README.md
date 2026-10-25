@@ -166,6 +166,15 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
 2. Build the worker venv once: `powershell -File scripts\setup_jack_worker.ps1`.
 3. Try it alone: `models\voices\jack\worker\env\Scripts\python.exe scripts\try_jack.py --play`.
 4. In `.env`: `CLAUDIO_TTS__ENGINE=jack` and `CLAUDIO_TTS__EFFECT=none`.
+5. Pick the pronunciation settings by ear: `uv run python scripts/jack_variants.py` (close
+   Claudio first) makes every variant speak the same replies and writes the WAVs plus a
+   report (Whisper's word error rate, first audio, longest pause) to `logs/jack-variants/`.
+   The keys: `jack_temperature` (lower = steadier), `jack_rvc` ("blocks", "sentence" or
+   "auto"). Qwen3 is always told "Italian" (with "Auto" it guessed the language per sentence).
+
+Before Jack speaks, symbols, acronyms, Markdown and emoji become Italian words ("50%" ->
+"cinquanta per cento") and the words in `[tts.jack_words]` are respelled ("file" -> "fàiil"):
+`src/claudio/tts/spoken_text.py`. Add a word there when Jack says it wrong.
 
 The worker loads in 10-30 s, in the background: Claudio listens as soon as Whisper and the
 wake word are loaded, and a reply asked meanwhile waits for Jack up to `jack_first_wait_s`

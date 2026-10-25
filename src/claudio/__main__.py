@@ -157,29 +157,18 @@ def build_brain(settings: Settings, tracker: CostTracker) -> ClaudeBrain | None:
 
 def make_jack(settings: Settings) -> JackSynth:
     """Jack's worker, not started yet; its fallback voice is set by build_synth()."""
-    from claudio.tts.jack import JackSynth
+    from claudio.tts.jack import JackSynth, worker_command
 
     tts = settings.tts
     models = settings.resolve(settings.models_dir)
-    worker = Path(__file__).parent / "tts" / "jack_worker.py"
     return JackSynth(
-        [
-            str(models / tts.jack_python),
-            str(worker),
-            "--checkpoint",
-            str(models / tts.jack_checkpoint),
-            "--rvc-model",
-            str(models / tts.jack_rvc_model),
-            "--applio",
-            str(models / tts.jack_applio),
-            "--speed",
-            str(tts.jack_speed),
-        ],
+        worker_command(models, tts),
         None,
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
-        tts.jack_language,
-        tts.jack_first_wait_s,
+        rvc=tts.jack_rvc,
+        words=tts.jack_words,
+        first_wait_s=tts.jack_first_wait_s,
     )
 
 

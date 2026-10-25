@@ -147,6 +147,7 @@ def test_every_language_gets_a_voice_or_falls_back(monkeypatch, tmp_path, caplog
     monkeypatch.setattr(speaker, "voice_path", lambda folder, voice: folder / voice)
     monkeypatch.setattr(speaker, "PiperSynth", piper)
     settings = load_settings(models_dir=tmp_path)
+    settings.stt.languages = ["it", "en"]  # English is off in claudio.toml for now
     assert build_voices(settings, object()) == {
         "en": (("piper", "en_US-ryan-low"), "en_US-ryan-low")
     }
