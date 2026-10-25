@@ -111,6 +111,7 @@ POSITIVE = [
     ("Nascondi la chat", "close_chat"),
     ("Claudio, chiudi la chat per favore", "close_chat"),
     ("Ora spegniti", "shutdown"),
+    ("Claudio, chiuditi.", "shutdown"),  # JenJo 25/10
 ]
 
 NEGATIVE = [

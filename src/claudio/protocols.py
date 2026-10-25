@@ -87,6 +87,9 @@ class LevelControl(Protocol):
 
 
 class Speaker(Protocol):
+    # The sentences of the last reply that started playing (the last one may be cut short).
+    played: list[str]
+
     async def speak(
         self,
         text_stream: AsyncIterator[str],

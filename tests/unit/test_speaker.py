@@ -166,3 +166,29 @@ def test_an_effect_makes_a_streaming_voice_render_whole_sentences() -> None:
     asyncio.run(speaker.speak(text()))
     assert synth.streamed == []
     assert [first for first, _ in player.played] == [7]
+
+
+def test_played_lists_each_sentence_once_as_it_starts() -> None:
+    """Where a reply cut by a new request resumes: the sentences that started playing."""
+    synth, player = StreamingSynth(), FakePlayer()
+    speaker = StreamingSpeaker(synth, player)
+
+    async def text():
+        yield "Prima frase. Seconda frase."
+
+    asyncio.run(speaker.speak(text()))
+    assert speaker.played == ["Prima frase.", "Seconda frase."]
+
+
+async def test_played_stops_where_the_reply_was_cut() -> None:
+    player = FakePlayer()
+    speaker = StreamingSpeaker(FakeSynth(), player)
+    original = player.write
+
+    def write(audio, sample_rate=None, cancel=None):
+        original(audio, sample_rate, cancel)
+        speaker.interrupt()  # cut during the first sentence
+
+    player.write = write
+    await speaker.speak(stream("Uno. Due. Tre."))
+    assert speaker.played == ["Uno."]
