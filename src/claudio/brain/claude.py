@@ -239,16 +239,27 @@ class ClaudeBrain:
         turn: _Turn,
         round_no: int,
         offer_from: list[dict[str, Any]] | None = None,
+        said_before: bool = False,
     ) -> AsyncGenerator[str, None]:
         """Haiku, with its tools, until it answers in words: each round runs the level-1
         calls and sends their results back; a level 2-3 call stops here and asks first."""
+        said_here = said_before
         while True:
             last = self.tools is None or round_no >= self.pc.max_rounds - 1
             leg = _Leg()
             async with contextlib.aclosing(
                 self._stream(self._params(messages, last_round=last), language, start, leg)
             ) as haiku:
+                # 25/10: "La apro.Aperta" was read without a pause. Only within this reply:
+                # after a yes the turn holds the question, already spoken.
+                gap = _space(turn) if said_here else ""
                 async for chunk in haiku:
+                    if gap and chunk:
+                        if not chunk[0].isspace():
+                            turn.parts.append(gap)
+                            chunk = gap + chunk
+                        gap = ""
+                    said_here = said_here or bool(chunk.strip())
                     yield chunk
             turn.parts.extend(leg.parts)
             if leg.handoff and not leg.calls and self.smart_model and offer_from is not None:
@@ -290,8 +301,9 @@ class ClaudeBrain:
             slow = any(c.name in SLOW_TOOLS for c in active)
             if self.pc.bridge and slow and not "".join(leg.parts).strip():
                 # The trailing space ends the sentence: the voice says it now.
-                said = _space(turn) + in_language(BRIDGE, language) + " "
+                said = (_space(turn) if said_here else "") + in_language(BRIDGE, language) + " "
                 turn.parts.append(said)
+                said_here = True
                 yield said
             results = await self._run_calls(leg.calls, refused, turn)
             messages = [*messages, {"role": "user", "content": results}]

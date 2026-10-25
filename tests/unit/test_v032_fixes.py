@@ -17,7 +17,7 @@ from claudio.router.matcher import CommandMatcher
 from tests.unit.test_claude_brain import FakeClient, Monotonic, ScriptedClient, hybrid, say
 from tests.unit.test_cost import PRICES, tracker
 from tests.unit.test_pc_screen_terminal import command
-from tests.unit.test_pc_tools import FakeDesktop, acting_brain, ask
+from tests.unit.test_pc_tools import FakeDesktop, acting_brain, ask, use
 
 
 @pytest.fixture(scope="module")
@@ -186,3 +186,14 @@ async def test_a_misheard_folder_offers_the_similar_name(
     desk.index = []
     out = await tools.run(ToolCall("t1", "search_files", {"query": "desi", "kind": "folder"}))
     assert "Similar names" in out.text and "TESI" in out.text and not out.error
+
+
+async def test_sentences_of_two_steps_keep_a_space(pricing: Pricing, tools: PcTools) -> None:
+    """25/10: "La apro.Aperta la cartella" reached the voice without a pause."""
+    (tools.policy.home / "Desktop" / "PROGETTI").mkdir(parents=True)
+    client = ScriptedClient(
+        (["La apro."], "tool_use", [use("open_path", path="~\\Desktop\\PROGETTI")]),
+        (["Aperta."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "apri la cartella progetti") == "La apro. Aperta."
