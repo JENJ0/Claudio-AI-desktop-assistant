@@ -199,11 +199,13 @@ class JackSynth:
 
     # -- synth interface --------------------------------------------------------------------
 
-    def cancel(self) -> None:
-        """ "basta": stop the sentence being generated (the audio already sent is dropped)."""
+    def cancel(self, upto: int | None = None) -> None:
+        """ "basta": stop the sentences sent so far, or only up to `upto` (the audio already
+        sent is dropped). A sentence asked for after this call is never cancelled by it, even
+        when the message reaches the worker late."""
         if self.alive():
             with contextlib.suppress(WorkerError):
-                self._send({"op": "interrupt"})
+                self._send({"op": "interrupt", "upto": self._next_id if upto is None else upto})
 
     def synthesize(self, text: str) -> np.ndarray:
         """The whole sentence at once (see stream() for audio as it is generated)."""
@@ -265,7 +267,10 @@ class JackSynth:
                     raise WorkerError(event.get("message", "errore"))
         finally:
             if not finished:
-                self.cancel()  # abandoned half way (barge-in, error): stop generating
+                # Abandoned half way (barge-in, error): stop generating. Only this sentence:
+                # an abandoned stream may be closed late, after the next reply has started
+                # (JenJo 25/10: "che ore sono?" after a takeover was never heard).
+                self.cancel(upto=rid)
 
     def _rvc_for_next(self) -> str:
         if self.rvc != "auto":

@@ -646,3 +646,34 @@ def test_player_lowers_only_replies(monkeypatch) -> None:
     written.clear()
     p.write(np.full(2000, 1000, np.int16))  # a beep: never lowered
     assert int(written[0].max()) == 1000
+
+
+async def test_a_phrase_over_the_reply_does_not_move_the_gain(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    """Said over the reply, louder and with its echo: the automatic gain ignores it (JenJo
+    25/10: the gain fell to +0 dB after one and the next requests came in at -42 dBFS)."""
+
+    class Level:
+        gain_db = 0.0
+
+        def __init__(self) -> None:
+            self.seen: list[dict] = []
+
+        def observe(self, stats) -> None:
+            self.seen.append(dict(stats))
+
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+    )
+    level = Level()
+    assistant.level = level
+    await speak_over(assistant, make_frames, speaker)
+    wakes = [r["wake_word"] for r in assistant.history]
+    assert "barge_in" in wakes and len(level.seen) == wakes.index("barge_in")

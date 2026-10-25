@@ -159,6 +159,26 @@ def test_cancel_reaches_a_running_worker(tmp_path, synths) -> None:
     assert len(synth.synthesize("Ciao.")) == 300  # the fake only notes it; the protocol holds
 
 
+def test_a_late_cancel_never_stops_a_newer_sentence(tmp_path, synths) -> None:
+    """An abandoned stream closed after the next sentence was asked for cancels only its own
+    (JenJo 25/10: the answer after a takeover was silent)."""
+    synth, _ = make(tmp_path, "ok", startup_timeout_s=10)
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    old = synth.stream("Una storia lunga.")
+    next(old)  # playing, then cut by a new request
+    assert len(synth.synthesize("Sono le 20 e 5.")) == 300
+    old.close()  # garbage collected late
+    interrupts = [m for m in sent if m["op"] == "interrupt"]
+    speaks = [m["id"] for m in sent if m["op"] == "speak"]
+    assert interrupts == [{"op": "interrupt", "upto": speaks[0]}] and speaks[1] > speaks[0]
+    synth.cancel()
+    assert sent[-1] == {"op": "interrupt", "upto": speaks[1]}
+
+
 def test_build_synth_falls_back_when_the_worker_is_missing(monkeypatch, tmp_path) -> None:
     from claudio import __main__ as entry
     from claudio.config import Settings

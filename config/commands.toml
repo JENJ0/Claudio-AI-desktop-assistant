@@ -236,7 +236,7 @@ reply_en = "I'm here."
 
 [[command]]
 id = "shutdown"
-phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegnerti"]
+phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegnerti", "chiuditi", "chiuditi pure"]
 phrases_en = ["shut down", "shut yourself down", "turn yourself off", "switch yourself off"]
 action = "system"
 exact = true  # no fuzzy match: "spegni la luce" or "shut down the PC" must not close CLAUDIO

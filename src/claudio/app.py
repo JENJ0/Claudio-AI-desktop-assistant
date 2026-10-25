@@ -823,7 +823,9 @@ class Assistant:
             inter.info.update(stats)
             if self.level is not None:
                 inter.info["gain_db"] = self.level.gain_db
-            if self.endpointer.started:
+            # Not a phrase said over the reply: louder than usual, with the reply's echo in it
+            # (JenJo 25/10: the gain fell to +0 dB after one and the next requests were -42 dBFS).
+            if self.endpointer.started and inter.info.get("wake_word") != BARGE_IN:
                 if self.level is not None:
                     self.level.observe(stats)
                 else:
