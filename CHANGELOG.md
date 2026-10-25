@@ -14,6 +14,16 @@
   800 ms of silence to end (`long_end_silence_ms`, `long_after_s`); commands still end after
   400 ms. `max_utterance_s` 8 -> 15 s.
 
+### Fixed (JenJo's test, 25/10)
+- A noise Whisper writes as an interjection ("Mm-hmm.", "Ehm, mh.") no longer stops the reply:
+  interjections do not count among the two words needed to take over.
+- The level of the voice heard over the reply is logged (`barge_dbfs` in metrics.jsonl, and the
+  dBFS of each phrase ignored as too quiet) to tune `barge_in_min_dbfs` on real data; what is
+  heard but not taken as a request is logged at INFO.
+- `scripts/compare_stt.py --engines turbo frase large-v3 --details`: the `frase` engine is turbo
+  with a natural-sentence prompt (`--prompt` to try another), to decide whether it should
+  replace the command list in `[stt.prompts]`.
+
 ## [Unreleased] - personality
 
 ### Added
