@@ -95,6 +95,14 @@ def tools(desk: FakeDesktop, home: Path) -> PcTools:
     t.close()
 
 
+@pytest.fixture
+def verbose(desk: FakeDesktop, home: Path) -> PcTools:
+    """The question that reads the action out ([pc] confirm_brief = false)."""
+    t = PcTools(desk, PcSettings(confirm_brief=False), home=home)
+    yield t
+    t.close()
+
+
 def call(tool: str, **args: Any) -> ToolCall:
     return ToolCall(f"id_{tool}", tool, args)
 
@@ -129,20 +137,41 @@ def test_prudent_setting_asks_for_every_key(desk: FakeDesktop, home: Path) -> No
     t.close()
 
 
-async def test_the_question_says_what_will_run(tools: PcTools) -> None:
+async def test_level_2_asks_only_confermi_by_default(tools: PcTools) -> None:
+    """JenJo (23/10): "Confermi?" alone, without repeating the action."""
     q = await tools.question(
         [call("type_text", text="ciao", window="chrome"), call("press_keys", keys=["enter"])],
         "it",
     )
+    assert q == "Confermi?"
+    assert await tools.question([call("close_window", window="")], "en") == "Do you confirm?"
+
+
+async def test_level_3_still_says_what_will_run(
+    tools: PcTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit "confermo" must know to what: the brief question is for level 2 only."""
+    monkeypatch.setattr(tools, "level", lambda c: 3)
+    q = await tools.question([call("close_window", window="")], "it")
+    assert q.startswith('Chiudo la finestra "Senza nome - Blocco note"') and "confermo" in q
+
+
+async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
+    q = await verbose.question(
+        [call("type_text", text="ciao", window="chrome"), call("press_keys", keys=["enter"])],
+        "it",
+    )
     assert q == 'Scrivo "ciao" in "YouTube - Google Chrome", poi premo enter. Confermi?'
-    q = await tools.question([call("close_window", window="")], "en")
+    q = await verbose.question([call("close_window", window="")], "en")
     assert q == 'I\'ll close the window "Senza nome - Blocco note". Do you confirm?'
-    q = await tools.question([call("move_file", source="~/Downloads/a.pdf", destination="~")], "it")
+    q = await verbose.question(
+        [call("move_file", source="~/Downloads/a.pdf", destination="~")], "it"
+    )
     assert q.startswith('Sposto "a.pdf" in "~')
 
 
-async def test_long_text_is_shortened_in_the_question(tools: PcTools) -> None:
-    q = await tools.question([call("type_text", text="parola " * 40)], "it")
+async def test_long_text_is_shortened_in_the_question(verbose: PcTools) -> None:
+    q = await verbose.question([call("type_text", text="parola " * 40)], "it")
     assert len(q) < 120 and "..." in q
 
 
@@ -356,7 +385,7 @@ async def test_level_2_asks_and_runs_after_a_yes(
     )
     b = acting_brain(pricing, client, tools)
     reply = await ask(b, "scrivi ciao nel blocco note")
-    assert reply == 'Ok. Scrivo "ciao" in "Senza nome - Blocco note". Confermi?'
+    assert reply == "Ok. Confermi?"
     assert b.awaiting and not [d for d in desk.done if d[0] == "keys"]  # nothing typed yet
     assert b.last_call["tools"] == ["type_text(text=ciao, window=blocco) ask"]
     assert await ask(b, "sì") == "Scritto."

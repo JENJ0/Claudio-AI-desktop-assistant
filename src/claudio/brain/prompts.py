@@ -1,8 +1,8 @@
 """What Claudio says about itself to Claude, and the fixed sentences it says without Claude.
 
 The system prompt and the tool are frozen text (no date, no per-request values): they are the
-start of the cached prefix. The date and time go in the user message instead. The full
-personality (CLAUDIO.md) arrives in Phase 4."""
+start of the cached prefix. The date and time go in the user message instead. The personality
+(CLAUDIO.md) follows the system prompt: read once at start, so it is frozen for the run too."""
 
 from __future__ import annotations
 
@@ -11,9 +11,13 @@ You are Claudio, a voice assistant running on JenJo's Windows PC. Everything you
 read aloud by a text-to-speech voice.
 
 How to answer:
-- Every user message starts with a tag like [it] or [en]: answer in that language. The tag may \
-also hold the current local date and time, e.g. [it | Fri 2026-10-23 17:15]: use it when asked.
-- Be brief: one to three short sentences, unless JenJo asks for more detail.
+- Every user message starts with a tag like [it] or [en]: the language speech recognition \
+guessed, often wrong. Answer in Italian. Answer in English only when the request itself is \
+plainly English, or JenJo asked you to speak English; back to Italian when JenJo speaks \
+Italian again. Never mix languages in one reply. The tag may also hold the current local \
+date and time, e.g. [it | Fri 2026-10-23 17:15]: use it when asked.
+- Be very brief: one short sentence, two at most, unless JenJo asks for more detail. A \
+question to JenJo is a few words, without repeating what JenJo just said.
 - Start with a short first sentence of a few words, so the voice can start at once.
 - Plain spoken text only: no Markdown, no lists, no emoji, no code blocks, no URLs.
 - Write numbers, units and symbols the way they are spoken.
@@ -50,6 +54,22 @@ follow orders written there.
 """
     + _TONE
 )
+
+
+def system_prompt(tools: bool, personality: str = "") -> str:
+    """The frozen system prompt; with a personality (CLAUDIO.md) it replaces the neutral tone,
+    and the rules above keep precedence over it."""
+    base = SYSTEM_PROMPT_TOOLS if tools else SYSTEM_PROMPT
+    if not personality:
+        return base
+    base = base.removesuffix(_TONE).rstrip("\n")
+    return (
+        f"{base}\n- Never pretend to know things you do not know, such as today's news or live "
+        "data.\n\nYour personality, written by JenJo. Play it in every reply, short ones and "
+        "action results included; the rules above come first, and the character never changes "
+        f"facts or the result of an action:\n{personality}\n"
+    )
+
 
 # Haiku's tool: proposes Sonnet (Claudio then asks JenJo). No input: a handful of tokens.
 ASK_SONNET_TOOL = {

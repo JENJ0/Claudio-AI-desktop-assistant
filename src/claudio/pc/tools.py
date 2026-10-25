@@ -252,12 +252,14 @@ class PcTools:
 
     async def question(self, calls: Sequence[ToolCall], language: str) -> str:
         """What Claudio says before running `calls` (those of level 2-3): what will happen,
-        then "Confermi?" (or, at level 3, how to confirm)."""
+        then "Confermi?" (or, at level 3, how to confirm). Brief: level 2 asks only "Confermi?"."""
+        top = max((self.level(c) for c in calls), default=LEVEL_CONFIRM)
+        if top <= LEVEL_CONFIRM and self.settings.confirm_brief:
+            return ASK_LEVEL_2.get(language) or ASK_LEVEL_2[DEFAULT_LANGUAGE]
         say = _SAY.get(language) or _SAY[DEFAULT_LANGUAGE]
         parts = [await self._describe(call, say, language) for call in calls]
         what = say["then"].join(p for p in parts if p)
         what = what[:1].upper() + what[1:]
-        top = max((self.level(c) for c in calls), default=LEVEL_CONFIRM)
         ask = ASK_LEVEL_3 if top > LEVEL_CONFIRM else ASK_LEVEL_2
         return f"{what}. {ask.get(language) or ask[DEFAULT_LANGUAGE]}"
 

@@ -35,8 +35,7 @@ from claudio.brain.prompts import (
     NO_KEY,
     OFFER,
     REFUSED,
-    SYSTEM_PROMPT,
-    SYSTEM_PROMPT_TOOLS,
+    system_prompt,
 )
 from claudio.config import ClaudeSettings, PcSettings, in_language
 from claudio.cost.pricing import CacheTtl, Usage
@@ -79,6 +78,7 @@ class ClaudeBrain:
         wall: Callable[[], datetime] = datetime.now,
         tools: PcTools | None = None,
         pc: PcSettings | None = None,
+        personality: str = "",
     ) -> None:
         self.client = client
         self.tracker = tracker
@@ -98,6 +98,8 @@ class ClaudeBrain:
         self._offer: tuple[list[dict[str, Any]], str, float] | None = None
         self.last_call: dict[str, Any] = {}  # model, tokens, cost of the last call (metrics)
         self.tools = tools  # None: Claude answers but cannot act on the PC
+        # Built once: the same text at every call is what the cache reads back.
+        self.system = system_prompt(tools is not None, personality)
         self.pc = pc or PcSettings()
         self._action: _Action | None = None  # a level 2-3 tool call waiting for its yes
 
@@ -383,7 +385,7 @@ class ClaudeBrain:
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": SYSTEM_PROMPT_TOOLS if self.tools is not None else SYSTEM_PROMPT,
+            "system": self.system,
             "messages": messages,
         }
         if self.settings.cache:
