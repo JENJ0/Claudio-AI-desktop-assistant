@@ -217,18 +217,6 @@ def test_digits_reach_the_worker_as_italian_words(tmp_path, synths) -> None:
     synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
     synth.synthesize("Sono le 20 e 13.")
     assert [m["text"] for m in sent if m["op"] == "speak"] == ["Sono le venti e tredici."]
-    assert [m["language"] for m in sent if m["op"] == "speak"] == ["Auto"]
-
-
-def test_the_configured_language_reaches_the_worker(tmp_path, synths) -> None:
-    """[tts] jack_language = "Italian": Qwen3 stops guessing the language per sentence."""
-    synth, _ = make(tmp_path, "ok", startup_timeout_s=10, sentence_timeout_s=2, language="Italian")
-    synths.append(synth)
-    synth.start()
-    sent: list[dict] = []
-    original = synth._send
-    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
-    synth.synthesize("Ciao socio.")
     assert [m["language"] for m in sent if m["op"] == "speak"] == ["Italian"]
 
 
@@ -243,3 +231,123 @@ def test_no_module_next_to_the_worker_shadows_the_standard_library() -> None:
         and p.stem in sys.stdlib_module_names
     )
     assert shadowing == []
+
+
+def test_symbols_and_acronyms_reach_the_worker_as_italian_words(tmp_path, synths) -> None:
+    synth, _ = make(tmp_path, "ok", startup_timeout_s=10, sentence_timeout_s=2)
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    synth.synthesize("Il **PC** è al 50%! 😎")
+    assert [m["text"] for m in sent if m["op"] == "speak"] == ["Il pi ci è al cinquanta per cento!"]
+
+
+def test_language_and_rvc_mode_reach_the_worker(tmp_path, synths) -> None:
+    synth, _ = make(tmp_path, "ok", startup_timeout_s=10, sentence_timeout_s=2)
+    assert synth.language == "Italian"  # never "Auto": it drifted to other accents
+    synth.rvc = "sentence"
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    synth.synthesize("Ciao.")
+    (speak,) = [m for m in sent if m["op"] == "speak"]
+    assert speak["language"] == "Italian" and speak["rvc"] == "sentence"
+
+
+def test_auto_rvc_streams_a_reply_opening_and_converts_the_rest_whole(tmp_path, synths) -> None:
+    from claudio.tts import jack
+
+    synth, _ = make(tmp_path, "ok", startup_timeout_s=10, sentence_timeout_s=2)
+    synth.rvc = "auto"
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    synth.synthesize("Prima frase.")
+    synth.synthesize("Seconda frase.")  # right after: the first one is still playing
+    synth._last_done -= jack.REPLY_GAP_S + 1  # a pause: the next sentence opens a new reply
+    synth.synthesize("Nuova risposta.")
+    modes = [m["rvc"] for m in sent if m["op"] == "speak"]
+    assert modes == ["blocks", "sentence", "blocks"]
+
+
+def test_worker_command_takes_the_settings_and_overrides(tmp_path) -> None:
+    from claudio.config import TtsSettings
+    from claudio.tts.jack import worker_command
+
+    tts = TtsSettings(jack_temperature=0.7, jack_speed=0.9)
+    command = worker_command(tmp_path, tts, jack_checkpoint=Path("ck3"))
+    assert command[1].endswith("jack_worker.py")
+    assert command[command.index("--checkpoint") + 1] == str(tmp_path / "ck3")
+    assert command[command.index("--temperature") + 1] == "0.7"
+    assert command[command.index("--speed") + 1] == "0.9"
+
+
+FAKE_APPLIO = textwrap.dedent(
+    """
+    import numpy as np
+    from scipy.signal import resample_poly
+
+    class Pipeline:
+        def get_f0(self, x, p_len, *args):
+            f0 = np.full(p_len, np.nan)  # what RMVPE gave on silence
+            return np.full(p_len, -(2**62)), f0
+
+        def pipeline(self, *, audio, pitch, f0_method, **kwargs):
+            coarse, f0 = self.get_f0(audio, 4)
+            self.pitch_seen.append((coarse.tolist(), f0.tolist()))
+            self.calls.append((len(audio), pitch, f0_method))
+            return resample_poly(audio, 2, 1)  # 16 kHz in, 32 kHz out like Jack's model
+
+    class VoiceConverter:
+        def __init__(self):
+            self.vc = Pipeline()
+            self.vc.calls = []
+            self.vc.pitch_seen = []
+            self.tgt_sr = 32000
+            self.hubert_model = self.net_g = self.use_f0 = self.version = None
+
+        def get_vc(self, path, sid):
+            self.model = path
+
+        def load_hubert(self, name):
+            self.embedder = name
+    """
+)
+
+
+def test_whole_sentence_rvc_converts_once_at_the_end(tmp_path, monkeypatch) -> None:
+    """RvcSentence with a stand-in for Applio: nothing until flush(), then the sentence
+    stretched by 1/speed (+ the tail), at 24 kHz, with the pitch raised back."""
+    applio = tmp_path / "Applio"
+    (applio / "rvc" / "infer").mkdir(parents=True)
+    (applio / "rvc" / "__init__.py").write_text("")
+    (applio / "rvc" / "infer" / "__init__.py").write_text("")
+    (applio / "rvc" / "infer" / "infer.py").write_text(FAKE_APPLIO)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    for name in [m for m in sys.modules if m == "rvc" or m.startswith("rvc.")]:
+        monkeypatch.delitem(sys.modules, name)
+    saved = sys.stdout
+    try:
+        from claudio.tts.jack_worker import QWEN_RATE, TAIL_S, RvcSentence
+    finally:
+        sys.stdout = saved  # the worker sends its prints to stderr when imported
+    rvc = RvcSentence(tmp_path / "jack.pth", applio, speed=0.9)
+    rvc.vc.vc.calls.clear()  # the warm-up call
+    assert rvc.feed(np.zeros(QWEN_RATE // 2, dtype=np.float32)) == []
+    assert rvc.feed(np.zeros(QWEN_RATE // 2, dtype=np.float32)) == []
+    (pcm,) = rvc.flush()
+    assert len(rvc.vc.vc.calls) == 1
+    _length, pitch, method = rvc.vc.vc.calls[0]
+    assert pitch == 2 and method == "rmvpe"
+    expected = (1 + TAIL_S) / 0.9 * 24_000
+    assert abs(len(pcm) // 2 - expected) < 50
+    assert rvc.flush() == []  # nothing left
+    # A NaN pitch is unvoiced, never an index outside the 256-entry pitch embedding.
+    assert rvc.vc.vc.pitch_seen[-1] == ([1, 1, 1, 1], [0.0, 0.0, 0.0, 0.0])

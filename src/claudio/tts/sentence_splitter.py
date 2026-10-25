@@ -99,7 +99,9 @@ class SentenceSplitter:
             if j >= len(buf):
                 return None  # wait: the next chunk may continue the number/abbreviation
             if not buf[j].isspace():
-                continue  # "3.5", "www.sito.it", "10:30"
+                if ch != "\n" and buf[j].isupper() and i > 0 and buf[i - 1].islower():
+                    return j  # "Cerco il nome.Nessuna cartella": two turns glued together
+                continue  # "3.5", "www.sito.it", "10:30", "U.S.A."
             if ch == "." and j == i + 1 and self._is_abbreviation(buf[: i + 1]):
                 continue
             return j

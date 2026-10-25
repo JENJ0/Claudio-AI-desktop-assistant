@@ -17,22 +17,50 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from claudio.i18n import tr
-from claudio.tts.number_words import digits_to_words_it
+from claudio.tts.spoken_text import to_spoken_it
 
 log = logging.getLogger(__name__)
 
 SAMPLE_RATE = 24_000
 RESTART_COOLDOWN_S = 30.0
+# rvc "auto": a sentence asked for after this long without speaking opens a reply, so it is
+# streamed in blocks (first audio ~0.3 s); the next ones are generated while it plays, so
+# they can go through RVC whole (clearer) without a pause.
+REPLY_GAP_S = 1.0
 CREATE_NO_WINDOW = 0x08000000  # Windows: no console window for the worker
 
 
 class WorkerError(RuntimeError):
     pass
+
+
+def worker_command(models: Path, tts: Any, **overrides: Any) -> list[str]:
+    """The worker's command line from the [tts] settings (paths relative to `models`);
+    `overrides` replace single settings, e.g. jack_checkpoint=... for a comparison."""
+
+    def get(name: str) -> Any:
+        return overrides.get(name, getattr(tts, name))
+
+    return [
+        str(models / get("jack_python")),
+        str(Path(__file__).with_name("jack_worker.py")),
+        "--checkpoint",
+        str(models / get("jack_checkpoint")),
+        "--rvc-model",
+        str(models / get("jack_rvc_model")),
+        "--applio",
+        str(models / get("jack_applio")),
+        "--speed",
+        str(get("jack_speed")),
+        "--temperature",
+        str(get("jack_temperature")),
+    ]
 
 
 class JackSynth:
@@ -44,9 +72,17 @@ class JackSynth:
         fallback: Any,
         startup_timeout_s: float = 90.0,
         sentence_timeout_s: float = 15.0,
-        language: str = "Auto",
+        language: str = "Italian",
+        rvc: str = "blocks",
+        words: dict[str, str] | None = None,
     ) -> None:
+        self.words = dict(words or {})  # respellings: "file" -> "fàil" (see spoken_text)
         self.command = command
+        # Told to Qwen3. Always Italian (JenJo, 24/10): "Auto" guessed the language per
+        # sentence and drifted to Spanish/English accents and stresses.
+        self.language = language
+        self.rvc = rvc  # "blocks", "sentence" or "auto" (see REPLY_GAP_S)
+        self._last_done = 0.0
         self.fallback = fallback
         self.startup_timeout_s = startup_timeout_s
         self.sentence_timeout_s = sentence_timeout_s
@@ -198,10 +234,17 @@ class JackSynth:
     def _speak(self, text: str) -> Iterator[np.ndarray]:
         self._next_id += 1
         rid = self._next_id
-        # Digits are spelled out: with language "Auto" a bare "22" or "51" is sometimes read in
-        # Spanish.
-        spoken_text = digits_to_words_it(text)
-        self._send({"op": "speak", "id": rid, "text": spoken_text, "language": self.language})
+        # Digits, symbols, acronyms and English words become Italian spelling: left alone,
+        # the model guesses them, sometimes in Spanish or English.
+        self._send(
+            {
+                "op": "speak",
+                "id": rid,
+                "text": to_spoken_it(text, self.words),
+                "language": self.language,
+                "rvc": self._rvc_for_next(),
+            }
+        )
         deadline = time.monotonic() + self.sentence_timeout_s
         finished = False
         try:
@@ -216,12 +259,18 @@ class JackSynth:
                     self.last_first_ms = event.get("first_ms")
                     self.last_total_ms = int(event.get("total_ms", 0))
                     finished = True
+                    self._last_done = time.monotonic()
                     return
                 elif kind == "error":
                     raise WorkerError(event.get("message", "errore"))
         finally:
             if not finished:
                 self.cancel()  # abandoned half way (barge-in, error): stop generating
+
+    def _rvc_for_next(self) -> str:
+        if self.rvc != "auto":
+            return self.rvc
+        return "blocks" if time.monotonic() - self._last_done > REPLY_GAP_S else "sentence"
 
     def _schedule_restart(self) -> None:
         """After a failure, try the worker again in the background, at most every 30 s."""

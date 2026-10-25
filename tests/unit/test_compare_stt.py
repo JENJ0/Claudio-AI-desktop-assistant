@@ -75,3 +75,22 @@ def test_scores_and_verifier(matcher: CommandMatcher, capsys: pytest.CaptureFixt
     assert "Capisce di più: turbo" in out
     assert "scarterebbe 1/3" in out  # only "Hey, ciao, come stai?"
     assert out.count("scarta\n") == 1
+
+
+def test_frase_is_turbo_with_the_natural_prompt(
+    matcher: CommandMatcher, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, bool, str | None]] = []
+    monkeypatch.setattr(
+        cs,
+        "whisper_engine",
+        lambda settings, model, closed, m, prompt=None: calls.append((model, closed, prompt)),
+    )
+    cs.build_engine("frase", None, matcher)  # type: ignore[arg-type]
+    cs.build_engine("turbo", None, matcher)  # type: ignore[arg-type]
+    cs.build_engine("frase", None, matcher, "Ciao Claudio.")  # type: ignore[arg-type]
+    assert calls == [
+        ("large-v3-turbo", False, cs.NATURAL_PROMPT),
+        ("large-v3-turbo", False, None),
+        ("large-v3-turbo", False, "Ciao Claudio."),
+    ]

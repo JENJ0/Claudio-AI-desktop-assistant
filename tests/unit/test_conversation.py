@@ -480,6 +480,7 @@ async def test_a_request_over_the_reply_stops_it_and_is_answered(
     assert speaker.cut
     first, second = list(assistant.history)[:2]
     assert first["outcome"] == "interrupted" and first["barge_in"] == "che giorno è oggi"
+    assert isinstance(first["barge_dbfs"], float)  # the level barge_in_min_dbfs is tuned on
     assert second["wake_word"] == "barge_in" and second["text"] == "che giorno è oggi"
     assert second["outcome"] == "ok"
     assert speaker.ducks[:2] == [0.3, None]  # lowered at once, full volume for the next reply
@@ -563,6 +564,9 @@ def test_the_reply_echo_is_not_a_request(fake_vad, vad_settings, matcher) -> Non
     assert assistant._is_talking_to_me("Claudio")  # the name alone
     assert not assistant._is_talking_to_me("eh")
     assert not assistant._is_talking_to_me("")
+    # JenJo's log, 25/10: Whisper wrote a noise as "Mm-hmm." and it stopped the story.
+    assert not assistant._is_talking_to_me("Mm-hmm.")
+    assert not assistant._is_talking_to_me("Ehm, mh.")
 
 
 # --- a longer pause closes a longer phrase ------------------------------------------------
