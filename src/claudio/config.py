@@ -360,6 +360,8 @@ class PcSettings(BaseModel):
     read_timeout_s: float = Field(2.0, gt=0, le=30)  # slow apps (Electron) stop here
     search_limit: int = Field(8, ge=1, le=50)
     search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
+    # web_search (level 1): the results page; {query} is replaced by the encoded words.
+    web_search_url: str = "https://www.google.com/search?q={query}"
     max_windows: int = Field(25, ge=1, le=100)
     apps_refresh_s: float = Field(600.0, ge=0)
     # v0.3.2. The screenshot to Haiku (last resort): long side in pixels, JPEG quality.
@@ -377,6 +379,13 @@ class PcSettings(BaseModel):
     private_windows: list[str] = Field(
         default_factory=lambda: ["keepass", "bitwarden", "1password", "lastpass", "password"]
     )
+
+    @field_validator("web_search_url")
+    @classmethod
+    def _search_url(cls, value: str) -> str:
+        if not value.startswith("https://") or value.count("{query}") != 1:
+            raise ValueError("web_search_url: un indirizzo https:// con {query} una volta")
+        return value
 
 
 class ChatSettings(BaseModel):

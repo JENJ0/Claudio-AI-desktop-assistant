@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased] - no needless confirmations
+
+### Added
+- `web_search(query, browser?)` (level 1): opens the browser on the search results page
+  (`[pc] web_search_url`, Google by default, https only). The query only goes into the URL,
+  encoded; `browser` (Chrome, Edge, Firefox, Brave, Opera) is found in the Windows "App Paths",
+  otherwise the default browser opens. "Apri Chrome e cerca X" no longer types the search
+  (`type_text`, level 2, "Confermi?") and no longer loses the first word while Chrome starts.
+
+### Fixed (JenJo's log, 26/10 00:25)
+- Haiku asked "Confermi?" in words without calling the tool: the prompt now says to call the
+  tool in the same reply and never ask for a yes itself.
+- "Confermo." said after the conversation window closed woke the detector and was dropped as a
+  false wake: a phrase of at most 4 words within 45 s of a reply that asked something is its
+  answer (`responder.answer_expected`).
+- An empty phrase in the conversation window (noise Whisper drops, like "Grazie a tutti")
+  closed it while a question waited: the window now stays open once more.
+
 ## [0.3.2] - screen and terminal
 
 ### Added

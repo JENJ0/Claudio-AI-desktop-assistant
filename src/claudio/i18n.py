@@ -206,6 +206,10 @@ EN: dict[str, str] = {
         "Answer too far from the microphone, not counted: %r"
     ),
     "Rumore scambiato per parole (%s), ignoro: %r": "Noise heard as words (%s), ignored: %r",
+    "Frase vuota mentre aspetto una risposta: continuo ad ascoltare": (
+        "Empty phrase while an answer is expected: still listening"
+    ),
+    "Browser %r sconosciuto: uso quello predefinito": "Unknown browser %r: using the default one",
     "Non è una richiesta, fine della conversazione: %r": (
         "Not a request, end of the conversation: %r"
     ),

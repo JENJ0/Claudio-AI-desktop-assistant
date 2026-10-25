@@ -53,6 +53,13 @@ class FakeDesktop:
     def open_path(self, path: Path) -> None:
         self.done.append(("open", path))
 
+    installed_browsers = frozenset({"chrome.exe", "msedge.exe"})
+
+    def open_url(self, url: str, browser: str | None) -> bool:
+        found = browser is None or browser in self.installed_browsers
+        self.done.append(("url", url, browser if found else None))
+        return found
+
     def search_index(
         self, terms: list[str], kind: str | None, roots: list[Path], limit: int
     ) -> list[Found] | None:

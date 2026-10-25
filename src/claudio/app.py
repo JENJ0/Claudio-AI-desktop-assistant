@@ -20,6 +20,7 @@ from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.config import NoiseSettings, in_language
 from claudio.intake import (
     BARGE_IN,
+    CONVERSATION,
     Decision,
     Heard,
     Hearing,
@@ -170,6 +171,7 @@ class Assistant:
         # A reply cut by a new request, still read to its end: resumed once that request is
         # answered. None: no reply was cut.
         self._cut: CutReply | None = None
+        self._kept_after_empty = False  # the window already outlived one empty phrase
         # Frames heard since the last phrase went to Whisper: if it was someone talking, they
         # are the rest of the request.
         self._since_check: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
@@ -458,7 +460,7 @@ class Assistant:
                     self._listen_to_takeover()
                 elif follow_up:
                     self._listen_for_answer()
-                elif self._keeps_conversation(outcome):
+                elif self._keeps_conversation(outcome, inter):
                     self._listen_for_answer(conversation=True)
 
     async def _decide(
@@ -594,13 +596,25 @@ class Assistant:
                 out.append(candidate)
         return tuple(out[: self.alternatives])
 
-    def _keeps_conversation(self, outcome: str) -> bool:
-        return (
-            outcome == "ok"
-            and self.conversation_s > 0
-            and not self.system.paused
-            and not self.system.stopping
-        )
+    def _keeps_conversation(self, outcome: str, inter: Interaction) -> bool:
+        """After a reply the window stays open. An empty phrase in the window (noise Whisper
+        threw away as "Grazie a tutti") keeps it open once more while Claude's question waits
+        for its answer (26/10: the window closed and the "Confermo." after it was lost)."""
+        if self.conversation_s <= 0 or self.system.paused or self.system.stopping:
+            return False
+        if outcome == "ok":
+            self._kept_after_empty = False
+            return True
+        if (
+            outcome == Kind.EMPTY.value
+            and inter.info.get("wake_word") == CONVERSATION
+            and self.responder.answer_expected
+            and not self._kept_after_empty
+        ):
+            self._kept_after_empty = True
+            log.info("Frase vuota mentre aspetto una risposta: continuo ad ascoltare")
+            return True
+        return False
 
     def _cancel_pending(self) -> None:
         self.responder.cancel_pending()

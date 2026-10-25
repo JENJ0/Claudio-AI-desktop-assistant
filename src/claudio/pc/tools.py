@@ -1,7 +1,8 @@
 """The PC tools Claude can call: their definitions, their safety levels and the dispatcher.
 
 The level of every call is decided here, in code, never by the model (CLAUDE.md, Sicurezza):
-1 runs at once (open, search, read, focus, look at the screen, harmless keys), 2 needs JenJo's
+1 runs at once (open, search files or the web, read, focus, look at the screen, harmless keys),
+2 needs JenJo's
 spoken yes (type, close a window, move a file, other keys), 3 an explicit spoken "confermo"
 (a PowerShell command, v0.3.2). The question asked before a level 2-3 action is written by
 code from the arguments, so what JenJo confirms is exactly what runs. Some calls are refused
@@ -20,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote_plus
 
 from rapidfuzz import fuzz, process
 
@@ -42,6 +44,17 @@ APP_CUTOFF = 70  # rapidfuzz WRatio: below this the app name is not a match
 WINDOW_CUTOFF = 60
 SPOKEN_TEXT_CHARS = 80  # the text to type, as read in the confirmation question
 SPOKEN_PURPOSE_CHARS = 120  # the purpose of a command, as read before "confermo"
+WEB_QUERY_CHARS = 200
+# The browsers web_search can name, by their executable (Windows "App Paths").
+BROWSERS = {
+    "chrome": "chrome.exe",
+    "google chrome": "chrome.exe",
+    "edge": "msedge.exe",
+    "microsoft edge": "msedge.exe",
+    "firefox": "firefox.exe",
+    "brave": "brave.exe",
+    "opera": "opera.exe",
+}
 # Tools that may take a while: Claudio says "Ci guardo" first when Haiku said nothing yet.
 SLOW = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
 
@@ -67,6 +80,11 @@ class Desktop(Protocol):
     def apps(self) -> list[App]: ...
     def launch(self, app: App) -> None: ...
     def open_path(self, path: Path) -> None: ...
+    def open_url(self, url: str, browser: str | None) -> bool:
+        """Open an https `url` in `browser` (an executable like chrome.exe; None: the default
+        browser). False when that browser is not installed: the default one opened it."""
+        ...
+
     def search_index(
         self, terms: list[str], kind: str | None, roots: list[Path], limit: int
     ) -> list[Found] | None:
@@ -168,6 +186,16 @@ DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "web_search",
+        "description": "Search the web: opens the browser on the search results for the "
+        "query. Use it for every web search (cerca su internet, cerca X su Chrome), never "
+        "open_app plus type_text. browser only when JenJo names one (Chrome, Edge, Firefox).",
+        "input_schema": _schema(
+            {"query": _STR, "browser": _STR},
+            ["query"],
+        ),
+    },
+    {
         "name": "list_windows",
         "description": "List the open windows (title, program; the active one is marked).",
         "input_schema": _schema({}),
@@ -240,6 +268,7 @@ LEVELS = {
     "open_app": LEVEL_SAFE,
     "open_path": LEVEL_SAFE,
     "search_files": LEVEL_SAFE,
+    "web_search": LEVEL_SAFE,  # only opens a results page: nothing is typed or changed
     "list_windows": LEVEL_SAFE,
     "read_window": LEVEL_SAFE,
     "focus_window": LEVEL_SAFE,
@@ -474,6 +503,8 @@ class PcTools:
             return f"Opened {files.shorten(path, self.policy.home)}."
         if call.name == "search_files":
             return self._search(str(a.get("query", "")), a.get("kind"))
+        if call.name == "web_search":
+            return self._web_search(str(a.get("query", "")), str(a.get("browser") or ""))
         if call.name == "list_windows":
             return self._list_windows()
         if call.name == "read_window":
@@ -594,6 +625,22 @@ class PcTools:
             return f"No files found for: {' '.join(terms)}."
         lines = [f.describe(home) for f in found[:limit]]
         return f"{len(lines)} found:\n" + "\n".join(lines)
+
+    def _web_search(self, query: str, browser: str) -> str:
+        """The results page of the configured search engine: the query only ever goes into
+        the URL, encoded, so the model cannot send the browser anywhere else."""
+        query = " ".join(query.split())
+        if not query:
+            raise ToolFailed("no query")
+        query = query[:WEB_QUERY_CHARS]
+        url = self.settings.web_search_url.format(query=quote_plus(query))
+        exe = BROWSERS.get(browser.casefold().strip()) if browser.strip() else None
+        if browser.strip() and exe is None:
+            log.info("Browser %r sconosciuto: uso quello predefinito", browser)
+        opened = self.desktop.open_url(url, exe)
+        if exe is not None and not opened:
+            return f'Searched "{query}" in the default browser ({browser} not found).'
+        return f'Searched "{query}" in {browser.strip() or "the browser"}: results are open.'
 
     def _list_windows(self) -> str:
         windows = [w for w in self.desktop.windows() if w.title.strip()]

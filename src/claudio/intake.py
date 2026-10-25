@@ -23,6 +23,8 @@ CONVERSATION = "conversation"  # the wake_word of a phrase heard in the conversa
 # The wake_word of a request said over CLAUDIO's reply: close to the microphone and already
 # heard as words by Whisper, so it is a request without the name.
 BARGE_IN = "barge_in"
+# An answer to Claudio's own question ("Confermi?", "quale delle due?") is a few words.
+ANSWER_MAX_WORDS = 4
 
 
 class Segment(NamedTuple):
@@ -180,8 +182,10 @@ class RequestFilter:
 
     def _false_wake(self, text: str, language: str, heard: Heard, responder: Responder) -> bool:
         """Only a real wake word detection is judged: not the conversation window, not a
-        yes/no answer, not a second chance (Whisper already heard the name) and not the
-        request after a lone wake word (the name was in the phrase before)."""
+        yes/no answer, not a second chance (Whisper already heard the name), not the request
+        after a lone wake word (the name was in the phrase before) and not a short answer to
+        a question Claude just asked (26/10: "Confermo." said after the window had closed
+        woke the detector and was thrown away)."""
         if (
             not self.verify_wake
             or heard.name_heard
@@ -189,6 +193,7 @@ class RequestFilter:
             or responder.awaiting
             or heard.second_chance
             or heard.relistened
+            or (responder.answer_expected and words(text) <= ANSWER_MAX_WORDS)
         ):
             return False
         return not wake_confirmed(text, responder.understands(text, language))

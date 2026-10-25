@@ -67,6 +67,7 @@ class FakeResponder:
         self.language = "it"
         self.awaiting = False
         self.asked_question = False
+        self.answer_expected = False
         self.prepared = 0
 
     def prepare(self) -> None:
