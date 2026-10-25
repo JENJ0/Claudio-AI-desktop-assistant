@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased] - file and folder search
+
+### Fixed (JenJo's logs, 25-26/10)
+- "Università" did not match the folder `UNIVERSITA'` (accent, apostrophe): the walk ran its
+  3 s to the end. Names and searches are now compared folded (no case, accents, apostrophes,
+  `_ - .` separators) and without spaces ("BB Port Windows", "BBPortWindows" -> `bbport-windows`).
+- Names Whisper spells the English way are matched by sound ("Projecti" -> `PROGETTI`,
+  "roket" -> `Rocket League`); a name holding some of the words is offered as similar
+  ("Project Work" -> `PROGETTO IUM`).
+- Filler words left in a search ("cartella progetti") are dropped.
+
+### Added
+- `[pc] folders_refresh_s` (900): every folder name under the roots is listed in the background
+  at start and again every 15 minutes. A folder is found in milliseconds wherever it is, and a
+  misheard name is compared with all of them. The Windows index and the walk still run when
+  the list has nothing (a folder made after the last read, files). `open_path` with a wrong
+  folder name uses the same list.
+
 ## [0.3.2] - screen and terminal
 
 ### Added

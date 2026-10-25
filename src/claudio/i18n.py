@@ -364,6 +364,9 @@ EN: dict[str, str] = {
         "A new request instead of the confirmation: action dropped"
     ),
     "Percorso %r non trovato: uso %s": "Path %r not found: using %s",
+    "Elenco delle cartelle: %d in %d ms%s": "Folder list: %d in %d ms%s",
+    "Elenco delle cartelle non letto": "Folder list not read",
+    "Ricerca %r: niente, %d nomi simili": "Search %r: nothing, %d similar names",
     "Indice: %d risultati fuori dalle cartelle permesse": (
         "Index: %d results outside the allowed folders"
     ),
