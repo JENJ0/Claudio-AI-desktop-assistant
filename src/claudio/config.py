@@ -362,6 +362,17 @@ class PcSettings(BaseModel):
     search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
     max_windows: int = Field(25, ge=1, le=100)
     apps_refresh_s: float = Field(600.0, ge=0)
+    # v0.3.2. The screenshot to Haiku (last resort): long side in pixels, JPEG quality.
+    screenshot_side: int = Field(1024, ge=256, le=1568)
+    screenshot_quality: int = Field(70, ge=30, le=95)
+    # PowerShell commands: always level 3 (spoken "confermo"), never as administrator.
+    commands: bool = True  # false: the tool is not even offered to Claude
+    command_timeout_s: float = Field(30.0, gt=0, le=120)
+    command_output_chars: int = Field(2000, ge=200, le=10000)  # output sent back to Claude
+    bridge: bool = True  # "Ci guardo" before a slow action when Claude said nothing yet
+    # Typing in these windows (title or program, any case) needs no yes (JenJo, 23/10).
+    free_typing: list[str] = Field(default_factory=lambda: ["blocco note", "notepad"])
+    paste_min_chars: int = Field(40, ge=0)  # longer text (or with new lines) is pasted: faster
     # Windows never read (title or program): password managers.
     private_windows: list[str] = Field(
         default_factory=lambda: ["keepass", "bitwarden", "1password", "lastpass", "password"]
