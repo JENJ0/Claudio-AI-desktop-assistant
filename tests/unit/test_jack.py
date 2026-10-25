@@ -1,5 +1,6 @@
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 
@@ -251,6 +252,57 @@ def test_no_module_next_to_the_worker_shadows_the_standard_library() -> None:
         and p.stem in sys.stdlib_module_names
     )
     assert shadowing == []
+
+
+# --- background start: Claudio listens while the worker loads ------------------------------
+
+
+def started_in_background(synth: JackSynth) -> list[WorkerError | None]:
+    done: list[WorkerError | None] = []
+    synth.start_in_background(done.append)
+    return done
+
+
+def test_background_start_does_not_block_and_the_first_sentence_waits(tmp_path, synths) -> None:
+    synth, fallback = make(tmp_path, "ok", startup_timeout_s=10, first_wait_s=10)
+    synths.append(synth)
+    done = started_in_background(synth)
+    assert synth.starting  # returned at once
+    assert len(synth.synthesize("Ciao.")) == 300  # waited for Jack instead of the fallback
+    assert fallback.texts == [] and done == [None] and not synth.starting
+
+
+def test_a_sentence_does_not_wait_longer_than_first_wait_s(tmp_path, synths) -> None:
+    synth, fallback = make(tmp_path, "slow_start", startup_timeout_s=10, first_wait_s=0.2)
+    synths.append(synth)
+    started_in_background(synth)
+    start = time.monotonic()
+    synth.synthesize("Ciao.")
+    assert time.monotonic() - start < 2
+    assert fallback.texts == ["Ciao."]
+    assert synth.starting  # the worker keeps loading
+
+
+def test_background_start_failure_is_reported_and_not_retried(tmp_path, synths) -> None:
+    synth, fallback = make(tmp_path, "bad_ready", startup_timeout_s=10, first_wait_s=10)
+    synths.append(synth)
+    done = started_in_background(synth)
+    assert synth.wait_started(10)
+    assert len(done) == 1 and isinstance(done[0], WorkerError)
+    synth.synthesize("Ciao.")
+    assert fallback.texts == ["Ciao."]
+    time.sleep(0.3)
+    assert not synth.alive() and synth._proc is None  # no restart of a broken install
+
+
+def test_basta_while_waiting_for_jack_says_nothing(tmp_path, synths) -> None:
+    synth, fallback = make(tmp_path, "slow_start", startup_timeout_s=10, first_wait_s=10)
+    synths.append(synth)
+    started_in_background(synth)
+    threading.Timer(0.2, synth.cancel).start()
+    start = time.monotonic()
+    assert len(synth.synthesize("Ciao.")) == 0
+    assert time.monotonic() - start < 2 and fallback.texts == []
 
 
 def test_symbols_and_acronyms_reach_the_worker_as_italian_words(tmp_path, synths) -> None:

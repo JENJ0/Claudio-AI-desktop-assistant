@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased] - faster startup
+
+### Changed
+- Claudio listens much sooner (JenJo: "ci mette troppo tempo ad avviarsi"). Jack's worker
+  (8-30 s) starts first and loads in the background instead of blocking everything; Whisper,
+  wake word, voice and Claude load at the same time (`[startup] parallel`). A reply asked
+  while Jack is still loading waits for him up to `[tts] jack_first_wait_s` (30 s), then the
+  fallback voice speaks it; "basta" stops the wait.
+- Once everything is loaded Claudio says "Sono pronto" (`[startup] announce_ready`), with the
+  notices of a degraded start before it, between two requests, never over one.
+- `console.log`: `Avvio: whisper 3.1 s, ...` (each loader) and `Avvio completo in N s`.
+
 ## [Unreleased] - 0.3.2 (understanding and interrupting)
 
 ### Changed
@@ -66,7 +78,7 @@
   `--words` speaks candidate spellings of hard words.
 - JenJo's pick by ear (24/10, variant C): `jack_temperature = 0.7`, `jack_rvc = "auto"`.
 - `[tts.jack_words]`: respellings for words Jack said wrong ("PC" heard as "pace", English
-  words like "file" read in English): `PC = "pì cì"`, `file = "fàiil"`, `download = "dàunlòud"` (JenJo's picks by ear), ...
+  words like "file" read in English): `PC = "pì cì"`, `file = "fàiil"`, `download = "dàunlòud"` (JenJo's picks by ear), `Claude = "clòd"`, `desktop = "dèsk-top"` (25/10, from JenJo's real replies replayed with `--from-log`), ...
 - Fixed: the whole-sentence RVC warm-up on silence gave a NaN pitch and a CUDA assert at worker
   startup; the pitch is now clamped (NaN = unvoiced).
 
