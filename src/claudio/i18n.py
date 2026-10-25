@@ -360,6 +360,31 @@ EN: dict[str, str] = {
     "Azione PC %s livello %d: %s (%d ms)": "PC action %s level %d: %s (%d ms)",
     "[pc] safe_keys: tasto non valido ignorato: %r": "[pc] safe_keys: invalid key ignored: %r",
     "Azione PC fallita: %s": "PC action failed: %s",
+    "Comando proposto: %s": "Command proposed: %s",
+    "Nuova richiesta al posto della conferma: azione annullata": (
+        "A new request instead of the confirmation: action dropped"
+    ),
+    "Percorso %r non trovato: uso %s": "Path %r not found: using %s",
+    "Indice: %d risultati fuori dalle cartelle permesse": (
+        "Index: %d results outside the allowed folders"
+    ),
+    "Incolla non riuscito (%s): scrivo tasto per tasto": "Paste failed (%s): typing key by key",
+    "Finestra della chat non aperta": "Chat window not opened",
+    "Comando: albero di processi non chiuso, chiudo solo PowerShell": (
+        "Command: process tree not closed, closing PowerShell only"
+    ),
+    "Screenshot di %s: %d x %d, %d KB": "Screenshot of %s: %d x %d, %d KB",
+    "Claudio gira come amministratore: i comandi da terminale sono spenti": (
+        "Claudio runs as administrator: terminal commands are off"
+    ),
+    "Non so se Claudio gira come amministratore: comandi spenti": (
+        "Cannot tell whether Claudio runs as administrator: commands off"
+    ),
+    "Comando eseguito: %s -> %s": "Command run: %s -> %s",
+    "Comando rifiutato: %r (%s)": "Command refused: %r (%s)",
+    "Finestra %r non visibile: screenshot dello schermo": (
+        "Window %r not visible: screenshot of the screen"
+    ),
     "Risposta alla conferma di Claude: %r": "Answer to Claude's confirmation: %r",
     "App nel menu Start: %d": "Apps in the Start menu: %d",
     "Lettura di %r interrotta dopo %.1f s": "Reading %r stopped after %.1f s",

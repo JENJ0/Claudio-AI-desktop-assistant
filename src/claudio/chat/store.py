@@ -78,6 +78,8 @@ class ChatStore:
         Near misses and timeouts have neither and are skipped. Never raises: the chat must not
         break a conversation."""
         text, reply = (row.get("text") or "").strip(), (row.get("reply") or "").strip()
+        if reply and row.get("shown"):  # the exact command waiting for "confermo" (v0.3.2)
+            reply = f"{reply}\n{row['shown']}"
         if not text and not reply:
             return
         ts = float(row.get("ts") or time.time())
