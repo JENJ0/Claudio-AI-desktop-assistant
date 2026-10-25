@@ -195,6 +195,8 @@ escalate = true
 smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"], en = ["think hard", "think carefully", "think it through"] }
 # A request for detail: Claudio asks "Lo uso?" for Sonnet at once (no Haiku call).
 offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"], en = ["in detail", "in depth", "explain thoroughly"] }
+# Stories, jokes, poems: Haiku tells them itself, never "Lo uso?" (even if it asks for Sonnet).
+no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "barzelletta", "barzellette", "poesia", "filastrocca", "racconta", "raccontami"], en = ["story", "stories", "joke", "jokes", "poem", "fairy tale"] }
 
 # Claude acts on the PC with tools (Phase 3). Level 1 runs at once (open, search, read the
 # windows, harmless keys); type, close a window, move a file and other keys ask "Confermi?"
