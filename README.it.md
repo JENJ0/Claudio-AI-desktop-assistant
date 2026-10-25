@@ -99,10 +99,13 @@ confirm" la esegue. Ogni domanda e risposta finisce nel log.
 Dopo una risposta Claudio resta in ascolto per 6 secondi senza wake word (lo dice un bip): un
 altro comando non richiede "Hey Claudio". La finestra si chiude con il silenzio, con "basta" o
 con qualcosa che non è un comando (la TV, qualcun altro che parla), con un bip basso e nessuna
-risposta. Mentre parla, Claudio ascolta anche "basta" / "stop" e si ferma subito: con le casse
-la sua stessa voce arriva al microfono, quindi con le cuffie funziona meglio. Entrambe le cose
-stanno in `[conversation]` (`window_s = 0` spegne la finestra, `barge_in = false` l'ascolto
-mentre parla).
+risposta. Mentre parla, Claudio continua ad
+ascoltare. Una voce vicina al microfono (`barge_in_min_dbfs`, almeno 0,3 s) abbassa subito la
+risposta; quando Whisper sente parole la risposta si ferma e quello che hai detto diventa la
+richiesta successiva, senza "Hey Claudio" ("basta" / "stop" ferma e basta). Se era rumore il
+volume torna normale. La sua voce che rientra dalle casse viene riconosciuta e ignorata, ma con
+le cuffie va meglio. Tutto sta in `[conversation]` (`window_s = 0` spegne la finestra,
+`barge_in = false` l'ascolto mentre parla, `barge_in_mode` come reagisce).
 
 ## Claude (domande)
 

@@ -84,6 +84,11 @@ class StreamingSpeaker:
             if cancel := getattr(synth, "cancel", None):  # a worker generating audio stops too
                 cancel()
 
+    def duck(self, volume: float | None) -> None:
+        """Lower the reply being spoken to `volume` (a voice may be interrupting); None
+        brings it back to full volume."""
+        self.player.gain = 1.0 if volume is None else volume
+
     def voice(self, language: str) -> Any:
         return self.voices.get(language, self.synth)
 
@@ -129,6 +134,7 @@ class StreamingSpeaker:
         """`language` may be a callable, read at every sentence: the responder only knows the
         language of its reply once it has matched the request."""
         self._cancel.clear()
+        self.duck(None)  # every reply starts at full volume
         queue: asyncio.Queue[tuple[np.ndarray, int] | None] = asyncio.Queue(maxsize=2)
 
         async def produce() -> None:

@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - 0.3.2 (understanding and interrupting)
+
+### Changed
+- Talking over a reply interrupts it (JenJo: "mentre sta rispondendo se gli parlo mi deve
+  sentire"): a loud, close voice (`barge_in_min_dbfs` -30, stricter VAD 0.6, at least 300 ms)
+  lowers the reply to `duck_volume` at once; when Whisper hears words (two or more, the name or
+  a command) the reply stops and the phrase, heard to its end, is the next request
+  (`wake_word = "barge_in"` in metrics). "basta" still only stops. Noise restores the volume;
+  words mostly from the reply itself are its echo and are ignored. `barge_in_mode` = duck |
+  stop | confirm. Slices checked every 1.2 s instead of 2 s.
+- Long phrases are no longer cut at a short pause: after 1.5 s of speech the phrase needs
+  800 ms of silence to end (`long_end_silence_ms`, `long_after_s`); commands still end after
+  400 ms. `max_utterance_s` 8 -> 15 s.
+
 ## [Unreleased] - personality
 
 ### Added
