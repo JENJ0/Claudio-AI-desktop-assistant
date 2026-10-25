@@ -243,3 +243,14 @@ async def test_empty_index_falls_back_to_the_walk(home: Path) -> None:
         assert out.text == "No files found for: zzqx."
     finally:
         tools.close()
+
+
+async def test_index_paths_outside_the_roots_still_walk(home: Path, tmp_path: Path) -> None:
+    desk = FakeDesktop()
+    desk.index = [files.Found(Path("/elsewhere/Utenti/TESI"), 0.0)]  # refused by the policy
+    tools = PcTools(desk, PcSettings(), home=home)
+    try:
+        out = await tools.run(ToolCall("1", "search_files", {"query": "tesi", "kind": "folder"}))
+        assert out.text.startswith("1 found:") and "TESI" in out.text
+    finally:
+        tools.close()

@@ -396,7 +396,10 @@ class PcTools:
         kind = kind if kind in files.KINDS else None
         roots = self.policy.search_roots()
         limit = self.settings.search_limit
-        found = self.desktop.search_index(terms, kind, roots, limit)
+        found = self.desktop.search_index(terms, kind, roots, limit) or []
+        # Outside the allowed folders counts as nothing: on 25/10 the index answered "tesi" only
+        # with paths the policy refused (likely written as C:\Utenti\...) and the walk never ran.
+        found = [f for f in found if self.policy.allowed(f.path)]
         similar: list[Found] = []
         if not found:
             # No index, or the index has nothing: a folder not indexed yet (on 25/10 it did not
@@ -405,8 +408,8 @@ class PcTools:
             walked = files.walk(
                 terms, roots, kind, limit, self.settings.search_timeout_s, similar=SIMILAR
             )
-            found, similar = walked.found, walked.similar
-        found = [f for f in found if self.policy.allowed(f.path)]
+            found = [f for f in walked.found if self.policy.allowed(f.path)]
+            similar = walked.similar
         home = self.policy.home
         if not found:
             similar = [f for f in similar if self.policy.allowed(f.path)]

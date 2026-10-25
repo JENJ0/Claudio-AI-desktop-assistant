@@ -165,6 +165,10 @@ def walk(
         for entry in listed:
             try:
                 is_dir = entry.is_dir(follow_symlinks=False)
+                # Junctions ("Dati applicazioni", Documents\My Music...) lead to folders seen
+                # elsewhere, or loop: walking them spent the whole budget.
+                if is_dir and _is_link(entry):
+                    continue
             except OSError:
                 continue
             name = entry.name
@@ -208,6 +212,17 @@ _EXTENSIONS = {
     "music": {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", ".wma"},
     "video": {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"},
 }
+
+
+REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a symlink or a junction (Windows)
+
+
+def _is_link(entry: os.DirEntry[str]) -> bool:
+    """A symlink or a Windows junction (Python 3.11 has no DirEntry.is_junction)."""
+    if entry.is_symlink():
+        return True
+    attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    return bool(attributes & REPARSE_POINT)
 
 
 def _kind_ok(name: str, kind: str | None) -> bool:
