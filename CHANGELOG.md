@@ -14,6 +14,26 @@
 
 ## [Unreleased] - 0.3.2 (understanding and interrupting)
 
+### Added
+- Misheard requests are understood (JenJo: "deve capire quello che ho detto veramente anche se
+  Whisper capta male"). When Whisper doubted a request for Claude (`[stt] unsure_logprob`
+  -0.2: on 25/10 the misheard ones scored -0.25..-1.1, the right ones -0.01..-0.17), Haiku
+  gets `unsure` and up to `[stt] alternatives` (2) other transcriptions in the request's tag
+  (~10-25 tokens, ~0.000003 $). The closed list's n-best is reused; otherwise one more Whisper
+  pass (~120 ms), only on these requests. `stt_unsure`, `stt_alternatives`, `alternatives_ms`
+  in metrics.jsonl.
+- System prompt: real examples of Whisper's mistakes ("desi"/"attesi" for "Tesi", "pure sono"
+  for "che ore sono", the name mangled at the start, noise as short English); Haiku acts on the
+  likely meaning and asks only when the readings lead to different actions (~200 cached tokens).
+- `search_files`: when the Windows index finds nothing (on 25/10 it missed Desktop\PROGETTI
+  and Desktop\UNIVERSITA'\TESI, then found them later) the folders are walked, breadth first,
+  and with no match the 5 names that sound most alike are listed ("desi" -> TESI).
+
+### Fixed
+- A reply cut short ("basta", or a new request said over it) stays in the conversation with a
+  `[cut off]` note: "continua la storia" and "ripeti la storia" used to get "non ho nessuna
+  storia" because only finished replies were kept.
+
 ### Changed
 - Talking over a reply interrupts it (JenJo: "mentre sta rispondendo se gli parlo mi deve
   sentire"): a loud, close voice (`barge_in_min_dbfs` -30, stricter VAD 0.6, at least 300 ms)

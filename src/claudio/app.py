@@ -18,7 +18,17 @@ import numpy as np
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.config import NoiseSettings, in_language
-from claudio.intake import BARGE_IN, Decision, Heard, Kind, RequestFilter, Segment, content_words
+from claudio.intake import (
+    BARGE_IN,
+    Decision,
+    Heard,
+    Hearing,
+    Kind,
+    RequestFilter,
+    Segment,
+    content_words,
+    unsure,
+)
 from claudio.intake import addressed_to_claudio as addressed_to_claudio  # re-exported
 from claudio.metrics import Interaction, MetricsWriter
 from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
@@ -87,6 +97,9 @@ class Assistant:
         confirm_below: float = 0.0,
         always_confirm: frozenset[str] = frozenset(),
         stt_segments: Callable[[], Sequence[Segment]] | None = None,
+        unsure_logprob: float | None = None,
+        alternatives: int = 0,
+        on_heard: Callable[[Hearing], None] | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -124,6 +137,13 @@ class Assistant:
         self.always_confirm = always_confirm
         # (audio, language) -> Whisper's n-best: tried on a request no command understands.
         self.closed_list = closed_list
+        # A request for Claude that Whisper doubted (a segment below `unsure_logprob`; None:
+        # never judged) is passed on with up to `alternatives` other transcriptions, through
+        # `on_heard`, called before every reply (None: Claude only gets the text).
+        self.unsure_logprob = unsure_logprob
+        self.alternatives = alternatives
+        self.on_heard = on_heard
+        self._candidates: list[str] | None = None  # the closed list's n-best, when it ran
         self._barge_checking = False
         self._interrupted = False  # the reply being spoken was cut short by "basta"
         # A voice took over while CLAUDIO spoke: the start of the next request, then the frames
@@ -346,6 +366,7 @@ class Assistant:
         self._interrupted = False
         self._takeover = None
         self._reply_parts = []
+        self._candidates = None
         try:
             async with self._stt_lock:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
@@ -370,6 +391,7 @@ class Assistant:
                 if decision.kind is not Kind.FALSE_WAKE:  # a false wake ends in silence
                     await self.speaker.beep("cancel")
                 return
+            await self._tell_hearing(audio, decision.text, heard, segments, inter)
             self._set_state(State.RESPONDING)
             await self.speaker.speak(
                 self._marked(self.responder.respond(decision.text, heard), inter),
@@ -479,6 +501,7 @@ class Assistant:
             return text
         start = self.clock()
         candidates = await asyncio.to_thread(self.closed_list, audio, heard)
+        self._candidates = candidates
         inter.info["closed_list_ms"] = round((self.clock() - start) * 1000)
         found = next((c for c in candidates if c != text and understands(c, heard)), None)
         if found is None:
@@ -486,6 +509,60 @@ class Assistant:
         log.info("Lista chiusa: %r -> %r", text, found)
         inter.info["closed_list_from"] = text
         return found
+
+    async def _tell_hearing(
+        self,
+        audio: np.ndarray,
+        text: str,
+        heard: str,
+        segments: Sequence[Segment],
+        inter: Interaction,
+    ) -> None:
+        """Before the reply: how sure Whisper was. Only a request for Claude that Whisper
+        doubted gets the note and the alternatives ("apri la cartella desi" -> also heard
+        "apri la cartella Tesi"); a local command or a yes/no never pays the extra pass."""
+        if self.on_heard is None:
+            return
+        hearing = Hearing()
+        if (
+            self.unsure_logprob is not None
+            and text
+            and unsure(segments, self.unsure_logprob)
+            and not self.responder.awaiting
+            and not self.responder.understands(text, heard)
+        ):
+            hearing = Hearing(True, await self._alternatives(audio, text, heard, inter))
+            inter.info["stt_unsure"] = True
+            if hearing.alternatives:
+                inter.info["stt_alternatives"] = list(hearing.alternatives)
+            log.info("Whisper insicuro: %r, forse %s", text, list(hearing.alternatives))
+        self.on_heard(hearing)
+
+    async def _alternatives(
+        self, audio: np.ndarray, text: str, heard: str, inter: Interaction
+    ) -> tuple[str, ...]:
+        """Whisper's other guesses, different from `text`: the closed list's, or one more
+        n-best pass when it did not run (a long request, a question)."""
+        if self.alternatives <= 0 or self.closed_list is None:
+            return ()
+        candidates = self._candidates
+        if candidates is None:
+            start = self.clock()
+            try:
+                async with self._stt_lock:
+                    candidates = await asyncio.to_thread(self.closed_list, audio, heard)
+            except Exception:
+                log.exception("Trascrizioni alternative non riuscite")
+                return ()
+            inter.info["alternatives_ms"] = round((self.clock() - start) * 1000)
+        seen = {normalize(text, drop_fillers=False)}
+        out: list[str] = []
+        for candidate in candidates:
+            key = normalize(candidate, drop_fillers=False)
+            if key and key not in seen:
+                seen.add(key)
+                out.append(candidate)
+        return tuple(out[: self.alternatives])
 
     def _keeps_conversation(self, outcome: str) -> bool:
         return (
@@ -678,6 +755,8 @@ class Assistant:
         outcome = "ok"
         log.info("Scritto nella finestra: %r", text)
         try:
+            if self.on_heard is not None:
+                self.on_heard(Hearing())  # typed: nothing misheard
             stream = self._marked(self.responder.respond(text, language), inter)
             if speak:
                 await self.speaker.speak(

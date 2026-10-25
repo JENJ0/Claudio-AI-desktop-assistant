@@ -324,6 +324,13 @@ says how many requests the wake word verifier (`wakeword.verify`) would drop: a 
 only when Whisper heard the name at the start or the request is a local command, so "Hey, ciao,
 come stai?" ends in silence and, from v0.2.0, never costs a Claude call.
 
+When Whisper is unsure of a request that goes to Claude (a segment's `avg_logprob` below
+`stt.unsure_logprob`, -0.2), Haiku is told so in the request's tag, with up to
+`stt.alternatives` (2) other transcriptions from Whisper's n-best: `[it | unsure: "Apri la
+cartella Tesi."] Apri la cartella desi.` The system prompt asks Haiku to work out what was
+most likely said. The n-best of the closed list is reused; otherwise one more Whisper pass
+(~120 ms) runs, only on these requests. `alternatives = 0` keeps only the note.
+
 ## Development
 
 ```powershell
