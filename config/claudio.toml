@@ -119,6 +119,8 @@ email = "imèil"
 mail = "mèil"
 browser = "bràuser"
 password = "pàssuord"
+Claude = "clòd"            # JenJo's picks by ear (25/10), as desktop
+desktop = "dèsk-top"
 
 # English replies are off while languages = ["it"]; their voices, if it comes back:
 # [tts.voices.en]

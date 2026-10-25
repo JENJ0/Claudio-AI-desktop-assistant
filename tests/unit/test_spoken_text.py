@@ -46,7 +46,8 @@ def test_the_default_config_respells_the_words_jenjo_heard_wrong() -> None:
     from claudio.config import DEFAULT_CONFIG, load_settings
 
     words = load_settings(DEFAULT_CONFIG).tts.jack_words
-    assert {"PC", "file", "download"} <= set(words)
+    assert {"PC", "file", "download", "Claude", "desktop"} <= set(words)
+    assert to_spoken_it("Sul Desktop di Claude", words) == "Sul dèsk-top di clòd"
 
 
 @pytest.mark.parametrize(

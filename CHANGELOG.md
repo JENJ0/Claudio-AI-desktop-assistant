@@ -59,7 +59,7 @@
   `--words` speaks candidate spellings of hard words.
 - JenJo's pick by ear (24/10, variant C): `jack_temperature = 0.7`, `jack_rvc = "auto"`.
 - `[tts.jack_words]`: respellings for words Jack said wrong ("PC" heard as "pace", English
-  words like "file" read in English): `PC = "pì cì"`, `file = "fàiil"`, `download = "dàunlòud"` (JenJo's picks by ear), ...
+  words like "file" read in English): `PC = "pì cì"`, `file = "fàiil"`, `download = "dàunlòud"` (JenJo's picks by ear), `Claude = "clòd"`, `desktop = "dèsk-top"` (25/10, from JenJo's real replies replayed with `--from-log`), ...
 - Fixed: the whole-sentence RVC warm-up on silence gave a NaN pitch and a CUDA assert at worker
   startup; the pitch is now clamped (NaN = unvoiced).
 
