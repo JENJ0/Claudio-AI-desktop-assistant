@@ -57,7 +57,10 @@ def build_responder(
     settings: Settings,
     system: SystemControl | None = None,
     chat: ChatLauncher | None = None,
+    tracker: CostTracker | None = None,
 ) -> LocalResponder:
+    """`tracker`: open it on the thread that runs the requests (its SQLite connection only
+    works there) when this runs in a loader thread."""
     from claudio.router.actions import ActionRunner
     from claudio.router.matcher import CommandMatcher, load_commands
     from claudio.router.responder import LocalResponder
@@ -65,7 +68,8 @@ def build_responder(
     commands = load_commands(settings.resolve(settings.router.commands_file))
     matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
-    tracker = build_tracker(settings)
+    if tracker is None:
+        tracker = build_tracker(settings)
     brain = build_brain(settings, tracker)
     return LocalResponder(
         matcher,
@@ -388,6 +392,7 @@ async def run_assistant(
     if jack is not None:
         jack.start_in_background(jack_error.append)
     system = SystemControl()
+    tracker = build_tracker(settings)  # SQLite: opened on the thread that uses it
     loaded = load_all(
         {
             "whisper": lambda: WhisperTranscriber(settings.stt, models / "whisper"),
@@ -398,7 +403,7 @@ async def run_assistant(
                 ),
             ),
             "voce": lambda: build_speaker(settings, jack, start_player=False),
-            "claude": lambda: build_responder(settings, system, chat_window),
+            "claude": lambda: build_responder(settings, system, chat_window, tracker),
         },
         parallel=settings.startup.parallel,
     )

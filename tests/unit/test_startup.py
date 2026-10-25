@@ -49,3 +49,19 @@ def test_a_failing_loader_raises_after_the_others_end(parallel: bool) -> None:
     with pytest.raises(FileNotFoundError):
         load_all({"broken": broken, "other": other}, parallel=parallel)
     assert ended == (["other"] if parallel else [])
+
+
+def test_spend_counter_works_after_a_threaded_load(tmp_path) -> None:
+    """25/10 on JenJo's PC: the SQLite counter opened in a loader thread broke every Claude
+    request ("SQLite objects created in a thread can only be used in that same thread")."""
+    from claudio.__main__ import build_responder, build_tracker
+    from claudio.config import load_settings
+
+    settings = load_settings()
+    settings = settings.model_copy(
+        update={"cost": settings.cost.model_copy(update={"db_file": tmp_path / "spesa.db"})}
+    )
+    tracker = build_tracker(settings)  # on this thread, as run_assistant does
+    loaded = load_all({"claude": lambda: build_responder(settings, tracker=tracker)})
+    assert loaded["claude"] is not None
+    tracker.check()  # raised sqlite3.ProgrammingError when opened in the loader thread
