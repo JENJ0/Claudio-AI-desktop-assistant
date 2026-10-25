@@ -276,6 +276,13 @@ L'ultima riga dice quante richieste scarterebbe il verificatore della wake word
 richiesta è un comando locale, così "Hey, ciao, come stai?" finisce nel silenzio e, da v0.2.0,
 non costa mai una chiamata a Claude.
 
+Quando Whisper è insicuro di una richiesta che va a Claude (un segmento con `avg_logprob` sotto
+`stt.unsure_logprob`, -0.2), Haiku lo sa dall'etichetta della richiesta, con fino a
+`stt.alternatives` (2) trascrizioni alternative dall'n-best di Whisper: `[it | unsure: "Apri la
+cartella Tesi."] Apri la cartella desi.` Il prompt di sistema chiede a Haiku di dedurre cosa è
+stato detto più probabilmente. Si riusa l'n-best della lista chiusa; altrimenti parte un'altra
+passata di Whisper (~120 ms), solo su queste richieste. `alternatives = 0` lascia solo la nota.
+
 ## Sviluppo
 
 ```powershell

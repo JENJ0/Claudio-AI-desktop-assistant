@@ -12,7 +12,7 @@ import httpx2
 import pytest
 
 from claudio.app import addressed_to_claudio
-from claudio.brain.claude import ClaudeBrain
+from claudio.brain.claude import CUT_NOTE, ClaudeBrain
 from claudio.brain.prompts import SYSTEM_PROMPT
 from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
@@ -245,7 +245,10 @@ async def test_cut_short_still_counts_the_tokens(pricing: Pricing) -> None:
     assert b.tracker.calls_today() == 1
     assert b.last_call["input_tokens"] == 400
     assert b.last_call["output_tokens"] == len(first) // 3  # estimate from the text
-    assert len(b._history) == 0  # a reply cut short is not context for the next question
+    # A reply cut short stays as context, marked: "continua la storia" must know the story.
+    assert list(b._history) == [
+        ("[it] raccontami una storia", f"Prima frase lunga. {CUT_NOTE}"),
+    ]
 
 
 # --- the responder: local first, Claude for the rest ---------------------------------

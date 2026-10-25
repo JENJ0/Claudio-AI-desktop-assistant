@@ -125,6 +125,12 @@ class SttSettings(BaseModel):
     # command wins (one more Whisper pass, only on requests not understood).
     closed_list: bool = True
     closed_list_max_words: int = Field(5, ge=0)  # longer requests skip it (0 = no limit)
+    # A request for Claude that Whisper was unsure of (a segment's avg_logprob below this) goes
+    # with a note and up to `alternatives` other transcriptions from Whisper's n-best (one more
+    # pass, ~120 ms, only on these requests; reused when the closed list already ran), so
+    # Claude can work out what JenJo said. 0 alternatives: only the note.
+    unsure_logprob: float = Field(-0.2, le=0)
+    alternatives: int = Field(2, ge=0, le=4)
     beam_size: int = Field(1, ge=1)
     initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
