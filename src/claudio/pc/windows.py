@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from claudio.pc import terminal
-from claudio.pc.files import INDEX_KINDS, Found, index_path
+from claudio.pc.files import INDEX_KINDS, SHORTCUTS, Found, index_path, shortcuts
 from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import App, Window
 
@@ -61,10 +61,19 @@ class WindowsDesktop:
             name, target = str(item.Name or ""), str(item.Path or "")
             if name and target and not name.lower().startswith(("uninstall", "disinstalla")):
                 found.append(App(name, target))
+        names = {app.name.casefold() for app in found}
+        for name, path in _shortcut_files():
+            if name.casefold() not in names:  # games: .url shortcuts the list leaves out
+                names.add(name.casefold())
+                found.append(App(name, str(path)))
         log.debug("App nel menu Start: %d", len(found))
         return found
 
     def launch(self, app: App) -> None:
+        target = Path(app.target)
+        if target.suffix.lower() in SHORTCUTS and target.is_file():
+            os.startfile(str(target))  # a Steam/Epic game shortcut (steam://, epic...://)
+            return
         # explorer resolves both Store apps (their AUMID) and classic shortcuts.
         subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app.target}"])
 
@@ -224,6 +233,21 @@ class WindowsDesktop:
 
     def run_command(self, command: str, timeout_s: float, cwd: Path) -> CommandResult:
         return terminal.run_process(terminal.powershell_argv(command), timeout_s, cwd)
+
+
+def _shortcut_files() -> list[tuple[str, Path]]:
+    """Shortcuts in both Start menus (all levels) and on the desktops (top level only)."""
+    env = os.environ
+    menus = [
+        Path(env.get(var, "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+        for var in ("APPDATA", "ProgramData")
+        if env.get(var)
+    ]
+    home = Path.home()
+    desks = [home / "Desktop", home / "OneDrive" / "Desktop"]
+    if env.get("PUBLIC"):
+        desks.append(Path(env["PUBLIC"]) / "Desktop")
+    return shortcuts(menus, deep=True) + shortcuts(desks, deep=False)
 
 
 def _alt_tab_window(hwnd: int) -> bool:

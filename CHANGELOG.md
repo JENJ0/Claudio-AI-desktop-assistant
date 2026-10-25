@@ -23,6 +23,9 @@
   similar folder and file names, and Haiku opens the only one or asks which (25/10).
 - Replies with tools were long: Haiku narrated each step and read paths aloud. It now stays
   silent before a tool, says a few words after it and names folders without their path (25/10).
+- Games from Steam or Epic ("Apri Rocket League") open: `.lnk`/`.url` shortcuts in the Start
+  menus and on the desktop count as apps. Sentences of two tool steps keep a space between them,
+  so the voice pauses ("La apro. Aperta.") (25/10).
 - "Apri la cartella Progetti": a name Claude puts in the wrong folder is looked for in the
   user folder, Desktop, Documents, Downloads (also under OneDrive).
 - Typing in Notepad needs no yes (`[pc] free_typing`); text of 40+ characters or with new

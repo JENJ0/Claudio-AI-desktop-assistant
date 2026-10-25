@@ -197,3 +197,20 @@ async def test_sentences_of_two_steps_keep_a_space(pricing: Pricing, tools: PcTo
     )
     b = acting_brain(pricing, client, tools)
     assert await ask(b, "apri la cartella progetti") == "La apro. Aperta."
+
+
+def test_game_shortcuts_are_apps(tmp_path: Path) -> None:
+    """25/10: "Apri Rocket League" failed: an Epic/Steam game is a .url shortcut."""
+    from claudio.pc.files import shortcuts
+
+    menu = tmp_path / "Programs" / "Steam"
+    menu.mkdir(parents=True)
+    (menu / "Rocket League.url").write_text("[InternetShortcut]\nURL=steam://rungameid/252950")
+    (menu / "Uninstall Steam.lnk").write_text("x")
+    (menu / "readme.txt").write_text("x")
+    desk = tmp_path / "Desktop"
+    (desk / "deep").mkdir(parents=True)
+    (desk / "deep" / "Hidden.url").write_text("x")
+    names = [n for n, _ in shortcuts([tmp_path / "Programs"], deep=True)]
+    assert names == ["Rocket League"]
+    assert shortcuts([desk], deep=False) == []

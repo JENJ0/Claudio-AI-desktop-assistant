@@ -142,6 +142,26 @@ def search_terms(query: str) -> list[str]:
     return terms[:MAX_TERMS]
 
 
+SHORTCUTS = {".lnk", ".url"}
+
+
+def shortcuts(folders: Iterable[Path], deep: bool) -> list[tuple[str, Path]]:
+    """(name, file) of the shortcuts in these folders. Games from Steam or Epic are .url
+    shortcuts that the Start menu app list leaves out (25/10: Rocket League)."""
+    out: list[tuple[str, Path]] = []
+    for folder in folders:
+        try:
+            items = folder.rglob("*") if deep else folder.iterdir()
+            for item in items:
+                if item.suffix.lower() in SHORTCUTS and item.is_file():
+                    name = item.stem
+                    if not name.casefold().startswith(("uninstall", "disinstalla")):
+                        out.append((name, item))
+        except OSError:
+            continue
+    return out
+
+
 def index_path(url: str) -> Path | None:
     """The real path of a Windows Search result from its System.ItemUrl ("file:C:/Users/...").
     Not System.ItemPathDisplay: on an Italian Windows it reads "C:\\Utenti\\..." (25/10: every
