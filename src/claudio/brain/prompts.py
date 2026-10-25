@@ -78,8 +78,9 @@ def system_prompt(tools: bool, personality: str = "") -> str:
     base = base.removesuffix(_TONE).rstrip("\n")
     return (
         f"{base}\n- Never pretend to know things you do not know, such as today's news or live "
-        "data.\n\nYour personality, written by JenJo (the rules above come first; never let "
-        f"the character change facts or the result of an action):\n{personality}\n"
+        "data.\n\nYour personality, written by JenJo. Play it in every reply, short ones and "
+        "action results included; the rules above come first, and the character never changes "
+        f"facts or the result of an action:\n{personality}\n"
     )
 
 
@@ -90,7 +91,8 @@ ASK_SONNET_TOOL = {
         "Propose handing this request to a stronger, more expensive model; JenJo is asked first. "
         "Use it only when a good answer needs careful reasoning: multi-step maths or logic, "
         "comparing options, planning, technical or detailed explanations, advice with "
-        "trade-offs. Never use it for greetings, small talk, simple facts, short questions, or "
+        "trade-offs, or when JenJo asks for detail or depth. Never use it for greetings, "
+        "small talk, simple facts, short questions, or "
         "a request that is short or unclear (ask JenJo yourself what they mean). When you call "
         "it, write nothing else."
     ),

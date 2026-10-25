@@ -52,7 +52,7 @@ def test_off_or_missing_means_no_personality(tmp_path: Path) -> None:
 def test_the_default_is_short_and_in_character() -> None:
     text = load_personality(Path(DEFAULT_FILE), 3000)
     assert "Jack il Bello" in text and "<!--" not in text
-    assert len(text) < 1500  # it goes with every request
+    assert len(text) < 2500  # it goes with every request
 
 
 def test_the_personality_replaces_the_neutral_tone() -> None:

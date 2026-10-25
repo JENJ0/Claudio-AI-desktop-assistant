@@ -6,12 +6,14 @@ import contextlib
 import logging
 import sys
 import threading
+import time
 from typing import Any
 
 from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
 
+AUTO = "auto"  # input_device: the microphone with the most signal (probe_inputs)
 PREFERRED_HOST_API = "WASAPI"  # lowest latency on Windows; same name also appears under MME/DS
 MME_NAME_LENGTH = 31  # MME cuts device names to this many characters
 
@@ -64,15 +66,19 @@ def match_endpoint(
     return None
 
 
-def pick_output(spec: str | int, windows_default: str | None = None) -> int | None:
-    """The configured output; with none configured, the one Windows is using right now."""
+def pick_device(spec: str | int, kind: str, windows_default: str | None = None) -> int | None:
+    """The configured device; with none configured, the one Windows is using right now."""
     if spec != "" and spec is not None:
-        return resolve_device(spec, "output")
+        return resolve_device(spec, kind)
     if windows_default:
-        index = match_endpoint(windows_default, "output")
+        index = match_endpoint(windows_default, kind)
         if index is not None:
             return index
-    return resolve_device("", "output")
+    return resolve_device("", kind)
+
+
+def pick_output(spec: str | int, windows_default: str | None = None) -> int | None:
+    return pick_device(spec, "output", windows_default)
 
 
 class WindowsDefaultOutput:
@@ -80,6 +86,8 @@ class WindowsDefaultOutput:
 
     PortAudio reads the default device once at start-up; asking Windows directly follows a
     change made while CLAUDIO runs. Returns None off Windows or if Core Audio is unavailable."""
+
+    FLOW = 0  # eRender
 
     def __init__(self) -> None:
         self._local = threading.local()  # COM objects belong to the thread that made them
@@ -103,11 +111,17 @@ class WindowsDefaultOutput:
                 comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
             local.enumerator = AudioUtilities.GetDeviceEnumerator()
             local.id, local.name = None, None
-        device = local.enumerator.GetDefaultAudioEndpoint(0, 1)  # render, multimedia
+        device = local.enumerator.GetDefaultAudioEndpoint(self.FLOW, 1)  # multimedia role
         device_id = device.GetId()
         if device_id != local.id:
             local.id, local.name = device_id, AudioUtilities.CreateDevice(device).FriendlyName
         return local.name
+
+
+class WindowsDefaultInput(WindowsDefaultOutput):
+    """Name of the microphone Windows uses right now (Settings > Sound > Input)."""
+
+    FLOW = 1  # eCapture
 
 
 def resolve_device(
@@ -121,7 +135,7 @@ def resolve_device(
     kind: "input" or "output". A name may match the same device under several host APIs
     (MME, DirectSound, WASAPI...): WASAPI wins. Raises ValueError if nothing matches.
     """
-    if spec == "" or spec is None:
+    if spec == "" or spec is None or spec == AUTO:
         return default_device(kind, devices, hostapis)
     if isinstance(spec, int) or str(spec).strip().isdigit():
         return int(spec)
@@ -165,3 +179,92 @@ def stream_settings(device: int | None) -> Any:
 
     api = sd.query_hostapis(sd.query_devices(device)["hostapi"])["name"]
     return sd.WasapiSettings(auto_convert=True) if PREFERRED_HOST_API in api else None
+
+
+# Inputs that are not a microphone: they hear what the PC plays (Claudio's own voice).
+NOT_A_MICROPHONE = ("loopback", "stereo mix", "missaggio stereo", "what u hear", "wave out")
+PROBE_S = 0.6  # how long every microphone is listened to when choosing one
+PROBE_WINDOW = 512  # 32 ms at 16 kHz: the level is the loudest window
+DEFAULT_MARGIN_DB = 10.0  # another microphone must be this much louder than Windows' one
+DEAD_DBFS = -90.0  # quieter than this: switched off or muted, not a quiet room
+
+
+def candidate_inputs(
+    devices: list[dict[str, Any]] | None = None, hostapis: list[dict[str, Any]] | None = None
+) -> list[int]:
+    """Microphones worth listening to: one entry per device (WASAPI when there is one)."""
+    devices, hostapis = _query(devices, hostapis)
+    usable = [
+        i
+        for i, dev in enumerate(devices)
+        if dev["max_input_channels"] > 0
+        and not any(word in str(dev["name"]).lower() for word in NOT_A_MICROPHONE)
+    ]
+    wasapi = [
+        i for i in usable if PREFERRED_HOST_API in str(hostapis[devices[i]["hostapi"]]["name"])
+    ]
+    return wasapi or usable
+
+
+def choose_input(levels: dict[int, float], default: int | None) -> int | None:
+    """The microphone that hears the most (loudest 32 ms, dBFS). Windows' own keeps the job
+    unless another is clearly louder or it hears nothing at all (switched off, muted): room
+    noise alone must not make Claudio jump between microphones."""
+    alive = {i: db for i, db in levels.items() if db > DEAD_DBFS}
+    if not alive:
+        return default
+    best = max(alive, key=lambda i: alive[i])
+    if default in alive and alive[best] - alive[default] < DEFAULT_MARGIN_DB:
+        return default
+    return best
+
+
+def probe_inputs(sample_rate: int, seconds: float = PROBE_S) -> dict[int, float]:
+    """Listen to every microphone at once for `seconds`: {device index: loudest 32 ms in
+    dBFS}. One that cannot be opened is left out. Blocking (run it in a thread)."""
+    import sounddevice as sd
+
+    loudest: dict[int, float] = {}
+    streams = []
+
+    def callback_for(index: int) -> Any:
+        def callback(indata: Any, frames: int, time_info: object, status: object) -> None:
+            import numpy as np
+
+            audio = indata[:, 0].astype(np.float32) / 32768.0
+            n = len(audio) // PROBE_WINDOW
+            if n:
+                windows = audio[: n * PROBE_WINDOW].reshape(n, PROBE_WINDOW)
+                level = float(np.max(np.mean(np.square(windows), axis=1)))
+                loudest[index] = max(loudest.get(index, 0.0), level)
+
+        return callback
+
+    for index in candidate_inputs():
+        try:
+            stream = sd.InputStream(
+                samplerate=sample_rate,
+                blocksize=PROBE_WINDOW,
+                channels=1,
+                dtype="int16",
+                device=index,
+                callback=callback_for(index),
+                extra_settings=stream_settings(index),
+            )
+            stream.start()
+            streams.append(stream)
+        except Exception as exc:  # busy, unplugged, exclusive mode...
+            log.debug("Microfono %d non apribile per la prova: %s", index, exc)
+    try:
+        time.sleep(seconds)
+    finally:
+        for stream in streams:
+            with contextlib.suppress(Exception):
+                stream.close()
+    return {i: _dbfs(loudest.get(i, 0.0)) for i in loudest}
+
+
+def _dbfs(mean_square: float) -> float:
+    import math
+
+    return round(10 * math.log10(mean_square), 1) if mean_square > 0 else -120.0

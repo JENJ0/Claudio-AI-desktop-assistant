@@ -63,6 +63,17 @@ EN: dict[str, str] = {
     # audio
     "Stato audio in ingresso: %s": "Audio input status: %s",
     "Microfono: %s%s": "Microphone: %s%s",
+    "Microfono di Windows cambiato: %s": "Windows microphone changed: %s",
+    "Microfoni sentiti: %s": "Microphones heard: %s",
+    "WARN voce di Jack non installata (%s): parlerà Kokoro": (
+        "WARN Jack's voice is not installed (%s): Kokoro will speak"
+    ),
+    "Un altro microfono sente di più: passo a quello": (
+        "Another microphone hears more: switching to it"
+    ),
+    "Microfono %d non apribile per la prova: %s": (
+        "Microphone %d could not be opened for the probe: %s"
+    ),
     "Microfono non disponibile (%s): riprovo tra 1 s": (
         "Microphone not available (%s): retrying in 1 s"
     ),
@@ -196,6 +207,9 @@ EN: dict[str, str] = {
     "Sentito mentre parlo: %r": "Heard while speaking: %r",
     "Interrotto a voce: %r": "Interrupted by voice: %r",
     "Risposta interrotta": "Reply interrupted",
+    "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
+    "La mia voce nel microfono, la ignoro: %r": "My own voice heard again, ignored: %r",
+    "Voce troppo debole mentre parlo: ignorata": "Voice too quiet while speaking: ignored",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"
@@ -284,6 +298,10 @@ EN: dict[str, str] = {
     "Haiku propone Sonnet: chiedo conferma": "Haiku proposes Sonnet: asking first",
     "Sonnet approvato": "Sonnet approved",
     "Sonnet rifiutato: risponde Haiku": "Sonnet declined: Haiku answers",
+    "Richiesta dettagliata: propongo Sonnet": "Detailed request: proposing Sonnet",
+    "Wake word debole (%.2f): Whisper controlla il nome": (
+        "Weak wake word (%.2f): Whisper checks the name"
+    ),
     "Richiesta di ragionare: chiedo direttamente a Sonnet": (
         "Asked to reason: asking Sonnet directly"
     ),

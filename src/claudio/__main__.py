@@ -173,6 +173,8 @@ def build_synth(settings: Settings) -> tuple[Any, str]:
             str(models / tts.jack_rvc_model),
             "--applio",
             str(models / tts.jack_applio),
+            "--speed",
+            str(tts.jack_speed),
         ],
         fallback,
         tts.jack_startup_timeout_s,
@@ -305,12 +307,22 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
         settings.resolve(settings.models_dir) / "vad" / "silero_vad.onnx",
         settings.audio.sample_rate,
     )
+    c = settings.conversation
     vad_settings = settings.vad.model_copy(
-        update={"end_silence_ms": 300, "max_utterance_s": settings.conversation.barge_in_max_s}
+        update={
+            "threshold": c.barge_in_vad,  # stricter than for a request: the reply is playing
+            "min_speech_ms": c.barge_in_min_speech_ms,
+            "end_silence_ms": 300,
+            "long_end_silence_ms": 0,
+            "max_utterance_s": c.barge_in_max_s,
+        }
     )
     return BargeIn(
         Endpointer(vad, vad_settings, settings.audio.sample_rate),
         lambda audio: transcriber.transcribe(audio, quick=True),
+        mode=c.barge_in_mode,
+        min_dbfs=c.barge_in_min_dbfs,
+        duck_volume=c.duck_volume,
     )
 
 
@@ -417,6 +429,8 @@ async def run_assistant(
         claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
         only_addressed=settings.conversation.only_addressed,
         noise=settings.noise,
+        confirm_below=settings.wakeword.confirm_below,
+        always_confirm=wake.confirmed,
         stt_segments=lambda: transcriber.last_segments,
     )
     log.info(

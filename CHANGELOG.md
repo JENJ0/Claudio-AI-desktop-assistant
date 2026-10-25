@@ -42,6 +42,20 @@
   skipping big trees (miniconda3, npm-cache...); `open_path` with a wrong folder looks the
   name up the same way.
 
+## [Unreleased] - 0.3.2 (understanding and interrupting)
+
+### Changed
+- Talking over a reply interrupts it (JenJo: "mentre sta rispondendo se gli parlo mi deve
+  sentire"): a loud, close voice (`barge_in_min_dbfs` -30, stricter VAD 0.6, at least 300 ms)
+  lowers the reply to `duck_volume` at once; when Whisper hears words (two or more, the name or
+  a command) the reply stops and the phrase, heard to its end, is the next request
+  (`wake_word = "barge_in"` in metrics). "basta" still only stops. Noise restores the volume;
+  words mostly from the reply itself are its echo and are ignored. `barge_in_mode` = duck |
+  stop | confirm. Slices checked every 1.2 s instead of 2 s.
+- Long phrases are no longer cut at a short pause: after 1.5 s of speech the phrase needs
+  800 ms of silence to end (`long_end_silence_ms`, `long_after_s`); commands still end after
+  400 ms. `max_utterance_s` 8 -> 15 s.
+
 ## [Unreleased] - personality
 
 ### Added
@@ -75,6 +89,24 @@
 - Every action is logged with level, outcome and `tool_ms`; `metrics.jsonl` gets `tools`,
   `conversazione.md` an "Azioni" line.
 - Dependencies (Windows only): `pywinauto`, `psutil`.
+
+### Fixed after JenJo's test of v0.3.0 (23/10)
+- Self-activation (a 0.34 detection right after a reply): a wake below `[wakeword]
+  confirm_below` (0.45) wakes only if Whisper hears the name or a local command.
+- "Spiegami in dettaglio..." was answered by Haiku: `[claude] offer_phrases` propose Sonnet
+  at once ("Lo uso?"), without a Haiku call; the tool description mentions detail too.
+- Jack is the default voice (`engine = "jack"`, `effect = "none"`), 10% slower
+  (`[tts] jack_speed = 0.9`: stretched before RVC, RVC raises the pitch back).
+- Microphone: `input_device = "auto"` listens to every microphone for 0.6 s and uses the one
+  that hears the most (Windows' own unless another is 10 dB louder or it is silent). After
+  60 s below -50 dBFS it listens to the others with the stream still open and moves only to
+  a louder one, without re-scanning devices (second test: the headset sends digital silence
+  between phrases, and the re-scan broke the speaker's stream, PaErrorCode -9988).
+  `input_device = ""` follows Windows' default microphone while running.
+- "Claudio" alone wakes again: the `claudio` model is back (`threshold = 0.25`, `confirm =
+  true`): Whisper checks every detection, so its noise costs a Whisper pass, not a wake.
+  One "Claudio" fires the model on many frames: while Whisper checks, the rest of the burst
+  is dropped (no extra checks, near miss rows or WAVs).
 
 ## [Unreleased] - 0.3.0
 

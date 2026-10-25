@@ -51,6 +51,9 @@ class AudioPlayer:
         self._stream: Any = None
         self._index: int | None = None
         self._default_name: str | None = None
+        # Volume of what is played, read at every slice (lowered while a voice may be
+        # interrupting). Only replies sent with `cancel` are sliced, so beeps keep their level.
+        self.gain = 1.0
 
     def start(self) -> None:
         name = self.windows_default() if self.windows_default else None
@@ -122,7 +125,10 @@ class AudioPlayer:
             for start in range(0, max(len(data), 1), max(step, 1)):
                 if cancel is not None and cancel.is_set():
                     return False
-                self._write(data[start : start + step])
+                chunk = data[start : start + step]
+                if cancel is not None and self.gain < 1.0:
+                    chunk = (chunk * max(self.gain, 0.0)).astype(np.int16)
+                self._write(chunk)
         return True
 
     def _write(self, data: np.ndarray) -> None:
