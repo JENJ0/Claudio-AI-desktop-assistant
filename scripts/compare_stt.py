@@ -5,12 +5,15 @@ engines and counts how many become a known local command:
 
     uv run python scripts/compare_stt.py
     uv run python scripts/compare_stt.py --engines turbo lista --details
+    uv run python scripts/compare_stt.py --engines turbo frase large-v3 --details
     uv run python scripts/compare_stt.py --engines parakeet     # needs: uv pip install onnx-asr
 
 Engines:
     turbo     Whisper large-v3-turbo, as CLAUDIO uses it today
     large-v3  Whisper large-v3: slower, sometimes more accurate on fast speech
     lista     the "closed list": turbo proposes 5 transcriptions, the first known command wins
+    frase     turbo with a natural-sentence prompt (NATURAL_PROMPT, or --prompt) instead of the
+              command list in [stt.prompts]: does it hear "Claudio" and free questions better?
     parakeet  NVIDIA Parakeet TDT 0.6B v3 (ONNX int8, via onnx-asr): fast, guesses the language
 
 The audio is what Whisper got live: the request plus the 1.5 s before the wake word. There is
@@ -37,7 +40,13 @@ from claudio.config import Settings, load_settings
 from claudio.router.matcher import CommandMatcher, load_commands
 from claudio.wakeword.verifier import wake_confirmed
 
-ENGINES = ("turbo", "large-v3", "lista", "parakeet")
+ENGINES = ("turbo", "large-v3", "lista", "frase", "parakeet")
+# How JenJo talks to CLAUDIO, written as Whisper would: the prompt is read as the text said just
+# before, so whole sentences bias it less toward commands than a list of them.
+NATURAL_PROMPT = (
+    "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. "
+    "Apri Chrome e la cartella Download, poi alza il volume. Basta, grazie."
+)
 LEAD_IN_S = 1.5  # app.LEAD_IN_S: the audio before the detection that reaches Whisper
 
 
@@ -78,13 +87,22 @@ def load_requests(audio_dir: Path, log_path: Path, sample_rate: int = 16000) -> 
 
 
 def whisper_engine(
-    settings: Settings, model: str, closed_list: bool, matcher: CommandMatcher
+    settings: Settings,
+    model: str,
+    closed_list: bool,
+    matcher: CommandMatcher,
+    prompt: str | None = None,
 ) -> Callable[[np.ndarray], str]:
     from claudio.stt.transcriber import WhisperTranscriber, first_known
 
-    stt_settings = settings.stt.model_copy(update={"model": model})
+    update: dict[str, object] = {"model": model}
+    if prompt is not None:  # in place of the first language's prompt
+        update["initial_prompt"] = prompt
+    stt_settings = settings.stt.model_copy(update=update)
     stt = WhisperTranscriber(stt_settings, settings.resolve(settings.models_dir) / "whisper")
     print(f"  {model} su {stt.device}{' (lista chiusa, 5 proposte)' if closed_list else ''}")
+    if prompt is not None:
+        print(f"  prompt: {prompt!r}")
     if not closed_list:
         return stt.transcribe
     return lambda audio: first_known(stt.candidates(audio), lambda t: matcher.match(t) is not None)
@@ -105,12 +123,14 @@ def parakeet_engine() -> Callable[[np.ndarray], str]:
 
 
 def build_engine(
-    name: str, settings: Settings, matcher: CommandMatcher
+    name: str, settings: Settings, matcher: CommandMatcher, prompt: str = NATURAL_PROMPT
 ) -> Callable[[np.ndarray], str]:
     if name == "parakeet":
         return parakeet_engine()
     model = "large-v3" if name == "large-v3" else "large-v3-turbo"
-    return whisper_engine(settings, model, name == "lista", matcher)
+    return whisper_engine(
+        settings, model, name == "lista", matcher, prompt if name == "frase" else None
+    )
 
 
 def run(
@@ -168,6 +188,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--log", type=Path, default=Path("logs/metrics.jsonl"))
     parser.add_argument("--engines", nargs="+", choices=ENGINES, default=["turbo", "lista"])
     parser.add_argument("--details", action="store_true", help="ogni trascrizione")
+    parser.add_argument("--prompt", default=NATURAL_PROMPT, help="il prompt del motore frase")
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -179,7 +200,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{len(requests)} richieste da {args.audio}")
     results = []
     for name in args.engines:
-        transcribe = build_engine(name, settings, matcher)
+        transcribe = build_engine(name, settings, matcher, args.prompt)
         results.append(run(name, transcribe, requests, matcher))
         del transcribe
         gc.collect()  # one big model at a time on the GPU

@@ -204,12 +204,14 @@ EN: dict[str, str] = {
         "Not a request, end of the conversation: %r"
     ),
     "Ascolto durante la risposta non riuscito": "Listening while speaking failed",
-    "Sentito mentre parlo: %r": "Heard while speaking: %r",
+    "Sentito mentre parlo, non è per me: %r": "Heard while speaking, not for me: %r",
     "Interrotto a voce: %r": "Interrupted by voice: %r",
     "Risposta interrotta": "Reply interrupted",
     "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
     "La mia voce nel microfono, la ignoro: %r": "My own voice heard again, ignored: %r",
-    "Voce troppo debole mentre parlo: ignorata": "Voice too quiet while speaking: ignored",
+    "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
+        "Voice too quiet while speaking (%.0f dBFS): ignored"
+    ),
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"

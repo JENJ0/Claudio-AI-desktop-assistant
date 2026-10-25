@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from claudio.config import NoiseSettings
-from claudio.intake import CONVERSATION, Heard, Kind, RequestFilter, Segment
+from claudio.intake import CONVERSATION, Heard, Kind, RequestFilter, Segment, content_words
 from claudio.safety.confirmation import Answer, parse_answer
 from claudio.session_log import purge_old_logs
 from tests.unit.test_app import FakeResponder, FakeStt, build, run_frames
@@ -237,3 +237,9 @@ def test_old_logs_are_deleted(tmp_path) -> None:
     assert not old_session.exists() and not old_wav.exists() and not rotated.exists()
     assert new_session.exists() and new_wav.exists() and current.exists() and live.exists()
     assert purge_old_logs(tmp_path / "missing", 30) == 0
+
+
+def test_interjections_are_not_words() -> None:
+    assert content_words("Mm-hmm.") == 0
+    assert content_words("Ehm, che ore sono?") == 3
+    assert content_words("aspetta un attimo") == 3
