@@ -28,6 +28,15 @@ def wake_confirmed(text: str, matched_command: bool) -> bool:
     return not text.strip() or matched_command or name_at_start(text)
 
 
+# What Whisper writes for a lone word it did not get (JenJo's logs, 26/10: "Claudio" at 0.9).
+UNCLEAR = frozenset({"", "grazie", "grazie mille", "thank you"})
+
+
+def unclear(text: str) -> bool:
+    """Whisper heard nothing usable: silence, a filtered hallucination or a lone "Grazie."."""
+    return normalize(text, drop_fillers=False) in UNCLEAR
+
+
 # What Whisper makes of a "Claudio" with a soft or cut "C" (JenJo's logs, 25-26/10): "l'audio",
 # "audio", "fraudio". Two edits away at most: "radio" and "studio" (three) are not the name.
 CLIPPED_MAX_EDITS = 2

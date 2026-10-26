@@ -9,7 +9,7 @@ from claudio.app import PREWAKE_S, WAKE_CHECK_S, Assistant, State
 from claudio.audio.vad import Endpointer
 from claudio.metrics import MetricsWriter
 from claudio.wakeword.verifier import clipped_name
-from tests.unit.test_app import AudioClock, FakeSpeaker, FakeStt, SecondChance
+from tests.unit.test_app import AudioClock, FakeSpeaker, FakeStt, SecondChance, run_frames
 from tests.unit.test_jenjo_test_fixes import ClaudioWake, OnlyCommands, WeakWake
 
 RATE = 16000
@@ -83,3 +83,68 @@ async def test_the_check_hears_2_5_seconds_and_the_request_keeps_1_5(
     assert len(check.heard[0]) == int(WAKE_CHECK_S * RATE)
     assert assistant.state is State.LISTENING
     assert len(assistant._prewake) == int(PREWAKE_S * RATE)
+
+
+class StrongClaudio(ClaudioWake):
+    def __init__(self, fire_on: set[int], score: float) -> None:
+        super().__init__(fire_on)
+        self.score = score
+
+    def process(self, frame):
+        hit = super().process(frame)
+        return ("claudio", self.score) if hit else None
+
+
+def unclear_assistant(tmp_path, fake_vad, vad_settings, *, score=0.9, request="apri chrome"):
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        StrongClaudio({20}, score),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(request),
+        OnlyCommands(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        second_chance=SecondChance("Grazie."),
+        always_confirm=frozenset({"claudio"}),
+        verify_wake=True,
+        unclear_min=0.6,
+    )
+    return assistant, speaker
+
+
+@pytest.mark.parametrize(("text", "is_unclear"), [("", True), ("Grazie.", True), ("Ciao", False)])
+def test_unclear(text: str, is_unclear: bool) -> None:
+    from claudio.wakeword.verifier import unclear
+
+    assert unclear(text) is is_unclear
+
+
+async def test_a_strong_claudio_heard_as_grazie_wakes_and_a_command_passes(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    assistant, speaker = unclear_assistant(tmp_path, fake_vad, vad_settings)
+    await run_frames(assistant, make_frames("silence", 1700))
+    assert assistant.state is State.LISTENING and speaker.beeps == ["wake"]
+    assert assistant._interaction.info["wake_unclear"] == "Grazie."
+    await run_frames(assistant, make_frames("speech", 800) + make_frames("silence", 800))
+    assert speaker.spoken == ["Apro Chrome."]
+
+
+async def test_an_unclear_wake_without_the_name_or_a_command_is_dropped(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """The TV: the request has no name and is no command, so nothing reaches Haiku."""
+    assistant, speaker = unclear_assistant(tmp_path, fake_vad, vad_settings, request="il gatto")
+    await run_frames(assistant, make_frames("silence", 1700))
+    await run_frames(assistant, make_frames("speech", 800) + make_frames("silence", 800))
+    assert speaker.spoken == []
+    assert assistant.history[-1]["outcome"] == "false_wake"
+
+
+async def test_a_weak_claudio_heard_as_grazie_stays_silent(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    assistant, speaker = unclear_assistant(tmp_path, fake_vad, vad_settings, score=0.5)
+    await run_frames(assistant, make_frames("silence", 1700))
+    assert assistant.state is State.IDLE and speaker.beeps == []

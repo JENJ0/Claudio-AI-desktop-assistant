@@ -35,7 +35,7 @@ from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, Wak
 from claudio.resume import RESUME_PREFIX, DrainedStream, ends_the_reply, remainder
 from claudio.router.normalizer import heard_wake_word, normalize
 from claudio.system import SystemControl
-from claudio.wakeword.verifier import clipped_name
+from claudio.wakeword.verifier import clipped_name, unclear
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +117,7 @@ class Assistant:
         noise: NoiseSettings | None = None,
         confirm_below: float = 0.0,
         always_confirm: frozenset[str] = frozenset(),
+        unclear_min: float = 1.0,
         stt_segments: Callable[[], Sequence[Segment]] | None = None,
         unsure_logprob: float | None = None,
         alternatives: int = 0,
@@ -156,6 +157,7 @@ class Assistant:
         self.confirm_below = confirm_below
         # Wake word models whose every detection Whisper checks ("claudio" alone: noisy).
         self.always_confirm = always_confirm
+        self.unclear_min = unclear_min
         # (audio, language) -> Whisper's n-best: tried on a request no command understands.
         self.closed_list = closed_list
         # A request for Claude that Whisper doubted (a segment below `unsure_logprob`; None:
@@ -307,6 +309,16 @@ class Assistant:
         counts too: that model only fires on something that already sounds like the name."""
         return heard_wake_word(text) or (wake_word in self.always_confirm and clipped_name(text))
 
+    def _unclear_wake(self, name: str, score: float, text: str) -> bool:
+        """A strong "claudio" that Whisper heard as nothing or "Grazie.": a lone name is too
+        short for Whisper (JenJo's logs, 26/10: 0.86-0.95 lost). Only with verify on."""
+        return (
+            self.verify_wake
+            and name in self.always_confirm
+            and score >= self.unclear_min
+            and unclear(text)
+        )
+
     def _lead_in(self) -> np.ndarray:
         """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
         out was worse on JenJo's 22 recordings (10 commands understood instead of 13): the
@@ -345,6 +357,11 @@ class Assistant:
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
             self._on_wake(name, score, second_chance=text, second_chance_ms=ms)
+            return
+        if self.state is State.IDLE and self._unclear_wake(name, score, text):
+            # Not a second chance: the request must have the name or be a command (verify).
+            log.info("Whisper non ha capito %r (punteggio %.2f): ascolto e verifico", text, score)
+            self._on_wake(name, score, wake_unclear=text, second_chance_ms=ms)
             return
         log.info("Seconda possibilità: Whisper ha sentito %r: niente da fare", text)
         if name in self.always_confirm:

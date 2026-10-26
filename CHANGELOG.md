@@ -17,6 +17,10 @@
 - After the "claudio" model, a transcript starting with a word at most 2 edits from "claudio"
   ("l'audio", "audio", "fraudio") counts as the name. Not after "hey claudio", not in the middle
   ("alza l'audio"), not "radio" or "studio".
+- A strong "claudio" (`[wakeword] unclear_min` 0.6) that Whisper hears as nothing or "Grazie."
+  (its guess on a lone word: half of JenJo's "Claudio" on 26/10, at 0.86-0.95) now beeps and
+  listens; the request is verified (name or local command), else dropped in silence (JenJo
+  chose this over retraining).
 
 ## [0.3.2] - screen and terminal
 

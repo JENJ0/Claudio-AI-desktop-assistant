@@ -88,6 +88,10 @@ class WakeWordSettings(BaseModel):
     # After a wake, keep the request only if Whisper heard the name at the start or it is a
     # local command: "Hey, ciao, come stai?" wakes the model but ends in silence.
     verify: bool = True
+    # A "claudio" (confirm) detection at least this strong that Whisper hears as nothing or
+    # "Grazie." (its guess on a lone word) still wakes, and the request is verified: it needs
+    # the name or a local command. 1 = off.
+    unclear_min: float = Field(0.6, gt=0, le=1)
 
 
 class VadSettings(BaseModel):
