@@ -4,7 +4,12 @@ split into sentences as Claudio does, then Whisper writes down what it hears (WE
   uv run python scripts/jack_variants.py                 # all variants (~5 min of GPU)
   uv run python scripts/jack_variants.py --only A C      # some of them
   uv run python scripts/jack_variants.py --words         # spellings of hard words (~1 min)
-  uv run python scripts/jack_variants.py --from-log latest   # Claudio's real replies, C/S/V
+  uv run python scripts/jack_variants.py --from-log latest   # Claudio's real replies, C/F/T/Q
+
+Against the "robotic at times" tone: F (RVC pitch cleanup), T (F + livelier Qwen3) and Q
+(Qwen3 alone, no RVC: if Q is robotic where C is, the cause is Qwen3, not RVC). The report
+also measures the pitch of every reply: octave jumps, pitch flicker and a flat melody are
+what RVC robotic artifacts look like.
 
 Output in logs/jack-variants/ (not committed, personal use only): <variant>/<n>.wav and
 report.md (WER, first audio, gaps). The worker needs the GPU alone: close Claudio first."""
@@ -78,6 +83,21 @@ VARIANTS: dict[str, tuple[str, dict[str, Any], int | None]] = {
         {"jack_temperature": 0.7, "jack_rvc": "auto", "jack_speed": 1.0},
         None,
     ),
+    "F": (
+        "C + intonazione RVC pulita (salti d'ottava, tremolio, buchi)",
+        {"jack_temperature": 0.7, "jack_rvc": "auto", "jack_pitch_fix": True},
+        None,
+    ),
+    "T": (
+        "F con Qwen3 più vivace (temperatura 0.8)",
+        {"jack_temperature": 0.8, "jack_rvc": "auto", "jack_pitch_fix": True},
+        None,
+    ),
+    "Q": (
+        "solo Qwen3, senza RVC né rallentamento (diagnosi: voce non di Jack)",
+        {"jack_temperature": 0.7, "jack_rvc": "none"},
+        None,
+    ),
     "E": (
         "C senza taglio alla prima virgola",
         {"jack_temperature": 0.7, "jack_rvc": "auto"},
@@ -113,6 +133,71 @@ def wer(reference: str, heard: str) -> float:
         for j, h in enumerate(hyp, 1):
             prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (r != h))
     return row[-1] / max(len(ref), 1)
+
+
+PITCH_RATE = 16_000
+PITCH_FRAME = 640  # 40 ms
+PITCH_HOP = 160  # 10 ms
+PITCH_MIN_HZ, PITCH_MAX_HZ = 60.0, 400.0
+YIN_THRESHOLD = 0.15
+
+
+def pitch_track(audio: np.ndarray, rate: int) -> np.ndarray:
+    """f0 in Hz every 10 ms (0 = unvoiced), a plain YIN: enough to spot octave jumps and
+    flicker, not a studio pitch tracker."""
+    from scipy.signal import resample_poly
+
+    x = audio.astype(np.float64) / 32768
+    if rate != PITCH_RATE:
+        x = resample_poly(x, PITCH_RATE, rate)
+    lag_min = int(PITCH_RATE / PITCH_MAX_HZ)
+    lag_max = int(PITCH_RATE / PITCH_MIN_HZ)
+    loud = 10 ** (-40 / 20)  # quieter frames are pauses
+    f0 = []
+    for start in range(0, len(x) - PITCH_FRAME - lag_max, PITCH_HOP):
+        frame = x[start : start + PITCH_FRAME + lag_max]
+        if np.sqrt(np.mean(frame[:PITCH_FRAME] ** 2)) < loud:
+            f0.append(0.0)
+            continue
+        ref = frame[:PITCH_FRAME]
+        shifted = np.lib.stride_tricks.sliding_window_view(frame, PITCH_FRAME)[: lag_max + 1]
+        diff = np.sum((shifted - ref) ** 2, axis=1)
+        cum = np.cumsum(diff[1:])
+        cmnd = np.ones_like(diff)
+        cmnd[1:] = diff[1:] * np.arange(1, len(diff)) / np.maximum(cum, 1e-12)
+        below = np.flatnonzero(cmnd[lag_min:] < YIN_THRESHOLD)
+        if not len(below):
+            f0.append(0.0)
+            continue
+        lag = lag_min + below[0]
+        while lag + 1 < len(cmnd) and cmnd[lag + 1] < cmnd[lag]:
+            lag += 1  # bottom of that dip
+        f0.append(PITCH_RATE / lag)
+    return np.array(f0)
+
+
+def pitch_stats(audio: np.ndarray, rate: int) -> dict[str, float]:
+    """`jumps`: octave-sized leaps between neighbouring voiced frames (robotic warble);
+    `flicker`: voiced runs under 30 ms (buzz); `range_st`: spread of the melody in semitones
+    (low = flat, monotone)."""
+    f0 = pitch_track(audio, rate)
+    voiced = f0 > 0
+    if voiced.sum() < 5:
+        return {"jumps": 0, "flicker": 0, "range_st": 0.0}
+    semis = 12 * np.log2(np.where(voiced, f0, 1.0) / 100)
+    both = voiced[1:] & voiced[:-1]
+    jumps = int(np.sum(both & (np.abs(np.diff(semis)) > 9)))
+    edges = np.diff(np.concatenate([[0], voiced.astype(int), [0]]))
+    runs = np.flatnonzero(edges == -1) - np.flatnonzero(edges == 1)
+    return {
+        "jumps": jumps,
+        "flicker": int(np.sum(runs < 3)),
+        "range_st": float(np.std(semis[voiced])),
+    }
+
+
+def suspicious(row: dict) -> bool:
+    return row["jumps"] >= 2 or row["flicker"] >= 4 or 0 < row["range_st"] < 1.5
 
 
 def speak_reply(synth: JackSynth, reply: str, first_clause: int) -> tuple[np.ndarray, dict]:
@@ -176,7 +261,16 @@ def run_variant(
             time.sleep(1.5)  # a new reply each time, as after a question
             audio, info = speak_reply(synth, reply, clause)
             sf.write(folder / f"{n}.wav", audio, synth.sample_rate)
-            rows.append({"n": n, "reply": reply, "audio": audio, "rate": synth.sample_rate, **info})
+            rows.append(
+                {
+                    "n": n,
+                    "reply": reply,
+                    "audio": audio,
+                    "rate": synth.sample_rate,
+                    **info,
+                    **pitch_stats(audio, synth.sample_rate),
+                }
+            )
             first, gap = info["first_ms"], info["gap_ms"]
             print(f"  {n}: prima audio {first:.0f} ms, pausa max {gap:.0f} ms")
     finally:
@@ -203,8 +297,9 @@ def report(results: dict[str, list[dict]], out: Path) -> str:
     lines = [
         "# Varianti della voce di Jack",
         "",
-        "| Variante | Cosa cambia | WER medio | Prima audio (ms) | Pausa max (ms) |",
-        "|---|---|---|---|---|",
+        "| Variante | Cosa cambia | WER medio | Prima audio (ms) | Pausa max (ms) "
+        "| Salti d'ottava | Tremolii | Melodia (semitoni) | Frasi sospette |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for name, rows in results.items():
         if not rows:
@@ -212,12 +307,37 @@ def report(results: dict[str, list[dict]], out: Path) -> str:
         lines.append(
             f"| {name} | {VARIANTS[name][0]} | {statistics.mean(r['wer'] for r in rows):.3f} | "
             f"{statistics.median(r['first_ms'] for r in rows):.0f} | "
-            f"{max(r['gap_ms'] for r in rows):.0f} |"
+            f"{max(r['gap_ms'] for r in rows):.0f} | "
+            f"{sum(r['jumps'] for r in rows)} | {sum(r['flicker'] for r in rows)} | "
+            f"{statistics.mean(r['range_st'] for r in rows):.1f} | "
+            f"{sum(suspicious(r) for r in rows)}/{len(rows)} |"
         )
+    lines += [
+        "",
+        "Salti d'ottava e tremolii: meno è meglio. Melodia: sotto 1,5 semitoni la frase è",
+        "piatta (monotona). Q è la voce di Qwen3 senza RVC: se Q è robotica dove lo è C, la",
+        "causa è Qwen3, non RVC.",
+        "",
+        "## Da ascoltare per prime (sospette in almeno una variante)",
+        "",
+    ]
+    by_n: dict[int, list[str]] = {}
+    for name, rows in results.items():
+        for row in rows:
+            if suspicious(row):
+                by_n.setdefault(row["n"], []).append(name)
+    for n in sorted(by_n):
+        reply = next(r["reply"] for rows in results.values() for r in rows if r["n"] == n)
+        lines.append(f"- {n}.wav (sospetta in {', '.join(by_n[n])}): {reply}")
+    if not by_n:
+        lines.append("- nessuna: decide l'orecchio")
     lines += ["", "## Cosa ha sentito Whisper", ""]
     for name, rows in results.items():
         for row in rows:
-            lines.append(f"- {name}/{row['n']}.wav (WER {row['wer']:.2f}): {row['heard']}")
+            lines.append(
+                f"- {name}/{row['n']}.wav (WER {row['wer']:.2f}, salti {row['jumps']}, "
+                f"tremolii {row['flicker']}, melodia {row['range_st']:.1f}): {row['heard']}"
+            )
     text = "\n".join(lines) + "\n"
     (out / "report.md").write_text(text, encoding="utf-8")
     return text
@@ -329,7 +449,7 @@ def main() -> None:
         print(f"WAV in {out / 'parole'}")
         return
     replies = log_replies(args.from_log) if args.from_log else None
-    names = args.only if (args.only != sorted(VARIANTS) or not replies) else ["C", "S", "V"]
+    names = args.only if (args.only != sorted(VARIANTS) or not replies) else ["C", "F", "T", "Q"]
     results = {name: run_variant(settings, name, out, replies) for name in names}
     if Silent.used:
         print(f"ATTENZIONE: {Silent.used} frasi non dette da Jack (worker caduto)")

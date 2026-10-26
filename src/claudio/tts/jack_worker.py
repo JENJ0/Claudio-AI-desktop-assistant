@@ -11,7 +11,9 @@ Requests, one JSON line each on stdin:
   {"op": "speak", "id": 7, "text": "...", "language": "Italian", "rvc": "blocks"}
                              rvc "blocks": audio as it is generated (first audio ~0.3 s);
                              "sentence": the whole sentence through RVC at once, clearer
-                             (WER 6% instead of 10%) but the audio waits for the sentence
+                             (WER 6% instead of 10%) but the audio waits for the sentence;
+                             "none": Qwen3 alone, no RVC and no slowing down (diagnosis:
+                             tells whether a robotic sound comes from Qwen3 or from RVC)
   {"op": "interrupt", "upto": 7}  stops every speak up to id 7, even one in progress
                              (no "upto": every speak received so far)
   {"op": "quit"}
@@ -25,6 +27,7 @@ Personal use only: the model is trained on Handsome Jack's Italian dub."""
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import os
@@ -32,6 +35,7 @@ import queue
 import sys
 import threading
 import time
+import warnings
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -49,6 +53,11 @@ SENTENCE_RATE = 16_000  # what Applio's offline pipeline takes
 SPEAK_TOKENS = 300
 INDEX_RATE = 0.0
 PROTECT = 0.33
+# Applio's mel pitch scale (rvc/infer/pipeline.py), the one the RVC model was trained on.
+F0_MEL_MIN = 1127 * math.log(1 + 50 / 700)
+F0_MEL_MAX = 1127 * math.log(1 + 1100 / 700)
+OCTAVE_WINDOW = 15  # f0 frames (10 ms each) of the running median an octave error is judged by
+GAP_FRAMES = 2  # unvoiced holes this short inside a vowel are filled (they buzz)
 
 _write_lock = threading.Lock()
 
@@ -70,10 +79,88 @@ def speed_plan(speed: float, rate_ratio: float = RVC_RATE / QWEN_RATE) -> tuple[
     return ratio.numerator, ratio.denominator, semitones
 
 
+def smooth_f0(f0: Any) -> Any:
+    """Pitch track cleaned of what makes RVC sound robotic: octave errors (one frame twice
+    or half the pitch around it), 1-2 frame unvoiced holes in a vowel, frame-to-frame
+    jitter (median of 3). Unvoiced frames (0) stay unvoiced. f0 in Hz, 10 ms frames."""
+    import numpy as np
+    from scipy.ndimage import median_filter
+
+    f0 = np.nan_to_num(np.asarray(f0, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    f0 = np.where(f0 > 0, f0, 0.0)
+    voiced = f0 > 0
+    if voiced.sum() < 3:
+        return f0
+    # holes: an unvoiced run of <= GAP_FRAMES between two voiced frames is interpolated
+    idx = np.flatnonzero(voiced)
+    for a, b in itertools.pairwise(idx):
+        if 1 < b - a <= GAP_FRAMES + 1:
+            f0[a + 1 : b] = np.interp(np.arange(a + 1, b), [a, b], [f0[a], f0[b]])
+    voiced = f0 > 0
+    # octave errors against the running median of the voiced frames around each one
+    log_f0 = np.log2(np.where(voiced, f0, 1.0))
+    ref = log_f0.copy()
+    ref[~voiced] = np.nan
+    pad = OCTAVE_WINDOW // 2
+    padded = np.pad(ref, pad, constant_values=np.nan)
+    windows = np.lib.stride_tricks.sliding_window_view(padded, OCTAVE_WINDOW)
+    with warnings.catch_warnings():  # windows of a pause are all NaN: unused anyway
+        warnings.simplefilter("ignore", RuntimeWarning)
+        local = np.nanmedian(windows, axis=1)
+    off = np.where(voiced, log_f0 - local, 0.0)
+    log_f0 -= np.round(np.clip(off, -2, 2)) * (np.abs(off) > 0.75)
+    # jitter: median of 3 inside each voiced run (the edges keep their own value)
+    smoothed = median_filter(log_f0, size=3, mode="nearest")
+    inner = voiced & np.roll(voiced, 1) & np.roll(voiced, -1)
+    log_f0 = np.where(inner, smoothed, log_f0)
+    return np.where(voiced, 2.0**log_f0, 0.0)
+
+
+def coarse_f0(f0: Any) -> Any:
+    """The 1..255 pitch buckets of the RVC model, as Applio's offline pipeline computes them."""
+    import numpy as np
+
+    mel = 1127 * np.log(1 + np.asarray(f0, dtype=np.float64) / 700)
+    bucket = (mel - F0_MEL_MIN) * 254 / (F0_MEL_MAX - F0_MEL_MIN) + 1
+    return np.clip(np.rint(np.where(mel > 0, bucket, 1)), 1, 255).astype(int)
+
+
+def fix_realtime_pitch_scale(pipeline: Any) -> bool:
+    """Applio 3.7.0's realtime pipeline buckets the pitch with Hz limits (50, 1100) applied
+    to mel values, so the model gets a pitch embedding ~6 buckets (~2 semitones) off the
+    pitch it actually renders, unlike training: the first sentence of each reply (the only
+    one in blocks) can sound strained. Its fcpe/rmvpe paths use these two values only there,
+    so setting them to the mel limits gives the training buckets. False if not applicable."""
+    if getattr(pipeline, "f0_method", None) not in ("fcpe", "rmvpe"):
+        return False
+    if not hasattr(pipeline, "f0_min") or not hasattr(pipeline, "f0_max"):
+        return False
+    pipeline.f0_min, pipeline.f0_max = F0_MEL_MIN, F0_MEL_MAX
+    return True
+
+
+class RvcNone:
+    """Qwen3's voice as it comes out, no RVC (and no slowing down): for comparisons only."""
+
+    def begin(self) -> None:
+        pass
+
+    def feed(self, chunk: Any) -> list[bytes]:
+        import numpy as np
+
+        pcm = np.clip(np.asarray(chunk, dtype=np.float32).reshape(-1), -1.0, 1.0)
+        return [(pcm * 32767).astype("<i2").tobytes()]
+
+    def flush(self) -> list[bytes]:
+        return []
+
+
 class RvcStream:
     """Applio's realtime VoiceChanger fed with Qwen3 chunks; yields converted int16 PCM."""
 
-    def __init__(self, model_path: Path, applio: Path, speed: float = 1.0) -> None:
+    def __init__(
+        self, model_path: Path, applio: Path, speed: float = 1.0, pitch_fix: bool = False
+    ) -> None:
         import numpy as np
 
         os.chdir(applio)  # Applio resolves its assets and logs relative to its own folder
@@ -93,6 +180,8 @@ class RvcStream:
             embedder_model="contentvec",
             silent_threshold=-60,
         )
+        if pitch_fix and not fix_realtime_pitch_scale(self.vc.vc_model.pipeline):
+            print("pitch fix: Applio realtime pipeline not as expected, left alone")
         self.up, self.down, semitones = speed_plan(speed)
         self.kw = {
             "index_rate": INDEX_RATE,
@@ -165,10 +254,13 @@ class RvcSentence:
     """Applio's offline converter on a whole sentence: the same model as RvcStream, but it
     sees the sentence at once, so words are not cut at block edges (WER 6% against 10%)."""
 
-    def __init__(self, model_path: Path, applio: Path, speed: float = 1.0) -> None:
+    def __init__(
+        self, model_path: Path, applio: Path, speed: float = 1.0, pitch_fix: bool = False
+    ) -> None:
         import numpy as np
 
         os.chdir(applio)
+        self.pitch_fix = pitch_fix
         if str(applio) not in sys.path:
             sys.path.insert(0, str(applio))
         from rvc.infer.infer import VoiceConverter
@@ -188,12 +280,16 @@ class RvcSentence:
     def _guard_f0(self) -> None:
         """Applio quantizes the pitch with comparisons that NaN slips through, so a NaN f0
         became a huge index into the 256-entry pitch embedding (device-side assert, and the
-        CUDA context is lost for good). Unvoiced (0) and bounded pitch only."""
+        CUDA context is lost for good). Unvoiced (0) and bounded pitch only. With pitch_fix
+        the track is also cleaned (smooth_f0) before RVC renders it."""
         np = self.np
         get_f0 = self.vc.vc.get_f0
 
         def safe_get_f0(*args: Any, **kwargs: Any) -> Any:
             coarse, f0 = get_f0(*args, **kwargs)
+            if self.pitch_fix:
+                f0 = smooth_f0(f0)
+                return coarse_f0(f0), f0
             bad = ~np.isfinite(f0)
             f0 = np.where(bad, 0.0, f0)
             coarse = np.where(bad, 1, np.clip(coarse, 1, 255)).astype(int)
@@ -256,9 +352,10 @@ class Worker:
         self.tts = FasterQwen3TTS.from_pretrained(str(args.checkpoint))
         self.temperature = args.temperature
         # Both converters stay loaded (~0.3 GB more): each sentence says which one it wants.
-        self.rvc: dict[str, RvcStream | RvcSentence] = {
-            "blocks": RvcStream(args.rvc_model, args.applio, args.speed),
-            "sentence": RvcSentence(args.rvc_model, args.applio, args.speed),
+        self.rvc: dict[str, RvcStream | RvcSentence | RvcNone] = {
+            "blocks": RvcStream(args.rvc_model, args.applio, args.speed, args.pitch_fix),
+            "sentence": RvcSentence(args.rvc_model, args.applio, args.speed, args.pitch_fix),
+            "none": RvcNone(),
         }
         for _ in self.generate("Prova.", "Italian", 60):  # captures the CUDA graph
             pass
@@ -362,6 +459,11 @@ def main() -> None:
     parser.add_argument("--speed", type=float, default=1.0, help="pace: < 1 slower")
     parser.add_argument(
         "--temperature", type=float, default=0.9, help="Qwen3 sampling: lower = steadier"
+    )
+    parser.add_argument(
+        "--pitch-fix",
+        action="store_true",
+        help="RVC pitch as in training (blocks) and cleaned of octave errors (sentence)",
     )
     args = parser.parse_args()
     for path in (args.checkpoint, args.rvc_model, args.applio):

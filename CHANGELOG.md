@@ -18,7 +18,7 @@
   the list has nothing (a folder made after the last read, files). `open_path` with a wrong
   folder name uses the same list.
 
-## [Unreleased] - Sonnet only when needed, "Claudio" wake word
+## [Unreleased] - Sonnet only when needed, "Claudio" wake word, Jack less robotic
 
 ### Changed
 - `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
@@ -26,6 +26,17 @@
 - New `[claude] no_offer_phrases` (storia, barzelletta, poesia, raccontami...): if Haiku still
   asks for Sonnet on such a request, or a detail phrase matches, Claudio does not ask "Lo uso?"
   and Haiku answers (log "Sonnet chiesto per una storia", metric `escalated = skipped`).
+
+### Added
+- `[tts] jack_pitch_fix` (off until JenJo's A/B): RVC pitch cleanup against Jack's
+  occasional robotic tone. Streamed first sentence: Applio 3.7.0's realtime pipeline bucketed
+  the pitch with Hz limits on mel values (~6 buckets, ~2 semitones above training), now the
+  training scale. Whole sentences: octave errors folded back, 1-2 frame unvoiced holes in a
+  vowel filled, median-of-3 jitter filter (`smooth_f0` in `tts/jack_worker.py`).
+- Worker `rvc: "none"` (Qwen3 alone) for diagnosis.
+- `scripts/jack_variants.py`: variants F (pitch fix), T (F + temperature 0.8), Q (no RVC);
+  `--from-log` now compares C/F/T/Q; the report measures every reply's pitch (octave jumps,
+  flicker, melody spread) and lists the suspicious replies to listen to first.
 
 ### Fixed (JenJo's test, 25/10: "Claudio" alone fires rarely)
 - The "claudio" model fires late, on the word after the name when it is said in one breath:
