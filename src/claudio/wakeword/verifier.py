@@ -26,3 +26,29 @@ def wake_confirmed(text: str, matched_command: bool) -> bool:
     """Keep the wake when the name was heard at the start or the request is a local command.
     An empty transcript is not judged here: the caller already handles silence."""
     return not text.strip() or matched_command or name_at_start(text)
+
+
+# What Whisper writes for a lone word it did not get (JenJo's logs, 26/10: "Claudio" at 0.9).
+UNCLEAR = frozenset({"", "grazie", "grazie mille", "thank you"})
+
+
+def unclear(text: str) -> bool:
+    """Whisper heard nothing usable: silence, a filtered hallucination or a lone "Grazie."."""
+    return normalize(text, drop_fillers=False) in UNCLEAR
+
+
+# What Whisper makes of a "Claudio" with a soft or cut "C" (JenJo's logs, 25-26/10): "l'audio",
+# "audio", "fraudio". Two edits away at most: "radio" and "studio" (three) are not the name.
+CLIPPED_MAX_EDITS = 2
+CLIPPED_LEAD = frozenset({"l", "e"})  # "l'audio", "e l'audio" (a fast "hey")
+
+
+def clipped_name(text: str) -> bool:
+    """True when the transcript starts with something close to the name ("L'audio?", "Fraudio.",
+    "l'audio apri..."): a cut-off name can only be at the start of the audio Whisper gets."""
+    from rapidfuzz.distance import Levenshtein
+
+    words = normalize(text, drop_fillers=False).split()
+    while words and (words[0] in GREETINGS or words[0] in CLIPPED_LEAD):
+        words = words[1:]
+    return bool(words) and Levenshtein.distance(words[0], "claudio") <= CLIPPED_MAX_EDITS

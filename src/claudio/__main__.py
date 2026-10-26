@@ -502,6 +502,7 @@ async def run_assistant(
         noise=settings.noise,
         confirm_below=settings.wakeword.confirm_below,
         always_confirm=wake.confirmed,
+        unclear_min=settings.wakeword.unclear_min,
         stt_segments=lambda: transcriber.last_segments,
         unsure_logprob=settings.stt.unsure_logprob if responder.fallback else None,
         alternatives=settings.stt.alternatives if settings.stt.closed_list else 0,

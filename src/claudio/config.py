@@ -79,7 +79,7 @@ class WakeWordSettings(BaseModel):
         default_factory=lambda: [WakeWordModel(name="hey_jarvis")], min_length=1
     )
     # A peak between this and the threshold is a missed wake word: it is logged and, with
-    # second_chance, Whisper listens to the last 1.5 s and wakes CLAUDIO if it hears the name.
+    # second_chance, Whisper listens to the last 2.5 s and wakes CLAUDIO if it hears the name.
     near_miss_floor: float = Field(0.15, gt=0, lt=1)
     # A wake scoring below this is confirmed by Whisper first (the second chance, ~130 ms):
     # a weak detection on Claudio's own voice or the TV stays silent. 0 = off.
@@ -88,6 +88,10 @@ class WakeWordSettings(BaseModel):
     # After a wake, keep the request only if Whisper heard the name at the start or it is a
     # local command: "Hey, ciao, come stai?" wakes the model but ends in silence.
     verify: bool = True
+    # A "claudio" (confirm) detection at least this strong that Whisper hears as nothing or
+    # "Grazie." (its guess on a lone word) still wakes, and the request is verified: it needs
+    # the name or a local command. 1 = off.
+    unclear_min: float = Field(0.6, gt=0, le=1)
 
 
 class VadSettings(BaseModel):
