@@ -1,14 +1,16 @@
-"""The names on JenJo's PC that Whisper should know: folders and programs.
+"""The names on JenJo's PC that Whisper should know: folders, programs, open windows.
 
 Whisper reads its prompt as the words said just before, so a name in the prompt is written
 right when it is said: "Tesi" instead of "desi" or "attesi", "PSS" instead of "PZ" (logs of
 25/10). The names come from the PC itself (Desktop and Documents folders, two levels; the
 shortcuts on the Desktop and in the Start menu), the most recent first, plus the words JenJo
-lists in [stt] vocabulary_words. The prompt stays short: Whisper keeps only its last 223
+lists in [stt] vocabulary_words. The open windows come too, read again every few seconds:
+"chiudi il Blocco note" is said while it is open, and Store apps like it have no shortcut
+("brocconote", "bacanoate": logs of 26/10). The prompt stays short: Whisper keeps only its last 223
 tokens, and a longer one is slower and invents more on noise.
 
 Reading the folders takes a few milliseconds; it happens in a thread, at most once every
-`refresh_s`, so a request never waits for it."""
+`refresh_s`, so a request never waits for it. The window titles take about a millisecond."""
 
 from __future__ import annotations
 
@@ -24,8 +26,8 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 LABELS = {
-    "it": ("Cartelle", "Programmi"),
-    "en": ("Folders", "Programs"),
+    "it": ("Cartelle", "Programmi", "Finestre aperte"),
+    "en": ("Folders", "Programs", "Open windows"),
 }
 SHORTCUTS = (".lnk", ".url")
 # Shortcuts that are not programs anyone asks for by name.
@@ -42,6 +44,8 @@ SKIP_FOLDERS = frozenset(
 MAX_NAME_CHARS = 28
 MAX_NAME_PARTS = 3  # "bbport-windows" yes, "Claudio-AI-desktop-assistant" no
 _PARTS = re.compile(r"[\s_\-.]+")
+# "Senza titolo - Blocco note", "YouTube — Mozilla Firefox": the program's name is last.
+_TITLE_PARTS = re.compile(r"\s[-\u2013\u2014|]\s")
 _LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
 
 
@@ -127,6 +131,21 @@ def shortcut_names(folders: Iterable[Path], depth: int = 2) -> list[Name]:
     return found
 
 
+def window_names(titles: Iterable[str], limit: int, seen: set[str]) -> list[str]:
+    """The program of each window ("Senza titolo - Blocco note" -> "Blocco note"), or the
+    whole title when it has one part (an Explorer window: the folder "PROGETTI")."""
+    out: list[str] = []
+    for title in titles:
+        name = _TITLE_PARTS.split(title.strip())[-1].strip()
+        if not usable(name) or name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        out.append(spoken_form(name))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def pick(names: Sequence[Name], limit: int, seen: set[str]) -> list[str]:
     """The `limit` most recently changed names, each once (case does not count)."""
     out: list[str] = []
@@ -142,17 +161,18 @@ def pick(names: Sequence[Name], limit: int, seen: set[str]) -> list[str]:
 
 
 def prompt_text(
-    language: str, words: Sequence[str], folders: Sequence[str], programs: Sequence[str]
+    language: str,
+    words: Sequence[str],
+    folders: Sequence[str],
+    programs: Sequence[str],
+    windows: Sequence[str] = (),
 ) -> str:
-    """ "Cartelle: Tesi, PSS. Programmi: Rocket League." (JenJo's own words go first)."""
-    folder_label, program_label = LABELS.get(language, LABELS["en"])
-    parts = []
-    first = [*words, *folders]
-    if first:
-        parts.append(f"{folder_label}: {', '.join(first)}.")
-    if programs:
-        parts.append(f"{program_label}: {', '.join(programs)}.")
-    return " ".join(parts)
+    """ "Cartelle: Tesi, PSS. Programmi: Rocket League. Finestre aperte: Blocco note."
+    (JenJo's own words go first)."""
+    labels = LABELS.get(language, LABELS["en"])
+    groups = ([*words, *folders], programs, windows)
+    named = [(label, names) for label, names in zip(labels, groups, strict=True) if names]
+    return " ".join(f"{label}: {', '.join(names)}." for label, names in named)
 
 
 def default_folders(home: Path) -> list[Path]:
@@ -186,9 +206,17 @@ class Vocabulary:
         max_programs: int = 12,
         refresh_s: float = 600.0,
         clock: Callable[[], float] = time.monotonic,
+        windows: Callable[[], Sequence[str]] | None = None,
+        max_windows: int = 8,
+        windows_s: float = 3.0,
     ) -> None:
         self._folders = folders
         self._shortcuts = shortcuts
+        self._windows = windows
+        self.max_windows = max_windows
+        self.windows_s = windows_s
+        self._open: list[str] = []
+        self._open_at = float("-inf")
         self.words = [w.strip() for w in words if w.strip()]
         self.max_folders = max_folders
         self.max_programs = max_programs
@@ -233,4 +261,21 @@ class Vocabulary:
         if self.clock() - self._read_at > self.refresh_s:
             self.refresh()
         folders, programs = self._names or ([], [])
-        return prompt_text(language, self.words, folders, programs)
+        seen = {n.casefold() for n in (*self.words, *folders, *programs)}
+        windows = [w for w in self.open_windows() if w.casefold() not in seen]
+        return prompt_text(language, self.words, folders, programs, windows)
+
+    def open_windows(self) -> list[str]:
+        """The open windows' names, read again after `windows_s` (one request asks twice:
+        the transcription and its alternatives)."""
+        if self._windows is None or self.max_windows <= 0:
+            return []
+        now = self.clock()
+        if now - self._open_at > self.windows_s:
+            self._open_at = now
+            try:
+                self._open = window_names(self._windows(), self.max_windows, set())
+            except Exception:
+                log.debug("Finestre aperte non lette per Whisper", exc_info=True)
+                self._open = []
+        return self._open

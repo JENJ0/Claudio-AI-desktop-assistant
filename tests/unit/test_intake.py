@@ -17,6 +17,7 @@ from claudio.intake import (
     RequestFilter,
     Segment,
     content_words,
+    echo_of,
     incomplete,
 )
 from claudio.safety.confirmation import Answer, parse_answer
@@ -105,6 +106,57 @@ def test_conversation_window_with_claude() -> None:
     f.only_addressed = True
     assert decide("e poi gli ho detto di no", f=f, wake_word=CONVERSATION).kind is Kind.NOT_REQUEST
     assert decide("dimmi di più sul meteo", f=f, wake_word=CONVERSATION).kind is Kind.ANSWER
+
+
+def test_a_short_phrase_with_the_name_is_a_request() -> None:
+    """26/10 19:52: "Claudio QDT." (chiuditi) in the window was dropped as the TV."""
+    f = RequestFilter(claude_min_words=3, only_addressed=True)
+    assert decide("Claudio QDT.", f=f, wake_word=CONVERSATION).kind is Kind.ANSWER
+    assert decide("ma dai", f=f, wake_word=CONVERSATION).kind is Kind.NOT_REQUEST
+
+
+# CLAUDIO's reply and what Whisper made of it in the microphone (logs of 26/10).
+CAMPIONE = "Ciao, campione. Sempre un piacere, anche se ripeti come un disco rotto."
+UNIVERSO = "Ciao, socio. Eccomi, il genio più bello dell'universo è in linea. Che vuoi fare?"
+MISTERO = "Ah, il grande mistero: non dire niente. Strategia audace, socio, quasi zen."
+GIOCO = "Se vuoi altro, dimmelo chiaro: non ho capito se intendi di nuovo il gioco."
+BLOCCO = "Fatto, il blocco note è pulito. Un foglio bianco, come la mia modestia."
+
+
+@pytest.mark.parametrize(
+    ("heard", "reply"),
+    [
+        ("ciao cappiore", CAMPIONE),
+        ("dell'università e lì.", UNIVERSO),
+        ("Ah, che grande vista.", MISTERO),
+        ("e come il genio", UNIVERSO),
+        ("Non capito se intendo.", GIOCO),
+        ("di nuovo il gioco", GIOCO),
+        ("sono le 14 e 5", "Sono le 14 e 5, capo."),
+    ],
+)
+def test_the_reply_misheard_is_its_echo(heard: str, reply: str) -> None:
+    assert echo_of(heard, reply)
+
+
+@pytest.mark.parametrize(
+    ("heard", "reply"),
+    [
+        ("Claudio, che di blocco.", BLOCCO),  # the name: JenJo talking
+        ("Claudio, chiudi il blocco note", BLOCCO),
+        ("aspetta, che ore sono?", MISTERO),
+        ("No, raccontala lo stesso", MISTERO),
+        ("Basta, grazie.", CAMPIONE),
+        ("apri la cartella progetti", UNIVERSO),
+    ],
+)
+def test_words_said_over_the_reply_are_not_its_echo(heard: str, reply: str) -> None:
+    assert not echo_of(heard, reply)
+
+
+def test_the_name_is_echo_only_when_the_reply_says_it() -> None:
+    assert echo_of("sono Claudio, il tuo assistente", "Sono Claudio, il tuo assistente.")
+    assert not echo_of("", "Sono Claudio.") and not echo_of("ciao", "")
 
 
 @pytest.mark.parametrize("segments", [[UNSURE], [GARBLED], [UNSURE, GARBLED]])

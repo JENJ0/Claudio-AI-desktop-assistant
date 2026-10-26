@@ -223,6 +223,7 @@ EN: dict[str, str] = {
         "Whisper vocabulary: %d folders, %d programs (%.0f ms)"
     ),
     "Lettura dei nomi per Whisper non riuscita": "Could not read the names for Whisper",
+    "Finestre aperte non lette per Whisper": "Could not read the open windows for Whisper",
     "La mia voce nel microfono, la ignoro: %r": "My own voice heard again, ignored: %r",
     "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
         "Voice too quiet while speaking (%.0f dBFS): ignored"

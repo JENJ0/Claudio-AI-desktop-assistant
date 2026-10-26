@@ -79,6 +79,7 @@ vocabulary = true
 vocabulary_words = []          # your own names, always included, e.g. ["Dainese", "Bloodborne"]
 vocabulary_folders = 25
 vocabulary_programs = 12
+vocabulary_windows = 8         # names of the open windows ("Blocco note"), read every 3 s
 no_speech_threshold = 0.6
 cpu_threads = 4
 

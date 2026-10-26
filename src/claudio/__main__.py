@@ -332,16 +332,24 @@ async def run_text(settings: Settings, text: str) -> None:
 
 
 def build_vocabulary(settings: Settings) -> Any:
-    """The folder and program names for Whisper's prompt, read now in a thread."""
+    """The folder, program and open window names for Whisper's prompt (folders and programs
+    read now in a thread)."""
     from claudio.stt.vocabulary import Vocabulary, default_folders, default_shortcut_folders
 
     folders = default_folders(Path.home())
+    windows = None
+    if sys.platform == "win32":
+        from claudio.pc.windows import window_titles
+
+        windows = window_titles
     vocabulary = Vocabulary(
         lambda: folders,
         lambda: default_shortcut_folders(folders[0]),
         words=settings.stt.vocabulary_words,
         max_folders=settings.stt.vocabulary_folders,
         max_programs=settings.stt.vocabulary_programs,
+        windows=windows,
+        max_windows=settings.stt.vocabulary_windows,
     )
     vocabulary.refresh()
     return vocabulary

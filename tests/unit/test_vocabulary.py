@@ -13,6 +13,7 @@ from claudio.stt.vocabulary import (
     shortcut_names,
     spoken_form,
     usable,
+    window_names,
 )
 
 
@@ -76,6 +77,29 @@ def test_prompt_text_in_the_language() -> None:
     )
     assert prompt_text("en", [], [], ["Steam"]) == "Programs: Steam."
     assert prompt_text("it", [], [], []) == ""
+    assert prompt_text("it", [], [], ["Steam"], ["Blocco note"]) == (
+        "Programmi: Steam. Finestre aperte: Blocco note."
+    )
+
+
+def test_open_windows_give_their_program_or_folder_name() -> None:
+    titles = [
+        "*Senza titolo - Blocco note",
+        "YouTube \u2014 Mozilla Firefox",
+        "PROGETTI",
+        "Claudio-AI-desktop-assistant - Visual Studio Code",
+        "Nuova scheda - Google Chrome",
+        "Altra scheda - Google Chrome",
+        "Program Manager - a very long window title that nobody says out loud",
+    ]
+    assert window_names(titles, 10, set()) == [
+        "Blocco note",
+        "Mozilla Firefox",
+        "Progetti",
+        "Visual Studio Code",
+        "Google Chrome",
+    ]
+    assert window_names(titles, 2, {"blocco note"}) == ["Mozilla Firefox", "Progetti"]
 
 
 def test_vocabulary_reads_in_the_background_and_refreshes(tmp_path: Path) -> None:
@@ -99,3 +123,34 @@ def test_before_the_first_reading_only_jenjos_words(tmp_path: Path) -> None:
     vocabulary = Vocabulary(lambda: [tmp_path / "missing"], lambda: [], words=["Dainese"])
     vocabulary.refresh = lambda: None  # type: ignore[method-assign]
     assert vocabulary.text("it") == "Cartelle: Dainese."
+
+
+def test_open_windows_are_read_again_every_few_seconds() -> None:
+    now = [0.0]
+    titles = [["Senza titolo - Blocco note"]]
+    calls = []
+
+    def windows() -> list[str]:
+        calls.append(now[0])
+        return titles[0]
+
+    vocabulary = Vocabulary(
+        lambda: [], lambda: [], words=["Tesi"], clock=lambda: now[0], windows=windows
+    )
+    vocabulary.refresh = lambda: None  # type: ignore[method-assign]
+    assert vocabulary.text("it") == "Cartelle: Tesi. Finestre aperte: Blocco note."
+    titles[0] = ["Calcolatrice", "Tesi"]
+    now[0] = 1.0
+    assert "Blocco note" in vocabulary.text("it")  # one request asks twice: read once
+    now[0] = 5.0
+    assert vocabulary.text("it") == "Cartelle: Tesi. Finestre aperte: Calcolatrice."
+    assert calls == [0.0, 5.0]
+
+
+def test_a_failed_window_reading_leaves_them_out() -> None:
+    def broken() -> list[str]:
+        raise OSError("no desktop")
+
+    vocabulary = Vocabulary(lambda: [], lambda: [], words=["Tesi"], windows=broken)
+    vocabulary.refresh = lambda: None  # type: ignore[method-assign]
+    assert vocabulary.text("it") == "Cartelle: Tesi."

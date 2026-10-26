@@ -12,8 +12,24 @@
   Chrome e cerca..." on 26/10) waits up to `[vad] continue_s` (2 s) for the rest; both parts are
   transcribed together. Nothing more said: the first text is answered, without a second pass.
   `continued_from` in `metrics.jsonl`.
+- The open windows' names go in Whisper's prompt too ("Finestre aperte: Blocco note."), read
+  every 3 s (`[stt] vocabulary_windows`, 8): Store apps such as Blocco note have no shortcut and
+  came out as "brocconote", "bacanoate" (26/10).
+- Local commands also match by sound (`router/phonetic.py`): Whisper's capital letters are read
+  as Italian letter names ("Claudio QDT" = cu-di-ti = "chiuditi", "QD" = "chiudi") and spellings
+  that sound alike meet ("kiudi", "chiudi"). On JenJo's 294 saved requests it changes only the
+  two "QDT"s.
 
-### Fixed
+### Fixed (logs of 26/10 evening)
+- CLAUDIO's own voice coming back into the microphone stopped the reply when Whisper misheard
+  it ("ciao cappiore" for "Ciao, campione", "dell'università e lì" for "dell'universo è in
+  linea", "Ah, che grande vista" for "Ah, il grande mistero"). The echo check now compares the
+  sounds of the words (`intake.echo_of`), not only identical words; a phrase with the name is
+  never echo unless the reply says the name.
+- A short phrase with the name in the conversation window ("Claudio QDT.") was dropped as the
+  TV: the name makes it a request.
+- Haiku's system prompt: capital letters are spelled words, nonsense words are names of open
+  windows, programs or folders that sound alike.
 - Prompt caching: an explicit marker on the system prompt besides automatic caching. With 6
   turns of history, every request from the 7th dropped the oldest turn, changed the prefix and
   wrote ~5,000 tokens again (0.0007 $ instead of ~0.0002 $ with Haiku).

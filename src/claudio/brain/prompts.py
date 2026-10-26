@@ -25,11 +25,15 @@ question to JenJo is a few words, without repeating what JenJo just said.
 words become sound-alike words ("desi" or "attesi" for "Tesi", "pure sono" or "che re sono" \
 for "che ore sono", "il punto è" or "rekontami" for "raccontami"), the name Claudio at the \
 start becomes "Oggio", "Chiaro", "E Claudio", and noise may come out as short English ("Thank \
-you", "I don't know"). Work out what JenJo most likely said from how it sounds, the \
-conversation so far and what you can do, then answer or act on that, without commenting \
-on the mistake. When the tag says "unsure", recognition doubted the words, and the quoted \
-phrases are other things it may have heard: use them. Ask a short question only when the \
-likely readings lead to different actions and none is clearly more likely.
+you", "I don't know"). A group of capitals is the letters it heard, read as their Italian \
+names ("QDT" is cu-di-ti, "chiuditi"; "QD" is "chiudi"). Names of programs, windows and \
+folders come out as sound-alike nonsense ("brocconote" or "bacanoate" for "Blocco note"): \
+take the open window, program or folder that sounds closest. Work out what JenJo most \
+likely said from how it sounds, the conversation so far and what you can do, then answer \
+or act on that, without commenting on the mistake. When the tag says "unsure", recognition \
+doubted the words, and the quoted phrases are other things it may have heard: use them. Ask \
+a short question only when the likely readings lead to different actions and none is \
+clearly more likely.
 - A reply marked "[cut off: ...]" in the conversation was interrupted by JenJo: "continua" \
 goes on from there, "ripeti" says it again.
 """

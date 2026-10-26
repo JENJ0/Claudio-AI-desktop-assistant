@@ -150,7 +150,8 @@ class RequestFilter:
 
     def is_request(self, text: str, language: str, responder: Responder) -> bool:
         """Heard in the conversation window: a command, or (with Claude) a phrase that sounds
-        addressed to Claudio. The TV's "e poi gli ho detto di no" is not: it costs nothing."""
+        addressed to Claudio, short ones too when they say the name. The TV's "e poi gli ho
+        detto di no" is not: it costs nothing."""
         if responder.understands(text, language):
             return True
         if self.claude_min_words is not None and responder.asked_question:
@@ -158,7 +159,8 @@ class RequestFilter:
         if self.claude_min_words is None:
             return False
         if words(text) < self.claude_min_words:
-            return short_request(text)  # "Allora scrivi." (23/10: dropped, now answered)
+            # "Allora scrivi." (23/10) and "Claudio QDT." (26/10): dropped, now answered.
+            return short_request(text) or heard_wake_word(text)
         return not self.only_addressed or addressed_to_claudio(text)
 
     def noise_cause(self, text: str, heard: Heard) -> str:
@@ -329,3 +331,35 @@ INTERJECTIONS = frozenset(
 def content_words(text: str) -> int:
     """The words in `text` that are not interjections: "Mm-hmm." has none."""
     return sum(w not in INTERJECTIONS for w in normalize(text, drop_fillers=False).split())
+
+
+# CLAUDIO's own voice heard again through the speakers, as Whisper writes it: rarely the same
+# words ("Ciao, campione" -> "ciao cappiore", "dell'universo è in linea" -> "dell'università e
+# lì", "il grande mistero" -> "che grande vista": logs of 26/10).
+ECHO_SHARE = 0.6  # this share of the heard words sounds like words of the reply
+ECHO_WORD = 75  # rapidfuzz ratio of a heard word to a reply word: the same word, misheard
+ECHO_PHRASE = 77  # partial_ratio of three or more heard words to the reply: a piece of it
+ECHO_MIN_CHARS = 4  # shorter words ("e", "il", "lì") are in every reply: they say nothing
+
+
+def echo_of(text: str, reply: str) -> bool:
+    """`text`, heard while the reply was spoken, is the reply itself coming back into the
+    microphone: most of its words sound like the reply's, or it is a misheard piece of it.
+    The name is JenJo talking to CLAUDIO, unless the reply says it too."""
+    from rapidfuzz import fuzz
+
+    heard = normalize(text, drop_fillers=False).split()
+    said = normalize(reply, drop_fillers=False).split()
+    if not heard or not said:
+        return False
+    if heard_wake_word(text) and not heard_wake_word(reply):
+        return False
+    vocabulary = set(said)
+    long_words = [w for w in vocabulary if len(w) >= ECHO_MIN_CHARS]
+    checked = [w for w in heard if len(w) >= ECHO_MIN_CHARS] or heard
+    alike = sum(
+        w in vocabulary or any(fuzz.ratio(w, r) >= ECHO_WORD for r in long_words) for w in checked
+    )
+    if alike / len(checked) >= ECHO_SHARE:
+        return True
+    return len(heard) >= 3 and fuzz.partial_ratio(" ".join(heard), " ".join(said)) >= ECHO_PHRASE

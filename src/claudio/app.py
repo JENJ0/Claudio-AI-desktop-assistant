@@ -27,6 +27,7 @@ from claudio.intake import (
     RequestFilter,
     Segment,
     content_words,
+    echo_of,
     unsure,
 )
 from claudio.intake import addressed_to_claudio as addressed_to_claudio  # re-exported
@@ -49,7 +50,6 @@ QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphon
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
 CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for the rest
-ECHO_SHARE = 0.6  # words heard while speaking that are mostly in the reply: CLAUDIO's own voice
 
 
 class State(enum.StrEnum):
@@ -727,16 +727,13 @@ class Assistant:
             self.speaker.duck(None)
 
     def _is_talking_to_me(self, text: str) -> bool:
-        """Words said over the reply: two or more, the name or a command, and not mostly the
-        reply's own words (its echo, with speakers instead of headphones)."""
+        """Words said over the reply: two or more, the name or a command, and not the reply's
+        own words coming back, however Whisper wrote them (speakers instead of headphones)."""
         if not text or not (
             content_words(text) >= 2 or heard_wake_word(text) or self.responder.understands(text)
         ):
             return False
-        heard = normalize(text, drop_fillers=False).split()
-        reply = set(normalize("".join(self._reply_parts), drop_fillers=False).split())
-        echo = sum(word in reply for word in heard) / len(heard)
-        if echo >= ECHO_SHARE:
+        if echo_of(text, "".join(self._reply_parts)):
             log.info("La mia voce nel microfono, la ignoro: %r", text)
             return False
         return True

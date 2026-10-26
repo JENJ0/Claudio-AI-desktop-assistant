@@ -148,6 +148,7 @@ class SttSettings(BaseModel):
     vocabulary_words: list[str] = Field(default_factory=list)
     vocabulary_folders: int = Field(25, ge=0, le=60)
     vocabulary_programs: int = Field(12, ge=0, le=40)
+    vocabulary_windows: int = Field(8, ge=0, le=20)
     no_speech_threshold: float = Field(0.6, ge=0, le=1)
     cpu_threads: int = Field(4, ge=1)
 
