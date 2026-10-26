@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - own voice through the speakers
+
+### Fixed
+- With speakers, the reply's echo became new requests to Haiku (JenJo's log 26/10 19:41:
+  "Sono le 19 e 42" -> "Se non le diciamo"). New `claudio/echo.py`: a phrase heard while
+  speaking is compared letter by letter (rapidfuzz partial ratio, numbers as spoken) with the
+  last two sentences played; `[conversation] echo_similarity` 70.
+- The same check on the conversation window after the reply (`intake = echo`), which also
+  starts deaf for `echo_tail_ms` 300.
+
+### Changed
+- `[conversation] barge_in_needs_name = true`: over the reply, a new request needs the name
+  ("Claudio, ...") or a local command; "basta" always works. `false` = the old behaviour.
+
 ## [Unreleased] - Sonnet only when needed
 
 ### Changed

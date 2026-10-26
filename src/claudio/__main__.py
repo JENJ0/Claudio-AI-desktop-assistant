@@ -357,6 +357,8 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
         mode=c.barge_in_mode,
         min_dbfs=c.barge_in_min_dbfs,
         duck_volume=c.duck_volume,
+        needs_name=c.barge_in_needs_name,
+        echo_similarity=c.echo_similarity,
         resume_s=c.resume_s,
     )
 
@@ -488,6 +490,7 @@ async def run_assistant(
         unsure_logprob=settings.stt.unsure_logprob if responder.fallback else None,
         alternatives=settings.stt.alternatives if settings.stt.closed_list else 0,
         on_heard=responder.heard,
+        echo_tail_ms=settings.conversation.echo_tail_ms if settings.conversation.barge_in else 0,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

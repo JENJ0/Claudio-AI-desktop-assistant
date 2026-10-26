@@ -18,8 +18,10 @@ import numpy as np
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.config import NoiseSettings, in_language
+from claudio.echo import is_echo, recent_reply
 from claudio.intake import (
     BARGE_IN,
+    CONVERSATION,
     Decision,
     Heard,
     Hearing,
@@ -45,7 +47,6 @@ QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphon
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
 CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for the rest
-ECHO_SHARE = 0.6  # words heard while speaking that are mostly in the reply: CLAUDIO's own voice
 
 
 class State(enum.StrEnum):
@@ -64,13 +65,20 @@ class BargeIn:
 
     `mode`: "duck" lowers the reply as soon as a loud voice starts and stops it when Whisper
     hears words; "stop" stops it at once; "confirm" waits for Whisper at full volume.
-    `min_dbfs`: the loudest 32 ms of the voice must reach this (the TV and the echo do not)."""
+    `min_dbfs`: the loudest 32 ms of the voice must reach this (the TV and the echo do not).
+    `needs_name`: a new request said over the reply must have the name ("Claudio, che ore
+    sono") or be a local command; "basta" always works. With speakers the reply's echo is
+    never taken for a request (JenJo 26/10: it answered its own voice).
+    `echo_similarity`: 0-100, a phrase whose letters are this close to what was just said
+    is the echo (echo.py); 0 = only the word check."""
 
     endpointer: Endpointer
     transcribe: Callable[[np.ndarray], str]
     mode: str = "duck"
     min_dbfs: float = -30.0
     duck_volume: float = 0.3
+    needs_name: bool = False
+    echo_similarity: float = 70.0
     # A reply cut by a new request goes on ("Dicevo: ...") after that request is answered,
     # if it took less than this (0: never).
     resume_s: float = 60.0
@@ -117,6 +125,7 @@ class Assistant:
         unsure_logprob: float | None = None,
         alternatives: int = 0,
         on_heard: Callable[[Hearing], None] | None = None,
+        echo_tail_ms: int = 0,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -167,6 +176,11 @@ class Assistant:
         # heard until the reply has stopped. None: nobody interrupted.
         self._takeover: tuple[np.ndarray, list[np.ndarray]] | None = None
         self._reply_parts: list[str] = []  # the reply being spoken (to recognise its echo)
+        self._said = ""  # the reply before the request being handled
+        # The conversation window opens deaf for this long: the reply's last syllables are
+        # still coming out of the speakers (output buffer, room).
+        self.echo_tail_ms = echo_tail_ms
+        self._deaf_samples = 0
         # A reply cut by a new request, still read to its end: resumed once that request is
         # answered. None: no reply was cut.
         self._cut: CutReply | None = None
@@ -356,6 +370,9 @@ class Assistant:
 
     def _on_listen(self, frame: np.ndarray) -> None:
         assert self._interaction is not None
+        if self._deaf_samples > 0:
+            self._deaf_samples -= len(frame)
+            return
         event = self.endpointer.process(frame)
         if event is EndpointEvent.START:
             self._interaction.mark("speech_start")
@@ -387,7 +404,8 @@ class Assistant:
         follow_up = False
         self._interrupted = False
         self._takeover = None
-        self._reply_parts = []
+        # The reply before: the conversation window may be hearing its echo.
+        self._said, self._reply_parts = "".join(self._reply_parts), []
         cut, self._cut = self._cut, None
         self._candidates = None
         try:
@@ -482,6 +500,15 @@ class Assistant:
         if decision.kind is Kind.FALSE_WAKE and await self._name_before(inter):
             heard = replace(heard, name_heard=True)
             decision = self.intake.decide(text, language, heard, self.responder)
+        if (
+            heard.wake_word == CONVERSATION
+            and not decision.dropped
+            and not self.responder.awaiting  # "sì" to "Confermi?" may be in the question
+            and self._is_echo(text, self._said)
+        ):
+            # The end of the reply, still in the room when the window opened.
+            log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", text)
+            return Decision(Kind.NOT_REQUEST, text, "echo")
         if decision.reason and not decision.dropped:
             info["intake"] = decision.reason  # e.g. quiet_answer: the "sì" was not counted
             log.info("Risposta troppo lontana dal microfono, non la conto: %r", text)
@@ -617,6 +644,8 @@ class Assistant:
         self._prewake = np.zeros(0, dtype=np.float32)
         self._recent.clear()
         self.endpointer.reset(timeout_s=self.conversation_s if conversation else None)
+        if conversation:
+            self._deaf_samples = self.endpointer.sample_rate * self.echo_tail_ms // 1000
         self._set_state(State.LISTENING)
 
     def _on_barge_frame(self, frame: np.ndarray, barge: BargeIn) -> None:
@@ -686,19 +715,31 @@ class Assistant:
             self.speaker.duck(None)
 
     def _is_talking_to_me(self, text: str) -> bool:
-        """Words said over the reply: two or more, the name or a command, and not mostly the
-        reply's own words (its echo, with speakers instead of headphones)."""
-        if not text or not (
-            content_words(text) >= 2 or heard_wake_word(text) or self.responder.understands(text)
-        ):
+        """Words said over the reply: two or more, the name or a command, and not the
+        reply's own echo (with speakers instead of headphones). With needs_name only the
+        name or a command."""
+        if not text:
             return False
-        heard = normalize(text, drop_fillers=False).split()
-        reply = set(normalize("".join(self._reply_parts), drop_fillers=False).split())
-        echo = sum(word in reply for word in heard) / len(heard)
-        if echo >= ECHO_SHARE:
+        named = heard_wake_word(text)
+        command = self.responder.understands(text)
+        if not (content_words(text) >= 2 or named or command):
+            return False
+        if self._is_echo(text):
             log.info("La mia voce nel microfono, la ignoro: %r", text)
             return False
+        if self.barge_in is not None and self.barge_in.needs_name and not (named or command):
+            log.info("Sentito mentre parlo, senza il mio nome: lo ignoro: %r", text)
+            return False
         return True
+
+    def _is_echo(self, text: str, reply: str | None = None) -> bool:
+        """`text` is what CLAUDIO itself is saying (or `reply`, what it has just said), heard
+        back."""
+        recent = recent_reply(self.speaker.played, "".join(self._reply_parts) or reply or "")
+        # After the reply only its end counts: a follow-up may reuse its words ("e Marte?").
+        reply = "".join(self._reply_parts) if reply is None else recent
+        min_similarity = self.barge_in.echo_similarity if self.barge_in is not None else 0.0
+        return is_echo(text, recent, reply, min_similarity)
 
     def _take_over(
         self, audio: np.ndarray, text: str, rest: list[np.ndarray] | None = None
