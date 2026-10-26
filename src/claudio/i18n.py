@@ -213,6 +213,9 @@ EN: dict[str, str] = {
         "Empty phrase while an answer is expected: still listening"
     ),
     "Browser %r sconosciuto: uso quello predefinito": "Unknown browser %r: using the default one",
+    "Finestra di %s non ancora aperta: scrivo in quella attiva": (
+        "%s has no window yet: typing in the active one"
+    ),
     "Non è una richiesta, fine della conversazione: %r": (
         "Not a request, end of the conversation: %r"
     ),

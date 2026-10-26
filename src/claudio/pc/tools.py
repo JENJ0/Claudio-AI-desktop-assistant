@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 from rapidfuzz import fuzz, process
 
@@ -45,6 +45,13 @@ WINDOW_CUTOFF = 60
 SPOKEN_TEXT_CHARS = 80  # the text to type, as read in the confirmation question
 SPOKEN_PURPOSE_CHARS = 120  # the purpose of a command, as read before "confermo"
 WEB_QUERY_CHARS = 200
+URL_CHARS = 2000
+# An app started this recently may not have its window yet: typing waits for it (26/10: Chrome
+# opened and type_text ran at once, the first word went nowhere and only "Moto" was typed).
+LAUNCH_WAIT_S = 6.0
+WINDOW_WAIT_S = 3.0  # how long a window named by Claude (or just launched) is waited for
+WINDOW_POLL_S = 0.2
+WINDOW_SETTLE_S = 0.4  # a window that just appeared: its text field takes the focus a bit later
 # The browsers web_search can name, by their executable (Windows "App Paths").
 BROWSERS = {
     "chrome": "chrome.exe",
@@ -196,6 +203,12 @@ DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "open_website",
+        "description": "Open a website or web address in the browser (e.g. youtube.com, "
+        "https://www.dainese.com). browser only when JenJo names one.",
+        "input_schema": _schema({"url": _STR, "browser": _STR}, ["url"]),
+    },
+    {
         "name": "list_windows",
         "description": "List the open windows (title, program; the active one is marked).",
         "input_schema": _schema({}),
@@ -269,6 +282,7 @@ LEVELS = {
     "open_path": LEVEL_SAFE,
     "search_files": LEVEL_SAFE,
     "web_search": LEVEL_SAFE,  # only opens a results page: nothing is typed or changed
+    "open_website": LEVEL_SAFE,  # opening is level 1 (CLAUDE.md, Sicurezza)
     "list_windows": LEVEL_SAFE,
     "read_window": LEVEL_SAFE,
     "focus_window": LEVEL_SAFE,
@@ -314,12 +328,15 @@ class PcTools:
         settings: PcSettings,
         home: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.desktop = desktop
         self.settings = settings
         self.policy = PathPolicy(settings.roots, home)
         self.safe_keys = frozenset(_canonical_or_none(k) for k in settings.safe_keys) - {None}
         self.clock = clock
+        self.sleep = sleep
+        self._launched: tuple[App, float] | None = None  # the last app started, and when
         self._free: set[str] = set()  # type_text calls into a free_typing window (prepare)
         self._apps: list[App] | None = None
         self._apps_at = -float("inf")
@@ -505,6 +522,8 @@ class PcTools:
             return self._search(str(a.get("query", "")), a.get("kind"))
         if call.name == "web_search":
             return self._web_search(str(a.get("query", "")), str(a.get("browser") or ""))
+        if call.name == "open_website":
+            return self._open_website(str(a.get("url", "")), str(a.get("browser") or ""))
         if call.name == "list_windows":
             return self._list_windows()
         if call.name == "read_window":
@@ -580,6 +599,7 @@ class PcTools:
                 raise ToolFailed(f'no app called "{name}" in the Start menu. Closest: {hint}')
             app = by_name[best[0]]
         self.desktop.launch(app)
+        self._launched = (app, self.clock())
         return f"Started {app.name}."
 
     def _app_list(self) -> list[App]:
@@ -634,13 +654,40 @@ class PcTools:
             raise ToolFailed("no query")
         query = query[:WEB_QUERY_CHARS]
         url = self.settings.web_search_url.format(query=quote_plus(query))
+        where = self._browse(url, browser)
+        return f'Searched "{query}" in {where}: results are open.'
+
+    def _open_website(self, raw: str, browser: str) -> str:
+        """Any web address JenJo asks for (opening is level 1): only https, so the model can
+        neither start a program (file:, ms-settings:...) nor hide a download behind it."""
+        raw = raw.strip()
+        if not raw:
+            raise ToolFailed("no address")
+        if "://" not in raw:
+            raw = "https://" + raw  # "youtube.com"
+        parts = urlsplit(raw)
+        if parts.scheme.lower() == "http":
+            raw, parts = "https" + raw[4:], urlsplit("https" + raw[4:])
+        try:
+            parts.port  # noqa: B018 - "ms-settings:privacy" has a port that is not a number
+        except ValueError:
+            raise ToolFailed(f"not a web address: {raw[:80]}") from None
+        host = parts.hostname or ""
+        if parts.scheme.lower() != "https" or "." not in host or len(raw) > URL_CHARS:
+            raise ToolFailed(f"not a web address: {raw[:80]}")
+        if any(c.isspace() for c in raw):
+            raise ToolFailed("a web address has no spaces: use web_search for words")
+        return f"Opened {parts.hostname} in {self._browse(raw, browser)}."
+
+    def _browse(self, url: str, browser: str) -> str:
+        """Open `url` in the named browser, or the default one; where it went, for Claude."""
         exe = BROWSERS.get(browser.casefold().strip()) if browser.strip() else None
         if browser.strip() and exe is None:
             log.info("Browser %r sconosciuto: uso quello predefinito", browser)
         opened = self.desktop.open_url(url, exe)
         if exe is not None and not opened:
-            return f'Searched "{query}" in the default browser ({browser} not found).'
-        return f'Searched "{query}" in {browser.strip() or "the browser"}: results are open.'
+            return f"the default browser ({browser} not found)"
+        return browser.strip() or "the browser"
 
     def _list_windows(self) -> str:
         windows = [w for w in self.desktop.windows() if w.title.strip()]
@@ -668,6 +715,31 @@ class PcTools:
         if best is None:
             raise ToolFailed(f'no window like "{query}": call list_windows')
         return next(w for w in windows if w.handle == best[2])
+
+    def _just_launched(self) -> App | None:
+        if self._launched is None or self.clock() - self._launched[1] > LAUNCH_WAIT_S:
+            return None
+        return self._launched[0]
+
+    def _wait_window(self, query: str) -> Window:
+        """The window, waited for up to WINDOW_WAIT_S when an app was just started (its
+        window is not there yet); a window that only now appeared gets a moment to settle."""
+        if self._just_launched() is None:
+            return self._find_window(query)
+        deadline = self.clock() + WINDOW_WAIT_S
+        waited = False
+        while True:
+            try:
+                window = self._find_window(query)
+            except ToolFailed:
+                if self.clock() >= deadline:
+                    raise
+                self.sleep(WINDOW_POLL_S)
+                waited = True
+                continue
+            if waited:
+                self.sleep(WINDOW_SETTLE_S)
+            return window
 
     def _private(self, window: Window) -> bool:
         title = f"{window.title} {window.process}".casefold()
@@ -730,8 +802,13 @@ class PcTools:
         if len(text) > self.settings.type_max_chars:
             raise ToolFailed(f"too long: at most {self.settings.type_max_chars} characters")
         if query:
-            window = self._find_window(query)
-            self.desktop.focus(window)
+            self.desktop.focus(self._wait_window(query))
+        elif (just := self._just_launched()) is not None:
+            # "Apri Chrome e scrivi...": the keys go to that app, not to whatever was in front.
+            try:
+                self.desktop.focus(self._wait_window(just.name))
+            except ToolFailed:
+                log.info("Finestra di %s non ancora aperta: scrivo in quella attiva", just.name)
         long = len(text) >= self.settings.paste_min_chars or "\n" in text
         if long and self.settings.paste_min_chars > 0:
             try:

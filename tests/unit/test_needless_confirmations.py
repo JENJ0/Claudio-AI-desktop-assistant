@@ -15,7 +15,7 @@ from claudio.brain.prompts import SYSTEM_PROMPT_TOOLS
 from claudio.config import PcSettings
 from claudio.cost.pricing import load_pricing
 from claudio.intake import Kind
-from claudio.pc.tools import DEFINITIONS, LEVELS, PcTools
+from claudio.pc.tools import DEFINITIONS, LEVELS, PcTools, Window
 from claudio.router.matcher import CommandMatcher
 from claudio.router.responder import ANSWER_WINDOW_S, LocalResponder
 from tests.unit.test_claude_brain import FakeClient, Monotonic, brain, hybrid, say
@@ -166,3 +166,90 @@ async def test_without_a_question_an_empty_phrase_ends_the_window(
     assistant, speaker, _, _ = build(fake_vad, vad_settings, matcher, ["che ore sono", ""])
     await talk(assistant, make_frames, speaker, requests=2)
     assert [row["outcome"] for row in assistant.history] == ["ok", "empty"]
+
+
+# --- the whole behaviour, not only web searches: direct tools, and typing after a launch -------
+
+
+async def test_open_website_needs_no_yes_and_is_https_only(
+    tools: PcTools, desk: FakeDesktop
+) -> None:
+    assert tools.level(call("open_website", url="youtube.com")) == 1
+    out = await tools.run(call("open_website", url="youtube.com", browser="Edge"))
+    assert not out.error and desk.done[-1] == ("url", "https://youtube.com", "msedge.exe")
+    await tools.run(call("open_website", url="http://www.dainese.com/it"))
+    assert desk.done[-1][1] == "https://www.dainese.com/it"  # upgraded, never plain http
+    for bad in ("file:///C:/Windows/system32/calc.exe", "ms-settings:privacy", "dainese moto"):
+        out = await tools.run(call("open_website", url=bad))
+        assert out.error, bad
+    assert sum(d[0] == "url" for d in desk.done) == 2
+
+
+def test_prompt_prefers_direct_tools_to_typing() -> None:
+    prompt = SYSTEM_PROMPT_TOOLS.replace("\\\n", "").replace("\n", " ")
+    assert "open_website" in prompt
+    assert "type and press keys only when no tool does it" in prompt
+
+
+class SlowDesktop(FakeDesktop):
+    """Chrome's window shows up only a few looks after the launch, as on 26/10."""
+
+    def __init__(self, appears_after: int) -> None:
+        super().__init__()
+        self.looks = 0
+        self.appears_after = appears_after
+        self.chrome = Window(9, "Nuova scheda - Google Chrome", "chrome.exe")
+        self.open_windows = [Window(1, "Senza nome - Blocco note", "notepad.exe", active=True)]
+
+    def windows(self) -> list[Window]:
+        self.looks += 1
+        if self.looks > self.appears_after and self.chrome not in self.open_windows:
+            self.open_windows = [*self.open_windows, self.chrome]
+        return self.open_windows
+
+
+def slow_tools(desk: FakeDesktop, home: Path, clock: Monotonic) -> PcTools:
+    def sleep(s: float) -> None:
+        clock.t += s
+
+    return PcTools(desk, PcSettings(), home=home, clock=clock, sleep=sleep)
+
+
+async def test_typing_right_after_a_launch_waits_for_its_window(tmp_path: Path) -> None:
+    desk, clock = SlowDesktop(appears_after=3), Monotonic()
+    t = slow_tools(desk, tmp_path, clock)
+    await t.run(call("open_app", name="Google Chrome"))
+    out = await t.run(call("type_text", text="Dainese Moto"))
+    t.close()
+    assert not out.error
+    focus = desk.done.index(("focus", "Nuova scheda - Google Chrome"))
+    assert desk.done[focus + 1] == ("keys", "Dainese Moto")  # into Chrome, after it appeared
+    assert desk.looks > 3
+
+
+async def test_a_named_window_of_a_new_app_is_waited_for(tmp_path: Path) -> None:
+    desk, clock = SlowDesktop(appears_after=2), Monotonic()
+    t = slow_tools(desk, tmp_path, clock)
+    await t.run(call("open_app", name="Google Chrome"))
+    out = await t.run(call("type_text", text="ciao", window="Chrome"))
+    t.close()
+    assert not out.error and ("focus", "Nuova scheda - Google Chrome") in desk.done
+
+
+async def test_without_a_launch_a_missing_window_fails_at_once(tmp_path: Path) -> None:
+    desk, clock = SlowDesktop(appears_after=99), Monotonic()
+    t = slow_tools(desk, tmp_path, clock)
+    out = await t.run(call("type_text", text="ciao", window="Chrome"))
+    t.close()
+    assert out.error and clock.t == 1000.0  # nothing was waited for
+
+
+async def test_a_window_that_never_comes_types_into_the_active_one(tmp_path: Path) -> None:
+    desk, clock = SlowDesktop(appears_after=99), Monotonic()
+    t = slow_tools(desk, tmp_path, clock)
+    await t.run(call("open_app", name="Google Chrome"))
+    start = clock.t
+    out = await t.run(call("type_text", text="ciao"))
+    t.close()
+    assert not out.error and desk.done[-1] == ("keys", "ciao")  # as before this change
+    assert clock.t - start <= 3.5  # waited about WINDOW_WAIT_S, not forever

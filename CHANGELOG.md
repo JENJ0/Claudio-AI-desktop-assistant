@@ -8,6 +8,14 @@
   encoded; `browser` (Chrome, Edge, Firefox, Brave, Opera) is found in the Windows "App Paths",
   otherwise the default browser opens. "Apri Chrome e cerca X" no longer types the search
   (`type_text`, level 2, "Confermi?") and no longer loses the first word while Chrome starts.
+- `open_website(url, browser?)` (level 1, https only; "youtube.com" and http:// become
+  https://, `file:`/`ms-settings:` and words are refused). The prompt now prefers a tool that
+  does the whole job to driving a window with typing and keys.
+
+### Fixed (the general cause, not only Chrome)
+- Typing right after an app was started went to whatever window was in front, before the new
+  window existed (only "Moto" was typed): `type_text` now waits up to 3 s for the window of an
+  app started in the last 6 s (or for the window it names), focuses it and lets it settle.
 
 ### Fixed (JenJo's log, 26/10 00:25)
 - Haiku asked "Confermi?" in words without calling the tool: the prompt now says to call the
