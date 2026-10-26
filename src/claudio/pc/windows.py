@@ -40,6 +40,23 @@ UIA_VALUE_PROPERTY = 30045
 TEXT_TYPES = frozenset({"Edit", "Document"})  # their value is the text, not their name
 
 
+def _app_path(exe: str) -> Path | None:
+    """Where `exe` (chrome.exe) is installed, from the "App Paths" registry keys that also
+    let "Esegui" start it by name. None when it is not installed."""
+    import winreg
+
+    key = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key) as k:
+                value = str(winreg.QueryValue(k, None) or "").strip().strip('"')
+        except OSError:
+            continue
+        if value and Path(value).is_file():
+            return Path(value)
+    return None
+
+
 class WindowsDesktop:
     def thread_init(self) -> None:
         try:
@@ -79,6 +96,16 @@ class WindowsDesktop:
 
     def open_path(self, path: Path) -> None:
         os.startfile(str(path))
+
+    def open_url(self, url: str, browser: str | None) -> bool:
+        if not url.startswith("https://"):
+            raise ValueError(f"not an https URL: {url!r}")
+        exe = _app_path(browser) if browser else None
+        if exe is not None:
+            subprocess.Popen([str(exe), url])  # no shell: the URL is one argument
+            return True
+        os.startfile(url)  # the default browser
+        return browser is None
 
     # --- files --------------------------------------------------------------------------
 

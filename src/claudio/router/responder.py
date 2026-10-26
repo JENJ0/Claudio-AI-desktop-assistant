@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection
 from typing import Any
 
@@ -26,6 +27,7 @@ from claudio.safety.confirmation import (
 log = logging.getLogger(__name__)
 
 QUESTION_TAIL_CHARS = 60  # a "?" this close to the end of a reply asks something
+ANSWER_WINDOW_S = 45.0  # then the question is old: a phrase without the name is not its answer
 
 # Asked with (request, reply language): Claude's reply, streamed.
 Fallback = Callable[[str, str], AsyncGenerator[str, None]]
@@ -45,6 +47,7 @@ class LocalResponder:
         fallback_awaiting: Callable[[], bool] | None = None,
         fallback_cancel: Callable[[], None] | None = None,
         fallback_heard: Callable[[Hearing], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.matcher = matcher
         self.actions = actions
@@ -62,6 +65,8 @@ class LocalResponder:
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
         self._last_reply: tuple[str, str] | None = None  # (text, language) for "ripeti"
+        self.clock = clock
+        self._last_reply_at = -float("inf")
 
     def prepare(self) -> None:
         """JenJo started speaking to Claudio: whatever the request needs can get ready now.
@@ -111,6 +116,12 @@ class LocalResponder:
             and "?" in self._last_reply[0].rstrip()[-QUESTION_TAIL_CHARS:]
         )
 
+    @property
+    def answer_expected(self) -> bool:
+        """The question was asked less than ANSWER_WINDOW_S ago (counted from the end of the
+        reply's text): "Confermo." after the conversation window closed is still its answer."""
+        return self.asked_question and self.clock() - self._last_reply_at <= ANSWER_WINDOW_S
+
     def heard(self, hearing: Hearing) -> None:
         """How sure Whisper was of the request about to be answered (Claude is told)."""
         if self.fallback_heard is not None:
@@ -148,6 +159,7 @@ class LocalResponder:
         reply = "".join(parts).strip()
         if reply and self.last_route.get("command") != "repeat":
             self._last_reply = (reply, self.language)
+            self._last_reply_at = self.clock()
 
     async def _respond(self, text: str, language: str) -> AsyncIterator[str]:
         if self._pending is not None:

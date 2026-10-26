@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased] - no needless confirmations
+
+### Added
+- `web_search(query, browser?)` (level 1): opens the browser on the search results page
+  (`[pc] web_search_url`, Google by default, https only). The query only goes into the URL,
+  encoded; `browser` (Chrome, Edge, Firefox, Brave, Opera) is found in the Windows "App Paths",
+  otherwise the default browser opens. "Apri Chrome e cerca X" no longer types the search
+  (`type_text`, level 2, "Confermi?") and no longer loses the first word while Chrome starts.
+- `open_website(url, browser?)` (level 1, https only; "youtube.com" and http:// become
+  https://, `file:`/`ms-settings:` and words are refused). The prompt now prefers a tool that
+  does the whole job to driving a window with typing and keys.
+
+### Fixed (the general cause, not only Chrome)
+- Typing right after an app was started went to whatever window was in front, before the new
+  window existed (only "Moto" was typed): `type_text` now waits up to 3 s for the window of an
+  app started in the last 6 s (or for the window it names), focuses it and lets it settle.
+
+### Fixed (JenJo's log, 26/10 00:25)
+- Haiku asked "Confermi?" in words without calling the tool: the prompt now says to call the
+  tool in the same reply and never ask for a yes itself.
+- "Confermo." said after the conversation window closed woke the detector and was dropped as a
+  false wake: a phrase of at most 4 words within 45 s of a reply that asked something is its
+  answer (`responder.answer_expected`).
+- An empty phrase in the conversation window (noise Whisper drops, like "Grazie a tutti")
+  closed it while a question waited: the window now stays open once more.
+
 ## [Unreleased] - Whisper hears names and whole phrases
 
 ### Added
