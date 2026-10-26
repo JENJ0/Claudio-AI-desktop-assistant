@@ -42,6 +42,7 @@ from claudio.wakeword.verifier import clipped_name, unclear
 log = logging.getLogger(__name__)
 
 PREWAKE_S = 1.5  # audio kept before the wake word: one-breath phrases and the saved WAV
+ECHO_MARGIN_DB = 3.0  # a voice must be this much louder than the echo to lower the reply
 HELD_FRAMES = 100  # frames kept while transcribing (~8 s), replayed if we listen again
 LEAD_IN_S = PREWAKE_S  # one breath: how much of the audio before the detection Whisper gets
 # What Whisper hears to check the name. The "claudio" model fires late, on the next word when
@@ -183,6 +184,9 @@ class Assistant:
         self._takeover: tuple[np.ndarray, list[np.ndarray]] | None = None
         self._reply_parts: list[str] = []  # the reply being spoken (to recognise its echo)
         self._said = ""  # the reply before the request being handled
+        self._heard_echo = False  # the last phrase over the reply was CLAUDIO's own voice
+        # The loudest echo of CLAUDIO's voice heard so far (None: none, e.g. headphones).
+        self._echo_dbfs: float | None = None
         # The conversation window opens deaf for this long: the reply's last syllables are
         # still coming out of the speakers (output buffer, room).
         self.echo_tail_ms = echo_tail_ms
@@ -679,6 +683,8 @@ class Assistant:
         if event is EndpointEvent.START:
             if not self._barge_loud(barge):
                 return
+            if self._sounds_like_echo(barge):
+                return  # no louder than CLAUDIO's own echo: wait for Whisper
             if barge.mode == "stop":
                 # Everything heard so far is in the phrase: nothing more to add.
                 self._take_over(barge.endpointer.partial(), "", rest=[])
@@ -701,6 +707,13 @@ class Assistant:
             task = asyncio.create_task(self._check_barge_in(audio, barge, dbfs))
             self._checks.add(task)
             task.add_done_callback(self._checks.discard)
+
+    def _sounds_like_echo(self, barge: BargeIn) -> bool:
+        """The voice starting now is no louder than CLAUDIO's own echo already heard: with
+        speakers the reply would keep lowering (or stopping) itself on its own voice."""
+        if self._echo_dbfs is None:
+            return False
+        return barge.endpointer.stats()["speech_dbfs"] < self._echo_dbfs + ECHO_MARGIN_DB
 
     @staticmethod
     def _barge_loud(barge: BargeIn) -> bool:
@@ -733,6 +746,9 @@ class Assistant:
         elif self._is_talking_to_me(text):
             self._take_over(audio, text)
         else:
+            if self._heard_echo and dbfs is not None:
+                # How loud the speakers come back: quieter voices no longer lower the reply.
+                self._echo_dbfs = max(self._echo_dbfs or dbfs, dbfs)
             log.info("Sentito mentre parlo, non è per me: %r", text)
             self.speaker.duck(None)
 
@@ -740,14 +756,16 @@ class Assistant:
         """Words said over the reply: two or more, the name or a command, and not the
         reply's own echo (with speakers instead of headphones). With needs_name only the
         name or a command."""
+        self._heard_echo = False
         if not text:
+            return False
+        if self._is_echo(text):
+            self._heard_echo = True
+            log.info("La mia voce nel microfono, la ignoro: %r", text)
             return False
         named = heard_wake_word(text)
         command = self.responder.understands(text)
         if not (content_words(text) >= 2 or named or command):
-            return False
-        if self._is_echo(text):
-            log.info("La mia voce nel microfono, la ignoro: %r", text)
             return False
         if self.barge_in is not None and self.barge_in.needs_name and not (named or command):
             log.info("Sentito mentre parlo, senza il mio nome: lo ignoro: %r", text)

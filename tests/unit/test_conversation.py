@@ -772,3 +772,26 @@ async def test_the_window_starts_deaf_but_still_hears_the_next_request(
 def test_echo_settings_are_shipped() -> None:
     c = load_settings().conversation
     assert c.barge_in_needs_name and c.echo_similarity == 70.0 and c.echo_tail_ms == 300
+
+
+async def test_once_its_echo_is_known_the_reply_stops_lowering_itself(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    """With speakers every echo lowered the reply until Whisper had listened: once a phrase
+    was the echo, voices no louder than it wait for Whisper at full volume."""
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono"],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["Sono le 14 e 5."]),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert assistant._echo_dbfs is not None  # learnt from the first echo
+    assert speaker.ducks == [0.3, None]  # that one still lowered it
+    assert assistant._sounds_like_echo(assistant.barge_in)
+    assistant._echo_dbfs = float("-inf")  # any voice is louder: lowered at once again
+    assert not assistant._sounds_like_echo(assistant.barge_in)

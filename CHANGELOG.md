@@ -9,6 +9,9 @@
   last two sentences played; `[conversation] echo_similarity` 70.
 - The same check on the conversation window after the reply (`intake = echo`), which also
   starts deaf for `echo_tail_ms` 300.
+- The echo no longer lowers (duck) or stops (stop mode) the reply over and over: Claudio
+  remembers how loud its own echo came back and only a voice 3 dB louder acts before Whisper
+  has listened.
 
 ### Changed
 - `[conversation] barge_in_needs_name = true`: over the reply, a new request needs the name
