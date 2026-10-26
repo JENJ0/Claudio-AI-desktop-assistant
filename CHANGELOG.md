@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - Sonnet only when needed, Jack less robotic
+## [Unreleased] - Sonnet only when needed, "Claudio" wake word, Jack less robotic
 
 ### Changed
 - `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
@@ -19,6 +19,19 @@
 - `scripts/jack_variants.py`: variants F (pitch fix), T (F + temperature 0.8), Q (no RVC);
   `--from-log` now compares C/F/T/Q; the report measures every reply's pitch (octave jumps,
   flicker, melody spread) and lists the suspicious replies to listen to first.
+
+### Fixed (JenJo's test, 25/10: "Claudio" alone fires rarely)
+- The "claudio" model fires late, on the word after the name when it is said in one breath:
+  Whisper's check got only the last 1.5 s, the "C" was cut off and it heard "l'audio" (8 of the
+  rejected checks in the logs), so JenJo had to repeat. The check now hears the last
+  `WAKE_CHECK_S` 2.5 s; the request keeps its 1.5 s lead-in.
+- After the "claudio" model, a transcript starting with a word at most 2 edits from "claudio"
+  ("l'audio", "audio", "fraudio") wakes too, but the request is verified (name or command). Not after "hey claudio", not in the middle
+  ("alza l'audio"), not "radio" or "studio".
+- A strong "claudio" (`[wakeword] unclear_min` 0.6) that Whisper hears as nothing or "Grazie."
+  (its guess on a lone word: half of JenJo's "Claudio" on 26/10, at 0.86-0.95) now beeps and
+  listens; the request is verified (name or local command), else dropped in silence (JenJo
+  chose this over retraining).
 
 ## [0.3.2] - screen and terminal
 

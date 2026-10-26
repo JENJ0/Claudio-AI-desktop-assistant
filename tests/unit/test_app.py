@@ -319,7 +319,7 @@ async def test_near_miss_is_logged_without_waking(fake_vad, vad_settings, make_f
 
 
 class SecondChance:
-    """Stands for Whisper listening to the last 1.5 s after a near miss."""
+    """Stands for Whisper listening to the last 2.5 s after a near miss."""
 
     def __init__(
         self, text: str = "", error: bool = False, gate: threading.Event | None = None
@@ -358,7 +358,7 @@ async def test_second_chance_wakes_when_whisper_hears_the_name(
     check = SecondChance("Hey Claudio.")
     assistant, speaker = with_second_chance(fake_vad, vad_settings, check, tmp_path)
     await run_frames(assistant, make_frames("silence", 2400))
-    assert len(check.heard) == 1 and 0 < len(check.heard[0]) <= 24000  # the last 1.5 s
+    assert len(check.heard) == 1 and 0 < len(check.heard[0]) <= 40000  # the last 2.5 s
     assert speaker.beeps == ["wake"] and assistant.state is State.LISTENING
     info = assistant._interaction.info
     assert info["second_chance"] == "Hey Claudio." and info["wake_score"] == 0.3
