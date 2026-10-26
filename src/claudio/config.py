@@ -212,6 +212,10 @@ class TtsSettings(BaseModel):
     # audio ~0.3 s, more mangled words), "sentence" whole (clearer, the audio waits for the
     # sentence), "auto" blocks for a reply's first sentence and whole for the next ones.
     jack_rvc: Literal["blocks", "sentence", "auto"] = "auto"  # JenJo's pick, 24/10
+    # RVC pitch cleanup against the "robotic at times" tone: the pitch buckets of the
+    # streamed first sentence as in training (Applio's realtime path had them ~2 semitones
+    # off) and octave errors, jitter and tiny unvoiced holes removed from whole sentences.
+    jack_pitch_fix: bool = False  # off until JenJo's A/B (scripts/jack_variants.py C vs F)
     # Words Jack says wrong, written as he should say them (any case): English words read
     # in English, "PC" merged into "pace". Edit in claudio.toml [tts.jack_words].
     jack_words: dict[str, str] = Field(default_factory=dict)
@@ -394,6 +398,10 @@ class PcSettings(BaseModel):
     read_timeout_s: float = Field(2.0, gt=0, le=30)  # slow apps (Electron) stop here
     search_limit: int = Field(8, ge=1, le=50)
     search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
+    # Every folder name under the roots, read in the background at start and again after this
+    # many seconds (0 = off): folders found at once, misheard names compared with all of them.
+    folders_refresh_s: float = Field(900.0, ge=0)
+    folders_max: int = Field(200_000, ge=1000)  # stop listing here (a huge drive with "*")
     max_windows: int = Field(25, ge=1, le=100)
     apps_refresh_s: float = Field(600.0, ge=0)
     # v0.3.2. The screenshot to Haiku (last resort): long side in pixels, JPEG quality.

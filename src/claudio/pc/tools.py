@@ -276,6 +276,12 @@ _SAY = {
 }
 
 
+def _merge(first: Sequence[Found], then: Sequence[Found]) -> list[Found]:
+    """`first`, then the items of `then` not already there."""
+    seen = {f.path for f in first}
+    return [*first, *(f for f in then if f.path not in seen)]
+
+
 class PcTools:
     """Definitions for Claude, the level of each call, the confirmation question, the run."""
 
@@ -294,6 +300,11 @@ class PcTools:
         self._free: set[str] = set()  # type_text calls into a free_typing window (prepare)
         self._apps: list[App] | None = None
         self._apps_at = -float("inf")
+        self.folders = files.FolderNames(
+            self.policy.search_roots, settings.folders_refresh_s, settings.folders_max, clock
+        )
+        if settings.folders_refresh_s > 0:
+            self.folders.refresh()  # in the background: ready long before the first search
         self._pool = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="pc", initializer=desktop.thread_init
         )
@@ -515,19 +526,26 @@ class PcTools:
             return self.policy.check(str(near))
 
     def _find_by_name(self, raw: str) -> Path | None:
-        """The folder (or else file) named exactly like the last part of `raw`, anywhere in
-        the allowed folders, breadth first ("Tesi" -> Desktop\\UNIVERSITA'\\TESI)."""
+        """The folder (or else file) named like the last part of `raw`, anywhere in the
+        allowed folders ("Tesi" -> Desktop\\UNIVERSITA'\\TESI, "Projecti" -> PROGETTI): from
+        the list of folders, else breadth first. Accents and apostrophes do not count."""
         name = raw.replace("/", "\\").rstrip("\\").rsplit("\\", 1)[-1].strip().strip('"')
+        named = [p for p in self.folders.named(name) if p.is_dir() and self.policy.allowed(p)]
+        if len(named) == 1 or (named and files.fold(named[0].name) == files.fold(name)):
+            return named[0]
         try:
             terms = files.search_terms(name)
         except PathRefused:
             return None
+        wanted = files.fold(name)
         for kind in ("folder", None):
             found = files.walk_search(
                 terms, self.policy.search_roots(), kind, 5, self.settings.search_timeout_s
             )
             for f in found:
-                if f.path.name.casefold() == name.casefold() and self.policy.allowed(f.path):
+                stem = f.path.name if f.path.is_dir() else f.path.stem
+                same = wanted in (files.fold(f.path.name), files.fold(stem))
+                if same and self.policy.allowed(f.path):
                     return f.path
         return None
 
@@ -563,28 +581,35 @@ class PcTools:
         kind = kind if kind in files.KINDS else None
         roots = self.policy.search_roots()
         limit = self.settings.search_limit
-        found = self.desktop.search_index(terms, kind, roots, limit) or []
-        # Outside the allowed folders counts as nothing: on 25/10 the index answered "tesi" only
-        # with paths the policy refused (likely written as C:\Utenti\...) and the walk never ran.
-        allowed = [f for f in found if self.policy.allowed(f.path)]
-        if len(allowed) < len(found):
-            log.info(
-                "Indice: %d risultati fuori dalle cartelle permesse", len(found) - len(allowed)
-            )
-        found = allowed
-        similar: list[Found] = []
+        found: list[Found] = []
+        listed = files.Walk()
+        if kind in (None, "folder") and self.folders.folders() is not None:
+            listed = self.folders.find(terms, limit, SIMILAR)
+            found = [f for f in listed.found if self.policy.allowed(f.path)]
+        if kind != "folder" or not found:
+            indexed = self.desktop.search_index(terms, kind, roots, limit) or []
+            # Outside the allowed folders counts as nothing: on 25/10 the index answered "tesi"
+            # only with paths the policy refused (C:\Utenti\...) and the walk never ran.
+            allowed = [f for f in indexed if self.policy.allowed(f.path)]
+            if len(allowed) < len(indexed):
+                log.info(
+                    "Indice: %d risultati fuori dalle cartelle permesse",
+                    len(indexed) - len(allowed),
+                )
+            found = _merge(found, allowed)
+        similar = listed.similar
         if not found:
-            # No index, or the index has nothing: a folder not indexed yet (on 25/10 it did not
-            # find Desktop\PROGETTI, then did ten minutes later) or a misheard name. Walk the
-            # folders, with a time limit, and collect the names that sound alike.
+            # The index has nothing: a folder made after the list was read, a file not indexed
+            # yet, or a misheard name. Walk the folders, with a time limit.
             walked = files.walk(
                 terms, roots, kind, limit, self.settings.search_timeout_s, similar=SIMILAR
             )
             found = [f for f in walked.found if self.policy.allowed(f.path)]
-            similar = walked.similar
+            similar = _merge(similar, walked.similar)[:SIMILAR]
         home = self.policy.home
         if not found:
             similar = [f for f in similar if self.policy.allowed(f.path)]
+            log.info("Ricerca %r: niente, %d nomi simili", " ".join(terms), len(similar))
             if similar:
                 lines = [f"- {f.describe(home)}" for f in similar]
                 return (

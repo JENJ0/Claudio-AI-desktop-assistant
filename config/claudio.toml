@@ -113,6 +113,7 @@ jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pit
 jack_temperature = 0.7     # Qwen3 sampling: lower = steadier pronunciation (JenJo's pick C, 24/10)
 jack_rvc = "auto"          # "blocks" (fast, more mangled words), "sentence" (clearer, waits for the
                            # sentence) or "auto" (blocks for a reply's first sentence, then whole)
+jack_pitch_fix = false     # true = RVC pitch cleaned (octave errors, jitter): against the robotic tone
 # Compare settings by ear: uv run python scripts/jack_variants.py (WAVs + WER in logs/jack-variants/)
 first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 
@@ -220,6 +221,7 @@ type_max_chars = 500
 read_chars = 1500              # window text sent to Claude (~500 tokens)
 read_timeout_s = 2.0
 search_limit = 8
+folders_refresh_s = 900        # folder names listed in the background, read again every 15 min (0 = off)
 private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password"]
 screenshot_side = 1024         # last-resort screenshot to Haiku: long side in pixels (~1000 tokens)
 commands = true                # PowerShell commands: always "confermo" said aloud, never as admin
