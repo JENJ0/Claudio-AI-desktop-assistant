@@ -212,6 +212,7 @@ type_max_chars = 500
 read_chars = 1500              # window text sent to Claude (~500 tokens)
 read_timeout_s = 2.0
 search_limit = 8
+folders_refresh_s = 900        # folder names listed in the background, read again every 15 min (0 = off)
 private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password"]
 screenshot_side = 1024         # last-resort screenshot to Haiku: long side in pixels (~1000 tokens)
 commands = true                # PowerShell commands: always "confermo" said aloud, never as admin

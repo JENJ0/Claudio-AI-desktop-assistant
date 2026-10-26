@@ -8,17 +8,22 @@ is refused: launching programs goes through `open_app`, which only knows the Sta
 from __future__ import annotations
 
 import heapq
+import logging
 import os
 import re
 import shutil
+import threading
 import time
+import unicodedata
 from collections import deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from rapidfuzz import fuzz
+
+log = logging.getLogger(__name__)
 
 ANYWHERE = "*"
 # Opening one of these runs code: never a level-1 "open".
@@ -43,6 +48,20 @@ SKIP_DIRS = frozenset(
 # rapidfuzz ratio of a name to a search that found nothing: "desi" and "attesi" -> "TESI" (75,
 # 80). Below this the name does not sound like the search.
 SIMILAR_CUTOFF = 70
+# Words Claude sometimes leaves in a search ("cartella progetti"): no name holds them, so the
+# search found nothing. Dropped when another word remains.
+FILLER = frozenset(
+    {"cartella", "cartelle", "folder", "folders", "file", "files", "documento", "il", "lo", "la"}
+    | {"i", "gli", "le", "di", "del", "della", "dei", "delle", "the", "of", "my", "mia", "mio"}
+)
+# Spellings that sound the same, applied in order after `fold`: Whisper writes Italian names
+# the English way ("Projecti" for PROGETTI, 25/10).
+_SOUNDS = (
+    ("ph", "f"), ("ck", "c"), ("ch", "c"), ("k", "c"), ("ct", "tt"), ("j", "g"), ("y", "i"),
+    ("w", "v"), ("x", "cs"), ("h", ""),
+)  # fmt: skip
+_DOUBLE = re.compile(r"(.)\1+")
+_SEPARATORS = re.compile(r"[_.\-]+")
 
 
 class PathRefused(ValueError):
@@ -143,7 +162,65 @@ def search_terms(query: str) -> list[str]:
     terms = [t for t in _TERM.sub(" ", query).split() if t.strip(".-")]
     if not terms:
         raise PathRefused("nothing to search for")
-    return terms[:MAX_TERMS]
+    kept = [t for t in terms if t.casefold() not in FILLER]
+    return (kept or terms)[:MAX_TERMS]
+
+
+def fold(text: str) -> str:
+    """Lowercase, without accents, apostrophes or separators: "UNIVERSITA'" and "università"
+    are both "universita", "Project_Work" is "project work"."""
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    plain = "".join(c for c in decomposed if not unicodedata.combining(c))
+    plain = plain.replace("'", "").replace("\u2019", "").replace("`", "")
+    return " ".join(_SEPARATORS.sub(" ", plain).split())
+
+
+def sound(text: str) -> str:
+    """How a folded name sounds, roughly: "projecti" and "progetti" are both "progeti"."""
+    out = fold(text)
+    for written, said in _SOUNDS:
+        out = out.replace(written, said)
+    return _DOUBLE.sub(r"\1", out)
+
+
+def prepare(terms: Iterable[str]) -> list[tuple[str, str]]:
+    """The terms folded and as they sound, once per search (not once per name)."""
+    return [(fold(t), sound(t)) for t in terms]
+
+
+def matches(terms: Sequence[tuple[str, str]], folded: str, sounds: str) -> bool:
+    """Every prepared term is in the name, written or (from 3 letters) said the same way."""
+    return _held(terms, folded, sounds) == len(terms)
+
+
+def _held(terms: Sequence[tuple[str, str]], folded: str, sounds: str) -> int:
+    """How many terms the name holds. Spaces do not count: "BBPortWindows" is in
+    "bbport-windows" (26/10)."""
+    joined, joined_sounds = folded.replace(" ", ""), sounds.replace(" ", "")
+    return sum(
+        1
+        for f, s in terms
+        if f.replace(" ", "") in joined or (len(s) >= 3 and s.replace(" ", "") in joined_sounds)
+    )
+
+
+def likeness(query: str, folded: str, sounds: str, terms: Sequence[tuple[str, str]] = ()) -> float:
+    """0-100: how much a name (folded, and its sound) is like a search that found nothing.
+    One word may be like one word of a longer name ("roket" -> "Rocket League"), and a name
+    holding some of the prepared `terms` is like it too ("Project Work": "PROGETTO IUM")."""
+    q = fold(query)
+    score = max(fuzz.ratio(q, folded), fuzz.ratio(sound(query), sounds))
+    if len(terms) > 1:
+        held = _held([t for t in terms if len(t[0]) >= 3], folded, sounds)
+        if held:
+            score = max(score, 60 + 40 * held / len(terms))
+    words = folded.split()
+    if len(words) > 1:
+        score = max(score, fuzz.token_sort_ratio(q, folded))
+        long_words = [w for w in words if len(w) >= 3]
+        if " " not in q and len(q) >= 4 and long_words:
+            score = max(score, *(fuzz.ratio(q, w) for w in long_words))
+    return score
 
 
 SHORTCUTS = {".lnk", ".url"}
@@ -207,28 +284,16 @@ def walk(
     """Walk the roots breadth first (Desktop\\UNIVERSITA\\TESI before the depths of a
     project) for names holding every term, within `budget_s` seconds, most recent first.
     With nothing found, the `similar` names that sound most like the search."""
-    wanted = [t.casefold() for t in terms]
-    query = " ".join(wanted)
+    terms = list(terms)
+    query = " ".join(terms)
+    wanted = prepare(terms)
     deadline = time.monotonic() + budget_s
     found: list[Found] = []
     close: list[tuple[float, str, Path]] = []  # a min-heap of the best `similar` scores
     queue: deque[Path] = deque(roots)
     while queue and time.monotonic() <= deadline:
         folder = queue.popleft()
-        try:
-            with os.scandir(folder) as entries:
-                listed = list(entries)
-        except OSError:
-            continue
-        for entry in listed:
-            try:
-                is_dir = entry.is_dir(follow_symlinks=False)
-                # Junctions ("Dati applicazioni", Documents\My Music...) lead to folders seen
-                # elsewhere, or loop: walking them spent the whole budget.
-                if is_dir and _is_link(entry):
-                    continue
-            except OSError:
-                continue
+        for entry, is_dir in _children(folder):
             name = entry.name
             if is_dir:
                 if name.casefold() in SKIP_DIRS or name.startswith("."):
@@ -236,15 +301,15 @@ def walk(
                 queue.append(Path(entry.path))
             if is_dir != (kind == "folder") or not _kind_ok(name, kind):
                 continue
-            low = name.casefold()
-            if all(t in low for t in wanted):
+            stem = name if is_dir else os.path.splitext(name)[0]
+            folded, sounds = fold(stem), sound(stem)
+            if matches(wanted, folded, sounds):
                 try:
                     found.append(Found(Path(entry.path), entry.stat().st_mtime))
                 except OSError:
                     continue
             elif similar and not found:
-                stem = low if is_dir else os.path.splitext(low)[0]
-                score = fuzz.ratio(query, stem)
+                score = likeness(query, folded, sounds, wanted)
                 if score >= SIMILAR_CUTOFF:
                     item = (score, entry.path, Path(entry.path))
                     if len(close) < similar:
@@ -270,6 +335,142 @@ _EXTENSIONS = {
     "music": {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", ".wma"},
     "video": {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"},
 }
+
+
+def _children(folder: Path) -> list[tuple[os.DirEntry[str], bool]]:
+    """(entry, is a folder) for what `folder` holds, without links: junctions ("Dati
+    applicazioni", Documents\\My Music...) lead to folders seen elsewhere, or loop (walking
+    them spent the whole budget)."""
+    try:
+        with os.scandir(folder) as entries:
+            listed = list(entries)
+    except OSError:
+        return []
+    out = []
+    for entry in listed:
+        try:
+            is_dir = entry.is_dir(follow_symlinks=False)
+            if is_dir and _is_link(entry):
+                continue
+        except OSError:
+            continue
+        out.append((entry, is_dir))
+    return out
+
+
+@dataclass(frozen=True)
+class Folder:
+    path: Path
+    folded: str
+    sounds: str
+
+
+class FolderNames:
+    """The name of every folder under the roots, read in the background and again after
+    `refresh_s`: a folder is found in milliseconds wherever it is, and a misheard name is
+    compared with all of them, not only with those a 3-second walk reached (25/10: "spesso
+    non trova"). Files stay with the Windows index and the walk. Never the only answer: a
+    folder made after the last read is not here, so the callers still walk."""
+
+    def __init__(
+        self,
+        roots: Callable[[], Sequence[Path]],
+        refresh_s: float,
+        max_folders: int,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._roots = roots
+        self.refresh_s = refresh_s
+        self.max_folders = max_folders
+        self.clock = clock
+        self._folders: list[Folder] | None = None
+        self._read_at = -float("inf")
+        self._reading = threading.Lock()
+
+    def refresh(self) -> None:
+        """Read the folders again in a background thread, unless a read is running."""
+        if not self._reading.acquire(blocking=False):
+            return
+        threading.Thread(target=self._read, name="folder-names", daemon=True).start()
+
+    def read_now(self) -> None:
+        """Read the folders on this thread (tests, or a first search that can wait)."""
+        with self._reading:
+            self._folders = self._list()
+            self._read_at = self.clock()
+
+    def folders(self) -> list[Folder] | None:
+        """The folders last read (None before the first read ends); a stale list starts a
+        new read and is still returned."""
+        if self.clock() - self._read_at > self.refresh_s:
+            self.refresh()
+        return self._folders
+
+    def find(self, terms: Sequence[str], limit: int, similar: int) -> Walk:
+        """Folders whose name holds every term, newest first; with none, the `similar`
+        names most like the search."""
+        folders = self._folders or []
+        wanted = prepare(terms)
+        hits = [f for f in folders if matches(wanted, f.folded, f.sounds)]
+        if hits:
+            return Walk(_dated(f.path for f in hits)[:limit])
+        if not similar:
+            return Walk()
+        query = " ".join(terms)
+        scored = [(likeness(query, f.folded, f.sounds, wanted), f.path) for f in folders]
+        best = heapq.nlargest(similar, (s for s in scored if s[0] >= SIMILAR_CUTOFF))
+        return Walk([], _dated((p for _, p in best), newest_first=False))
+
+    def named(self, name: str) -> list[Path]:
+        """Folders called `name` (any case, accents or apostrophes); else those that sound
+        exactly like it."""
+        folders = self._folders or []
+        f, s = fold(name), sound(name)
+        same = [x.path for x in folders if x.folded == f]
+        return same or [x.path for x in folders if len(s) >= 3 and x.sounds == s]
+
+    def _read(self) -> None:
+        try:
+            folders = self._list()
+            self._folders, self._read_at = folders, self.clock()
+        except Exception:
+            log.exception("Elenco delle cartelle non letto")
+            self._read_at = self.clock()  # not again at every search
+        finally:
+            self._reading.release()
+
+    def _list(self) -> list[Folder]:
+        start = time.monotonic()
+        out: list[Folder] = []
+        queue: deque[Path] = deque(self._roots())
+        while queue and len(out) < self.max_folders:
+            for entry, is_dir in _children(queue.popleft()):
+                name = entry.name
+                if not is_dir or name.casefold() in SKIP_DIRS or name.startswith("."):
+                    continue
+                path = Path(entry.path)
+                queue.append(path)
+                out.append(Folder(path, fold(name), sound(name)))
+        log.info(
+            "Elenco delle cartelle: %d in %d ms%s",
+            len(out),
+            round((time.monotonic() - start) * 1000),
+            " (limite raggiunto)" if queue else "",
+        )
+        return out
+
+
+def _dated(paths: Iterable[Path], newest_first: bool = True) -> list[Found]:
+    """Found items for the paths that still exist; newest first, or in the given order."""
+    out = []
+    for path in paths:
+        try:
+            out.append(Found(path, path.stat().st_mtime))
+        except OSError:
+            continue  # deleted since the folders were read
+    if newest_first:
+        out.sort(key=lambda f: f.modified, reverse=True)
+    return out
 
 
 REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a symlink or a junction (Windows)
