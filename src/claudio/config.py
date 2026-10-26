@@ -105,6 +105,9 @@ class VadSettings(BaseModel):
     # stop to think mid-sentence. 0 = always end_silence_ms.
     long_end_silence_ms: int = Field(800, ge=0)
     long_after_s: float = Field(1.5, ge=0)  # speech after which the longer pause applies
+    # A phrase left halfway ("apri Chrome e cerca...", Whisper's "...") waits this long for
+    # the rest before it is answered. 0 = off.
+    continue_s: float = Field(2.0, ge=0, le=10)
 
 
 class SttSettings(BaseModel):
@@ -138,6 +141,14 @@ class SttSettings(BaseModel):
     beam_size: int = Field(1, ge=1)
     initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
+    # The names on the PC in Whisper's prompt (stt/vocabulary.py): the most recent folders of
+    # Desktop and Documents and the programs of the Desktop and Start menu, so "Tesi" is not
+    # written "desi". vocabulary_words: JenJo's own names, always first.
+    vocabulary: bool = True
+    vocabulary_words: list[str] = Field(default_factory=list)
+    vocabulary_folders: int = Field(25, ge=0, le=60)
+    vocabulary_programs: int = Field(12, ge=0, le=40)
+    vocabulary_windows: int = Field(8, ge=0, le=20)
     no_speech_threshold: float = Field(0.6, ge=0, le=1)
     cpu_threads: int = Field(4, ge=1)
 

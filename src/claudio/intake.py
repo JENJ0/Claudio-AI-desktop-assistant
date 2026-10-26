@@ -55,6 +55,7 @@ class Kind(enum.StrEnum):
     FALSE_WAKE = "false_wake"  # woke on something that only starts like the name
     NOT_REQUEST = "conversation_end"  # the TV or someone else, in the conversation window
     NOISE = "noise"  # noise transcribed as words: not worth a call to Claude
+    CONTINUE = "continue"  # left halfway ("apri Chrome e cerca..."): listen for the rest
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ class Decision:
 
     @property
     def dropped(self) -> bool:
-        return self.kind not in (Kind.ANSWER, Kind.RELISTEN)
+        return self.kind not in (Kind.ANSWER, Kind.RELISTEN, Kind.CONTINUE)
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class Heard:
     name_heard: bool = False  # Whisper heard the name in the wake word audio itself
     speech_dbfs: float | None = None  # loudest 32 ms of speech; None: not measured
     segments: Sequence[Segment] = ()  # empty: Whisper's confidence is not known
+    continued: bool = False  # already waited once for the rest of a phrase left halfway
 
 
 @dataclass
@@ -92,6 +94,7 @@ class RequestFilter:
     closed_list_max_words: int = 0  # 0: no limit
     retry_language: str | None = None
     noise: NoiseSettings | None = None  # None: noise is never judged
+    continue_incomplete: bool = False  # a phrase left halfway waits for its end
 
     # -- before decide(): is another Whisper pass worth it? --
 
@@ -136,11 +139,19 @@ class RequestFilter:
             return Decision(Kind.NOT_REQUEST, text, "not_a_request")
         if (cause := self.noise_cause(text, heard)) and not responder.understands(text, language):
             return Decision(Kind.NOISE, text, cause)
+        if (
+            self.continue_incomplete
+            and not heard.continued
+            and incomplete(text)
+            and not responder.understands(text, language)
+        ):
+            return Decision(Kind.CONTINUE, text, "incomplete")
         return Decision(Kind.ANSWER, text)
 
     def is_request(self, text: str, language: str, responder: Responder) -> bool:
         """Heard in the conversation window: a command, or (with Claude) a phrase that sounds
-        addressed to Claudio. The TV's "e poi gli ho detto di no" is not: it costs nothing."""
+        addressed to Claudio, short ones too when they say the name. The TV's "e poi gli ho
+        detto di no" is not: it costs nothing."""
         if responder.understands(text, language):
             return True
         if self.claude_min_words is not None and responder.asked_question:
@@ -148,7 +159,8 @@ class RequestFilter:
         if self.claude_min_words is None:
             return False
         if words(text) < self.claude_min_words:
-            return short_request(text)  # "Allora scrivi." (23/10: dropped, now answered)
+            # "Allora scrivi." (23/10) and "Claudio QDT." (26/10): dropped, now answered.
+            return short_request(text) or heard_wake_word(text)
         return not self.only_addressed or addressed_to_claudio(text)
 
     def noise_cause(self, text: str, heard: Heard) -> str:
@@ -285,6 +297,30 @@ def words(text: str) -> int:
     return len(normalize(text, drop_fillers=False).split())
 
 
+# A phrase ending on one of these is not finished: "apri Chrome e cerca", "metti la".
+DANGLING_WORDS = frozenset(
+    {"e", "o", "oppure", "ma", "poi", "di", "del", "della", "dei", "delle", "a", "al", "alla"}
+    | {"da", "dal", "dalla", "in", "nel", "nella", "con", "su", "sul", "sulla", "per", "tra"}
+    | {"fra", "il", "lo", "la", "i", "gli", "le", "un", "uno", "una", "che", "cerca", "apri"}
+    | {"scrivi", "digita", "metti", "chiama", "and", "or", "the", "to", "of", "for", "with"}
+    | {"search", "open", "type"}
+)
+TRAILING_DOTS = ("...", "…")
+
+
+def incomplete(text: str) -> bool:
+    """Whisper's "..." where the voice trailed off, or a last word that needs more after it:
+    on 26/10 "Apri Chrome e cerca..." (twice) and "Dimmi..." were cut by a pause while JenJo
+    thought of the words. A question ("?") is complete."""
+    stripped = text.rstrip()
+    if stripped.endswith(TRAILING_DOTS):
+        return True
+    if stripped.endswith("?"):
+        return False
+    tokens = normalize(text, drop_fillers=False).split()
+    return len(tokens) >= 2 and tokens[-1] in DANGLING_WORDS
+
+
 # Sounds Whisper writes for a cough, a breath or the TV ("Mm-hmm.", "Ehm"): not words.
 INTERJECTIONS = frozenset(
     {"mm", "mmm", "mmh", "mh", "mhm", "hm", "hmm", "hmmm", "uh", "huh", "um", "uhm", "ehm"}
@@ -295,3 +331,35 @@ INTERJECTIONS = frozenset(
 def content_words(text: str) -> int:
     """The words in `text` that are not interjections: "Mm-hmm." has none."""
     return sum(w not in INTERJECTIONS for w in normalize(text, drop_fillers=False).split())
+
+
+# CLAUDIO's own voice heard again through the speakers, as Whisper writes it: rarely the same
+# words ("Ciao, campione" -> "ciao cappiore", "dell'universo è in linea" -> "dell'università e
+# lì", "il grande mistero" -> "che grande vista": logs of 26/10).
+ECHO_SHARE = 0.6  # this share of the heard words sounds like words of the reply
+ECHO_WORD = 75  # rapidfuzz ratio of a heard word to a reply word: the same word, misheard
+ECHO_PHRASE = 77  # partial_ratio of three or more heard words to the reply: a piece of it
+ECHO_MIN_CHARS = 4  # shorter words ("e", "il", "lì") are in every reply: they say nothing
+
+
+def echo_of(text: str, reply: str) -> bool:
+    """`text`, heard while the reply was spoken, is the reply itself coming back into the
+    microphone: most of its words sound like the reply's, or it is a misheard piece of it.
+    The name is JenJo talking to CLAUDIO, unless the reply says it too."""
+    from rapidfuzz import fuzz
+
+    heard = normalize(text, drop_fillers=False).split()
+    said = normalize(reply, drop_fillers=False).split()
+    if not heard or not said:
+        return False
+    if heard_wake_word(text) and not heard_wake_word(reply):
+        return False
+    vocabulary = set(said)
+    long_words = [w for w in vocabulary if len(w) >= ECHO_MIN_CHARS]
+    checked = [w for w in heard if len(w) >= ECHO_MIN_CHARS] or heard
+    alike = sum(
+        w in vocabulary or any(fuzz.ratio(w, r) >= ECHO_WORD for r in long_words) for w in checked
+    )
+    if alike / len(checked) >= ECHO_SHARE:
+        return True
+    return len(heard) >= 3 and fuzz.partial_ratio(" ".join(heard), " ".join(said)) >= ECHO_PHRASE
