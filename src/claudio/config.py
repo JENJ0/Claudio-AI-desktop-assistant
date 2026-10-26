@@ -389,6 +389,10 @@ class PcSettings(BaseModel):
     search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
     # web_search (level 1): the results page; {query} is replaced by the encoded words.
     web_search_url: str = "https://www.google.com/search?q={query}"
+    # Every folder name under the roots, read in the background at start and again after this
+    # many seconds (0 = off): folders found at once, misheard names compared with all of them.
+    folders_refresh_s: float = Field(900.0, ge=0)
+    folders_max: int = Field(200_000, ge=1000)  # stop listing here (a huge drive with "*")
     max_windows: int = Field(25, ge=1, le=100)
     apps_refresh_s: float = Field(600.0, ge=0)
     # v0.3.2. The screenshot to Haiku (last resort): long side in pixels, JPEG quality.
