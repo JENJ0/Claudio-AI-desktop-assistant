@@ -45,7 +45,7 @@ HALLUCINATIONS_EXACT = {
 }
 MIN_RMS = 1e-3  # about -60 dBFS: below this there is nothing to transcribe
 MAX_NEW_TOKENS = 80  # an 8 s request is about 50 tokens; a repetition loop stops here
-QUICK_NEW_TOKENS = 24  # the second chance listens to 1.5 s: "hey claudio che ore sono" is ~12
+QUICK_NEW_TOKENS = 24  # the second chance listens to 2.5 s: "hey claudio che ore sono" is ~12
 CANDIDATES = 5  # the closed list: how many transcriptions Whisper proposes
 LOOP_RATIO = 2.4  # gzip ratio above which a text is a loop ("Ciao, ciao, ciao..."), as in Whisper
 
@@ -195,7 +195,7 @@ class WhisperTranscriber:
     def transcribe(
         self, audio: np.ndarray, *, quick: bool = False, language: str | None = None
     ) -> str:
-        """`quick`: the wake word's second chance. A short look at 1.5 s of audio, without the
+        """`quick`: the wake word's second chance. A short look at 2.5 s of audio, without the
         prompt (it must not put "Claudio" in noise) and without touching the language kept for
         the next unsure request. `language`: no detection, transcribe in that one (the retry
         of a request not understood in the language Whisper guessed)."""

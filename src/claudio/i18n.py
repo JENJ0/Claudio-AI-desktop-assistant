@@ -57,6 +57,9 @@ EN: dict[str, str] = {
     "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo": (
         "Second chance: Whisper heard %r (score %.2f): waking up"
     ),
+    "Whisper non ha capito %r (punteggio %.2f): ascolto e verifico": (
+        "Whisper did not get %r (score %.2f): listening, the request will be verified"
+    ),
     "Seconda possibilità: Whisper ha sentito %r: niente da fare": (
         "Second chance: Whisper heard %r: nothing to do"
     ),
