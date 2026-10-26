@@ -77,7 +77,10 @@ class JackSynth:
         rvc: str = "blocks",
         words: dict[str, str] | None = None,
         first_wait_s: float = 30.0,
+        voice: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
+        # Pace, pitch and temperature of each sentence (claudio/style.py); None: the worker's.
+        self.voice = voice
         self.words = dict(words or {})  # respellings: "file" -> "fàil" (see spoken_text)
         self.command = command
         # Told to Qwen3. Always Italian (JenJo, 24/10): "Auto" guessed the language per
@@ -301,6 +304,7 @@ class JackSynth:
                 "text": to_spoken_it(text, self.words),
                 "language": self.language,
                 "rvc": self._rvc_for_next(),
+                **(self.voice() if self.voice is not None else {}),
             }
         )
         deadline = time.monotonic() + self.sentence_timeout_s

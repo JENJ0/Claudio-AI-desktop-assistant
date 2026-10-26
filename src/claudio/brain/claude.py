@@ -42,6 +42,7 @@ from claudio.brain.prompts import (
     NO_KEY,
     OFFER,
     REFUSED,
+    SET_STYLE_TOOL,
     system_prompt,
 )
 from claudio.config import ClaudeSettings, PcSettings, in_language
@@ -59,7 +60,8 @@ from claudio.safety.confirmation import (
 )
 
 if TYPE_CHECKING:
-    from claudio.pc.tools import PcTools, ToolCall
+    from claudio.pc.tools import PcTools, ToolCall, ToolOutcome
+    from claudio.style import SpeakingStyle
 
 # Tools that may take a while (pc/tools.py SLOW; repeated here: no import of the PC package).
 SLOW_TOOLS = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
@@ -96,6 +98,7 @@ class ClaudeBrain:
         pc: PcSettings | None = None,
         on_show: Callable[[], object] | None = None,
         personality: str = "",
+        style: SpeakingStyle | None = None,
     ) -> None:
         self.client = client
         self.tracker = tracker
@@ -123,6 +126,12 @@ class ClaudeBrain:
         self.on_show = on_show  # opens the chat window, where the exact command is written
         # How sure Whisper was of the next request: set before every reply, read once.
         self._hearing = Hearing()
+        self.style = style  # None: no set_style tool, the voice and tone never change
+
+    @property
+    def _acts(self) -> bool:
+        """Haiku has tools that run (PC tools or set_style), not only ask_sonnet."""
+        return self.tools is not None or self.style is not None
 
     def reset(self) -> None:
         self._history.clear()
@@ -270,7 +279,7 @@ class ClaudeBrain:
         streaming: _Leg | None = None  # the leg whose words are not in `turn` yet
         try:
             while True:
-                last = self.tools is None or round_no >= self.pc.max_rounds - 1
+                last = not self._acts or round_no >= self.pc.max_rounds - 1
                 leg = streaming = _Leg()
                 async with contextlib.aclosing(
                     self._stream(self._params(messages, last_round=last), language, start, leg)
@@ -311,18 +320,18 @@ class ClaudeBrain:
                     leg.content = [
                         b for b in leg.content if b.get("name") != ASK_SONNET_TOOL["name"]
                     ]
-                if not leg.complete or not leg.calls or self.tools is None:
+                if not leg.complete or not leg.calls or not self._acts:
                     turn.complete = leg.complete
                     self._remember(turn)
                     return
                 messages = [*messages, {"role": "assistant", "content": leg.content}]
-                refused = {
-                    c.id: why for c in leg.calls if (why := self.tools.refusal(c, leg.calls))
-                }
+                refused = {c.id: why for c in leg.calls if (why := self._refusal(c, leg.calls))}
                 active = [c for c in leg.calls if c.id not in refused]
-                await self.tools.prepare(active)
-                confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
-                if confirm:
+                pc_calls = [c for c in active if c.name != SET_STYLE_TOOL["name"]]
+                if self.tools is not None:
+                    await self.tools.prepare(pc_calls)
+                confirm = [c for c in pc_calls if self.tools and self.tools.level(c) > LEVEL_SAFE]
+                if confirm and self.tools is not None:
                     level = max(self.tools.level(c) for c in confirm)
                     ask = await self.tools.question(confirm, language)
                     self._action = _Action(messages, leg.calls, turn, language, level, round_no)
@@ -394,7 +403,6 @@ class ClaudeBrain:
         turn: _Turn | None = None,
     ) -> list[dict[str, Any]]:
         """One tool_result per call, in order; a refused call is answered without running."""
-        assert self.tools is not None
         refused = refused or {}
         results = []
         for call in calls:
@@ -409,7 +417,11 @@ class ClaudeBrain:
                     }
                 )
                 continue
-            outcome = await self.tools.run(call)
+            if call.name == SET_STYLE_TOOL["name"]:
+                outcome = self._set_style(call)
+            else:
+                assert self.tools is not None  # _refusal() refused PC calls without PC tools
+                outcome = await self.tools.run(call)
             self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
             if turn is not None:
                 turn.done.append(f"{call.name} {'failed' if outcome.error else 'ok'}")
@@ -422,6 +434,26 @@ class ClaudeBrain:
                 block["is_error"] = True
             results.append(block)
         return results
+
+    def _refusal(self, call: ToolCall, calls: list[ToolCall]) -> str | None:
+        if call.name == SET_STYLE_TOOL["name"]:
+            return None if self.style is not None else "set_style is not available"
+        if self.tools is None:
+            return f"unknown tool: {call.name}"
+        return self.tools.refusal(call, calls)
+
+    def _set_style(self, call: ToolCall) -> ToolOutcome:
+        """Level 1, instant: the words change from this reply, Jack's voice from its next
+        sentence. A bad value goes back to Haiku as an error, nothing changes."""
+        from claudio.pc.tools import ToolOutcome
+        from claudio.style import describe
+
+        assert self.style is not None
+        try:
+            style = self.style.update(call.args)
+        except ValueError as exc:
+            return ToolOutcome(str(exc), error=True)
+        return ToolOutcome(f"style now: {describe(style)}")
 
     def _note_tools(self, calls: list[ToolCall], outcome: str, ms: int | None = None) -> None:
         """For metrics.jsonl and conversazione.md: what was done, how it went, how long."""
@@ -532,6 +564,8 @@ class ClaudeBrain:
         if self.settings.tell_time:
             now = self.wall()
             fields.append(f"{_DAYS[now.weekday()]} {now:%Y-%m-%d %H:%M}")
+        if self.style is not None and (style := self.style.tag()):
+            fields.append(style)  # changes nothing cached: after the prefix, like the time
         if hearing is not None and hearing.unsure:
             others = " / ".join(f'"{_quoted(a)}"' for a in hearing.alternatives)
             fields.append(f"unsure: {others}" if others else "unsure")
@@ -566,11 +600,13 @@ class ClaudeBrain:
         listed: list[dict[str, Any]] = []
         if tools and s.escalate and self.smart_model is not None:
             listed.append(ASK_SONNET_TOOL)
+        if tools and self.style is not None:
+            listed.append(SET_STYLE_TOOL)
         if tools and self.tools is not None:
             listed.extend(self.tools.definitions())
         if listed:
             params["tools"] = listed
-            if last_round and self.tools is not None:
+            if last_round and self._acts:
                 params["tool_choice"] = {"type": "none"}
         return params
 

@@ -30,6 +30,8 @@ conversation so far and what you can do, then answer or act on that, without com
 on the mistake. When the tag says "unsure", recognition doubted the words, and the quoted \
 phrases are other things it may have heard: use them. Ask a short question only when the \
 likely readings lead to different actions and none is clearly more likely.
+- When the tag holds "style: ...", JenJo asked for that way of speaking: follow its tone in \
+every reply, as a shade of your character, until JenJo changes it.
 - A reply marked "[cut off: ...]" in the conversation was interrupted by JenJo: "continua" \
 goes on from there, "ripeti" says it again.
 """
@@ -106,6 +108,34 @@ ASK_SONNET_TOOL = {
         "nothing else."
     ),
     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+}
+
+# How Claudio speaks from now on (claudio/style.py): words and Jack's voice, kept across
+# restarts. Level 1: nothing to confirm. Frozen, part of the cached prefix.
+SET_STYLE_TOOL = {
+    "name": "set_style",
+    "description": (
+        "Change how you speak from now on, when JenJo asks for it: more dramatic, calmer, "
+        "slower, faster, a deeper or higher voice, back to normal. Give only what changes; "
+        "the current style is in the tag (missing = normal). tone: a few Italian words on "
+        "how to write replies, e.g. 'drammatico e teatrale'; '' = your usual tone. pace: "
+        "speed, 1 = normal, 0.7 slowest, 1.3 fastest; a step is 0.15 from the current one. "
+        "pitch: semitones, 0 = normal, -4 deepest, 4 highest; a step is 2. energy: calm, "
+        "normal or lively delivery. reset: true = everything back to normal. Your voice is "
+        "always Jack's, there is no other speaker: for 'cambia voce' say so in character and "
+        "offer tone, pace or pitch. After the call, answer already in the new tone."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "tone": {"type": "string"},
+            "pace": {"type": "number"},
+            "pitch": {"type": "integer"},
+            "energy": {"type": "string", "enum": ["calm", "normal", "lively"]},
+            "reset": {"type": "boolean"},
+        },
+        "additionalProperties": False,
+    },
 }
 
 # Said at once before a slow action (search, reading a window, a screenshot, a command).

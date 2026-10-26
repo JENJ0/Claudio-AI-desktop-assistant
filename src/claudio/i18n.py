@@ -306,6 +306,9 @@ EN: dict[str, str] = {
     ),
     "Non riesco a creare %s (%s): uso %s": "Cannot create %s (%s): using %s",
     "Personalità non letta (%s): tono neutro": "Personality not read (%s): neutral tone",
+    "Stile: %s": "Style: %s",
+    "Stile in %s non valido (%s): uso quello normale": "Style in %s not valid (%s): using normal",
+    "Stile non salvato in %s: %s": "Style not saved in %s: %s",
     "%s supera %d caratteri: tengo solo l'inizio (ogni carattere costa a ogni richiesta)": (
         "%s is over %d characters: keeping only the start (every character costs on every request)"
     ),

@@ -23,6 +23,7 @@ from claudio.config import (
 )
 from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
+from claudio.style import STYLE_FILE, SpeakingStyle
 
 if TYPE_CHECKING:
     from claudio.app import BargeIn
@@ -58,6 +59,7 @@ def build_responder(
     system: SystemControl | None = None,
     chat: ChatLauncher | None = None,
     tracker: CostTracker | None = None,
+    style: SpeakingStyle | None = None,
 ) -> LocalResponder:
     """`tracker`: open it on the thread that runs the requests (its SQLite connection only
     works there) when this runs in a loader thread."""
@@ -70,7 +72,7 @@ def build_responder(
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
     if tracker is None:
         tracker = build_tracker(settings)
-    brain = build_brain(settings, tracker, chat)
+    brain = build_brain(settings, tracker, chat, style)
     return LocalResponder(
         matcher,
         ActionRunner(system=system, tracker=tracker, chat=chat),
@@ -107,7 +109,10 @@ def build_pc_tools(settings: Settings) -> PcTools | None:
 
 
 def build_brain(
-    settings: Settings, tracker: CostTracker, chat: ChatLauncher | None = None
+    settings: Settings,
+    tracker: CostTracker,
+    chat: ChatLauncher | None = None,
+    style: SpeakingStyle | None = None,
 ) -> ClaudeBrain | None:
     """Claude for what no command understands; None when it is switched off. A missing key
     still builds it: Claudio then says where the key goes instead of "I can't do that"."""
@@ -138,6 +143,7 @@ def build_brain(
         tools=build_pc_tools(settings),
         pc=settings.pc,
         personality=personality,
+        style=style if claude.style_tool else None,
         on_show=chat.open if chat is not None else None,  # a command is read in the chat
     )
     if brain.smart_model is not None:
@@ -159,11 +165,13 @@ def build_brain(
     return brain
 
 
-def make_jack(settings: Settings) -> JackSynth:
-    """Jack's worker, not started yet; its fallback voice is set by build_synth()."""
+def make_jack(settings: Settings, style: SpeakingStyle | None = None) -> JackSynth:
+    """Jack's worker, not started yet; its fallback voice is set by build_synth(). With a
+    `style`, each sentence carries JenJo's pace, pitch and energy."""
     from claudio.tts.jack import JackSynth, worker_command
 
     tts = settings.tts
+    voice = (lambda: style.voice(tts.jack_speed, tts.jack_temperature)) if style else None
     models = settings.resolve(settings.models_dir)
     return JackSynth(
         worker_command(models, tts),
@@ -173,6 +181,7 @@ def make_jack(settings: Settings) -> JackSynth:
         rvc=tts.jack_rvc,
         words=tts.jack_words,
         first_wait_s=tts.jack_first_wait_s,
+        voice=voice,
     )
 
 
@@ -381,7 +390,9 @@ async def run_assistant(
     t0 = time.perf_counter()
     # Jack's worker is a process of its own: it loads (8-30 s) while everything else does,
     # and Claudio listens without waiting for it (a reply meanwhile waits jack_first_wait_s).
-    jack = make_jack(settings) if settings.tts.engine == "jack" else None
+    # How JenJo asked Claudio to speak (set_style): shared by Claude (words) and Jack (voice).
+    style = SpeakingStyle(settings.resolve(settings.data_dir) / STYLE_FILE)
+    jack = make_jack(settings, style) if settings.tts.engine == "jack" else None
     jack_error: list[Exception | None] = []
     if jack is not None:
         jack.start_in_background(jack_error.append)
@@ -397,7 +408,7 @@ async def run_assistant(
                 ),
             ),
             "voce": lambda: build_speaker(settings, jack, start_player=False),
-            "claude": lambda: build_responder(settings, system, chat_window, tracker),
+            "claude": lambda: build_responder(settings, system, chat_window, tracker, style),
         },
         parallel=settings.startup.parallel,
     )

@@ -138,6 +138,23 @@ never touch it, and `<!-- notes -->` are not sent. It is read once and goes afte
 prompt, so it is cached: keep it short (`personality_max_chars = 3000`). Claudio answers in
 Italian unless the request is plainly English or you ask for English.
 
+### Changing the tone by voice
+
+Say how Claudio should speak and Haiku applies it with its `set_style` tool, from the same
+reply on and also after a restart (`data/style.json`):
+
+| You say | What changes |
+|---|---|
+| "usa un tono più drammatico", "sii più calmo", "più sarcastico" | `tone`: a few words added to every request (after the cache: no extra cost) |
+| "parla più lentamente / più veloce" | `pace`: Jack's speed, 0.7-1.3 times `[tts] jack_speed` |
+| "voce più grave / più acuta" | `pitch`: -4 to +4 semitones (RVC) |
+| "più vivace", "più pacato" | `energy`: Qwen3's temperature ±0.1 (livelier = more varied, may mispronounce more) |
+| "torna normale" | everything back to normal |
+
+Jack is the only voice (one speaker in the model): "cambia voce" gets an honest answer and an
+offer to change tone, pace or pitch. Pace, pitch and energy apply to Jack only, not to the
+Kokoro/Piper fallback. Off with `[claude] style_tool = false`.
+
 ## Acting on the PC
 
 With Claude on, Claudio also acts on Windows (`[pc]` in `config/claudio.toml`): it opens apps

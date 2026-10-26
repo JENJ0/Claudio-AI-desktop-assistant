@@ -329,6 +329,9 @@ class ClaudeSettings(BaseModel):
     # cached. Missing: copied from config/CLAUDIO.md. Longer than the limit: cut (it costs).
     personality_file: Path = Path("data/CLAUDIO.md")
     personality_max_chars: int = Field(3000, ge=0, le=20000)  # 0 = no personality
+    # JenJo may change how Claudio speaks by voice ("più drammatico", "più lento"): Haiku's
+    # set_style tool, kept in data/style.json (one short tool definition per call).
+    style_tool: bool = True
     smart_phrases: dict[str, list[str]] = Field(
         default_factory=lambda: {
             "it": ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"],

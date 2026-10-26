@@ -79,6 +79,23 @@ def speed_plan(speed: float, rate_ratio: float = RVC_RATE / QWEN_RATE) -> tuple[
     return ratio.numerator, ratio.denominator, semitones
 
 
+def voice_of(request: dict[str, Any], speed: float, temperature: float) -> tuple[float, int, float]:
+    """A sentence's pace, pitch (semitones) and temperature: the request's (JenJo's style,
+    see claudio/style.py) within safe bounds, else the command line's."""
+
+    def number(key: str, default: float, low: float, high: float) -> float:
+        value = request.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int | float) or value != value:
+            return default
+        return min(max(float(value), low), high)
+
+    return (
+        number("speed", speed, 0.5, 1.5),
+        round(number("pitch", 0, -6, 6)),
+        number("temperature", temperature, 0.1, 1.5),
+    )
+
+
 def smooth_f0(f0: Any) -> Any:
     """Pitch track cleaned of what makes RVC sound robotic: octave errors (one frame twice
     or half the pitch around it), 1-2 frame unvoiced holes in a vowel, frame-to-frame
@@ -142,6 +159,9 @@ def fix_realtime_pitch_scale(pipeline: Any) -> bool:
 class RvcNone:
     """Qwen3's voice as it comes out, no RVC (and no slowing down): for comparisons only."""
 
+    def set_voice(self, speed: float, pitch: int) -> None:
+        pass
+
     def begin(self) -> None:
         pass
 
@@ -182,15 +202,16 @@ class RvcStream:
         )
         if pitch_fix and not fix_realtime_pitch_scale(self.vc.vc_model.pipeline):
             print("pitch fix: Applio realtime pipeline not as expected, left alone")
-        self.up, self.down, semitones = speed_plan(speed)
-        self.kw = {
-            "index_rate": INDEX_RATE,
-            "protect": PROTECT,
-            "volume_envelope": 1,
-            "f0_up_key": semitones,
-        }
+        self.kw = {"index_rate": INDEX_RATE, "protect": PROTECT, "volume_envelope": 1}
+        self.set_voice(speed, 0)
         self.vc.warmup(**self.kw)
         self.begin()
+
+    def set_voice(self, speed: float, pitch: int) -> None:
+        """Pace and pitch of the next sentence (JenJo's style): semitones on top of the
+        ones that keep the pitch when the pace changes."""
+        self.up, self.down, semitones = speed_plan(speed)
+        self.kw["f0_up_key"] = semitones + pitch
 
     def begin(self) -> None:
         from scipy.signal import butter, sosfilt_zi
@@ -269,7 +290,7 @@ class RvcSentence:
         self.vc = VoiceConverter()
         self.vc.get_vc(str(model_path), 0)
         self.vc.load_hubert("contentvec")
-        self.up, self.down, self.semitones = speed_plan(speed, SENTENCE_RATE / QWEN_RATE)
+        self.set_voice(speed, 0)
         self._guard_f0()
         self.begin()
         # Loads the f0 model. A quiet voice-like tone, not zeros: on pure silence RMVPE gave
@@ -296,6 +317,10 @@ class RvcSentence:
             return coarse, f0
 
         self.vc.vc.get_f0 = safe_get_f0
+
+    def set_voice(self, speed: float, pitch: int) -> None:
+        self.up, self.down, self.semitones = speed_plan(speed, SENTENCE_RATE / QWEN_RATE)
+        self.semitones += pitch
 
     def begin(self) -> None:
         self.parts: list[Any] = []
@@ -351,6 +376,7 @@ class Worker:
         t0 = time.perf_counter()
         self.tts = FasterQwen3TTS.from_pretrained(str(args.checkpoint))
         self.temperature = args.temperature
+        self.speed = args.speed
         # Both converters stay loaded (~0.3 GB more): each sentence says which one it wants.
         self.rvc: dict[str, RvcStream | RvcSentence | RvcNone] = {
             "blocks": RvcStream(args.rvc_model, args.applio, args.speed, args.pitch_fix),
@@ -364,14 +390,20 @@ class Worker:
         self.cancelled_upto = -1
         self.latest_id = -1
 
-    def generate(self, text: str, language: str, max_tokens: int = SPEAK_TOKENS) -> Any:
+    def generate(
+        self,
+        text: str,
+        language: str,
+        max_tokens: int = SPEAK_TOKENS,
+        temperature: float | None = None,
+    ) -> Any:
         return self.tts.generate_custom_voice_streaming(
             text=text,
             speaker="jack",
             language=language,
             chunk_size=8,
             max_new_tokens=max_tokens,
-            temperature=self.temperature,
+            temperature=self.temperature if temperature is None else temperature,
         )
 
     def vram_mb(self) -> int:
@@ -411,10 +443,12 @@ class Worker:
 
         cancelled = rid <= self.cancelled_upto
         rvc = self.rvc.get(request.get("rvc", "blocks"), self.rvc["blocks"])
+        speed, pitch, temperature = voice_of(request, self.speed, self.temperature)
+        rvc.set_voice(speed, pitch)
         rvc.begin()
         if not cancelled:
             for chunk, _rate, _timing in self.generate(
-                request["text"], request.get("language", "Auto")
+                request["text"], request.get("language", "Auto"), temperature=temperature
             ):
                 send(rvc.feed(chunk))
                 if rid <= self.cancelled_upto:

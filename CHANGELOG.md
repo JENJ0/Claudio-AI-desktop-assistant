@@ -1,6 +1,14 @@
 # Changelog
 
-## [Unreleased] - Sonnet only when needed, "Claudio" wake word, Jack less robotic
+## [Unreleased] - Sonnet only when needed, "Claudio" wake word, Jack less robotic, tone by voice
+
+### Added (log 26/10 19:50: "cambia voce", "tono più drammatico" had no command)
+- Haiku tool `set_style` (`src/claudio/style.py`): JenJo changes how Claudio speaks by voice.
+  `tone` (a few words, sent in the request tag after the cached prefix), Jack's `pace` and
+  `pitch` (RVC, per sentence) and `energy` (Qwen3 temperature ±0.1); `reset`. Kept in
+  `data/style.json`. Out-of-range numbers are clamped; nonsense goes back to Haiku as an
+  error. "Cambia voce": the tool text says Jack is the only voice. `[claude] style_tool`.
+- Jack's worker takes `speed`, `pitch` and `temperature` with each sentence (bounded).
 
 ### Changed
 - `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
