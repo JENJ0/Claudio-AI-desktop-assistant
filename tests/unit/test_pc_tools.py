@@ -383,7 +383,7 @@ async def test_level_1_runs_and_haiku_answers(
     assert await ask(b, "apri spotify") == "Fatto, Spotify è aperto."
     assert ("launch", "Spotify") in desk.done
     first, second = client.calls
-    assert first["system"] == SYSTEM_PROMPT_TOOLS
+    assert first["system"][0]["text"] == SYSTEM_PROMPT_TOOLS
     assert [t["name"] for t in first["tools"]][:2] == ["ask_sonnet", "open_app"]
     assert first["tools"] == second["tools"]  # same prefix: cached
     assert second["messages"][-2]["content"][0]["type"] == "tool_use"
@@ -527,7 +527,7 @@ async def test_without_tools_the_old_prompt(pricing: Pricing) -> None:
     )
     await ask(b, "ciao")
     assert [t["name"] for t in client.calls[0]["tools"]] == ["ask_sonnet"]
-    assert client.calls[0]["system"] != SYSTEM_PROMPT_TOOLS
+    assert client.calls[0]["system"][0]["text"] != SYSTEM_PROMPT_TOOLS
 
 
 # --- through the router ---------------------------------------------------------------------

@@ -112,13 +112,17 @@ async def ask(b: ClaudeBrain, text: str, language: str = "it") -> str:
     return "".join([c async for c in b.ask(text, language)])
 
 
+def cached(system: str) -> list[dict[str, Any]]:
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+
 async def test_streams_the_reply_and_records_the_cost(pricing: Pricing) -> None:
     client = FakeClient()
     b = brain(pricing, client)
     assert await ask(b, "qual è la capitale d'Italia") == "Roma è la capitale d'Italia."
     params = client.calls[0]
     assert params["model"] == "claude-haiku-5-5" and params["max_tokens"] == 300
-    assert params["system"] == SYSTEM_PROMPT
+    assert params["system"] == cached(SYSTEM_PROMPT)  # tools + system: always read back
     assert params["thinking"] == {"type": "disabled"}
     assert params["output_config"] == {"effort": "low"}
     assert params["messages"] == [{"role": "user", "content": "[it] qual è la capitale d'Italia"}]
@@ -444,10 +448,25 @@ async def test_haiku_gets_the_tool_and_the_cache_marker(pricing: Pricing) -> Non
     assert params["cache_control"] == {"type": "ephemeral"}
 
 
+async def test_tools_and_system_stay_cached_when_the_history_slides(pricing: Pricing) -> None:
+    """26/10: with 6 turns of history, the 7th request dropped the oldest one, the prefix
+    changed and every request wrote ~5,000 tokens again. The marker on the system prompt
+    keeps tools + system byte-identical and marked on every request."""
+    client = ScriptedClient(*[(["Ok."], "end_turn", [])] * 8)
+    b = brain(pricing, client, history_turns=2)
+    for n in range(4):
+        await ask(b, f"domanda {n}")
+    systems = [c["system"] for c in client.calls]
+    assert all(s == systems[0] for s in systems)
+    assert systems[0][-1]["cache_control"] == {"type": "ephemeral"}
+    assert client.calls[3]["messages"][0]["content"] != client.calls[2]["messages"][0]["content"]
+
+
 async def test_no_tool_without_sonnet(pricing: Pricing) -> None:
     client = ScriptedClient((["Ciao."], "end_turn", []))
     await ask(brain(pricing, client, smart_model="", cache=False), "ciao come va")
     assert "tools" not in client.calls[0] and "cache_control" not in client.calls[0]
+    assert client.calls[0]["system"] == SYSTEM_PROMPT  # no marker without caching
 
 
 async def test_sonnet_only_after_a_yes(pricing: Pricing) -> None:
@@ -568,7 +587,7 @@ async def test_the_time_goes_after_the_cached_prefix(pricing: Pricing) -> None:
         wall=lambda: datetime(2026, 10, 23, 17, 15),
     )
     await ask(b, "che ore sono in Thailandia")
-    assert client.calls[0]["system"] == SYSTEM_PROMPT  # frozen: cacheable
+    assert client.calls[0]["system"] == cached(SYSTEM_PROMPT)  # frozen: cacheable
     content = client.calls[0]["messages"][-1]["content"]
     assert content == "[it | Fri 2026-10-23 17:15] che ore sono in Thailandia"
 

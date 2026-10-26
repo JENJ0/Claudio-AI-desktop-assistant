@@ -52,6 +52,7 @@ no_speech_timeout_s = 4.0  # nothing said after the wake word -> back to idle
 max_utterance_s = 15.0    # a long question for Claude fits
 long_end_silence_ms = 800  # after long_after_s of speech the phrase needs this pause to end (thinking mid-sentence)
 long_after_s = 1.5         # shorter phrases (commands) still end after end_silence_ms
+continue_s = 2.0           # a phrase left halfway ("apri Chrome e cerca...") waits this long for the rest (0 = off)
 
 [stt]
 model = "large-v3-turbo"
@@ -71,6 +72,14 @@ closed_list_max_words = 5      # longer requests skip it (~150 ms saved): a ques
 unsure_logprob = -0.2          # Whisper below this on a request for Claude: Haiku is told it may be misheard
 alternatives = 2               # ...and gets up to 2 other transcriptions (one more Whisper pass, ~120 ms, only then; 0 = note only)
 beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
+# The names on the PC go in Whisper's prompt ("Cartelle: Tesi, PSS. Programmi: Rocket League."),
+# so short names are written right ("Tesi", not "desi"): the most recent folders of Desktop and
+# Documents (2 levels) and the shortcuts of the Desktop and Start menu, re-read every 10 minutes.
+vocabulary = true
+vocabulary_words = []          # your own names, always included, e.g. ["Dainese", "Bloodborne"]
+vocabulary_folders = 25
+vocabulary_programs = 12
+vocabulary_windows = 8         # names of the open windows ("Blocco note"), read every 3 s
 no_speech_threshold = 0.6
 cpu_threads = 4
 

@@ -4,7 +4,10 @@ Each command has its phrases and reply in Italian (`phrases`, `reply`) and optio
 other languages (`phrases_en`, `reply_en`...). The language Whisper heard is tried first,
 then the others, so a request still works when the language was misjudged. `keywords_xx`
 are words a fuzzy match in that language must contain ("what's the weather" is close to
-"what's the date" but has no "date")."""
+"what's the date" but has no "date").
+
+Last, in Italian, the phrases are compared by how they sound (phonetic.py): Whisper's "Claudio
+QDT" is "chiuditi" spelled as letters, "kiudi" is "chiudi"."""
 
 from __future__ import annotations
 
@@ -20,8 +23,10 @@ from claudio.config import DEFAULT_LANGUAGE
 from claudio.i18n import tr
 from claudio.router.normalizer import extract_number, normalize
 from claudio.router.normalizer import language as language_rules
+from claudio.router.phonetic import sound_key, spell_capitals
 
 _TRANSLATED = re.compile(r"^(phrases|reply|keywords|confirm)_([a-z]{2})$")
+SOUND_LANGUAGES = ("it",)  # the sound rules are Italian
 
 
 @dataclass(frozen=True)
@@ -157,6 +162,17 @@ class CommandMatcher:
             language: [p for p, cmd in table.items() if not cmd.exact]
             for language, table in self._by_phrase.items()
         }
+        # How each phrase sounds -> its command. Two phrases sounding alike are one command
+        # (they were written as variants of the same words).
+        self._by_sound: dict[str, dict[str, Command]] = {}
+        for language in SOUND_LANGUAGES:
+            sounds = self._by_sound[language] = {}
+            for phrase, cmd in self._by_phrase.get(language, {}).items():
+                sounds.setdefault(sound_key(phrase), cmd)
+        self._sound_choices = {
+            language: [k for k, cmd in sounds.items() if not cmd.exact]
+            for language, sounds in self._by_sound.items()
+        }
 
     @property
     def languages(self) -> list[str]:
@@ -189,5 +205,34 @@ class CommandMatcher:
                 cmd = self._by_phrase[lang][phrase]
                 needed = cmd.keywords.get(lang)
                 if needed is None or words & needed:
+                    return Match(cmd, float(score), number, lang)
+        return self._match_sound(text, order)
+
+    def _match_sound(self, text: str, order: list[str]) -> Match | None:
+        """The same, comparing how the phrases sound: an exact command ("chiuditi") only when
+        the sounds are the same ("QDT" = cu-di-ti), the others also when they are close."""
+        spelled = spell_capitals(text)
+        raw = normalize(spelled, drop_fillers=False).split()
+        for lang in order:
+            sounds = self._by_sound.get(lang)
+            if not sounds:
+                continue
+            norm, number = extract_number(normalize(spelled, lang=lang), lang)
+            if not norm:
+                continue
+            key = sound_key(norm)
+            cmd = sounds.get(key)
+            if cmd is not None and not (
+                cmd.exact
+                and (number is not None or (raw and raw[-1] in language_rules(lang).articles))
+            ):
+                return Match(cmd, 100.0, number, lang)
+            heard = set(key.split())
+            for phrase, score, _ in process.extract(
+                key, self._sound_choices[lang], scorer=fuzz.ratio, score_cutoff=self.threshold
+            ):
+                cmd = sounds[phrase]
+                needed = cmd.keywords.get(lang)
+                if needed is None or heard & {sound_key(w) for w in needed}:
                     return Match(cmd, float(score), number, lang)
         return None

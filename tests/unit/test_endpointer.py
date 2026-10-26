@@ -123,3 +123,30 @@ def test_level_counts_speech_only_and_spots_clipping(fake_vad, vad_settings, mak
     stats = ep.stats()
     assert -9.6 < stats["speech_dbfs"] < 0  # the tone, not the bump
     assert 0.05 < stats["clipped"] < 0.2  # one frame of five, mostly at full scale
+
+
+def test_extend_waits_for_the_rest_of_the_phrase(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    feed(ep, make_frames("speech", 800) + make_frames("silence", 480))
+    first = ep.audio()
+    ep.extend(first, wait_s=2.0)
+    assert ep.extended and not ep.spoke_again
+    # A pause longer than end_silence_ms does not close it any more...
+    assert feed(ep, make_frames("silence", 1200)) == []
+    # ...the voice comes back, and the usual pause ends the whole phrase.
+    events = feed(ep, make_frames("speech", 640) + make_frames("silence", 1200))
+    assert events == [EndpointEvent.END] and ep.spoke_again
+    assert len(ep.audio()) / 16000 > len(first) / 16000 + 1.2 + 0.6
+    ep.reset()
+    assert not ep.extended and not ep.spoke_again
+
+
+def test_extend_ends_after_the_wait_when_nothing_more_is_said(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    feed(ep, make_frames("speech", 800) + make_frames("silence", 480))
+    ep.extend(ep.audio(), wait_s=1.0)
+    assert feed(ep, make_frames("silence", 880)) == []
+    assert feed(ep, make_frames("silence", 240)) == [EndpointEvent.END]
+    assert not ep.spoke_again

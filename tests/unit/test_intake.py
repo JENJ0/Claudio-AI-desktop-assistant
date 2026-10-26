@@ -10,7 +10,16 @@ import numpy as np
 import pytest
 
 from claudio.config import NoiseSettings
-from claudio.intake import CONVERSATION, Heard, Kind, RequestFilter, Segment, content_words
+from claudio.intake import (
+    CONVERSATION,
+    Heard,
+    Kind,
+    RequestFilter,
+    Segment,
+    content_words,
+    echo_of,
+    incomplete,
+)
 from claudio.safety.confirmation import Answer, parse_answer
 from claudio.session_log import purge_old_logs
 from tests.unit.test_app import FakeResponder, FakeStt, build, run_frames
@@ -52,6 +61,38 @@ def test_false_wake_unless_the_name_was_heard() -> None:
     assert decide("ciao come stai", f=f, wake_word=CONVERSATION).kind is not Kind.FALSE_WAKE
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["Apri Chrome e cerca...", "Dimmi...", "Claudio, apri la", "Scrivi una mail a", "open the…"],
+)
+def test_phrases_left_halfway(text: str) -> None:
+    assert incomplete(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Apri Chrome e cerca Dainese Moto.",
+        "Claudio apri la cartella tesi.",
+        "Che ore sono?",
+        "La",
+        "Hai cercato e?",
+        "Grazie.",
+    ],
+)
+def test_finished_phrases(text: str) -> None:
+    assert not incomplete(text)
+
+
+def test_a_phrase_left_halfway_waits_once() -> None:
+    f = RequestFilter(continue_incomplete=True)
+    assert decide("Apri Firefox e cerca...", f=f).kind is Kind.CONTINUE
+    assert decide("Apri Firefox e cerca...", f=f, continued=True).kind is Kind.ANSWER
+    assert decide("Apri Firefox e cerca...").kind is Kind.ANSWER  # off by default
+    assert decide("apri chrome e", f=f).kind is Kind.ANSWER  # a command runs at once
+    assert not decide("Dimmi...", f=f).dropped
+
+
 def test_conversation_window_without_claude_keeps_only_commands() -> None:
     f = RequestFilter(claude_min_words=None)
     assert decide("e poi gli ho detto di no", f=f, wake_word=CONVERSATION).kind is Kind.NOT_REQUEST
@@ -65,6 +106,57 @@ def test_conversation_window_with_claude() -> None:
     f.only_addressed = True
     assert decide("e poi gli ho detto di no", f=f, wake_word=CONVERSATION).kind is Kind.NOT_REQUEST
     assert decide("dimmi di più sul meteo", f=f, wake_word=CONVERSATION).kind is Kind.ANSWER
+
+
+def test_a_short_phrase_with_the_name_is_a_request() -> None:
+    """26/10 19:52: "Claudio QDT." (chiuditi) in the window was dropped as the TV."""
+    f = RequestFilter(claude_min_words=3, only_addressed=True)
+    assert decide("Claudio QDT.", f=f, wake_word=CONVERSATION).kind is Kind.ANSWER
+    assert decide("ma dai", f=f, wake_word=CONVERSATION).kind is Kind.NOT_REQUEST
+
+
+# CLAUDIO's reply and what Whisper made of it in the microphone (logs of 26/10).
+CAMPIONE = "Ciao, campione. Sempre un piacere, anche se ripeti come un disco rotto."
+UNIVERSO = "Ciao, socio. Eccomi, il genio più bello dell'universo è in linea. Che vuoi fare?"
+MISTERO = "Ah, il grande mistero: non dire niente. Strategia audace, socio, quasi zen."
+GIOCO = "Se vuoi altro, dimmelo chiaro: non ho capito se intendi di nuovo il gioco."
+BLOCCO = "Fatto, il blocco note è pulito. Un foglio bianco, come la mia modestia."
+
+
+@pytest.mark.parametrize(
+    ("heard", "reply"),
+    [
+        ("ciao cappiore", CAMPIONE),
+        ("dell'università e lì.", UNIVERSO),
+        ("Ah, che grande vista.", MISTERO),
+        ("e come il genio", UNIVERSO),
+        ("Non capito se intendo.", GIOCO),
+        ("di nuovo il gioco", GIOCO),
+        ("sono le 14 e 5", "Sono le 14 e 5, capo."),
+    ],
+)
+def test_the_reply_misheard_is_its_echo(heard: str, reply: str) -> None:
+    assert echo_of(heard, reply)
+
+
+@pytest.mark.parametrize(
+    ("heard", "reply"),
+    [
+        ("Claudio, che di blocco.", BLOCCO),  # the name: JenJo talking
+        ("Claudio, chiudi il blocco note", BLOCCO),
+        ("aspetta, che ore sono?", MISTERO),
+        ("No, raccontala lo stesso", MISTERO),
+        ("Basta, grazie.", CAMPIONE),
+        ("apri la cartella progetti", UNIVERSO),
+    ],
+)
+def test_words_said_over_the_reply_are_not_its_echo(heard: str, reply: str) -> None:
+    assert not echo_of(heard, reply)
+
+
+def test_the_name_is_echo_only_when_the_reply_says_it() -> None:
+    assert echo_of("sono Claudio, il tuo assistente", "Sono Claudio, il tuo assistente.")
+    assert not echo_of("", "Sono Claudio.") and not echo_of("ciao", "")
 
 
 @pytest.mark.parametrize("segments", [[UNSURE], [GARBLED], [UNSURE, GARBLED]])

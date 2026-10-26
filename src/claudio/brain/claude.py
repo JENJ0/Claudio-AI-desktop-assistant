@@ -547,8 +547,15 @@ class ClaudeBrain:
             "messages": messages,
         }
         if self.settings.cache:
-            # Automatic caching: the marker goes on the last block, so the next turn reads
-            # this whole conversation from the cache (below 512 tokens nothing is cached).
+            # Two markers. One fixed on the system prompt: tools + system (~5,000 tokens) are
+            # always read from the cache, even when the history window drops its oldest
+            # question and the conversation prefix changes (26/10: from the 7th request on
+            # every request wrote the whole prefix again, 0.0007 $ instead of 0.0002 $).
+            # Plus automatic caching on the last block, so the next turn reads this whole
+            # conversation too (below 512 tokens nothing is cached).
+            params["system"] = [
+                {"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}
+            ]
             params["cache_control"] = {"type": "ephemeral"}
         return params
 

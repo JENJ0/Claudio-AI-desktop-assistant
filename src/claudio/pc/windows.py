@@ -277,6 +277,24 @@ def _shortcut_files() -> list[tuple[str, Path]]:
     return shortcuts(menus, deep=True) + shortcuts(desks, deep=False)
 
 
+def window_titles() -> list[str]:
+    """The titles of the Alt+Tab list, front to back. No COM: any thread can call it (the
+    names of the open windows go into Whisper's prompt)."""
+    import win32gui
+
+    titles: list[str] = []
+
+    def visit(hwnd: int, _: Any) -> bool:
+        if _alt_tab_window(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title:
+                titles.append(title)
+        return True
+
+    win32gui.EnumWindows(visit, None)
+    return titles
+
+
 def _alt_tab_window(hwnd: int) -> bool:
     """Visible, not owned, not a tool window and not cloaked (hidden Store apps)."""
     import win32gui
