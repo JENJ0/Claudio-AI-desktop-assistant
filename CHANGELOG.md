@@ -15,7 +15,7 @@
   rejected checks in the logs), so JenJo had to repeat. The check now hears the last
   `WAKE_CHECK_S` 2.5 s; the request keeps its 1.5 s lead-in.
 - After the "claudio" model, a transcript starting with a word at most 2 edits from "claudio"
-  ("l'audio", "audio", "fraudio") counts as the name. Not after "hey claudio", not in the middle
+  ("l'audio", "audio", "fraudio") wakes too, but the request is verified (name or command). Not after "hey claudio", not in the middle
   ("alza l'audio"), not "radio" or "studio".
 - A strong "claudio" (`[wakeword] unclear_min` 0.6) that Whisper hears as nothing or "Grazie."
   (its guess on a lone word: half of JenJo's "Claudio" on 26/10, at 0.86-0.95) now beeps and

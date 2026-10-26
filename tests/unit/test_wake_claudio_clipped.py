@@ -46,6 +46,7 @@ def assistant_with(wake, heard: str, tmp_path, fake_vad, vad_settings):
         second_chance=check,
         confirm_below=0.45,
         always_confirm=frozenset({"claudio"}),
+        verify_wake=True,
     )
     return assistant, check
 
@@ -148,3 +149,28 @@ async def test_a_weak_claudio_heard_as_grazie_stays_silent(
     assistant, speaker = unclear_assistant(tmp_path, fake_vad, vad_settings, score=0.5)
     await run_frames(assistant, make_frames("silence", 1700))
     assert assistant.state is State.IDLE and speaker.beeps == []
+
+
+async def test_a_clipped_wake_is_verified_a_stray_ciao_is_dropped(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """26/10 19:41: "L'audio?" at 0.33, then "Ciao." went to Haiku. Now it needs the name."""
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        StrongClaudio({20}, 0.33),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt("ciao"),
+        OnlyCommands(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        second_chance=SecondChance("L'audio?"),
+        always_confirm=frozenset({"claudio"}),
+        verify_wake=True,
+        unclear_min=0.6,
+    )
+    await run_frames(assistant, make_frames("silence", 1700))
+    assert assistant.state is State.LISTENING
+    await run_frames(assistant, make_frames("speech", 800) + make_frames("silence", 800))
+    assert speaker.spoken == []
+    assert assistant.history[-1]["outcome"] == "false_wake"

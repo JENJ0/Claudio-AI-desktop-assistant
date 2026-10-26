@@ -304,20 +304,15 @@ class Assistant:
             score < self.confirm_below or name in self.always_confirm
         )
 
-    def _name_in(self, wake_word: str, text: str) -> bool:
-        """Whisper heard the name. After the "claudio" model a clipped "l'audio" at the start
-        counts too: that model only fires on something that already sounds like the name."""
-        return heard_wake_word(text) or (wake_word in self.always_confirm and clipped_name(text))
-
-    def _unclear_wake(self, name: str, score: float, text: str) -> bool:
-        """A strong "claudio" that Whisper heard as nothing or "Grazie.": a lone name is too
-        short for Whisper (JenJo's logs, 26/10: 0.86-0.95 lost). Only with verify on."""
-        return (
-            self.verify_wake
-            and name in self.always_confirm
-            and score >= self.unclear_min
-            and unclear(text)
-        )
+    def _unsure_wake(self, name: str, score: float, text: str) -> bool:
+        """A "claudio" detection Whisper did not spell as the name: a clipped "l'audio" or
+        "fraudio" (the model fires late, the "C" falls out), or nothing / "Grazie." at a strong
+        score (a lone name is too short for Whisper: 0.86-0.95 lost on 26/10). It wakes, but
+        the request must have the name or be a command: a "l'audio" at 0.33 trusted outright
+        sent a stray "Ciao." to Haiku (26/10, 19:41). Only with verify on."""
+        if not self.verify_wake or name not in self.always_confirm:
+            return False
+        return clipped_name(text) or (score >= self.unclear_min and unclear(text))
 
     def _lead_in(self) -> np.ndarray:
         """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
@@ -352,13 +347,13 @@ class Assistant:
         # A weak detection said fast often loses the name ("apri cancolatrice"): a command counts.
         language = self.transcriber.language
         weak = self._weak(name, score) and bool(text) and self.responder.understands(text, language)
-        if self.state is State.IDLE and (self._name_in(name, text) or weak):
+        if self.state is State.IDLE and (heard_wake_word(text) or weak):
             log.info(
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
             self._on_wake(name, score, second_chance=text, second_chance_ms=ms)
             return
-        if self.state is State.IDLE and self._unclear_wake(name, score, text):
+        if self.state is State.IDLE and self._unsure_wake(name, score, text):
             # Not a second chance: the request must have the name or be a command (verify).
             log.info("Whisper non ha capito %r (punteggio %.2f): ascolto e verifico", text, score)
             self._on_wake(name, score, wake_unclear=text, second_chance_ms=ms)
@@ -541,7 +536,7 @@ class Assistant:
             return False
         inter.info["wake_check_ms"] = round((self.clock() - start) * 1000)
         inter.info["wake_check"] = text
-        if self._name_in(str(inter.info.get("wake_word", "")), text):
+        if heard_wake_word(text):
             log.info("Nome sentito prima della richiesta: %r", text)
             return True
         return False
