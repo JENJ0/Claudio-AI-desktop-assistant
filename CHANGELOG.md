@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased] - Jack at his pace without RVC
+
+### Added
+- `jack_speed` works with `jack_rvc = "none"` too: a streaming WSOLA time stretch in the
+  worker (`TimeStretch`) slows Qwen3's audio (0.9 = 10% slower) and keeps its pitch, chunk by
+  chunk, with no extra wait for the first audio.
+
 ## [Unreleased] - Jack speaks with Qwen3 alone
 
 ### Changed
