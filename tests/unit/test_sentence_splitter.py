@@ -93,3 +93,29 @@ def test_sentences_glued_without_a_space_are_split() -> None:
     assert splitter.feed("Gli U.S.A. e 3.5 restano. ") + splitter.flush() == [
         "Gli U.S.A. e 3.5 restano."
     ]
+
+
+async def _sentences(*items: str):
+    for item in items:
+        yield item
+
+
+async def _collect(gen) -> list[str]:
+    return [x async for x in gen]
+
+
+async def test_group_stream_joins_sentences_up_to_the_limit() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    got = await _collect(group_stream(_sentences("Ciao.", "Come stai?", "Bene."), 600))
+    assert got == ["Ciao. Come stai? Bene."]
+    got = await _collect(group_stream(_sentences("Aaaa.", "Bbbb.", "Cccc."), 11))
+    assert got == ["Aaaa. Bbbb.", "Cccc."]
+
+
+async def test_group_stream_keeps_a_long_sentence_whole_and_skips_empty_replies() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    long = "x" * 50 + "."
+    assert await _collect(group_stream(_sentences("Hi.", long, "Ok."), 20)) == ["Hi.", long, "Ok."]
+    assert await _collect(group_stream(_sentences(), 20)) == []

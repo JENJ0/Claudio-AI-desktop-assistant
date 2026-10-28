@@ -206,7 +206,12 @@ class TtsSettings(BaseModel):
     # Jack's pace: < 1 slower (0.9 = 10% slower, JenJo 23/10); the pitch stays the same. With
     # RVC the audio is resampled before it and RVC raises the pitch back; without RVC
     # ("none") a time stretch (WSOLA) changes the pace only.
-    jack_speed: float = Field(0.9, ge=0.7, le=1.3)
+    jack_speed: float = Field(1.0, ge=0.7, le=1.3)  # JenJo 28/10: no slowing
+    # Jack says a reply's sentences together, up to this many characters per piece: one
+    # generation keeps one voice, sentence by sentence the tone drifts (JenJo 28/10; measured
+    # on long paragraphs: same-voice score 0.69 vs 0.63). Long replies start a little later.
+    # 0 = sentence by sentence.
+    jack_group_chars: int = Field(600, ge=0, le=2000)
     # Qwen3 sampling: lower is steadier (fewer odd stresses), higher is livelier.
     jack_temperature: float = Field(0.7, ge=0.1, le=1.5)  # JenJo's pick by ear, 24/10
     # How RVC turns Qwen3's voice into Jack's: "blocks" of 250 ms as it is generated (first

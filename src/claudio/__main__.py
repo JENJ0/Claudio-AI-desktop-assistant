@@ -260,6 +260,7 @@ def build_speaker(
         effect,
         {language: voice for language, (voice, _) in voices.items()},
         first_clause_chars=settings.tts.first_clause_chars,
+        group_chars=settings.tts.jack_group_chars if settings.tts.engine == "jack" else 0,
     )
     speaker.warm_up()
     others = "".join(f", {lang}: {label}" for lang, (_, label) in voices.items())

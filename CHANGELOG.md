@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased] - Jack keeps one voice in a reply
+
+### Changed
+- Jack says a reply's sentences together (`[tts] jack_group_chars` 600, 0 = one by one): each
+  sentence generated on its own drew a slightly different Jack, so the tone changed between
+  sentences (JenJo 28/10). Measured on 3 long paragraphs x 2 seeds (`jack_tone.py`): same-voice
+  score 0.69 whole vs 0.63 sentence by sentence, pitch spread 3.2 vs 5.5 semitones; talker
+  temperature, a fixed seed, the code predictor's temperature and the streaming chunk
+  boundaries made no steady difference. Long replies start a little later.
+- `jack_speed` back to 1.0 (JenJo 28/10: no slowing).
+- The Jack sentence timeout counts from the last audio received, and the worker allows up to
+  2000 frames for a long piece.
+
 ## [Unreleased] - Jack on Qwen3-TTS 1.7B
 
 ### Changed

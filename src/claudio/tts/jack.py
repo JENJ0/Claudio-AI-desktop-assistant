@@ -312,6 +312,9 @@ class JackSynth:
                     continue  # leftovers of an interrupted sentence
                 kind = event.get("event")
                 if kind == "audio":
+                    # A reply said in one piece can last longer than the timeout: it counts
+                    # from the last audio, so only a worker that stops producing fails.
+                    deadline = time.monotonic() + self.sentence_timeout_s
                     yield np.frombuffer(event["pcm"], dtype="<i2").astype(np.int16)
                 elif kind == "done":
                     self.last_first_ms = event.get("first_ms")

@@ -109,7 +109,8 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
 # jack_first_wait_s = 30    # Claudio listens while Jack loads: a reply meanwhile waits this long for Jack (0 = fallback voice at once)
-jack_speed = 0.9           # Jack's pace: < 1 slower (0.9 = 10% slower); the pitch stays the same
+jack_speed = 1.0           # Jack's pace: < 1 slower; 1.0 = as generated (JenJo 28/10: no slowing)
+jack_group_chars = 600     # a reply's sentences said together (one voice), up to this many chars; 0 = one by one
 jack_temperature = 0.7     # Qwen3 sampling: lower = steadier pronunciation (JenJo's pick C, 24/10)
 jack_rvc = "none"          # JenJo 28/10, until Qwen3 is retrained on Jack. Or "blocks" (fast, more
                            # mangled words), "sentence" (clearer, waits for the

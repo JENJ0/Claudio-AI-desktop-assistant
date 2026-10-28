@@ -131,3 +131,22 @@ async def split_stream(
             yield sentence
     for sentence in splitter.flush():
         yield sentence
+
+
+async def group_stream(sentences: AsyncIterator[str], max_chars: int) -> AsyncIterator[str]:
+    """Sentences joined into pieces of up to max_chars, each one said in a single breath.
+
+    Jack's voice drifts between sentences generated one by one (each draws its own take
+    of Jack from the training lines); a whole reply in one generation keeps one voice
+    (JenJo 28/10: tone changing between sentences). A piece waits for its text, so a
+    reply starts once it is complete or long enough. A sentence longer than max_chars
+    stays whole.
+    """
+    piece = ""
+    async for sentence in sentences:
+        if piece and len(piece) + 1 + len(sentence) > max_chars:
+            yield piece
+            piece = ""
+        piece = f"{piece} {sentence}" if piece else sentence
+    if piece:
+        yield piece

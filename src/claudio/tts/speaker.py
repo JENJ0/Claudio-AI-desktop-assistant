@@ -17,7 +17,7 @@ from claudio.audio.earcons import make_earcons
 from claudio.audio.player import AudioPlayer
 from claudio.config import DEFAULT_LANGUAGE, TtsSettings
 from claudio.i18n import tr
-from claudio.tts.sentence_splitter import split_stream
+from claudio.tts.sentence_splitter import group_stream, split_stream
 
 log = logging.getLogger(__name__)
 
@@ -68,9 +68,13 @@ class StreamingSpeaker:
         effect: Callable[[np.ndarray, int], np.ndarray] | None = None,
         voices: Mapping[str, Any] | None = None,
         first_clause_chars: int = 0,
+        group_chars: int = 0,
     ) -> None:
         self.synth = synth
         self.first_clause_chars = first_clause_chars  # the first piece may end at a comma
+        # > 0: the sentences of a reply are said together, up to this many characters per
+        # piece (Jack keeps one voice); 0: sentence by sentence, the first one at once.
+        self.group_chars = group_chars
         self.voices = dict(voices or {})
         self.player = player
         self.effect = effect
@@ -151,9 +155,11 @@ class StreamingSpeaker:
 
         async def produce() -> None:
             try:
-                async for sentence in split_stream(
-                    text_stream, first_clause_chars=self.first_clause_chars
-                ):
+                if self.group_chars:
+                    pieces = group_stream(split_stream(text_stream), self.group_chars)
+                else:
+                    pieces = split_stream(text_stream, first_clause_chars=self.first_clause_chars)
+                async for sentence in pieces:
                     lang = language() if callable(language) else language
                     log.debug("TTS (%s): %s", lang, sentence)
                     text: str | None = sentence

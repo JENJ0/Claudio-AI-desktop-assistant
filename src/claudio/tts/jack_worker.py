@@ -499,8 +499,11 @@ class Worker:
         rvc = self.rvc.get(request.get("rvc", "blocks"), self.rvc["blocks"])
         rvc.begin()
         if not cancelled:
+            # 12 frames a second, Italian ~13 characters a second: a whole reply needs more
+            # room than one sentence.
+            tokens = min(max(SPEAK_TOKENS, 2 * len(request["text"])), 2000)
             for chunk, _rate, _timing in self.generate(
-                request["text"], request.get("language", "Auto")
+                request["text"], request.get("language", "Auto"), tokens
             ):
                 send(rvc.feed(chunk))
                 if rid <= self.cancelled_upto:
