@@ -103,7 +103,7 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # If the worker cannot start or answer, Kokoro/Piper speaks. Paths are relative to models/;
 # set the effect to "none" with Jack. Personal use only. See README ("Jack's voice").
 # jack_python = "voices/jack/worker/env/Scripts/python.exe"
-# jack_checkpoint = "voices/jack/ft/0.6B/checkpoint-epoch-5"
+# jack_checkpoint = "voices/jack/ft/1.7B/checkpoint-epoch-7"   # 1.7B, JenJo 28/10 (was ft/0.6B/checkpoint-epoch-5)
 # jack_rvc_model = "voices/jack/rvc/Applio/logs/jack/jack_100e_2800s.pth"
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90

@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased] - Jack on Qwen3-TTS 1.7B
+
+### Changed
+- `[tts] jack_checkpoint` default `voices/jack/ft/1.7B/checkpoint-epoch-7`: Qwen3-TTS 1.7B
+  fine-tuned on Jack's 641 cleanest lines (one shared reference, top 14 talker layers, 8-bit
+  AdamW). JenJo's pick by ear, 28/10. First audio ~225 ms as with 0.6B; the worker loads
+  slower and uses more VRAM.
+
 ## [Unreleased] - Jack at his pace without RVC
 
 ### Added

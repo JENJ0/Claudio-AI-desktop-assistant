@@ -180,7 +180,7 @@ lines, passed through RVC. It needs an NVIDIA GPU (~1.2 GB VRAM) and runs in a *
 worker process** with its own venv, so Claudio itself does not depend on torch.
 
 1. The trained voice is not in the repo. Put it under `models/voices/jack/`: the Qwen3
-   checkpoint (`ft/0.6B/checkpoint-epoch-5`), Applio 3.7.0 with the RVC model
+   checkpoint (`ft/1.7B/checkpoint-epoch-7`, trained with the `jack_finetune.py` round-3 recipe), Applio 3.7.0 with the RVC model
    (`rvc/Applio/logs/jack/jack_100e_2800s.pth`); other paths: `jack_*` keys in `[tts]`.
 2. Build the worker venv once: `powershell -File scripts\setup_jack_worker.ps1`.
 3. Try it alone: `models\voices\jack\worker\env\Scripts\python.exe scripts\try_jack.py --play`.

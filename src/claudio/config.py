@@ -195,7 +195,7 @@ class TtsSettings(BaseModel):
     effect: Literal["none", "estremo", "jarvis", "ultron", "ultron_estremo"] = "none"
     # Engine "jack": a worker process with its own venv; paths are relative to models_dir.
     jack_python: Path = Path("voices/jack/worker/env/Scripts/python.exe")
-    jack_checkpoint: Path = Path("voices/jack/ft/0.6B/checkpoint-epoch-5")
+    jack_checkpoint: Path = Path("voices/jack/ft/1.7B/checkpoint-epoch-7")  # JenJo, 28/10
     jack_rvc_model: Path = Path("voices/jack/rvc/Applio/logs/jack/jack_100e_2800s.pth")
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
