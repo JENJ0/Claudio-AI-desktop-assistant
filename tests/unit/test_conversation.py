@@ -677,3 +677,195 @@ async def test_a_phrase_over_the_reply_does_not_move_the_gain(
     await speak_over(assistant, make_frames, speaker)
     wakes = [r["wake_word"] for r in assistant.history]
     assert "barge_in" in wakes and len(level.seen) == wakes.index("barge_in")
+
+
+# --- 26/10: CLAUDIO's own voice from the speakers is not a request -----------------------
+
+
+async def test_needs_name_ignores_a_request_without_the_name(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono"],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["aspetta, raccontami una barzelletta"], needs_name=True),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert not speaker.cut
+    assert [r["outcome"] for r in assistant.history] == ["ok"]
+
+
+async def test_needs_name_takes_a_request_with_the_name(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "Claudio, che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["Claudio, che giorno è oggi"], needs_name=True),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut
+    second = list(assistant.history)[1]
+    assert second["wake_word"] == "barge_in" and second["outcome"] == "ok"
+
+
+def test_needs_name_still_lets_basta_and_commands_through(fake_vad, vad_settings, matcher) -> None:
+    assistant, _, _, _ = build(
+        fake_vad, vad_settings, matcher, ["x"], barge_in=barge(vad_settings, [], needs_name=True)
+    )
+    assistant._reply_parts = ["Sono le 14 ", "e 5, capo."]
+    assert assistant._is_talking_to_me("Claudio, che giorno è oggi?")
+    assert assistant._is_talking_to_me("canzone successiva")  # a local command
+    assert not assistant._is_talking_to_me("aspetta, raccontami una barzelletta")
+
+
+def test_a_misheard_echo_is_not_a_request(fake_vad, vad_settings, matcher) -> None:
+    """JenJo's log 26/10 19:41: Whisper turned the reply's echo into new words."""
+    speaker = FakeSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad, vad_settings, matcher, ["x"], speaker=speaker, barge_in=barge(vad_settings, [])
+    )
+    speaker.played = ["Sono le 19 e 42.", "Il padrone dell'universo è in linea."]
+    assistant._reply_parts = speaker.played[:]
+    assert not assistant._is_talking_to_me("Se non le diciamo")
+    assert not assistant._is_talking_to_me("dell'università e lì")
+    assert assistant._is_talking_to_me("aspetta, che giorno è oggi?")
+
+
+async def test_the_echo_in_the_conversation_window_is_dropped(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "Se non le quattordici e cinque"],
+        barge_in=barge(vad_settings, []),
+    )
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert speaker.spoken == ["Sono le 14 e 5."]  # its own echo got no answer
+    rows = list(assistant.history)
+    assert [r["outcome"] for r in rows] == ["ok", "conversation_end"]
+
+
+async def test_the_window_starts_deaf_but_still_hears_the_next_request(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, _, _ = build(
+        fake_vad, vad_settings, matcher, ["che ore sono", "che giorno è oggi"]
+    )
+    assistant.echo_tail_ms = 300
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert len(speaker.spoken) == 2
+    assert [r["outcome"] for r in assistant.history][:2] == ["ok", "ok"]
+
+
+def test_echo_settings_are_shipped() -> None:
+    c = load_settings().conversation
+    assert c.barge_in_needs_name and c.echo_similarity == 70.0 and c.echo_tail_ms == 400
+
+
+async def test_once_its_echo_is_known_the_reply_stops_lowering_itself(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    """With speakers every echo lowered the reply until Whisper had listened: once a phrase
+    was the echo, voices no louder than it wait for Whisper at full volume."""
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono"],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["Sono le 14 e 5."]),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert assistant._echo_dbfs is not None  # learnt from the first echo
+    assert speaker.ducks == [0.3, None]  # that one still lowered it
+    assert assistant._sounds_like_echo(assistant.barge_in)
+    assistant._echo_dbfs = float("-inf")  # any voice is louder: lowered at once again
+    assert not assistant._sounds_like_echo(assistant.barge_in)
+
+
+# --- 28/10: CLAUDIO's own beeps and a "stop" lost in the echo ----------------------------
+
+
+def test_the_wake_word_does_not_hear_claudios_own_sounds(fake_vad, vad_settings, matcher) -> None:
+    """JenJo 28/10: the low beep that ends a conversation woke the "claudio" model."""
+    assistant, _, _, _ = build(fake_vad, vad_settings, matcher, ["x"])
+    assistant.echo_tail_ms = 400
+    frame = np.zeros(1280, dtype=np.int16)  # 80 ms
+    assistant._beeps.add(object())  # a beep is playing
+    assert assistant._hears_itself(frame)
+    assistant._beeps.clear()
+    assistant._wake_deaf_for_tail()  # the beep is over: its tail
+    deaf = [assistant._hears_itself(frame) for _ in range(6)]
+    assert deaf == [True] * 5 + [False]  # 400 ms, then the wake word listens again
+    assert assistant.wake.resets == 1  # starting clean, without the beep in its buffer
+
+
+async def test_a_stop_mixed_with_the_echo_still_stops(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["Sono le 14 stop e 5"], needs_name=True),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut
+    assert assistant.history[0]["outcome"] == "interrupted"
+
+
+def test_a_stop_word_the_reply_says_is_not_a_stop(fake_vad, vad_settings, matcher) -> None:
+    assistant, _, _, _ = build(fake_vad, vad_settings, matcher, ["x"])
+    assistant._reply_parts = ["Non serve a niente, capo."]
+    assert not assistant._says_stop("non serve a niente")  # its own echo
+    assert assistant._says_stop("non serve basta")
+    assert not assistant._says_stop("che ore sono")
+
+
+async def test_a_phrase_heard_while_whisper_is_busy_waits_its_turn(
+    fake_vad, vad_settings, matcher
+) -> None:
+    """28/10: with the echo keeping Whisper busy, a phrase said meanwhile was dropped."""
+    gate = threading.Event()
+    heard: list[int] = []
+
+    def transcribe(audio: np.ndarray) -> str:
+        heard.append(len(audio))
+        if len(heard) == 1:
+            gate.wait(2)
+            return "Sono le 14 e 5."  # the echo
+        return "basta"
+
+    speaker = LongSpeaker()
+    b = barge(vad_settings, [])
+    b.transcribe = transcribe
+    assistant, _, _, _ = build(fake_vad, vad_settings, matcher, ["x"], speaker=speaker, barge_in=b)
+    assistant._set_state(State.SPEAKING)
+    assistant._reply_parts = ["Sono le 14 e 5."]
+    one = np.ones(1600, dtype=np.float32)
+    assistant._start_barge_check(one, b, -20.0)
+    await asyncio.sleep(0.05)
+    assistant._barge_pending = (one, -20.0)  # what _on_barge_frame keeps while busy
+    gate.set()
+    for _ in range(100):
+        if speaker.cut:
+            break
+        await asyncio.sleep(0.01)
+    assert heard == [1600, 1600] and speaker.cut

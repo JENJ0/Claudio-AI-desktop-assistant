@@ -161,6 +161,9 @@ barge_in_vad = 0.6         # speech probability needed while speaking (stricter 
 barge_in_min_speech_ms = 300  # voice this long before anything happens (a cough is shorter)
 resume_s = 60.0            # a reply cut by a question goes on after the answer ("Dicevo: ..."); 0 = never
 duck_volume = 0.3          # the reply's volume while Whisper checks what was said
+barge_in_needs_name = true # over the reply a new request needs the name ("Claudio, ...") or a command; "basta" always works
+echo_similarity = 70.0     # 0-100: heard this close to what was just said = CLAUDIO's own echo (0 = word check only)
+echo_tail_ms = 400         # after any sound of its own (reply, beep) the wake word and the conversation window are deaf this long
 only_addressed = false     # true: without the wake word only questions, "dimmi..." or the name reach Claude
 
 # Noise transcribed as words (the TV, a cough): what never reaches Claude. Local commands are

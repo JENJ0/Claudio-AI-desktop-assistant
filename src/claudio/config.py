@@ -285,6 +285,14 @@ class ConversationSettings(BaseModel):
     barge_in_vad: float = Field(0.6, gt=0, lt=1)  # speech probability needed (stricter than [vad])
     barge_in_min_speech_ms: int = Field(300, ge=0)  # voice this long before anything happens
     duck_volume: float = Field(0.3, ge=0, le=1)  # the reply's volume while Whisper checks
+    # true: a new request over the reply needs the name ("Claudio, che ore sono") or a local
+    # command; "basta" always works. With speakers the echo is never a request (JenJo 26/10).
+    barge_in_needs_name: bool = True
+    # 0-100: a phrase this close (letter by letter) to what was just said is the reply's echo.
+    echo_similarity: float = Field(70.0, ge=0, le=100)
+    # After any sound of its own (reply, beep) the wake word and the conversation window ignore
+    # this much audio: its tail is still in the room.
+    echo_tail_ms: int = Field(400, ge=0, le=2000)
     # A reply cut by a new request ("che ore sono?") goes on after it is answered ("Dicevo:
     # ..."), if that took less than this many seconds (0 = never; JenJo 25/10).
     resume_s: float = Field(60.0, ge=0, le=600)
