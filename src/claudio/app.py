@@ -184,6 +184,8 @@ class Assistant:
         self.on_heard = on_heard
         self._candidates: list[str] | None = None  # the closed list's n-best, when it ran
         self._barge_checking = False
+        # A phrase heard over the reply while Whisper was busy (audio, loudest dBFS).
+        self._barge_pending: tuple[np.ndarray, float] | None = None
         self._interrupted = False  # the reply being spoken was cut short by "basta"
         # A voice took over while CLAUDIO spoke: the start of the next request, then the frames
         # heard until the reply has stopped. None: nobody interrupted.
@@ -197,6 +199,8 @@ class Assistant:
         # still coming out of the speakers (output buffer, room).
         self.echo_tail_ms = echo_tail_ms
         self._deaf_samples = 0
+        self._wake_deaf = 0  # samples the wake word still ignores (a sound of CLAUDIO's own)
+        self._wake_stale = False  # the wake word model heard CLAUDIO: reset it before use
         # A reply cut by a new request, still read to its end: resumed once that request is
         # answered. None: no reply was cut.
         self._cut: CutReply | None = None
@@ -288,6 +292,8 @@ class Assistant:
     async def handle_frame(self, frame: np.ndarray) -> None:
         if self.state == State.IDLE:
             self._recent.append(frame.astype(np.float32) / 32768.0)
+            if self._hears_itself(frame):
+                return
             detection = self.wake.process(frame)
             if detection is not None and self._weak(*detection):
                 if not self._checking:
@@ -735,12 +741,27 @@ class Assistant:
                 log.info("Voce troppo debole mentre parlo (%.0f dBFS): ignorata", dbfs)
                 return
             if self._barge_checking:
-                return  # still looking at the last phrase: this one is skipped
-            self._barge_checking = True
-            self._since_check.clear()
-            task = asyncio.create_task(self._check_barge_in(audio, barge, dbfs))
-            self._checks.add(task)
-            task.add_done_callback(self._checks.discard)
+                # Still looking at the last phrase: this one waits its turn, never dropped
+                # (JenJo 28/10: with the echo keeping Whisper busy, some "stop" were lost).
+                prev = self._barge_pending
+                if prev is not None:
+                    audio, dbfs = np.concatenate((prev[0], audio)), max(prev[1], dbfs)
+                self._barge_pending = (audio, dbfs)
+                return
+            self._start_barge_check(audio, barge, dbfs)
+
+    def _start_barge_check(self, audio: np.ndarray, barge: BargeIn, dbfs: float) -> None:
+        self._barge_checking = True
+        self._since_check.clear()
+        task = asyncio.create_task(self._check_barge_in(audio, barge, dbfs))
+        self._checks.add(task)
+        task.add_done_callback(self._checks.discard)
+
+    def _next_barge_check(self, barge: BargeIn) -> None:
+        """The phrase heard while Whisper was busy, if the reply is still being spoken."""
+        pending, self._barge_pending = self._barge_pending, None
+        if pending is not None and self.state is State.SPEAKING and self._takeover is None:
+            self._start_barge_check(pending[0], barge, pending[1])
 
     def _sounds_like_echo(self, barge: BargeIn) -> bool:
         """The voice starting now is no louder than CLAUDIO's own echo already heard: with
@@ -767,7 +788,14 @@ class Assistant:
         finally:
             self._barge_checking = False
         if self.state is not State.SPEAKING or self._takeover is not None:
+            self._barge_pending = None
             return  # the reply had already ended, or someone already took over
+        try:
+            self._judge_barge_in(text, audio, dbfs)
+        finally:
+            self._next_barge_check(barge)
+
+    def _judge_barge_in(self, text: str, audio: np.ndarray, dbfs: float | None) -> None:
         if self._interaction is not None and dbfs is not None:
             self._interaction.info["barge_dbfs"] = round(dbfs, 1)
         if text and self.responder.is_stop(text):
@@ -779,6 +807,14 @@ class Assistant:
             self.speaker.duck(None)
         elif self._is_talking_to_me(text):
             self._take_over(audio, text)
+        elif self._says_stop(text):
+            # "stop" said over the reply, written together with the reply's own echo.
+            log.info("Interrotto a voce (insieme alla mia eco): %r", text)
+            self._interrupted = True
+            if self._interaction is not None:
+                self._interaction.info["barge_in"] = text
+            self.speaker.interrupt()
+            self.speaker.duck(None)
         else:
             if self._heard_echo and dbfs is not None:
                 # How loud the speakers come back: quieter voices no longer lower the reply.
@@ -805,6 +841,17 @@ class Assistant:
             log.info("Sentito mentre parlo, senza il mio nome: lo ignoro: %r", text)
             return False
         return True
+
+    def _says_stop(self, text: str) -> bool:
+        """A stop word ("stop", "basta", "zitto"...) somewhere in `text` that the reply itself
+        does not say: JenJo's voice mixed with the echo, which Whisper writes as one phrase."""
+        reply = "".join(self._reply_parts)
+        said = set(normalize(reply, drop_fillers=False).split())
+        said |= set(normalize(" ".join(self.speaker.played), drop_fillers=False).split())
+        return any(
+            w not in said and self.responder.is_stop(w)
+            for w in normalize(text, drop_fillers=False).split()
+        )
 
     def _is_echo(self, text: str, reply: str | None = None) -> bool:
         """`text` is what CLAUDIO itself is saying (or `reply`, what it has just said), heard
@@ -1043,6 +1090,7 @@ class Assistant:
 
     def _on_first_audio(self, inter: Interaction) -> None:
         inter.mark("first_audio")
+        self._barge_pending = None
         if self.barge_in is not None:
             self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
             self._since_check.clear()
@@ -1074,6 +1122,8 @@ class Assistant:
             self.history.append(row)
         self._interaction = None
         self.wake.reset()
+        if inter is not None and "first_audio" in inter.marks:
+            self._wake_deaf_for_tail()  # the reply's last syllables are still in the room
         self._set_state(State.IDLE)
 
     def _check_level(self, speech_dbfs: float) -> None:
@@ -1088,7 +1138,33 @@ class Assistant:
     def _beep(self, kind: str) -> None:
         task = asyncio.create_task(self.speaker.beep(kind))
         self._beeps.add(task)
-        task.add_done_callback(self._beeps.discard)
+        task.add_done_callback(self._beep_done)
+
+    def _beep_done(self, task: asyncio.Task[None]) -> None:
+        self._beeps.discard(task)
+        self._wake_deaf_for_tail()
+
+    def _wake_deaf_for_tail(self) -> None:
+        """CLAUDIO has just made a sound: the wake word does not listen to its tail."""
+        tail = self.endpointer.sample_rate * self.echo_tail_ms // 1000
+        self._wake_deaf = max(self._wake_deaf, tail)
+        self._wake_stale = True
+
+    def _hears_itself(self, frame: np.ndarray) -> bool:
+        """True while a beep plays and for echo_tail_ms after it or after a reply: the wake
+        word model is not fed CLAUDIO's own sounds (JenJo 28/10: the low beep that closes a
+        conversation woke the "claudio" model at 0.6-0.8, beep after beep). Then the model
+        starts clean."""
+        if self._beeps:
+            self._wake_stale = True
+            return True
+        if self._wake_deaf > 0:
+            self._wake_deaf -= len(frame)
+            return True
+        if self._wake_stale:
+            self._wake_stale = False
+            self.wake.reset()
+        return False
 
     async def wait_idle(self) -> None:
         if self._checks:

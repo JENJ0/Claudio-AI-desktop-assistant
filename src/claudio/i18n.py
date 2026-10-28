@@ -235,6 +235,7 @@ EN: dict[str, str] = {
     "La mia voce nel microfono dopo la risposta, la ignoro: %r": (
         "My own voice heard again after the reply, ignored: %r"
     ),
+    "Interrotto a voce (insieme alla mia eco): %r": "Stopped by voice (along with my echo): %r",
     "Sentito mentre parlo, senza il mio nome: lo ignoro: %r": (
         "Heard while speaking, without my name: ignored: %r"
     ),

@@ -12,6 +12,13 @@
 - The echo no longer lowers (duck) or stops (stop mode) the reply over and over: Claudio
   remembers how loud its own echo came back and only a voice 3 dB louder acts before Whisper
   has listened.
+- JenJo 28/10 02:40: Claudio woke by itself three times in a row. The low beep that closes a
+  conversation, from the speakers, fired the "claudio" model (0.6-0.8, Whisper heard nothing).
+  The wake word is now never fed CLAUDIO's own sounds: deaf while a beep plays and for
+  `echo_tail_ms` (now 400) after it or after a reply, then reset.
+- Some "stop" over the reply were lost: a phrase heard while Whisper was still busy (with the
+  echo) was dropped; now it waits its turn. A stop word that the reply does not say counts
+  even when Whisper writes it together with the echo ("Sono le 14 stop e 5").
 
 ### Changed
 - `[conversation] barge_in_needs_name = true`: over the reply, a new request needs the name
