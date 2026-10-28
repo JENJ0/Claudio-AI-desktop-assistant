@@ -12,8 +12,8 @@ Requests, one JSON line each on stdin:
                              rvc "blocks": audio as it is generated (first audio ~0.3 s);
                              "sentence": the whole sentence through RVC at once, clearer
                              (WER 6% instead of 10%) but the audio waits for the sentence;
-                             "none": Qwen3 alone, no RVC and no slowing down (diagnosis:
-                             tells whether a robotic sound comes from Qwen3 or from RVC)
+                             "none": Qwen3 alone, no RVC: right stress and melody (JenJo's
+                             A/B, 28/10); --speed is applied by a pitch-keeping time stretch
   {"op": "interrupt", "upto": 7}  stops every speak up to id 7, even one in progress
                              (no "upto": every speak received so far)
   {"op": "quit"}
@@ -139,20 +139,106 @@ def fix_realtime_pitch_scale(pipeline: Any) -> bool:
     return True
 
 
-class RvcNone:
-    """Qwen3's voice as it comes out, no RVC (and no slowing down): for comparisons only."""
+class TimeStretch:
+    """Streaming WSOLA: plays audio at `speed` (< 1 slower) and keeps its pitch.
 
-    def begin(self) -> None:
-        pass
+    Without RVC nothing can raise the pitch back after a resample, so the pace is changed
+    in time only: frames of N samples are overlap-added every HOP samples of output, each
+    taken from around speed * HOP samples further in the input, shifted by up to TOL
+    samples to where it best continues the previous frame (no phase clash, no warble).
+    """
 
-    def feed(self, chunk: Any) -> list[bytes]:
+    N = 1024  # 43 ms at 24 kHz: two pitch periods even for a deep voice
+    HOP = N // 2  # periodic Hann at 50% overlap adds up to exactly 1
+    TOL = 256
+
+    def __init__(self, speed: float) -> None:
         import numpy as np
 
-        pcm = np.clip(np.asarray(chunk, dtype=np.float32).reshape(-1), -1.0, 1.0)
-        return [(pcm * 32767).astype("<i2").tobytes()]
+        self.np = np
+        self.ha = self.HOP * speed
+        self.speed = speed
+        self.win = np.hanning(self.N + 1)[: self.N].astype(np.float32)
+        self.begin()
+
+    def begin(self) -> None:
+        np = self.np
+        # HOP zeros in front: the first frame's fade-in falls on them, not on the speech.
+        self.buf = np.zeros(self.HOP, dtype=np.float32)
+        self.base = 0  # input index of buf[0]
+        self.n_in = 0
+        self.k = 0  # next frame
+        self.prev = 0  # input index where the previous frame started
+        self.acc = np.zeros(self.N, dtype=np.float32)
+        self.skip = self.HOP  # output samples that belong to the zeros in front
+        self.n_out = 0
+
+    def _frames(self) -> Any:
+        np = self.np
+        out = []
+        while True:
+            a = round(self.k * self.ha)
+            nat = self.prev + self.HOP  # where the previous frame naturally goes on
+            if max(a + self.TOL, nat) + self.N > self.base + len(self.buf):
+                break
+            if self.k == 0:
+                start = 0
+            else:
+                lo = max(a - self.TOL, 0)
+                seg = self.buf[lo - self.base : a + self.TOL + self.N - self.base]
+                tpl = self.buf[nat - self.base : nat + self.N - self.base]
+                start = lo + int(np.argmax(np.correlate(seg, tpl, mode="valid")))
+            self.acc += self.win * self.buf[start - self.base : start + self.N - self.base]
+            out.append(self.acc[: self.HOP].copy())
+            self.acc = np.concatenate([self.acc[self.HOP :], np.zeros(self.HOP, dtype=np.float32)])
+            self.prev, self.k = start, self.k + 1
+            keep = min(self.prev + self.HOP, round(self.k * self.ha) - self.TOL)
+            if keep > self.base:
+                self.buf, self.base = self.buf[keep - self.base :], keep
+        return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
+
+    def _emit(self, audio: Any, limit: int | None = None) -> Any:
+        cut = min(self.skip, len(audio))
+        audio, self.skip = audio[cut:], self.skip - cut
+        if limit is not None:
+            audio = audio[: max(0, limit - self.n_out)]
+        self.n_out += len(audio)
+        return audio
+
+    def feed(self, chunk: Any) -> Any:
+        chunk = self.np.asarray(chunk, dtype=self.np.float32).reshape(-1)
+        self.n_in += len(chunk)
+        self.buf = self.np.concatenate([self.buf, chunk])
+        return self._emit(self._frames())
+
+    def flush(self) -> Any:
+        pad = self.np.zeros(2 * self.N + self.TOL, dtype=self.np.float32)
+        self.buf = self.np.concatenate([self.buf, pad])
+        return self._emit(self._frames(), limit=round(self.n_in / self.speed))
+
+
+class RvcNone:
+    """Qwen3's voice as it comes out, no RVC; slower or faster with a pitch-keeping stretch."""
+
+    def __init__(self, speed: float = 1.0) -> None:
+        self.stretch = TimeStretch(speed) if abs(speed - 1.0) > 1e-3 else None
+
+    def begin(self) -> None:
+        if self.stretch:
+            self.stretch.begin()
+
+    @staticmethod
+    def _pcm(audio: Any) -> list[bytes]:
+        import numpy as np
+
+        pcm = np.clip(np.asarray(audio, dtype=np.float32).reshape(-1), -1.0, 1.0)
+        return [(pcm * 32767).astype("<i2").tobytes()] if len(pcm) else []
+
+    def feed(self, chunk: Any) -> list[bytes]:
+        return self._pcm(self.stretch.feed(chunk) if self.stretch else chunk)
 
     def flush(self) -> list[bytes]:
-        return []
+        return self._pcm(self.stretch.flush()) if self.stretch else []
 
 
 class RvcStream:
@@ -355,7 +441,7 @@ class Worker:
         self.rvc: dict[str, RvcStream | RvcSentence | RvcNone] = {
             "blocks": RvcStream(args.rvc_model, args.applio, args.speed, args.pitch_fix),
             "sentence": RvcSentence(args.rvc_model, args.applio, args.speed, args.pitch_fix),
-            "none": RvcNone(),
+            "none": RvcNone(args.speed),
         }
         for _ in self.generate("Prova.", "Italian", 60):  # captures the CUDA graph
             pass

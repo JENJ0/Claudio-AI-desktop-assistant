@@ -195,7 +195,7 @@ class TtsSettings(BaseModel):
     effect: Literal["none", "estremo", "jarvis", "ultron", "ultron_estremo"] = "none"
     # Engine "jack": a worker process with its own venv; paths are relative to models_dir.
     jack_python: Path = Path("voices/jack/worker/env/Scripts/python.exe")
-    jack_checkpoint: Path = Path("voices/jack/ft/0.6B/checkpoint-epoch-5")
+    jack_checkpoint: Path = Path("voices/jack/ft/1.7B/checkpoint-epoch-7")  # JenJo, 28/10
     jack_rvc_model: Path = Path("voices/jack/rvc/Applio/logs/jack/jack_100e_2800s.pth")
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
@@ -203,15 +203,18 @@ class TtsSettings(BaseModel):
     # Claudio listens while Jack's worker is still loading: a reply in that time waits this
     # long for Jack, then the fallback voice speaks it (0 = fallback at once).
     jack_first_wait_s: float = Field(30.0, ge=0)
-    # Jack's pace: < 1 slower (0.9 = 10% slower, JenJo 23/10). The audio is stretched before
-    # RVC and RVC raises the pitch back by the same amount, so the voice does not get deeper.
+    # Jack's pace: < 1 slower (0.9 = 10% slower, JenJo 23/10); the pitch stays the same. With
+    # RVC the audio is resampled before it and RVC raises the pitch back; without RVC
+    # ("none") a time stretch (WSOLA) changes the pace only.
     jack_speed: float = Field(0.9, ge=0.7, le=1.3)
     # Qwen3 sampling: lower is steadier (fewer odd stresses), higher is livelier.
     jack_temperature: float = Field(0.7, ge=0.1, le=1.5)  # JenJo's pick by ear, 24/10
     # How RVC turns Qwen3's voice into Jack's: "blocks" of 250 ms as it is generated (first
     # audio ~0.3 s, more mangled words), "sentence" whole (clearer, the audio waits for the
-    # sentence), "auto" blocks for a reply's first sentence and whole for the next ones.
-    jack_rvc: Literal["blocks", "sentence", "auto"] = "auto"  # JenJo's pick, 24/10
+    # sentence), "auto" blocks for a reply's first sentence and whole for the next ones,
+    # "none" Qwen3 alone: right stress and melody (JenJo's A/B, 28/10), timbre only as close
+    # to Jack's as the fine-tuned checkpoint.
+    jack_rvc: Literal["blocks", "sentence", "auto", "none"] = "none"  # JenJo, 28/10
     # RVC pitch cleanup against the "robotic at times" tone: the pitch buckets of the
     # streamed first sentence as in training (Applio's realtime path had them ~2 semitones
     # off) and octave errors, jitter and tiny unvoiced holes removed from whole sentences.

@@ -83,3 +83,55 @@ def test_worker_command_adds_pitch_fix_only_when_on(tmp_path) -> None:
     assert "--pitch-fix" not in worker_command(tmp_path, TtsSettings())
     assert "--pitch-fix" in worker_command(tmp_path, TtsSettings(jack_pitch_fix=True))
     assert "--pitch-fix" in worker_command(tmp_path, TtsSettings(), jack_pitch_fix=True)
+
+
+def test_qwen_alone_is_a_valid_setting() -> None:
+    from claudio.config import TtsSettings
+
+    assert TtsSettings(jack_rvc="none").jack_rvc == "none"
+
+
+def _peak_hz(audio: np.ndarray, rate: int = 24_000) -> float:
+    spectrum = np.abs(np.fft.rfft(audio * np.hanning(len(audio))))
+    return float(np.fft.rfftfreq(len(audio), 1 / rate)[np.argmax(spectrum)])
+
+
+def _stretch(audio: np.ndarray, speed: float, chunk: int) -> np.ndarray:
+    ts = w.TimeStretch(speed)
+    parts = [ts.feed(audio[i : i + chunk]) for i in range(0, len(audio), chunk)]
+    return np.concatenate([*parts, ts.flush()])
+
+
+@pytest.mark.parametrize("speed", [0.9, 1.1])
+def test_time_stretch_changes_the_pace_and_keeps_the_pitch(speed: float) -> None:
+    rate = 24_000
+    t = np.arange(2 * rate) / rate
+    tone = (0.5 * np.sin(2 * np.pi * 150 * t)).astype(np.float32)
+    out = _stretch(tone, speed, chunk=16_000)  # Qwen3 streams ~0.67 s chunks
+    assert len(out) == round(len(tone) / speed)
+    assert abs(_peak_hz(out) - 150) < 2  # resampling would give 150 * speed
+    middle = out[rate // 4 : -rate // 4]
+    assert np.sqrt(np.mean(middle**2)) == pytest.approx(0.5 / np.sqrt(2), rel=0.05)  # no warble
+
+
+def test_time_stretch_does_not_depend_on_chunk_size() -> None:
+    rng = np.random.default_rng(0)
+    voice = rng.standard_normal(30_000).astype(np.float32) * 0.1
+    assert np.allclose(_stretch(voice, 0.9, 777), _stretch(voice, 0.9, 30_000), atol=1e-6)
+
+
+def test_time_stretch_restarts_clean_for_each_sentence() -> None:
+    tone = np.sin(np.arange(12_000) / 10).astype(np.float32)
+    ts = w.TimeStretch(0.9)
+    first = np.concatenate([ts.feed(tone), ts.flush()])
+    ts.begin()
+    again = np.concatenate([ts.feed(tone), ts.flush()])
+    assert np.array_equal(first, again)
+
+
+def test_no_rvc_applies_the_speed_without_rvc() -> None:
+    rvc = w.RvcNone(0.9)
+    rvc.begin()
+    tone = (0.3 * np.sin(np.arange(24_000) / 8)).astype(np.float32)
+    pcm = b"".join(rvc.feed(tone) + rvc.flush())
+    assert len(pcm) // 2 == round(24_000 / 0.9)

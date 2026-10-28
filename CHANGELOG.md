@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased] - Jack on Qwen3-TTS 1.7B
+
+### Changed
+- `[tts] jack_checkpoint` default `voices/jack/ft/1.7B/checkpoint-epoch-7`: Qwen3-TTS 1.7B
+  fine-tuned on Jack's 641 cleanest lines (one shared reference, top 14 talker layers, 8-bit
+  AdamW). JenJo's pick by ear, 28/10. First audio ~225 ms as with 0.6B; the worker loads
+  slower and uses more VRAM.
+
+## [Unreleased] - Jack at his pace without RVC
+
+### Added
+- `jack_speed` works with `jack_rvc = "none"` too: a streaming WSOLA time stretch in the
+  worker (`TimeStretch`) slows Qwen3's audio (0.9 = 10% slower) and keeps its pitch, chunk by
+  chunk, with no extra wait for the first audio.
+
+## [Unreleased] - Jack speaks with Qwen3 alone
+
+### Changed
+- `[tts] jack_rvc` default `"none"` (new value): Qwen3 alone, no RVC. JenJo's A/B (28/10,
+  `jack_variants.py` C/F/T/Q): only Q had the right stress and melody on every sentence; RVC
+  (even with `jack_pitch_fix`) brought the robotic tone and the wrong stresses. The timbre is
+  less Jack's and `jack_speed` does not apply (RVC did the slowing) until Qwen3 is retrained
+  on more of Jack's lines.
 ## [Unreleased] - own voice through the speakers
 
 ### Fixed
