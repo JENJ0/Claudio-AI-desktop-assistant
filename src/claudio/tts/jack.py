@@ -60,6 +60,7 @@ def worker_command(models: Path, tts: Any, **overrides: Any) -> list[str]:
         str(get("jack_speed")),
         "--temperature",
         str(get("jack_temperature")),
+        *(["--pitch-fix"] if get("jack_pitch_fix") else []),
     ]
 
 

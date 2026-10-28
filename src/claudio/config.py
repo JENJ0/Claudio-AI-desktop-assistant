@@ -105,6 +105,9 @@ class VadSettings(BaseModel):
     # stop to think mid-sentence. 0 = always end_silence_ms.
     long_end_silence_ms: int = Field(800, ge=0)
     long_after_s: float = Field(1.5, ge=0)  # speech after which the longer pause applies
+    # A phrase left halfway ("apri Chrome e cerca...", Whisper's "...") waits this long for
+    # the rest before it is answered. 0 = off.
+    continue_s: float = Field(2.0, ge=0, le=10)
 
 
 class SttSettings(BaseModel):
@@ -138,6 +141,14 @@ class SttSettings(BaseModel):
     beam_size: int = Field(1, ge=1)
     initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
     prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
+    # The names on the PC in Whisper's prompt (stt/vocabulary.py): the most recent folders of
+    # Desktop and Documents and the programs of the Desktop and Start menu, so "Tesi" is not
+    # written "desi". vocabulary_words: JenJo's own names, always first.
+    vocabulary: bool = True
+    vocabulary_words: list[str] = Field(default_factory=list)
+    vocabulary_folders: int = Field(25, ge=0, le=60)
+    vocabulary_programs: int = Field(12, ge=0, le=40)
+    vocabulary_windows: int = Field(8, ge=0, le=20)
     no_speech_threshold: float = Field(0.6, ge=0, le=1)
     cpu_threads: int = Field(4, ge=1)
 
@@ -201,6 +212,10 @@ class TtsSettings(BaseModel):
     # audio ~0.3 s, more mangled words), "sentence" whole (clearer, the audio waits for the
     # sentence), "auto" blocks for a reply's first sentence and whole for the next ones.
     jack_rvc: Literal["blocks", "sentence", "auto"] = "auto"  # JenJo's pick, 24/10
+    # RVC pitch cleanup against the "robotic at times" tone: the pitch buckets of the
+    # streamed first sentence as in training (Applio's realtime path had them ~2 semitones
+    # off) and octave errors, jitter and tiny unvoiced holes removed from whole sentences.
+    jack_pitch_fix: bool = False  # off until JenJo's A/B (scripts/jack_variants.py C vs F)
     # Words Jack says wrong, written as he should say them (any case): English words read
     # in English, "PC" merged into "pace". Edit in claudio.toml [tts.jack_words].
     jack_words: dict[str, str] = Field(default_factory=dict)
@@ -390,6 +405,12 @@ class PcSettings(BaseModel):
     read_timeout_s: float = Field(2.0, gt=0, le=30)  # slow apps (Electron) stop here
     search_limit: int = Field(8, ge=1, le=50)
     search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
+    # web_search (level 1): the results page; {query} is replaced by the encoded words.
+    web_search_url: str = "https://www.google.com/search?q={query}"
+    # Every folder name under the roots, read in the background at start and again after this
+    # many seconds (0 = off): folders found at once, misheard names compared with all of them.
+    folders_refresh_s: float = Field(900.0, ge=0)
+    folders_max: int = Field(200_000, ge=1000)  # stop listing here (a huge drive with "*")
     max_windows: int = Field(25, ge=1, le=100)
     apps_refresh_s: float = Field(600.0, ge=0)
     # v0.3.2. The screenshot to Haiku (last resort): long side in pixels, JPEG quality.
@@ -407,6 +428,13 @@ class PcSettings(BaseModel):
     private_windows: list[str] = Field(
         default_factory=lambda: ["keepass", "bitwarden", "1password", "lastpass", "password"]
     )
+
+    @field_validator("web_search_url")
+    @classmethod
+    def _search_url(cls, value: str) -> str:
+        if not value.startswith("https://") or value.count("{query}") != 1:
+            raise ValueError("web_search_url: un indirizzo https:// con {query} una volta")
+        return value
 
 
 class ChatSettings(BaseModel):

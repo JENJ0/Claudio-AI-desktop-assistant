@@ -331,6 +331,30 @@ async def run_text(settings: Settings, text: str) -> None:
     speaker.player.close()
 
 
+def build_vocabulary(settings: Settings) -> Any:
+    """The folder, program and open window names for Whisper's prompt (folders and programs
+    read now in a thread)."""
+    from claudio.stt.vocabulary import Vocabulary, default_folders, default_shortcut_folders
+
+    folders = default_folders(Path.home())
+    windows = None
+    if sys.platform == "win32":
+        from claudio.pc.windows import window_titles
+
+        windows = window_titles
+    vocabulary = Vocabulary(
+        lambda: folders,
+        lambda: default_shortcut_folders(folders[0]),
+        words=settings.stt.vocabulary_words,
+        max_folders=settings.stt.vocabulary_folders,
+        max_programs=settings.stt.vocabulary_programs,
+        windows=windows,
+        max_windows=settings.stt.vocabulary_windows,
+    )
+    vocabulary.refresh()
+    return vocabulary
+
+
 def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
     """The listener used while CLAUDIO speaks: a second Silero VAD (its own state) that
     closes a phrase after a short pause, or every barge_in_max_s of continuous speech."""
@@ -404,6 +428,8 @@ async def run_assistant(
         parallel=settings.startup.parallel,
     )
     transcriber: WhisperTranscriber = loaded["whisper"]
+    if settings.stt.vocabulary:
+        transcriber.vocabulary = build_vocabulary(settings).text
     vad, wake = loaded["wake word"]
     speaker: StreamingSpeaker = loaded["voce"]
     responder: LocalResponder = loaded["claude"]
@@ -491,6 +517,7 @@ async def run_assistant(
         unsure_logprob=settings.stt.unsure_logprob if responder.fallback else None,
         alternatives=settings.stt.alternatives if settings.stt.closed_list else 0,
         on_heard=responder.heard,
+        continue_s=settings.vad.continue_s,
         echo_tail_ms=settings.conversation.echo_tail_ms if settings.conversation.barge_in else 0,
     )
     log.info(

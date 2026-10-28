@@ -40,6 +40,23 @@ UIA_VALUE_PROPERTY = 30045
 TEXT_TYPES = frozenset({"Edit", "Document"})  # their value is the text, not their name
 
 
+def _app_path(exe: str) -> Path | None:
+    """Where `exe` (chrome.exe) is installed, from the "App Paths" registry keys that also
+    let "Esegui" start it by name. None when it is not installed."""
+    import winreg
+
+    key = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key) as k:
+                value = str(winreg.QueryValue(k, None) or "").strip().strip('"')
+        except OSError:
+            continue
+        if value and Path(value).is_file():
+            return Path(value)
+    return None
+
+
 class WindowsDesktop:
     def thread_init(self) -> None:
         try:
@@ -79,6 +96,16 @@ class WindowsDesktop:
 
     def open_path(self, path: Path) -> None:
         os.startfile(str(path))
+
+    def open_url(self, url: str, browser: str | None) -> bool:
+        if not url.startswith("https://"):
+            raise ValueError(f"not an https URL: {url!r}")
+        exe = _app_path(browser) if browser else None
+        if exe is not None:
+            subprocess.Popen([str(exe), url])  # no shell: the URL is one argument
+            return True
+        os.startfile(url)  # the default browser
+        return browser is None
 
     # --- files --------------------------------------------------------------------------
 
@@ -248,6 +275,24 @@ def _shortcut_files() -> list[tuple[str, Path]]:
     if env.get("PUBLIC"):
         desks.append(Path(env["PUBLIC"]) / "Desktop")
     return shortcuts(menus, deep=True) + shortcuts(desks, deep=False)
+
+
+def window_titles() -> list[str]:
+    """The titles of the Alt+Tab list, front to back. No COM: any thread can call it (the
+    names of the open windows go into Whisper's prompt)."""
+    import win32gui
+
+    titles: list[str] = []
+
+    def visit(hwnd: int, _: Any) -> bool:
+        if _alt_tab_window(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title:
+                titles.append(title)
+        return True
+
+    win32gui.EnumWindows(visit, None)
+    return titles
 
 
 def _alt_tab_window(hwnd: int) -> bool:

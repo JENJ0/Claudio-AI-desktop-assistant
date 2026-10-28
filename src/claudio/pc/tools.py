@@ -1,7 +1,8 @@
 """The PC tools Claude can call: their definitions, their safety levels and the dispatcher.
 
 The level of every call is decided here, in code, never by the model (CLAUDE.md, Sicurezza):
-1 runs at once (open, search, read, focus, look at the screen, harmless keys), 2 needs JenJo's
+1 runs at once (open, search files or the web, read, focus, look at the screen, harmless keys),
+2 needs JenJo's
 spoken yes (type, close a window, move a file, other keys), 3 an explicit spoken "confermo"
 (a PowerShell command, v0.3.2). The question asked before a level 2-3 action is written by
 code from the arguments, so what JenJo confirms is exactly what runs. Some calls are refused
@@ -20,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote_plus, urlsplit
 
 from rapidfuzz import fuzz, process
 
@@ -42,6 +44,24 @@ APP_CUTOFF = 70  # rapidfuzz WRatio: below this the app name is not a match
 WINDOW_CUTOFF = 60
 SPOKEN_TEXT_CHARS = 80  # the text to type, as read in the confirmation question
 SPOKEN_PURPOSE_CHARS = 120  # the purpose of a command, as read before "confermo"
+WEB_QUERY_CHARS = 200
+URL_CHARS = 2000
+# An app started this recently may not have its window yet: typing waits for it (26/10: Chrome
+# opened and type_text ran at once, the first word went nowhere and only "Moto" was typed).
+LAUNCH_WAIT_S = 6.0
+WINDOW_WAIT_S = 3.0  # how long a window named by Claude (or just launched) is waited for
+WINDOW_POLL_S = 0.2
+WINDOW_SETTLE_S = 0.4  # a window that just appeared: its text field takes the focus a bit later
+# The browsers web_search can name, by their executable (Windows "App Paths").
+BROWSERS = {
+    "chrome": "chrome.exe",
+    "google chrome": "chrome.exe",
+    "edge": "msedge.exe",
+    "microsoft edge": "msedge.exe",
+    "firefox": "firefox.exe",
+    "brave": "brave.exe",
+    "opera": "opera.exe",
+}
 # Tools that may take a while: Claudio says "Ci guardo" first when Haiku said nothing yet.
 SLOW = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
 
@@ -67,6 +87,11 @@ class Desktop(Protocol):
     def apps(self) -> list[App]: ...
     def launch(self, app: App) -> None: ...
     def open_path(self, path: Path) -> None: ...
+    def open_url(self, url: str, browser: str | None) -> bool:
+        """Open an https `url` in `browser` (an executable like chrome.exe; None: the default
+        browser). False when that browser is not installed: the default one opened it."""
+        ...
+
     def search_index(
         self, terms: list[str], kind: str | None, roots: list[Path], limit: int
     ) -> list[Found] | None:
@@ -168,6 +193,22 @@ DEFINITIONS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "web_search",
+        "description": "Search the web: opens the browser on the search results for the "
+        "query. Use it for every web search (cerca su internet, cerca X su Chrome), never "
+        "open_app plus type_text. browser only when JenJo names one (Chrome, Edge, Firefox).",
+        "input_schema": _schema(
+            {"query": _STR, "browser": _STR},
+            ["query"],
+        ),
+    },
+    {
+        "name": "open_website",
+        "description": "Open a website or web address in the browser (e.g. youtube.com, "
+        "https://www.dainese.com). browser only when JenJo names one.",
+        "input_schema": _schema({"url": _STR, "browser": _STR}, ["url"]),
+    },
+    {
         "name": "list_windows",
         "description": "List the open windows (title, program; the active one is marked).",
         "input_schema": _schema({}),
@@ -240,6 +281,8 @@ LEVELS = {
     "open_app": LEVEL_SAFE,
     "open_path": LEVEL_SAFE,
     "search_files": LEVEL_SAFE,
+    "web_search": LEVEL_SAFE,  # only opens a results page: nothing is typed or changed
+    "open_website": LEVEL_SAFE,  # opening is level 1 (CLAUDE.md, Sicurezza)
     "list_windows": LEVEL_SAFE,
     "read_window": LEVEL_SAFE,
     "focus_window": LEVEL_SAFE,
@@ -276,6 +319,12 @@ _SAY = {
 }
 
 
+def _merge(first: Sequence[Found], then: Sequence[Found]) -> list[Found]:
+    """`first`, then the items of `then` not already there."""
+    seen = {f.path for f in first}
+    return [*first, *(f for f in then if f.path not in seen)]
+
+
 class PcTools:
     """Definitions for Claude, the level of each call, the confirmation question, the run."""
 
@@ -285,15 +334,23 @@ class PcTools:
         settings: PcSettings,
         home: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.desktop = desktop
         self.settings = settings
         self.policy = PathPolicy(settings.roots, home)
         self.safe_keys = frozenset(_canonical_or_none(k) for k in settings.safe_keys) - {None}
         self.clock = clock
+        self.sleep = sleep
+        self._launched: tuple[App, float] | None = None  # the last app started, and when
         self._free: set[str] = set()  # type_text calls into a free_typing window (prepare)
         self._apps: list[App] | None = None
         self._apps_at = -float("inf")
+        self.folders = files.FolderNames(
+            self.policy.search_roots, settings.folders_refresh_s, settings.folders_max, clock
+        )
+        if settings.folders_refresh_s > 0:
+            self.folders.refresh()  # in the background: ready long before the first search
         self._pool = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="pc", initializer=desktop.thread_init
         )
@@ -474,6 +531,10 @@ class PcTools:
             return f"Opened {files.shorten(path, self.policy.home)}."
         if call.name == "search_files":
             return self._search(str(a.get("query", "")), a.get("kind"))
+        if call.name == "web_search":
+            return self._web_search(str(a.get("query", "")), str(a.get("browser") or ""))
+        if call.name == "open_website":
+            return self._open_website(str(a.get("url", "")), str(a.get("browser") or ""))
         if call.name == "list_windows":
             return self._list_windows()
         if call.name == "read_window":
@@ -515,19 +576,26 @@ class PcTools:
             return self.policy.check(str(near))
 
     def _find_by_name(self, raw: str) -> Path | None:
-        """The folder (or else file) named exactly like the last part of `raw`, anywhere in
-        the allowed folders, breadth first ("Tesi" -> Desktop\\UNIVERSITA'\\TESI)."""
+        """The folder (or else file) named like the last part of `raw`, anywhere in the
+        allowed folders ("Tesi" -> Desktop\\UNIVERSITA'\\TESI, "Projecti" -> PROGETTI): from
+        the list of folders, else breadth first. Accents and apostrophes do not count."""
         name = raw.replace("/", "\\").rstrip("\\").rsplit("\\", 1)[-1].strip().strip('"')
+        named = [p for p in self.folders.named(name) if p.is_dir() and self.policy.allowed(p)]
+        if len(named) == 1 or (named and files.fold(named[0].name) == files.fold(name)):
+            return named[0]
         try:
             terms = files.search_terms(name)
         except PathRefused:
             return None
+        wanted = files.fold(name)
         for kind in ("folder", None):
             found = files.walk_search(
                 terms, self.policy.search_roots(), kind, 5, self.settings.search_timeout_s
             )
             for f in found:
-                if f.path.name.casefold() == name.casefold() and self.policy.allowed(f.path):
+                stem = f.path.name if f.path.is_dir() else f.path.stem
+                same = wanted in (files.fold(f.path.name), files.fold(stem))
+                if same and self.policy.allowed(f.path):
                     return f.path
         return None
 
@@ -549,6 +617,7 @@ class PcTools:
                 raise ToolFailed(f'no app called "{name}" in the Start menu. Closest: {hint}')
             app = by_name[best[0]]
         self.desktop.launch(app)
+        self._launched = (app, self.clock())
         return f"Started {app.name}."
 
     def _app_list(self) -> list[App]:
@@ -563,28 +632,35 @@ class PcTools:
         kind = kind if kind in files.KINDS else None
         roots = self.policy.search_roots()
         limit = self.settings.search_limit
-        found = self.desktop.search_index(terms, kind, roots, limit) or []
-        # Outside the allowed folders counts as nothing: on 25/10 the index answered "tesi" only
-        # with paths the policy refused (likely written as C:\Utenti\...) and the walk never ran.
-        allowed = [f for f in found if self.policy.allowed(f.path)]
-        if len(allowed) < len(found):
-            log.info(
-                "Indice: %d risultati fuori dalle cartelle permesse", len(found) - len(allowed)
-            )
-        found = allowed
-        similar: list[Found] = []
+        found: list[Found] = []
+        listed = files.Walk()
+        if kind in (None, "folder") and self.folders.folders() is not None:
+            listed = self.folders.find(terms, limit, SIMILAR)
+            found = [f for f in listed.found if self.policy.allowed(f.path)]
+        if kind != "folder" or not found:
+            indexed = self.desktop.search_index(terms, kind, roots, limit) or []
+            # Outside the allowed folders counts as nothing: on 25/10 the index answered "tesi"
+            # only with paths the policy refused (C:\Utenti\...) and the walk never ran.
+            allowed = [f for f in indexed if self.policy.allowed(f.path)]
+            if len(allowed) < len(indexed):
+                log.info(
+                    "Indice: %d risultati fuori dalle cartelle permesse",
+                    len(indexed) - len(allowed),
+                )
+            found = _merge(found, allowed)
+        similar = listed.similar
         if not found:
-            # No index, or the index has nothing: a folder not indexed yet (on 25/10 it did not
-            # find Desktop\PROGETTI, then did ten minutes later) or a misheard name. Walk the
-            # folders, with a time limit, and collect the names that sound alike.
+            # The index has nothing: a folder made after the list was read, a file not indexed
+            # yet, or a misheard name. Walk the folders, with a time limit.
             walked = files.walk(
                 terms, roots, kind, limit, self.settings.search_timeout_s, similar=SIMILAR
             )
             found = [f for f in walked.found if self.policy.allowed(f.path)]
-            similar = walked.similar
+            similar = _merge(similar, walked.similar)[:SIMILAR]
         home = self.policy.home
         if not found:
             similar = [f for f in similar if self.policy.allowed(f.path)]
+            log.info("Ricerca %r: niente, %d nomi simili", " ".join(terms), len(similar))
             if similar:
                 lines = [f"- {f.describe(home)}" for f in similar]
                 return (
@@ -594,6 +670,49 @@ class PcTools:
             return f"No files found for: {' '.join(terms)}."
         lines = [f.describe(home) for f in found[:limit]]
         return f"{len(lines)} found:\n" + "\n".join(lines)
+
+    def _web_search(self, query: str, browser: str) -> str:
+        """The results page of the configured search engine: the query only ever goes into
+        the URL, encoded, so the model cannot send the browser anywhere else."""
+        query = " ".join(query.split())
+        if not query:
+            raise ToolFailed("no query")
+        query = query[:WEB_QUERY_CHARS]
+        url = self.settings.web_search_url.format(query=quote_plus(query))
+        where = self._browse(url, browser)
+        return f'Searched "{query}" in {where}: results are open.'
+
+    def _open_website(self, raw: str, browser: str) -> str:
+        """Any web address JenJo asks for (opening is level 1): only https, so the model can
+        neither start a program (file:, ms-settings:...) nor hide a download behind it."""
+        raw = raw.strip()
+        if not raw:
+            raise ToolFailed("no address")
+        if "://" not in raw:
+            raw = "https://" + raw  # "youtube.com"
+        parts = urlsplit(raw)
+        if parts.scheme.lower() == "http":
+            raw, parts = "https" + raw[4:], urlsplit("https" + raw[4:])
+        try:
+            parts.port  # noqa: B018 - "ms-settings:privacy" has a port that is not a number
+        except ValueError:
+            raise ToolFailed(f"not a web address: {raw[:80]}") from None
+        host = parts.hostname or ""
+        if parts.scheme.lower() != "https" or "." not in host or len(raw) > URL_CHARS:
+            raise ToolFailed(f"not a web address: {raw[:80]}")
+        if any(c.isspace() for c in raw):
+            raise ToolFailed("a web address has no spaces: use web_search for words")
+        return f"Opened {parts.hostname} in {self._browse(raw, browser)}."
+
+    def _browse(self, url: str, browser: str) -> str:
+        """Open `url` in the named browser, or the default one; where it went, for Claude."""
+        exe = BROWSERS.get(browser.casefold().strip()) if browser.strip() else None
+        if browser.strip() and exe is None:
+            log.info("Browser %r sconosciuto: uso quello predefinito", browser)
+        opened = self.desktop.open_url(url, exe)
+        if exe is not None and not opened:
+            return f"the default browser ({browser} not found)"
+        return browser.strip() or "the browser"
 
     def _list_windows(self) -> str:
         windows = [w for w in self.desktop.windows() if w.title.strip()]
@@ -621,6 +740,31 @@ class PcTools:
         if best is None:
             raise ToolFailed(f'no window like "{query}": call list_windows')
         return next(w for w in windows if w.handle == best[2])
+
+    def _just_launched(self) -> App | None:
+        if self._launched is None or self.clock() - self._launched[1] > LAUNCH_WAIT_S:
+            return None
+        return self._launched[0]
+
+    def _wait_window(self, query: str) -> Window:
+        """The window, waited for up to WINDOW_WAIT_S when an app was just started (its
+        window is not there yet); a window that only now appeared gets a moment to settle."""
+        if self._just_launched() is None:
+            return self._find_window(query)
+        deadline = self.clock() + WINDOW_WAIT_S
+        waited = False
+        while True:
+            try:
+                window = self._find_window(query)
+            except ToolFailed:
+                if self.clock() >= deadline:
+                    raise
+                self.sleep(WINDOW_POLL_S)
+                waited = True
+                continue
+            if waited:
+                self.sleep(WINDOW_SETTLE_S)
+            return window
 
     def _private(self, window: Window) -> bool:
         title = f"{window.title} {window.process}".casefold()
@@ -683,8 +827,13 @@ class PcTools:
         if len(text) > self.settings.type_max_chars:
             raise ToolFailed(f"too long: at most {self.settings.type_max_chars} characters")
         if query:
-            window = self._find_window(query)
-            self.desktop.focus(window)
+            self.desktop.focus(self._wait_window(query))
+        elif (just := self._just_launched()) is not None:
+            # "Apri Chrome e scrivi...": the keys go to that app, not to whatever was in front.
+            try:
+                self.desktop.focus(self._wait_window(just.name))
+            except ToolFailed:
+                log.info("Finestra di %s non ancora aperta: scrivo in quella attiva", just.name)
         long = len(text) >= self.settings.paste_min_chars or "\n" in text
         if long and self.settings.paste_min_chars > 0:
             try:

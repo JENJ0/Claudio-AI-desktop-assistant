@@ -17,7 +17,85 @@
 - `[conversation] barge_in_needs_name = true`: over the reply, a new request needs the name
   ("Claudio, ...") or a local command; "basta" always works. `false` = the old behaviour.
 
-## [Unreleased] - Sonnet only when needed, "Claudio" wake word
+## [Unreleased] - no needless confirmations
+
+### Added
+- `web_search(query, browser?)` (level 1): opens the browser on the search results page
+  (`[pc] web_search_url`, Google by default, https only). The query only goes into the URL,
+  encoded; `browser` (Chrome, Edge, Firefox, Brave, Opera) is found in the Windows "App Paths",
+  otherwise the default browser opens. "Apri Chrome e cerca X" no longer types the search
+  (`type_text`, level 2, "Confermi?") and no longer loses the first word while Chrome starts.
+- `open_website(url, browser?)` (level 1, https only; "youtube.com" and http:// become
+  https://, `file:`/`ms-settings:` and words are refused). The prompt now prefers a tool that
+  does the whole job to driving a window with typing and keys.
+
+### Fixed (the general cause, not only Chrome)
+- Typing right after an app was started went to whatever window was in front, before the new
+  window existed (only "Moto" was typed): `type_text` now waits up to 3 s for the window of an
+  app started in the last 6 s (or for the window it names), focuses it and lets it settle.
+
+### Fixed (JenJo's log, 26/10 00:25)
+- Haiku asked "Confermi?" in words without calling the tool: the prompt now says to call the
+  tool in the same reply and never ask for a yes itself.
+- "Confermo." said after the conversation window closed woke the detector and was dropped as a
+  false wake: a phrase of at most 4 words within 45 s of a reply that asked something is its
+  answer (`responder.answer_expected`).
+- An empty phrase in the conversation window (noise Whisper drops, like "Grazie a tutti")
+  closed it while a question waited: the window now stays open once more.
+
+## [Unreleased] - Whisper hears names and whole phrases
+
+### Added
+- `[stt] vocabulary`: the names on the PC go first in Whisper's prompt (`stt/vocabulary.py`):
+  the 25 most recent folders of Desktop and Documents (two levels, no generic or long names,
+  "TESI" written "Tesi") and 12 shortcuts of the Desktop and Start menu, read in a thread every
+  10 minutes, plus `vocabulary_words`. Never in the wake word's quick look.
+  `compare_stt.py --engines nomi` measures it on the saved requests.
+- A phrase left halfway (Whisper's "...", or a last word such as "e", "la", "cerca": "Apri
+  Chrome e cerca..." on 26/10) waits up to `[vad] continue_s` (2 s) for the rest; both parts are
+  transcribed together. Nothing more said: the first text is answered, without a second pass.
+  `continued_from` in `metrics.jsonl`.
+- The open windows' names go in Whisper's prompt too ("Finestre aperte: Blocco note."), read
+  every 3 s (`[stt] vocabulary_windows`, 8): Store apps such as Blocco note have no shortcut and
+  came out as "brocconote", "bacanoate" (26/10).
+- Local commands also match by sound (`router/phonetic.py`): Whisper's capital letters are read
+  as Italian letter names ("Claudio QDT" = cu-di-ti = "chiuditi", "QD" = "chiudi") and spellings
+  that sound alike meet ("kiudi", "chiudi"). On JenJo's 294 saved requests it changes only the
+  two "QDT"s.
+
+### Fixed (logs of 26/10 evening)
+- CLAUDIO's own voice coming back into the microphone stopped the reply when Whisper misheard
+  it ("ciao cappiore" for "Ciao, campione", "dell'università e lì" for "dell'universo è in
+  linea", "Ah, che grande vista" for "Ah, il grande mistero"). The echo check now compares the
+  sounds of the words (`intake.echo_of`), not only identical words; a phrase with the name is
+  never echo unless the reply says the name.
+- A short phrase with the name in the conversation window ("Claudio QDT.") was dropped as the
+  TV: the name makes it a request.
+- Haiku's system prompt: capital letters are spelled words, nonsense words are names of open
+  windows, programs or folders that sound alike.
+- Prompt caching: an explicit marker on the system prompt besides automatic caching. With 6
+  turns of history, every request from the 7th dropped the oldest turn, changed the prefix and
+  wrote ~5,000 tokens again (0.0007 $ instead of ~0.0002 $ with Haiku).
+
+## [Unreleased] - file and folder search
+
+### Fixed (JenJo's logs, 25-26/10)
+- "Università" did not match the folder `UNIVERSITA'` (accent, apostrophe): the walk ran its
+  3 s to the end. Names and searches are now compared folded (no case, accents, apostrophes,
+  `_ - .` separators) and without spaces ("BB Port Windows", "BBPortWindows" -> `bbport-windows`).
+- Names Whisper spells the English way are matched by sound ("Projecti" -> `PROGETTI`,
+  "roket" -> `Rocket League`); a name holding some of the words is offered as similar
+  ("Project Work" -> `PROGETTO IUM`).
+- Filler words left in a search ("cartella progetti") are dropped.
+
+### Added
+- `[pc] folders_refresh_s` (900): every folder name under the roots is listed in the background
+  at start and again every 15 minutes. A folder is found in milliseconds wherever it is, and a
+  misheard name is compared with all of them. The Windows index and the walk still run when
+  the list has nothing (a folder made after the last read, files). `open_path` with a wrong
+  folder name uses the same list.
+
+## [Unreleased] - Sonnet only when needed, "Claudio" wake word, Jack less robotic
 
 ### Changed
 - `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long
@@ -25,6 +103,17 @@
 - New `[claude] no_offer_phrases` (storia, barzelletta, poesia, raccontami...): if Haiku still
   asks for Sonnet on such a request, or a detail phrase matches, Claudio does not ask "Lo uso?"
   and Haiku answers (log "Sonnet chiesto per una storia", metric `escalated = skipped`).
+
+### Added
+- `[tts] jack_pitch_fix` (off until JenJo's A/B): RVC pitch cleanup against Jack's
+  occasional robotic tone. Streamed first sentence: Applio 3.7.0's realtime pipeline bucketed
+  the pitch with Hz limits on mel values (~6 buckets, ~2 semitones above training), now the
+  training scale. Whole sentences: octave errors folded back, 1-2 frame unvoiced holes in a
+  vowel filled, median-of-3 jitter filter (`smooth_f0` in `tts/jack_worker.py`).
+- Worker `rvc: "none"` (Qwen3 alone) for diagnosis.
+- `scripts/jack_variants.py`: variants F (pitch fix), T (F + temperature 0.8), Q (no RVC);
+  `--from-log` now compares C/F/T/Q; the report measures every reply's pitch (octave jumps,
+  flicker, melody spread) and lists the suspicious replies to listen to first.
 
 ### Fixed (JenJo's test, 25/10: "Claudio" alone fires rarely)
 - The "claudio" model fires late, on the word after the name when it is said in one breath:

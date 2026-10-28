@@ -353,3 +353,24 @@ def test_stt_languages_and_prompts() -> None:
     assert s.prompt("it") == "Apri Chrome." and s.prompt("en") == "Hi."
     assert SttSettings(languages=["it", "en"], language="en").languages == ["en"]
     assert is_hallucination("Thanks for watching!") and is_hallucination("you")
+
+
+def test_the_names_on_the_pc_come_before_the_sentences() -> None:
+    """26/10: "Tesi" heard as "desi": the folder names go in the prompt, never in the quick
+    look of the wake word (noise must not become a folder name)."""
+    import numpy as np
+
+    from claudio.config import SttSettings
+
+    stt = make_stt()
+    stt.settings = SttSettings(languages=["it"], prompts={"it": "Ehi Claudio, che ore sono?"})
+    stt.vocabulary = lambda language: "Cartelle: Tesi, PSS." if language == "it" else ""
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    stt._model = FakeMultilingualWhisper([("<|it|>", 0.9)], text=" Apri la cartella Tesi.")
+    assert stt.transcribe(speech) == "Apri la cartella Tesi."
+    prompt = stt._model.kwargs["initial_prompt"]
+    assert prompt == "Cartelle: Tesi, PSS. Ehi Claudio, che ore sono?"
+    stt.transcribe(speech, quick=True)
+    assert stt._model.kwargs["initial_prompt"] is None
+    stt.vocabulary = None
+    assert stt.prompt("it") == "Ehi Claudio, che ore sono?"

@@ -67,6 +67,7 @@ class FakeResponder:
         self.language = "it"
         self.awaiting = False
         self.asked_question = False
+        self.answer_expected = False
         self.prepared = 0
 
     def prepare(self) -> None:
@@ -712,3 +713,71 @@ async def test_announce_waits_for_the_request_in_progress(fake_vad, vad_settings
     await task
     assert speaker.spoken == ["Sono pronto."]
     assert assistant.state is State.IDLE
+
+
+class LiteralResponder(FakeResponder):
+    """No local command understands the phrase: it is for Claude."""
+
+    def understands(self, text: str, language: str = "it") -> bool:
+        return False
+
+
+def build_continuing(fake_vad, vad_settings, stt: FakeStt, continue_s: float = 2.0):
+    assistant, _wake, speaker, _ = build(fake_vad, vad_settings, stt, {1})
+    responder = LiteralResponder()
+    assistant.responder = responder
+    assistant.continue_s = continue_s
+    assistant.intake.continue_incomplete = continue_s > 0
+    return assistant, speaker, responder
+
+
+async def test_a_phrase_left_halfway_waits_for_the_rest(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    # 26/10: "Apri Chrome e cerca..." [JenJo thinks] "Dainese Moto" was answered at the pause
+    stt = FakeStt(text=["Apri Chrome e cerca...", "Apri Chrome e cerca Dainese Moto."], delay=0.1)
+    assistant, speaker, responder = build_continuing(fake_vad, vad_settings, stt)
+    frames = (
+        make_frames("silence", 80)
+        + make_frames("speech", 800)
+        + make_frames("silence", 1200)  # the phrase ends, then JenJo thinks
+        + make_frames("speech", 640)
+        + make_frames("silence", 1200)  # a long phrase now: it ends after long_end_silence_ms
+    )
+    await run_frames(assistant, frames)
+    assert responder.seen == ["Apri Chrome e cerca Dainese Moto."]
+    assert len(stt.heard) == 2 and len(stt.heard[1]) > len(stt.heard[0]) + 0.6 * 16000
+    assert speaker.beeps == ["wake"]  # no beep in between: the same request
+    (row,) = assistant.history
+    assert row["outcome"] == "ok" and row["continued_from"] == "Apri Chrome e cerca..."
+    assert row["m1_ms"] is not None
+    assert assistant.state is State.IDLE
+
+
+async def test_nothing_more_said_answers_the_first_part(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    stt = FakeStt(text="Dimmi...")
+    assistant, _speaker, responder = build_continuing(fake_vad, vad_settings, stt)
+    frames = make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 3200)
+    await run_frames(assistant, frames)
+    assert responder.seen == ["Dimmi..."]
+    assert len(stt.heard) == 1  # the same audio is not transcribed twice
+    assert assistant.history[-1]["outcome"] == "ok" and assistant.state is State.IDLE
+
+
+async def test_a_finished_phrase_is_answered_at_once(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt(text="Apri Chrome e cerca Dainese Moto.")
+    assistant, _speaker, responder = build_continuing(fake_vad, vad_settings, stt)
+    frames = make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800)
+    await run_frames(assistant, frames)
+    assert responder.seen == ["Apri Chrome e cerca Dainese Moto."]
+    assert "continued_from" not in assistant.history[-1]
+
+
+async def test_continuing_is_off_with_zero(fake_vad, vad_settings, make_frames) -> None:
+    stt = FakeStt(text="Dimmi...")
+    assistant, _speaker, responder = build_continuing(fake_vad, vad_settings, stt, continue_s=0)
+    frames = make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800)
+    await run_frames(assistant, frames)
+    assert responder.seen == ["Dimmi..."]

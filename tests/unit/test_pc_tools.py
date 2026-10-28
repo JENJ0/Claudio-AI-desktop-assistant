@@ -53,6 +53,13 @@ class FakeDesktop:
     def open_path(self, path: Path) -> None:
         self.done.append(("open", path))
 
+    installed_browsers = frozenset({"chrome.exe", "msedge.exe"})
+
+    def open_url(self, url: str, browser: str | None) -> bool:
+        found = browser is None or browser in self.installed_browsers
+        self.done.append(("url", url, browser if found else None))
+        return found
+
     def search_index(
         self, terms: list[str], kind: str | None, roots: list[Path], limit: int
     ) -> list[Found] | None:
@@ -376,7 +383,7 @@ async def test_level_1_runs_and_haiku_answers(
     assert await ask(b, "apri spotify") == "Fatto, Spotify è aperto."
     assert ("launch", "Spotify") in desk.done
     first, second = client.calls
-    assert first["system"] == SYSTEM_PROMPT_TOOLS
+    assert first["system"][0]["text"] == SYSTEM_PROMPT_TOOLS
     assert [t["name"] for t in first["tools"]][:2] == ["ask_sonnet", "open_app"]
     assert first["tools"] == second["tools"]  # same prefix: cached
     assert second["messages"][-2]["content"][0]["type"] == "tool_use"
@@ -520,7 +527,7 @@ async def test_without_tools_the_old_prompt(pricing: Pricing) -> None:
     )
     await ask(b, "ciao")
     assert [t["name"] for t in client.calls[0]["tools"]] == ["ask_sonnet"]
-    assert client.calls[0]["system"] != SYSTEM_PROMPT_TOOLS
+    assert client.calls[0]["system"][0]["text"] != SYSTEM_PROMPT_TOOLS
 
 
 # --- through the router ---------------------------------------------------------------------

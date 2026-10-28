@@ -209,6 +209,13 @@ EN: dict[str, str] = {
         "Answer too far from the microphone, not counted: %r"
     ),
     "Rumore scambiato per parole (%s), ignoro: %r": "Noise heard as words (%s), ignored: %r",
+    "Frase vuota mentre aspetto una risposta: continuo ad ascoltare": (
+        "Empty phrase while an answer is expected: still listening"
+    ),
+    "Browser %r sconosciuto: uso quello predefinito": "Unknown browser %r: using the default one",
+    "Finestra di %s non ancora aperta: scrivo in quella attiva": (
+        "%s has no window yet: typing in the active one"
+    ),
     "Non è una richiesta, fine della conversazione: %r": (
         "Not a request, end of the conversation: %r"
     ),
@@ -218,6 +225,12 @@ EN: dict[str, str] = {
     "Risposta interrotta": "Reply interrupted",
     "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
     "Riprendo la risposta interrotta: %r": "Resuming the interrupted reply: %r",
+    "Frase lasciata a metà, ascolto il resto: %r": "Phrase left halfway, waiting for the rest: %r",
+    "Vocabolario di Whisper: %d cartelle, %d programmi (%.0f ms)": (
+        "Whisper vocabulary: %d folders, %d programs (%.0f ms)"
+    ),
+    "Lettura dei nomi per Whisper non riuscita": "Could not read the names for Whisper",
+    "Finestre aperte non lette per Whisper": "Could not read the open windows for Whisper",
     "La mia voce nel microfono, la ignoro: %r": "My own voice heard again, ignored: %r",
     "La mia voce nel microfono dopo la risposta, la ignoro: %r": (
         "My own voice heard again after the reply, ignored: %r"
@@ -374,6 +387,9 @@ EN: dict[str, str] = {
         "A new request instead of the confirmation: action dropped"
     ),
     "Percorso %r non trovato: uso %s": "Path %r not found: using %s",
+    "Elenco delle cartelle: %d in %d ms%s": "Folder list: %d in %d ms%s",
+    "Elenco delle cartelle non letto": "Folder list not read",
+    "Ricerca %r: niente, %d nomi simili": "Search %r: nothing, %d similar names",
     "Indice: %d risultati fuori dalle cartelle permesse": (
         "Index: %d results outside the allowed folders"
     ),

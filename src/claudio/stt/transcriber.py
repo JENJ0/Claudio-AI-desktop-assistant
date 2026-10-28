@@ -95,6 +95,9 @@ def pick_language(
 
 
 class WhisperTranscriber:
+    # language -> the names on the PC for the prompt ("Cartelle: Tesi, PSS."); None: none.
+    vocabulary: Callable[[str], str] | None = None
+
     def __init__(self, settings: SttSettings, download_root: Path) -> None:
         self.settings = settings
         self.download_root = download_root
@@ -182,6 +185,12 @@ class WhisperTranscriber:
         log.debug("Lingua: %s (%.2f)", self.language, self.language_confidence)
         return self.language
 
+    def prompt(self, language: str) -> str:
+        """The names on the PC, then the shipped sentences: Whisper keeps the end of a long
+        prompt, and the sentences say how JenJo talks."""
+        names = self.vocabulary(language) if self.vocabulary is not None else ""
+        return " ".join(p for p in (names, self.settings.prompt(language)) if p)
+
     def _encode(self, features: np.ndarray) -> Any:
         """Whisper's encoder, answering from what detect_language() already encoded."""
         if self._encoded is not None:
@@ -209,7 +218,7 @@ class WhisperTranscriber:
             language = self.detect_language(audio)
         else:
             self.language, self.language_confidence = language, 1.0
-        prompt = "" if quick else s.prompt(language)
+        prompt = "" if quick else self.prompt(language)
         reuse = self._encoded is not None
         if reuse:
             self._model.encode = self._encode
@@ -263,7 +272,7 @@ class WhisperTranscriber:
         audio = audio.astype(np.float32, copy=False)
         language = language or self.detect_language(audio)
         model = self._model
-        prompt_text = self.settings.prompt(language)
+        prompt_text = self.prompt(language)
         tokenizer = Tokenizer(
             model.hf_tokenizer, model.model.is_multilingual, task="transcribe", language=language
         )

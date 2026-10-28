@@ -55,6 +55,11 @@ class Responder(Protocol):
         """Claude's last reply ended with a question: the next phrase is its answer."""
         ...
 
+    @property
+    def answer_expected(self) -> bool:
+        """asked_question, and the question is recent: a short phrase is still its answer."""
+        ...
+
     def prepare(self) -> None:
         """A request is coming (wake word, or speech in the conversation window): open
         connections now, while JenJo is still talking."""
