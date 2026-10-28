@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased] - Jack speaks with Qwen3 alone
+
+### Changed
+- `[tts] jack_rvc` default `"none"` (new value): Qwen3 alone, no RVC. JenJo's A/B (28/10,
+  `jack_variants.py` C/F/T/Q): only Q had the right stress and melody on every sentence; RVC
+  (even with `jack_pitch_fix`) brought the robotic tone and the wrong stresses. The timbre is
+  less Jack's and `jack_speed` does not apply (RVC did the slowing) until Qwen3 is retrained
+  on more of Jack's lines.
+
 ## [Unreleased] - no needless confirmations
 
 ### Added

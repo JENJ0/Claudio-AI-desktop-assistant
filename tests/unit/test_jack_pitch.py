@@ -83,3 +83,9 @@ def test_worker_command_adds_pitch_fix_only_when_on(tmp_path) -> None:
     assert "--pitch-fix" not in worker_command(tmp_path, TtsSettings())
     assert "--pitch-fix" in worker_command(tmp_path, TtsSettings(jack_pitch_fix=True))
     assert "--pitch-fix" in worker_command(tmp_path, TtsSettings(), jack_pitch_fix=True)
+
+
+def test_qwen_alone_is_a_valid_setting() -> None:
+    from claudio.config import TtsSettings
+
+    assert TtsSettings(jack_rvc="none").jack_rvc == "none"

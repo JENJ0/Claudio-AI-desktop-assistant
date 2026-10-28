@@ -210,8 +210,10 @@ class TtsSettings(BaseModel):
     jack_temperature: float = Field(0.7, ge=0.1, le=1.5)  # JenJo's pick by ear, 24/10
     # How RVC turns Qwen3's voice into Jack's: "blocks" of 250 ms as it is generated (first
     # audio ~0.3 s, more mangled words), "sentence" whole (clearer, the audio waits for the
-    # sentence), "auto" blocks for a reply's first sentence and whole for the next ones.
-    jack_rvc: Literal["blocks", "sentence", "auto"] = "auto"  # JenJo's pick, 24/10
+    # sentence), "auto" blocks for a reply's first sentence and whole for the next ones,
+    # "none" Qwen3 alone: right stress and melody (JenJo's A/B, 28/10) but not Jack's timbre,
+    # and at normal pace (jack_speed is applied by RVC).
+    jack_rvc: Literal["blocks", "sentence", "auto", "none"] = "none"  # JenJo, 28/10
     # RVC pitch cleanup against the "robotic at times" tone: the pitch buckets of the
     # streamed first sentence as in training (Applio's realtime path had them ~2 semitones
     # off) and octave errors, jitter and tiny unvoiced holes removed from whole sentences.
