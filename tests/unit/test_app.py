@@ -188,7 +188,7 @@ async def test_normal_path(fake_vad, vad_settings, make_frames, tmp_path) -> Non
     assert responder.prepared == 1  # at the wake word: Claude's connection opens early
     assert stt.audio is not None and len(stt.audio) > 16000
     assert assistant.state is State.IDLE
-    assert wake.resets == 1
+    assert wake.resets >= 1  # at the end, and again once the beep it heard is over
     row = assistant.history[-1]
     assert row["outcome"] == "ok" and row["command"] == "open_chrome"
     assert row["wake_word"] == "hey_claudio"

@@ -23,6 +23,29 @@
   (even with `jack_pitch_fix`) brought the robotic tone and the wrong stresses. The timbre is
   less Jack's and `jack_speed` does not apply (RVC did the slowing) until Qwen3 is retrained
   on more of Jack's lines.
+## [Unreleased] - own voice through the speakers
+
+### Fixed
+- With speakers, the reply's echo became new requests to Haiku (JenJo's log 26/10 19:41:
+  "Sono le 19 e 42" -> "Se non le diciamo"). New `claudio/echo.py`: a phrase heard while
+  speaking is compared letter by letter (rapidfuzz partial ratio, numbers as spoken) with the
+  last two sentences played; `[conversation] echo_similarity` 70.
+- The same check on the conversation window after the reply (`intake = echo`), which also
+  starts deaf for `echo_tail_ms` 300.
+- The echo no longer lowers (duck) or stops (stop mode) the reply over and over: Claudio
+  remembers how loud its own echo came back and only a voice 3 dB louder acts before Whisper
+  has listened.
+- JenJo 28/10 02:40: Claudio woke by itself three times in a row. The low beep that closes a
+  conversation, from the speakers, fired the "claudio" model (0.6-0.8, Whisper heard nothing).
+  The wake word is now never fed CLAUDIO's own sounds: deaf while a beep plays and for
+  `echo_tail_ms` (now 400) after it or after a reply, then reset.
+- Some "stop" over the reply were lost: a phrase heard while Whisper was still busy (with the
+  echo) was dropped; now it waits its turn. A stop word that the reply does not say counts
+  even when Whisper writes it together with the echo ("Sono le 14 stop e 5").
+
+### Changed
+- `[conversation] barge_in_needs_name = true`: over the reply, a new request needs the name
+  ("Claudio, ...") or a local command; "basta" always works. `false` = the old behaviour.
 
 ## [Unreleased] - no needless confirmations
 

@@ -101,10 +101,13 @@ another command needs no "Hey Claudio". The window closes on silence, on "basta"
 anything that is not a command (the TV, someone else talking), with a low beep and no reply.
 While it speaks, CLAUDIO keeps listening. A voice close to the microphone (`barge_in_min_dbfs`,
 at least 0.3 s) lowers the reply at once; when Whisper hears words the reply stops and what you
-said becomes the next request, without "Hey Claudio" ("basta" / "stop" only stops); once it
+said becomes the next request if it starts with the name ("Claudio, che ore sono") or is a
+command ("basta" / "stop" only stops; `barge_in_needs_name = false` takes any phrase); once it
 is answered, the cut reply goes on ("Dicevo: ...", `resume_s`). Noise brings
-the volume back. Its own voice coming back through speakers is recognised and ignored, but
-headphones still work best. All of it is in `[conversation]` (`window_s = 0` turns the window
+the volume back. Its own voice coming back through speakers is ignored, also when Whisper
+mishears it ("Sono le 19 e 42" -> "Se non le diciamo"): the phrase is compared letter by letter
+with what was just said (`echo_similarity`), and the conversation window starts deaf for
+`echo_tail_ms`. Headphones still work best. All of it is in `[conversation]` (`window_s = 0` turns the window
 off, `barge_in = false` the listening while speaking, `barge_in_mode` how it reacts).
 
 ## Claude (questions)
