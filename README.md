@@ -354,6 +354,8 @@ known hallucination). Close CLAUDIO first.
 
 ```powershell
 uv run python scripts/stt_testset.py          # Enter, read the sentence, Enter (r = again, q = stop)
+uv run python scripts/stt_testset.py --controlla    # recordings mute or cut at the end
+uv run python scripts/stt_testset.py --rifai 10 25  # record those sentences again
 uv run python scripts/stt_bench.py --details
 uv run python scripts/stt_bench.py --variants live live+beam1 parakeet
 ```

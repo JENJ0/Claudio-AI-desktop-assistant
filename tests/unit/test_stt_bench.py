@@ -59,6 +59,58 @@ def test_peak_is_the_loudest_32_ms() -> None:
     assert testset.peak_dbfs(np.zeros(100, np.int16)) == -120.0
 
 
+def test_a_recording_mute_or_cut_at_the_end_is_flagged() -> None:
+    whole = np.concatenate((silence(0.4), tone(0.6, 0.1), silence(0.3)))
+    assert testset.tail_ms(whole) == pytest.approx(300, abs=20)
+    assert testset.problem(whole) == ""
+    assert testset.problem(np.concatenate((silence(0.4), tone(0.6, 0.1)))) == "tagliata alla fine?"
+    assert testset.problem(tone(0.5, 0.0005)) == "muto?"  # -66 dBFS: "Stop." on the headset
+    as_int16 = (whole * 32768).astype(np.int16)
+    assert testset.tail_ms(as_int16) == testset.tail_ms(whole)
+    hum = np.random.default_rng(0).normal(0, 0.012, len(whole))  # about -38 dBFS of noise
+    assert testset.tail_ms(whole + hum) == pytest.approx(300, abs=20)
+
+
+def test_check_lists_the_sentences_to_record_again(tmp_path, capsys) -> None:
+    import soundfile as sf
+
+    good = np.concatenate((silence(0.3), tone(0.5, 0.1), silence(0.3)))
+    cut, mute = np.concatenate((silence(0.3), tone(0.5, 0.1))), tone(0.4, 1e-4)
+    for mic, recordings in (("cuffie", (good, cut, good)), ("webcam", (good, good, mute))):
+        (tmp_path / mic).mkdir()
+        for n, audio in enumerate(recordings, start=1):
+            sf.write(tmp_path / mic / f"{n:02d}.wav", audio, SR, subtype="PCM_16")
+    assert testset.check(tmp_path) == [2, 3]
+    out = capsys.readouterr().out
+    assert "cuffie  02: tagliata alla fine?" in out and "webcam  03: muto?" in out
+
+
+class FakeRecorder:
+    def __init__(self, folder) -> None:
+        self.name, self.folder = "C270", folder
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> np.ndarray:
+        return (np.concatenate((silence(0.3), tone(0.5, 0.1), silence(0.3))) * 32768).astype(
+            np.int16
+        )
+
+
+def test_record_again_only_the_sentences_asked(tmp_path, monkeypatch) -> None:
+    recorder = FakeRecorder(tmp_path)
+    for n in (1, 2, 3):
+        (tmp_path / f"{n:02d}.wav").write_bytes(b"old")
+    answers = iter(["", "", "r", "", "", "", ""])  # 3, then "r" goes back to 3, again 3, then 1
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(testset.time, "sleep", lambda s: None)
+    testset.record([recorder], ["uno", "due", "tre"], only=[3, 1])  # type: ignore[list-item]
+    assert (tmp_path / "02.wav").read_bytes() == b"old"
+    assert (tmp_path / "01.wav").read_bytes() != b"old" != (tmp_path / "03.wav").read_bytes()
+    assert next(answers, "finished") == "finished"
+
+
 def test_words_ignore_case_punctuation_and_spelling() -> None:
     assert bench.words("Ehi Claudio, cos'è un buco nero?") == [
         "ehi",

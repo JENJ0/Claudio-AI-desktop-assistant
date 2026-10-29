@@ -40,7 +40,10 @@
 - `scripts/stt_testset.py` records `scripts/stt_frasi_it.txt` (40 sentences from JenJo's real
   requests) from every microphone at once; `scripts/stt_bench.py` scores them (WER, commands,
   ms per sentence, Silero's early cuts) for CLAUDIO's live settings and their variants, and with
-  `--details` says why a sentence came out empty.
+  `--details` says why a sentence came out empty. The recorder keeps 0.3 s after the Enter that
+  stops (cutting 0.25 s off the end had left the voice running to the last frame in 23 of the
+  80 first recordings), flags a recording mute or cut at once, and `--controlla` / `--rifai`
+  find and redo them.
 
 ## [Unreleased] - Jack keeps one voice in a reply
 
