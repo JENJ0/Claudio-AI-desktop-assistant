@@ -55,7 +55,10 @@ long_after_s = 1.5         # shorter phrases (commands) still end after end_sile
 continue_s = 2.0           # a phrase left halfway ("apri Chrome e cerca...") waits this long for the rest (0 = off)
 
 [stt]
-model = "large-v3-turbo"
+# large-v3 (JenJo 29/10): on JenJo's 40 test sentences 20.7% words wrong instead of 28.7% with the
+# headset, 38.8% instead of 59.6% with the webcam, for ~0.1 s more per request on the GPU
+# (scripts/stt_bench.py). "large-v3-turbo" is the faster one.
+model = "large-v3"
 device = "auto"            # auto | cuda | cpu
 compute_type = "float16"
 fallback_model = "small"
@@ -84,11 +87,13 @@ no_speech_threshold = 0.6
 cpu_threads = 4
 
 [stt.prompts]              # Whisper's prompt per language, read as the words said just before
-# Whole sentences, as JenJo talks (25/10, scripts/compare_stt.py on 23 of his requests): fixed
-# "pure sono", "Chiaro son" -> "che ore sono", "Il punto è" -> "raccontami", "Projecti" ->
-# "Progetti", which a list of commands got wrong; same speed.
-it = "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. Apri Chrome e la cartella Download, poi alza il volume. Basta, grazie."
-en = "Hey Claudio, what time is it? Claudio, tell me a short story. Open Chrome and the Downloads folder, then turn up the volume. Stop, thanks."
+# Whole sentences, as JenJo talks (25/10, scripts/compare_stt.py on 23 of JenJo's requests):
+# fixed "pure sono", "Chiaro son" -> "che ore sono", "Il punto è" -> "raccontami", "Projecti" ->
+# "Progetti", which a list of commands got wrong; same speed. The last sentence has 6+ words:
+# on unclear audio Whisper repeats it, and only then is it dropped as an echo ("Basta, grazie."
+# was heard for 7 different requests, 29/10).
+it = "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. Apri Chrome e la cartella Download, poi alza il volume."
+en = "Hey Claudio, what time is it? Claudio, tell me a short story. Open Chrome and the Downloads folder, then turn up the volume."
 
 [tts]
 engine = "jack"            # "jack" (Claudio's voice, JenJo 23/10), "kokoro" (Nicola) or "piper"; the others are fallbacks

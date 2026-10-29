@@ -10,7 +10,7 @@ engines and counts how many become a known local command:
     uv run python scripts/compare_stt.py --engines parakeet     # needs: uv pip install onnx-asr
 
 Engines:
-    turbo     Whisper large-v3-turbo, as CLAUDIO uses it today
+    turbo     Whisper large-v3-turbo (CLAUDIO's model until 29/10)
     large-v3  Whisper large-v3: slower, sometimes more accurate on fast speech
     lista     the "closed list": turbo proposes 5 transcriptions, the first known command wins
     frase     turbo with a natural-sentence prompt (NATURAL_PROMPT, or --prompt) instead of the

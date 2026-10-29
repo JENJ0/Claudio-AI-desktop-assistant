@@ -111,7 +111,7 @@ class VadSettings(BaseModel):
 
 
 class SttSettings(BaseModel):
-    model: str = "large-v3-turbo"
+    model: str = "large-v3"
     device: Literal["auto", "cuda", "cpu"] = "auto"
     compute_type: str = "float16"
     fallback_model: str = "small"

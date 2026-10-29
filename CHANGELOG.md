@@ -1,5 +1,47 @@
 # Changelog
 
+## [Unreleased] - IT-0: the microphone level stops garbling requests
+
+### Changed
+- `[stt] model` default `large-v3` instead of `large-v3-turbo` (JenJo 29/10): on the 40 test
+  sentences 20.7% of the words wrong instead of 28.7% with the headset and 38.8% instead of
+  59.6% with the webcam (commands right 8/12 both, webcam 8/12 instead of 6/12), for 199 ms per
+  sentence instead of 102 on the RTX 5070 Ti and about 1.5 GB more video memory.
+  `download_models.py` fetches it (about 3 GB); `model = "large-v3-turbo"` brings the faster
+  one back.
+
+### Fixed
+- The automatic microphone level learns only from requests in which Whisper heard words: an
+  empty phrase at -50 dBFS (a breath, a bump) raised the gain and the next request saturated
+  (26/10 19:50).
+- Each microphone really in use keeps its own gain, keyed by its own name under every host API
+  (the capture tells AutoGain which one it opened): moving from the webcam to the headset no
+  longer starts the headset at the webcam's +24 dB. The old single value starts a microphone
+  never heard before, then it is measured afresh.
+- The level no longer pumps: a microphone's first request sets the gain at once (3 dB under
+  the target), later ones move the expected voice level smoothly (a louder phrase weighs 0.6,
+  a quieter one 0.25) and nothing changes within 3 dB of -20 dBFS. On 28/10 16:41 phrases at
+  -25..-38 dBFS took the gain from +15 to +29 dB in two minutes and "apri la chat" clipped into
+  "qui la chat".
+- Boosted audio is soft-limited above -3 dBFS (tanh knee) instead of hard-clipped, so a phrase
+  louder than the others is compressed, not torn into harmonics Whisper cannot read.
+- Whisper's prompt no longer ends in "Basta, grazie." (and "Stop, thanks."): on unclear audio
+  Whisper repeats the end of its prompt, and on the test set "Basta, grazie." came out for 7
+  different requests (it is a command: it would stop Claudio). A test keeps the last sentence of
+  every shipped prompt at 6+ words, the length the echo filter drops.
+- The invented endings are dropped also when repeated or after a thanks ("Grazie a tutti. Grazie
+  a tutti.", "Grazie. Grazie a tutti.", "... per aver guardato il video"), what Whisper wrote for
+  a third of the webcam's requests. "Grazie, grazie." alone stays: it is JenJo's.
+- Folder names written for programs ("claudio-it0-fluidita": joined, with letters and digits in
+  one piece) stay out of Whisper's prompt: it wrote one for "Claudio, chiuditi".
+- A request Whisper drops as silence is logged with its scores, like the other filters.
+
+### Added
+- `scripts/stt_testset.py` records `scripts/stt_frasi_it.txt` (40 sentences from JenJo's real
+  requests) from every microphone at once; `scripts/stt_bench.py` scores them (WER, commands,
+  ms per sentence, Silero's early cuts) for CLAUDIO's live settings and their variants, and with
+  `--details` says why a sentence came out empty.
+
 ## [Unreleased] - Jack keeps one voice in a reply
 
 ### Changed

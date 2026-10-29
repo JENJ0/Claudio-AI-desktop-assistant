@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -123,6 +124,39 @@ def test_prompt_echo_is_hallucination() -> None:
 )
 def test_short_hallucinations_only_as_whole_text(text: str, expected: bool) -> None:
     assert is_hallucination(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [  # the webcam's unclear requests (29/10)
+        ("Grazie a tutti. Grazie a tutti. Grazie a tutti.", True),
+        ("Grazie a tutti, grazie a tutti, grazie a tutti.", True),
+        ("grazie a tutti grazie a tutti", True),
+        ("Grazie. Grazie a tutti.", True),
+        ("Grazie a tutti per aver guardato il video.", True),
+        ("Grazie, grazie.", False),  # JenJo thanking
+        ("Grazie mille.", False),
+        ("Basta, basta!", False),
+        ("Grazie a tutti, apri Chrome.", False),
+    ],
+)
+def test_invented_endings_also_repeated_or_after_a_thanks(text: str, expected: bool) -> None:
+    assert is_hallucination(text) is expected
+
+
+def test_the_shipped_prompts_do_not_end_in_a_sentence_whisper_can_repeat_unseen() -> None:
+    """On unclear audio Whisper repeats the end of its prompt ("Basta, grazie." for "Claudio,
+    chiudi il Blocco note", 29/10): a last sentence of ECHO_MIN_WORDS words or more is
+    dropped as an echo, a shorter one would be taken for a request."""
+    from claudio.config import DEFAULT_CONFIG, load_settings
+    from claudio.stt.transcriber import ECHO_MIN_WORDS
+
+    prompts = load_settings(DEFAULT_CONFIG).stt.prompts
+    assert prompts
+    for language, prompt in prompts.items():
+        last = re.split(r"(?<=[.?!])\s+", prompt.strip())[-1]
+        assert len(last.split()) >= ECHO_MIN_WORDS, (language, last)
+        assert is_hallucination(last, prompt)
 
 
 class FakeWhisper:

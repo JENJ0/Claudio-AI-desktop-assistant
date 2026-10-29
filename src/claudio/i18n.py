@@ -179,6 +179,9 @@ EN: dict[str, str] = {
         "Transcript dropped (known hallucination): %r"
     ),
     "Trascrizione scartata (ripetizione): %r": "Transcript dropped (repetition): %r",
+    "Trascrizione scartata (sembra silenzio, no_speech %.2f, logprob %.2f): %r": (
+        "Transcript dropped (sounds like silence, no_speech %.2f, logprob %.2f): %r"
+    ),
     "nessuna GPU CUDA trovata": "no CUDA GPU found",
     "GPU non utilizzabile (%s): passo alla CPU con '%s' %s": (
         "GPU not usable (%s): switching to the CPU with '%s' %s"

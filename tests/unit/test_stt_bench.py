@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 
 import numpy as np
@@ -94,6 +95,7 @@ def test_variants_are_changes_from_live() -> None:
     v = bench.parse_variant("live+grezzo+vuoto+beam1+novad+large")
     assert (v.gain, v.prompt, v.beam, v.vad, v.model) == (False, "vuoto", 1, False, "large-v3")
     assert bench.parse_variant("frasi").prompt == "frasi"
+    assert live.model == "" and bench.parse_variant("live+turbo").model == "large-v3-turbo"
     assert bench.parse_variant("parakeet").engine == "parakeet"
     with pytest.raises(SystemExit, match="rumore"):
         bench.parse_variant("live+rumore")
@@ -140,16 +142,35 @@ def test_run_applies_the_gain_and_counts_the_cuts(fake_vad, vad_settings) -> Non
     assert raw.texts == ["apri chrome"] * 2 and heard[-1] == pytest.approx(0.02, abs=0.002)
 
 
+def test_run_says_why_a_sentence_came_out_empty(fake_vad, vad_settings) -> None:
+    voice = (np.concatenate((silence(0.3), tone(0.8, 0.2), silence(0.3))) * 32768).astype(np.int16)
+    mute = np.zeros(SR, dtype=np.int16)
+    mic = bench.Microphone("C270", testset.OUT, [1, 2, 3], [voice, voice, mute], gain_db=0.0)
+    texts = iter(["", "", "Stop.", ""])  # the warm-up, then the sentences
+
+    def transcribe(audio: np.ndarray, variant: bench.Variant) -> str:
+        text = next(texts)
+        if not text:
+            logging.getLogger("claudio.stt.transcriber").info("Trascrizione scartata (%s)", "x")
+        return text
+
+    endpointer = Endpointer(fake_vad, vad_settings, SR)
+    score = bench.run(bench.parse_variant("live"), mic, transcribe, endpointer)
+    assert score.texts == ["", "Stop.", ""]
+    assert score.why == {0: "Trascrizione scartata (x)", 2: "Silero non ha sentito voce"}
+    assert not logging.getLogger("claudio.stt.transcriber").handlers  # taken off again
+
+
 def test_report_scores_words_and_commands(matcher, capsys) -> None:
     mic = bench.Microphone("C270", testset.OUT, [1, 2], [], gain_db=12.0)
     references = ["Claudio, apri Chrome.", "Che tempo fa domani?"]
     good = bench.Score("live", ["Claudio, apri Chrome.", "Che tempo fa domani?"], [300, 320])
-    bad = bench.Score("live+vuoto", ["Claudio, abri come.", "Che tempo fa domani?"], [250, 260])
+    bad = bench.Score("live+vuoto", ["Claudio, abri come.", ""], [250, 260], why={1: "silenzio"})
     bench.report(mic, references, [good, bad], matcher, details=True)
     out = capsys.readouterr().out
     assert "guadagno +12 dB" in out
     rows = {line.split()[0]: line.split() for line in out.splitlines() if line.startswith("  live")}
     assert rows["live"][1:3] == ["0.0%", "1/1"]
-    assert rows["live+vuoto"][1:3] == ["28.6%", "0/1"]  # 2 words wrong of 7
+    assert rows["live+vuoto"][1:3] == ["85.7%", "0/1"]  # 2 + 4 words wrong of 7
     assert "01 «Claudio, apri Chrome.»" in out and "'Claudio, abri come.'" in out
-    assert "02 «" not in out  # right in every variant: not listed
+    assert "02 «Che tempo fa domani?»" in out and "''  (silenzio)" in out

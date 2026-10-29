@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -26,6 +27,7 @@ HALLUCINATIONS = (
     "sottotitoli e revisione a cura di qtss",
     "sottotitoli a cura di",
     "grazie per la visione",
+    "per aver guardato il video",
     "grazie per l attenzione",
     "iscriviti al canale",
     "amara org",
@@ -34,7 +36,8 @@ HALLUCINATIONS = (
     "please subscribe",
     "subtitles by",
 )
-# Short ones only count when they are the whole transcription.
+# Short ones only count alone: the whole transcription, or every piece of it ("Grazie a tutti.
+# Grazie a tutti.", "Grazie. Grazie a tutti.": the webcam's unclear requests, 29/10).
 HALLUCINATIONS_EXACT = {
     "buon appetito",
     "grazie a tutti",
@@ -43,6 +46,9 @@ HALLUCINATIONS_EXACT = {
     "you",
     "bye bye",
 }
+THANKS = frozenset({"grazie", "grazie mille", "thank you", "thanks"})  # JenJo's own, alone
+ECHO_MIN_WORDS = 6  # shorter pieces of the prompt are also real requests ("apri chrome")
+_PIECES = re.compile(r"[.,;:!?\u2026]+")
 MIN_RMS = 1e-3  # about -60 dBFS: below this there is nothing to transcribe
 MAX_NEW_TOKENS = 80  # an 8 s request is about 50 tokens; a repetition loop stops here
 QUICK_NEW_TOKENS = 24  # the second chance listens to 2.5 s: "hey claudio che ore sono" is ~12
@@ -64,14 +70,37 @@ def register_cuda_dlls() -> None:
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
+def repeated_unit(words: list[str]) -> list[str]:
+    """The phrase a Whisper loop repeats ("grazie a tutti grazie a tutti" -> "grazie a
+    tutti"); the words themselves when they are no repetition."""
+    for size in range(1, len(words) // 2 + 1):
+        if len(words) % size == 0 and words == words[:size] * (len(words) // size):
+            return words[:size]
+    return words
+
+
+def only_sign_offs(text: str) -> bool:
+    """Every piece of the text (between punctuation) is a short invented ending, alone or
+    repeated, and the rest is at most a thanks: "Grazie. Grazie a tutti." yes, "Grazie a
+    tutti, apri Chrome" and "Grazie, grazie." no."""
+    pieces = (repeated_unit(normalize(p, drop_fillers=False).split()) for p in _PIECES.split(text))
+    said = [" ".join(words) for words in pieces if words]
+    said = [piece for piece in said if piece not in THANKS]
+    return bool(said) and all(piece in HALLUCINATIONS_EXACT for piece in said)
+
+
 def is_hallucination(text: str, prompt: str = "") -> bool:
     norm = normalize(text, drop_fillers=False)
     if not norm:
         return True
-    if norm in HALLUCINATIONS_EXACT or any(h in norm for h in HALLUCINATIONS):
+    if any(h in norm for h in HALLUCINATIONS) or only_sign_offs(text):
         return True
     # Whisper sometimes echoes the initial prompt on near-silent audio.
-    return bool(prompt) and len(norm.split()) >= 6 and norm in normalize(prompt, drop_fillers=False)
+    return (
+        bool(prompt)
+        and len(norm.split()) >= ECHO_MIN_WORDS
+        and norm in normalize(prompt, drop_fillers=False)
+    )
 
 
 def pick_language(
@@ -238,6 +267,12 @@ class WhisperTranscriber:
             kept: list[Segment] = []
             for seg in segments:  # a generator: Whisper runs while it is consumed
                 if seg.no_speech_prob > s.no_speech_threshold and seg.avg_logprob < -1.0:
+                    log.info(
+                        "Trascrizione scartata (sembra silenzio, no_speech %.2f, logprob %.2f): %r",
+                        seg.no_speech_prob,
+                        seg.avg_logprob,
+                        seg.text[:80],
+                    )
                     continue
                 if seg.compression_ratio > LOOP_RATIO:
                     log.info("Trascrizione scartata (ripetizione): %r", seg.text[:80])

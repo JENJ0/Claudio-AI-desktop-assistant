@@ -14,12 +14,14 @@ A variant is a "+"-joined list of changes from what CLAUDIO does today ("live"):
     frasi     prompt: only the sentences of [stt.prompts], no names
     vuoto     no prompt at all
     beam1     beam size 1 instead of [stt] beam_size: faster
-    large     Whisper large-v3 instead of large-v3-turbo: slower
+    large     Whisper large-v3 instead of [stt] model
+    turbo     Whisper large-v3-turbo instead of [stt] model
     novad     the whole recording instead of Silero's cut
     parakeet  NVIDIA Parakeet TDT 0.6B v3 instead of Whisper (uv pip install onnx-asr)
 
-"tagli": sentences Silero ended before the voice did (a pause mid-sentence). Every
-transcription goes to data/stt_testset/risultati.json.
+"tagli": sentences Silero ended before the voice did (a pause mid-sentence). With --details
+an empty transcription says why (Silero heard no voice, Whisper took it for silence or for a
+known hallucination). Every transcription goes to data/stt_testset/risultati.json.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import argparse
 import gc
 import io
 import json
+import logging
 import re
 import statistics
 import sys
@@ -48,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from stt_testset import BLOCK, MUTE_DBFS, OUT, SAMPLE_RATE, peak_dbfs, read_sentences
 
-PARTS = ("live", "grezzo", "frasi", "vuoto", "beam1", "large", "novad", "parakeet")
+PARTS = ("live", "grezzo", "frasi", "vuoto", "beam1", "large", "turbo", "novad", "parakeet")
 DEFAULT_VARIANTS = ("live", "live+grezzo", "live+frasi", "live+vuoto", "live+novad", "live+beam1")
 MAX_GAIN_DB = 30.0  # [audio] auto_gain's ceiling
 SAME_WORD = {"hey": "ehi", "ei": "ehi", "eh": "ehi"}  # ways of writing the same word
@@ -60,7 +63,7 @@ class Variant:
     gain: bool = True
     prompt: str = "nomi"  # nomi | frasi | vuoto
     beam: int | None = None  # None: [stt] beam_size
-    model: str = "large-v3-turbo"
+    model: str = ""  # "": [stt] model
     vad: bool = True
     engine: str = "whisper"  # whisper | parakeet
 
@@ -76,7 +79,7 @@ def parse_variant(text: str) -> Variant:
         gain="grezzo" not in parts,
         prompt=prompt,
         beam=1 if "beam1" in parts else None,
-        model="large-v3" if "large" in parts else "large-v3-turbo",
+        model="large-v3" if "large" in parts else "large-v3-turbo" if "turbo" in parts else "",
         vad="novad" not in parts,
         engine="parakeet" if "parakeet" in parts else "whisper",
     )
@@ -146,6 +149,18 @@ class Score:
     texts: list[str] = field(default_factory=list)
     ms: list[float] = field(default_factory=list)
     cuts: int = 0
+    why: dict[int, str] = field(default_factory=dict)  # sentence index -> why it came out empty
+
+
+class Notes(logging.Handler):
+    """What the transcriber logs while it works: why a sentence came out empty."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
 
 
 def load_microphones(out: Path) -> tuple[list[str], list[Microphone]]:
@@ -224,16 +239,29 @@ def run(
 ) -> Score:
     score = Score(variant.name)
     gain = 10 ** ((microphone.gain_db if variant.gain else 0.0) / 20)
-    for i, recording in enumerate(microphone.recordings):
-        audio = apply_gain(recording, gain).astype(np.float32) / 32768.0
-        if variant.vad:
-            audio, cut = silero_cut(audio, endpointer)
-            score.cuts += cut
-        if i == 0:
-            transcribe(audio, variant)  # warm-up: the first pass on the GPU is slow
-        start = time.perf_counter()
-        score.texts.append(transcribe(audio, variant) if audio.size else "")
-        score.ms.append((time.perf_counter() - start) * 1000)
+    notes, logger = Notes(), logging.getLogger("claudio.stt.transcriber")
+    level = logger.level
+    logger.addHandler(notes)
+    logger.setLevel(logging.INFO)
+    try:
+        for i, recording in enumerate(microphone.recordings):
+            audio = apply_gain(recording, gain).astype(np.float32) / 32768.0
+            if variant.vad:
+                audio, cut = silero_cut(audio, endpointer)
+                score.cuts += cut
+            if i == 0:
+                transcribe(audio, variant)  # warm-up: the first pass on the GPU is slow
+            notes.lines.clear()
+            start = time.perf_counter()
+            text = transcribe(audio, variant) if audio.size else ""
+            score.ms.append((time.perf_counter() - start) * 1000)
+            score.texts.append(text)
+            if not text:
+                said = "; ".join(notes.lines) or "Whisper non ha scritto niente"
+                score.why[i] = said if audio.size else "Silero non ha sentito voce"
+    finally:
+        logger.removeHandler(notes)
+        logger.setLevel(level)
     return score
 
 
@@ -267,7 +295,8 @@ def report(
             if wrong:
                 print(f"  {microphone.numbers[i]:02d} «{reference}»")
                 for s in wrong:
-                    print(f"       {s.variant:<20} {s.texts[i]!r}")
+                    why = f"  ({s.why[i]})" if i in s.why else ""
+                    print(f"       {s.variant:<20} {s.texts[i]!r}{why}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -296,11 +325,12 @@ def main(argv: list[str] | None = None) -> None:
     scores: dict[str, list[Score]] = {m.name: [] for m in microphones}
     cache: dict[str, object] = {}
     # Grouped by engine and model: each big model is loaded once.
-    for variant in sorted(variants, key=lambda v: (v.engine, v.model)):
+    model_of = {v.name: v.model or settings.stt.model for v in variants}
+    for variant in sorted(variants, key=lambda v: (v.engine, model_of[v.name])):
         if variant.engine == "parakeet":
             transcribe = parakeet(cache)
         else:
-            transcribe = whisper_engine(settings, variant.model, cache)
+            transcribe = whisper_engine(settings, model_of[variant.name], cache)
         for mic in microphones:
             print(f"  {variant.name} su {mic.name}...", flush=True)
             score = run(variant, mic, transcribe, endpointer)

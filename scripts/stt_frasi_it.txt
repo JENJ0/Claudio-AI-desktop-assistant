@@ -1,5 +1,5 @@
-# The sentences JenJo reads for scripts/stt_testset.py: what he really says to Claudio
-# (logs of 25-29/10), commands and free requests, names of his folders and programs.
+# The sentences JenJo reads for scripts/stt_testset.py: what JenJo really says to Claudio
+# (logs of 25-29/10), commands and free requests, names of JenJo's folders and programs.
 # One per line, written the way Whisper should write them; "#" starts a comment.
 Claudio, apri la chat.
 Claudio, che ore sono?

@@ -32,7 +32,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
 uv sync                                   # without a GPU: uv sync --no-group gpu
-uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper turbo + small
+uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper large-v3 + small
 uv run claudio --check                    # every line must say OK
 uv run python scripts/check_gpu.py        # checks that Whisper really runs on the RTX
 ```
@@ -247,13 +247,16 @@ if you switch it while CLAUDIO runs (headphones, monitor, speakers), the next se
 plays there. A device plugged in after start-up needs a restart (CLAUDIO says so in the log).
 With `CLAUDIO_AUDIO__OUTPUT_DEVICE=...` it stays on that device instead.
 
-CLAUDIO sets the microphone level itself: after every request it checks how loud the voice
-arrived and corrects the digital gain (up 3 dB at a time, down 6 if the voice clips), aiming at
-peaks around -20 dBFS. The value is saved per microphone in `data/audio_level.json` and reused
-at the next start; `INPUT_GAIN_DB` is only the starting point. Windows' own microphone level is
-not touched. To set it by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and
-`CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. The `voce` and `guad` columns of `benchmark_latency.py --log`
-show the level and gain of every request.
+CLAUDIO sets the microphone level itself: after every request in which Whisper heard words it
+checks how loud the voice arrived and corrects the digital gain, aiming at peaks around
+-20 dBFS. A microphone's first request sets it at once; after that it moves gradually (at most
++3 dB or -6 dB a request, a louder voice counting more than a quieter one), and -6 dB at once
+if the voice clips. Each microphone really in use keeps its own value in
+`data/audio_level.json` (the headset does not start at the webcam's gain), reused at the next
+start; `INPUT_GAIN_DB` is only the starting point. A peak louder than the rest is bent softly
+under full scale instead of clipping. Windows' own microphone level is not touched. To set it
+by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. The `voce` and
+`guad` columns of `benchmark_latency.py --log` show the level and gain of every request.
 
 Spending (ready for Phase 2, when Claude answers): `[cost]` sets the daily budget (`daily_budget`,
 in dollars, 1.0 by default). Every Claude call will be written to `data/spend.db` (SQLite) with
@@ -337,6 +340,22 @@ each one turns into a known command, with its median and p90 time:
 ```powershell
 uv run python scripts/compare_stt.py                                   # turbo vs closed list
 uv run python scripts/compare_stt.py --engines turbo large-v3 lista parakeet --details
+```
+
+To measure how well CLAUDIO understands *you*, record a test set once and score it:
+`stt_testset.py` shows the 40 sentences of `scripts/stt_frasi_it.txt` (what you really say to
+Claudio) one at a time and records each from every microphone at once, without gain, into
+`data/stt_testset/`; `stt_bench.py` then gives, for every microphone, the word error rate (WER),
+the commands understood and the time per sentence of what CLAUDIO does today (`live`: its gain,
+its prompt, Silero's cut) and of its variants (`grezzo` no gain, `frasi`/`vuoto` other prompts,
+`beam1`, `large`/`turbo` other models, `novad`, `parakeet`); with `--details` every wrong
+sentence, and for an empty one why (Silero heard no voice, Whisper took it for silence or a
+known hallucination). Close CLAUDIO first.
+
+```powershell
+uv run python scripts/stt_testset.py          # Enter, read the sentence, Enter (r = again, q = stop)
+uv run python scripts/stt_bench.py --details
+uv run python scripts/stt_bench.py --variants live live+beam1 parakeet
 ```
 
 `nomi` is turbo with the names on your PC first in its prompt, as `[stt] vocabulary` does live
