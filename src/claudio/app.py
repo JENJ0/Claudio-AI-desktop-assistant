@@ -34,7 +34,14 @@ from claudio.intake import (
 )
 from claudio.intake import addressed_to_claudio as addressed_to_claudio  # re-exported
 from claudio.metrics import Interaction, MetricsWriter
-from claudio.protocols import LevelControl, Responder, Speaker, Transcriber, WakeWordDetector
+from claudio.protocols import (
+    LevelControl,
+    Responder,
+    Speaker,
+    StrictWake,
+    Transcriber,
+    WakeWordDetector,
+)
 from claudio.resume import RESUME_PREFIX, DrainedStream, ends_the_reply, remainder
 from claudio.router.normalizer import heard_wake_word, normalize
 from claudio.system import SystemControl
@@ -294,8 +301,16 @@ class Assistant:
             self._recent.append(frame.astype(np.float32) / 32768.0)
             if self._hears_itself(frame):
                 return
+            if isinstance(self.wake, StrictWake):
+                self.wake.strict = self.system.off
             detection = self.wake.process(frame)
-            if detection is not None and self._weak(*detection):
+            if self.system.off:
+                # Off: no second chance on Whisper. Only a clear wake (the strict threshold)
+                # gets the phrase after it transcribed, to look for "accenditi".
+                self.wake.pop_near_miss()
+                if detection is not None:
+                    self._on_wake(*detection)
+            elif detection is not None and self._weak(*detection):
                 if not self._checking:
                     log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
                 self._on_near_miss(*detection)
@@ -462,8 +477,9 @@ class Assistant:
                     # Whisper's confidence in the first pass: a retry only replaces it when
                     # understood.
                     segments = list(self.stt_segments()) if self.stt_segments is not None else []
-                    text, heard = await self._retry(audio, text, heard, inter)
-                    text = await self._closed_list(audio, text, heard, inter)
+                    if not self.system.off:  # off: one Whisper pass, for "accenditi" only
+                        text, heard = await self._retry(audio, text, heard, inter)
+                        text = await self._closed_list(audio, text, heard, inter)
             inter.mark("stt_done")
             inter.info["text"] = text
             inter.info["stt_language"] = heard
@@ -483,9 +499,10 @@ class Assistant:
             if decision.dropped:
                 self._log_drop(decision, inter)
                 if decision.kind is not Kind.FALSE_WAKE:  # a false wake ends in silence
-                    await self.speaker.beep("cancel")
+                    await self._beep_now("cancel")
                 return
-            await self._tell_hearing(audio, decision.text, heard, segments, inter)
+            if not self.system.off:  # off: nothing goes to Claude, no n-best pass for it
+                await self._tell_hearing(audio, decision.text, heard, segments, inter)
             self._set_state(State.RESPONDING)
             resume = await self._unsaid(cut)  # the reply this request cut, read to its end
             cut = None
@@ -495,12 +512,14 @@ class Assistant:
                 on_first_audio=lambda: self._on_first_audio(inter),
             )
             route = self.responder.last_route
-            if route.get("route") == "paused":
-                outcome = "paused"  # only "svegliati" and "spegniti" are answered
-                await self.speaker.beep("cancel")
+            if route.get("route") == "off":
+                outcome = "off"  # only "accenditi" is answered, without a sound otherwise
+            elif route.get("route") == "paused":
+                outcome = "paused"  # only the system commands are answered
+                await self._beep_now("cancel")
             elif route.get("command") == "stop":
                 outcome = "stopped"  # "basta": the conversation is over
-                await self.speaker.beep("cancel")
+                await self._beep_now("cancel")
             elif self._interrupted:
                 outcome = "interrupted"
             # A confirmation question ("Confermi?"): the answer comes without the wake word.
@@ -511,7 +530,7 @@ class Assistant:
             outcome = "error"
             log.exception("Errore durante la richiesta")
             try:
-                await self.speaker.beep("error")
+                await self._beep_now("error")
             except Exception:
                 log.exception("Impossibile riprodurre il segnale di errore")
         finally:
@@ -584,7 +603,7 @@ class Assistant:
         """The request was said after a pause ("Hey Claudio" ... beep ... "come ti chiami?"):
         its transcript has no name, so Whisper listens to the wake word itself (~100 ms, only
         on requests that are not commands). "Hey, ciao" there is still a false wake."""
-        if self.second_chance is None or not self._wake_audio.size:
+        if self.second_chance is None or not self._wake_audio.size or self.system.off:
             return False
         start = self.clock()
         try:
@@ -679,7 +698,8 @@ class Assistant:
         """After a reply the window stays open. An empty phrase in the window (noise Whisper
         threw away as "Grazie a tutti") keeps it open once more while Claude's question waits
         for its answer (26/10: the window closed and the "Confermo." after it was lost)."""
-        if self.conversation_s <= 0 or self.system.paused or self.system.stopping:
+        system = self.system
+        if self.conversation_s <= 0 or system.paused or system.off or system.stopping:
             return False
         if outcome == "ok":
             self._kept_after_empty = False
@@ -1135,7 +1155,14 @@ class Assistant:
                 speech_dbfs,
             )
 
+    async def _beep_now(self, kind: str) -> None:
+        """A beep, except while off ("spegniti"): then CLAUDIO makes no sound at all."""
+        if not self.system.off:
+            await self.speaker.beep(kind)
+
     def _beep(self, kind: str) -> None:
+        if self.system.off:
+            return
         task = asyncio.create_task(self.speaker.beep(kind))
         self._beeps.add(task)
         task.add_done_callback(self._beep_done)

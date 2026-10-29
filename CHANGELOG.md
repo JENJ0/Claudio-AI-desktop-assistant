@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased] - Off by voice, start at login
+
+### Added
+- "Claudio, spegniti" turns CLAUDIO off: no beeps, no replies, no Claude, no second-chance or
+  retry Whisper passes. Only the wake word listens, every threshold raised by
+  `[wakeword] off_threshold_boost` (0.1), and the one phrase after a clear wake is matched
+  against "accenditi" alone. "Claudio, accenditi" turns it back on (and also ends a pause).
+- Sound matching ignores spaces Whisper puts inside a word ("spegni ti", "accendi ti").
+- Start at login: `scripts/install_autostart.ps1` and `python -m claudio.autostart`
+  (Task Scheduler task "Claudio", current user, 30 s delay, `pythonw.exe`, restart on crash).
+  Prepared only: nothing is registered until JenJo runs it.
+
+### Changed
+- "spegniti" no longer closes the program: "chiuditi" does (also "ora chiuditi", "puoi
+  chiuderti", "esci dal programma"; English "turn yourself off" is now off, "shut down" and
+  "quit" close).
+- No console log handler when there is no console (pythonw): the log file only.
+
 ## [Unreleased] - Jack keeps one voice in a reply
 
 ### Changed

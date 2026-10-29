@@ -92,6 +92,9 @@ class WakeWordSettings(BaseModel):
     # "Grazie." (its guess on a lone word) still wakes, and the request is verified: it needs
     # the name or a local command. 1 = off.
     unclear_min: float = Field(0.6, gt=0, le=1)
+    # While off ("spegniti") every threshold is raised by this much: a wake word on the TV or
+    # in a conversation should not make CLAUDIO transcribe what follows. 0 = same threshold.
+    off_threshold_boost: float = Field(0.1, ge=0, lt=0.5)
 
 
 class VadSettings(BaseModel):
