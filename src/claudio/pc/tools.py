@@ -499,7 +499,12 @@ class PcTools:
         """Run one call. Never raises: an error becomes a tool_result with is_error."""
         start = self.clock()
         try:
-            done = await self._call(self._dispatch, call)
+            if call.name == command_tool.NAME:
+                # Claudio's own commands run here, like the router's: the spending ledger
+                # (SQLite) only works on the thread that opened it.
+                done: str | ToolOutcome = self._own_command(call)
+            else:
+                done = await self._call(self._dispatch, call)
             outcome = done if isinstance(done, ToolOutcome) else ToolOutcome(done)
         except (ToolFailed, PathRefused, keys.BadKey, CommandRefused) as exc:
             outcome = ToolOutcome(str(exc), error=True)
@@ -524,6 +529,14 @@ class PcTools:
                 extra={"route": "tool", "tool": call.name},
             )
         return outcome
+
+    def _own_command(self, call: ToolCall) -> str:
+        if self.commands is None:
+            raise ToolFailed(f"unknown tool: {call.name}")
+        try:
+            return self.commands.run(call.args)
+        except command_tool.UnknownCommand as exc:
+            raise ToolFailed(str(exc)) from exc
 
     async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
         loop = asyncio.get_running_loop()
@@ -572,11 +585,6 @@ class PcTools:
             return self._look(str(a.get("window") or ""), bool(a.get("whole_screen")))
         if call.name == "run_command":
             return self._command(str(a.get("command", "")))
-        if call.name == command_tool.NAME and self.commands is not None:
-            try:
-                return self.commands.run(a)
-            except command_tool.UnknownCommand as exc:
-                raise ToolFailed(str(exc)) from exc
         raise ToolFailed(f"unknown tool: {call.name}")
 
     def _locate(self, raw: str) -> Path:

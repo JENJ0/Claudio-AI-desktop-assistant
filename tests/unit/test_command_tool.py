@@ -17,7 +17,7 @@ from claudio.system import SystemControl
 from tests.conftest import COMMANDS_FILE
 from tests.unit.test_actions import Recorder
 from tests.unit.test_claude_brain import ScriptedClient
-from tests.unit.test_cost import PRICES
+from tests.unit.test_cost import PRICES, tracker
 from tests.unit.test_pc_tools import FakeDesktop, acting_brain, ask, call, use
 
 
@@ -86,6 +86,21 @@ async def test_offered_with_the_pc_tools(tools: PcTools, rec: Recorder) -> None:
     assert not out.error and rec.keys == [MEDIA_KEYS["mute"]]
     out = await tools.run(call(NAME, command="format_disk"))
     assert out.error and "unknown command" in out.text
+
+
+async def test_runs_on_the_thread_of_the_spending_ledger(
+    pricing: Pricing, rec: Recorder, tmp_path: Path
+) -> None:
+    # PC test 29/10: on the PC tools' worker thread SQLite refused the ledger opened here.
+    tool = CommandTool(
+        load_commands(COMMANDS_FILE), ActionRunner(rec.ctx(), tracker=tracker(pricing))
+    )
+    t = PcTools(FakeDesktop(), PcSettings(), home=tmp_path, commands=tool)
+    try:
+        out = await t.run(call(NAME, command="tell_spend"))
+    finally:
+        t.close()
+    assert not out.error and "spent" in out.text
 
 
 async def test_the_question_names_the_command(tool: CommandTool, tmp_path: Path) -> None:
