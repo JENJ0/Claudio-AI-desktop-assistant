@@ -59,6 +59,9 @@ class OpenWakeWordDetector:
         )
         # openWakeWord names each model after its file stem (e.g. "hey_jarvis_v0.1").
         self.thresholds = {p.stem: m.threshold for p, m in zip(paths, settings.models, strict=True)}
+        # While CLAUDIO is off ("spegniti") the assistant sets `strict`: higher thresholds.
+        self.strict = False
+        self.strict_thresholds = raised(self.thresholds, settings.off_threshold_boost)
         self.names = [m.name.replace("_", " ") for m in settings.models]
         self._silence = np.zeros(frame_size, dtype=np.int16)
         # Models checked by Whisper on every detection (by openWakeWord's name for them).
@@ -73,7 +76,9 @@ class OpenWakeWordDetector:
 
     def process(self, frame: np.ndarray) -> tuple[str, float] | None:
         scores = self._model.predict(frame)
-        detection = best_detection(scores, self.thresholds)
+        detection = best_detection(
+            scores, self.strict_thresholds if self.strict else self.thresholds
+        )
         self._near_miss.update(scores, detection is not None)
         return detection
 
@@ -139,3 +144,8 @@ def best_detection(
         if score >= threshold and (best is None or score - threshold > margin):
             best, margin = (name, score), score - threshold
     return best
+
+
+def raised(thresholds: dict[str, float], boost: float) -> dict[str, float]:
+    """Every threshold `boost` higher, never above 0.99 (a score of 1 is rare but possible)."""
+    return {name: min(value + boost, 0.99) for name, value in thresholds.items()}

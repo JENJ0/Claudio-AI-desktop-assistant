@@ -169,6 +169,7 @@ EN: dict[str, str] = {
     "Frase '{phrase}' ambigua: {first} e {second}": (
         "Ambiguous phrase '{phrase}': {first} and {second}"
     ),
+    "Spento, ignoro: %r": "Off, ignoring: %r",
     "In pausa, ignoro: %r": "Paused, ignoring: %r",
     "Richiesta non riconosciuta: %r": "Request not recognised: %r",
     "Errore eseguendo %s": "Error running %s",

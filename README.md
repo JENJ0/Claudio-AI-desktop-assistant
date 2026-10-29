@@ -74,7 +74,9 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "che ore sono", "che giorno è oggi" | answers aloud |
 | "vai in pausa", "vai a dormire" | pause: until "svegliati" CLAUDIO answers nothing else |
 | "svegliati" | back from the pause |
-| "spegniti" | closes CLAUDIO |
+| "spegniti" | off: no beeps, no replies, nothing goes to Whisper twice or to Claude; only the wake word listens (`[wakeword] off_threshold_boost` stricter) for "Claudio, accenditi" |
+| "accenditi" | back from off (or from the pause) |
+| "chiuditi" | closes CLAUDIO |
 | "quanto ho speso oggi" | today's Claude spending and the share of the daily budget |
 | "chiudi la finestra" | closes the window in front, after "Confermi?" and a "sì" |
 | "metti in pausa la musica", "canzone successiva", "canzone precedente" | media keys: play/pause, next, previous (Spotify, YouTube...) |
@@ -281,6 +283,19 @@ Piper, set in `[tts.voices.en]`, with the same effect. `CLAUDIO_TTS__LENGTH_SCAL
 both (lower = faster; 0.77 = +30%, the default). The robotic tone is `CLAUDIO_TTS__EFFECT`:
 `ultron_estremo` (default), `estremo`, `ultron`, `jarvis`, or `none` for the clean voice. The
 effect costs about 5 ms per sentence.
+
+## Start at login
+
+CLAUDIO can start by itself 30 s after you log in to Windows (Task Scheduler, your user only,
+no admin rights, no console window: `pythonw.exe`, logs in `logs/`). Nothing is registered
+until you run one of these from the project folder (each is safe to run twice):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -DryRun   # show only
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1           # install
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
+uv run python -m claudio.autostart install|uninstall|status [--dry-run]       # the same in Python
+```
 
 ## Startup time
 

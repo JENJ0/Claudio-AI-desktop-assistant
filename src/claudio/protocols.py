@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -20,6 +20,14 @@ class WakeWordDetector(Protocol):
         ...
 
     def reset(self) -> None: ...
+
+
+@runtime_checkable
+class StrictWake(Protocol):
+    """A detector that can demand a higher score: while CLAUDIO is off ("spegniti") a wake
+    has to be clearer before the phrase after it is transcribed."""
+
+    strict: bool
 
 
 class SpeechProbability(Protocol):
