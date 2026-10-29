@@ -214,6 +214,19 @@ offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spieg
 # Stories, jokes, poems: Haiku tells them itself, never "Lo uso?" (even if it asks for Sonnet).
 no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "barzelletta", "barzellette", "poesia", "filastrocca", "racconta", "raccontami"], en = ["story", "stories", "joke", "jokes", "poem", "fairy tale"] }
 
+# A phrase Claudio was about to ignore (a false wake, not addressed to it, noise) that sounds
+# like a command ("Spenditi.", "Audio Bust."): Haiku guesses which command JenJo asked and
+# how likely it is. Sure enough: done at once; less sure: "Hai detto: ...?" first; pausing
+# and switching Claudio off are always asked. Only those phrases cost a call (~0.0001 $).
+[guess]
+enabled = true                 # false: such phrases are dropped, as before (zero cost)
+near_floor = 65                # 0-100: how close (letters or sound) to a command to ask Claude
+act_at = 0.8                   # Claude this sure: the command runs at once
+ask_at = 0.5                   # from here up to act_at: "Hai detto: ...?"; below: ignored
+candidates = 4                 # closest commands shown to Claude
+max_tokens = 120
+timeout_s = 3.0                # no answer by then: the phrase is ignored, as before
+
 # Claude acts on the PC with tools (Phase 3). Level 1 runs at once (open, search, read the
 # windows, harmless keys); type, close a window, move a file and other keys ask "Confermi?"
 # first, by voice only. Levels are fixed in code (src/claudio/pc/tools.py), never by Claude.

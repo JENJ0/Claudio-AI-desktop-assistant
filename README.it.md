@@ -123,6 +123,18 @@ conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a l
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
 (`enabled = false` per solo comandi locali). Una domanda a Haiku costa circa 0,0002 USD.
 
+**Comandi capiti male.** Una frase che Claudio stava per ignorare (wake word non confermata,
+frase nella finestra di conversazione che non sembrava rivolta a lui, rumore) ma che somiglia a
+un comando ("Spenditi.", "Audio Bust.") va a Haiku, che dice quale comando hai chiesto più
+probabilmente e quanto ne è sicuro: dall'80 % Claudio lo esegue, dal 50 % chiede prima "Hai
+detto: ...?" ("sì" lo esegue, "no" lascia stare, "no, alza il volume" fa quello), sotto ignora
+la frase come prima. Pausa e "spegniti" vengono sempre chiesti. Costa una chiamata (circa 0,0001
+USD) solo una frase vicina a un comando; impostazioni in `[guess]`. Claude può anche eseguire i
+comandi di Claudio (volume, tasti multimediali, chat, spesa, pausa, "spegniti") quando una
+richiesta gli arriva storpiata ("Claudio, ok, la chata"). `uv run python scripts/replay_guess.py
+--dry` mostra quanto erano vicine a un comando le frasi scartate in `logs/metrics.jsonl`; senza
+`--dry` chiede anche a Haiku.
+
 ## Personalità (CLAUDIO.md)
 
 Il carattere di Claudio sta in `data/CLAUDIO.md`, creato al primo avvio da `config/CLAUDIO.md`

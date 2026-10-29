@@ -9,7 +9,7 @@ import functools
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -22,12 +22,17 @@ from claudio.echo import is_echo, recent_reply
 from claudio.intake import (
     BARGE_IN,
     CONVERSATION,
+    GUESSED_DROPS,
+    NEVER_GUESSED,
     Decision,
+    Doubt,
     Heard,
     Hearing,
     Kind,
+    Recovery,
     RequestFilter,
     Segment,
+    Verdict,
     content_words,
     echo_of,
     unsure,
@@ -53,6 +58,7 @@ QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphon
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
 CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for the rest
+OTHER_HEARINGS = 3  # of Whisper's other guesses, given to Claude with a phrase to guess
 
 
 class State(enum.StrEnum):
@@ -134,6 +140,7 @@ class Assistant:
         on_heard: Callable[[Hearing], None] | None = None,
         continue_s: float = 0.0,
         echo_tail_ms: int = 0,
+        guess: Callable[[Doubt], Awaitable[Recovery | None]] | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -182,6 +189,9 @@ class Assistant:
         self.unsure_logprob = unsure_logprob
         self.alternatives = alternatives
         self.on_heard = on_heard
+        # A phrase about to be dropped that may be a misheard command: Claude's guess
+        # (LocalResponder.guess) answers it, asks "Hai detto: ...?" or lets it drop.
+        self.guess = guess
         self._candidates: list[str] | None = None  # the closed list's n-best, when it ran
         self._barge_checking = False
         # A phrase heard over the reply while Whisper was busy (audio, loudest dBFS).
@@ -485,14 +495,16 @@ class Assistant:
                 if decision.kind is not Kind.FALSE_WAKE:  # a false wake ends in silence
                     await self.speaker.beep("cancel")
                 return
-            await self._tell_hearing(audio, decision.text, heard, segments, inter)
+            if decision.kind is Kind.ASK:  # "Hai detto: ...?": the answer comes next
+                reply = _fixed_reply(decision.text)
+            else:
+                await self._tell_hearing(audio, decision.text, heard, segments, inter)
+                reply = self.responder.respond(decision.text, heard)
             self._set_state(State.RESPONDING)
             resume = await self._unsaid(cut)  # the reply this request cut, read to its end
             cut = None
             await self._speak_reply(
-                self.responder.respond(decision.text, heard),
-                inter,
-                on_first_audio=lambda: self._on_first_audio(inter),
+                reply, inter, on_first_audio=lambda: self._on_first_audio(inter)
             )
             route = self.responder.last_route
             if route.get("route") == "paused":
@@ -566,7 +578,60 @@ class Assistant:
         if decision.reason and not decision.dropped and decision.kind is not Kind.CONTINUE:
             info["intake"] = decision.reason  # e.g. quiet_answer: the "sì" was not counted
             log.info("Risposta troppo lontana dal microfono, non la conto: %r", text)
+        if decision.dropped:
+            return await self._recover(decision, language, heard, inter) or decision
         return decision
+
+    async def _recover(
+        self, decision: Decision, language: str, heard: Heard, inter: Interaction
+    ) -> Decision | None:
+        """A phrase about to be dropped may be a command Whisper misheard ("Spenditi." in the
+        conversation window, "Audio Bust." after a reply): Claude's guess turns it into the
+        command (sure enough), into "Hai detto: ...?" (not sure) or leaves the drop. The
+        echo of Claudio's own voice, a voice far away and silence are never guessed."""
+        if (
+            self.guess is None
+            or decision.kind not in GUESSED_DROPS
+            or decision.reason in NEVER_GUESSED
+        ):
+            return None
+        text = decision.text
+        noise = self.intake.noise
+        doubt = Doubt(
+            text=text,
+            language=language,
+            reason=decision.reason,
+            alternatives=self._other_hearings(text),
+            wake_word=str(inter.info.get("wake_word", "")),
+            wake_score=float(inter.info.get("wake_score", 0.0)),
+            name_heard=heard.name_heard or heard_wake_word(text) or clipped_name(text),
+            close=(
+                None
+                if heard.speech_dbfs is None or noise is None
+                else heard.speech_dbfs >= noise.answer_min_dbfs
+            ),
+            logprob=min((s.avg_logprob for s in heard.segments), default=None),
+            said_before=self._said,
+        )
+        try:
+            recovery = await self.guess(doubt)
+        except Exception:
+            log.exception("Ipotesi sulla frase incerta non riuscita")
+            return None
+        if recovery is None:
+            return None
+        inter.info.update(recovery.info)
+        if recovery.verdict is Verdict.ACT:
+            inter.info["guessed_from"] = text
+            return Decision(Kind.ANSWER, recovery.said, "guessed")
+        if recovery.verdict is Verdict.ASK:
+            inter.info["guessed_from"] = text
+            return Decision(Kind.ASK, recovery.question, "guessed")
+        return None
+
+    def _other_hearings(self, text: str) -> tuple[str, ...]:
+        """Whisper's other guesses from the closed list, when it ran (no extra pass)."""
+        return _distinct(text, self._candidates or (), OTHER_HEARINGS)
 
     def _log_drop(self, decision: Decision, inter: Interaction) -> None:
         text = decision.text
@@ -666,14 +731,7 @@ class Assistant:
                 log.exception("Trascrizioni alternative non riuscite")
                 return ()
             inter.info["alternatives_ms"] = round((self.clock() - start) * 1000)
-        seen = {normalize(text, drop_fillers=False)}
-        out: list[str] = []
-        for candidate in candidates:
-            key = normalize(candidate, drop_fillers=False)
-            if key and key not in seen:
-                seen.add(key)
-                out.append(candidate)
-        return tuple(out[: self.alternatives])
+        return _distinct(text, candidates, self.alternatives)
 
     def _keeps_conversation(self, outcome: str, inter: Interaction) -> bool:
         """After a reply the window stays open. An empty phrase in the window (noise Whisper
@@ -1177,6 +1235,23 @@ class Assistant:
 
 
 # A level 2-3 action written in the chat window: it is confirmed by voice only.
+def _distinct(text: str, candidates: Sequence[str], limit: int) -> tuple[str, ...]:
+    """Up to `limit` of `candidates` that differ from `text` and from each other."""
+    seen = {normalize(text, drop_fillers=False)}
+    out: list[str] = []
+    for candidate in candidates:
+        key = normalize(candidate, drop_fillers=False)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(candidate)
+    return tuple(out[:limit])
+
+
+async def _fixed_reply(text: str) -> AsyncIterator[str]:
+    """A fixed sentence of Claudio's own, as a reply stream."""
+    yield text
+
+
 TYPED_NEEDS_VOICE = {
     "it": "Questa azione va confermata a voce: chiedimela parlando.",
     "en": "This action needs a spoken confirmation: ask me out loud.",

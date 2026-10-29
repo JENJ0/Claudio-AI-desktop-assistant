@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import NamedTuple
+from dataclasses import dataclass, field
+from typing import Any, NamedTuple
 
 from claudio.config import NoiseSettings
 from claudio.protocols import Responder
@@ -58,6 +58,7 @@ class Kind(enum.StrEnum):
     NOT_REQUEST = "conversation_end"  # the TV or someone else, in the conversation window
     NOISE = "noise"  # noise transcribed as words: not worth a call to Claude
     CONTINUE = "continue"  # left halfway ("apri Chrome e cerca..."): listen for the rest
+    ASK = "ask"  # Claude guessed the request, not surely enough: "Hai detto «...»?"
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,75 @@ class Decision:
 
     @property
     def dropped(self) -> bool:
-        return self.kind not in (Kind.ANSWER, Kind.RELISTEN, Kind.CONTINUE)
+        return self.kind not in (Kind.ANSWER, Kind.RELISTEN, Kind.CONTINUE, Kind.ASK)
+
+
+# The drops a misheard command can hide in: a false wake, a phrase that did not look addressed
+# to Claudio, noise Whisper was unsure of. Never the echo of Claudio's own voice, a voice far
+# from the microphone ("quiet") or silence: those are not JenJo talking to Claudio.
+GUESSED_DROPS = frozenset({Kind.FALSE_WAKE, Kind.NOT_REQUEST, Kind.NOISE})
+NEVER_GUESSED = frozenset({"echo", "quiet"})
+
+
+@dataclass(frozen=True)
+class Doubt:
+    """A phrase about to be dropped, with what is known about how it was said: Claude is
+    asked whether it is a command Whisper misheard (brain/guess.py)."""
+
+    text: str
+    language: str
+    reason: str  # why it was about to be dropped (Decision.reason)
+    alternatives: tuple[str, ...] = ()  # Whisper's other guesses (the closed list's n-best)
+    wake_word: str = ""  # the wake word model, CONVERSATION or BARGE_IN
+    wake_score: float = 0.0
+    name_heard: bool = False  # the name, even misheard ("l'audio"), at the start
+    close: bool | None = None  # loud, at the microphone (None: the level is not known)
+    logprob: float | None = None  # Whisper's lowest segment confidence (None: not known)
+    said_before: str = ""  # Claudio's reply just before (the conversation window)
+
+
+@dataclass(frozen=True)
+class Guess:
+    """Claude's reading of a Doubt: what JenJo most likely said to Claudio ("" = nothing,
+    it was the TV or noise), how likely, and the local command it is, if one."""
+
+    said: str
+    probability: float
+    command: str = ""
+    why: str = ""
+
+
+class Verdict(enum.StrEnum):
+    ACT = "act"  # sure enough: the guessed request is answered at once
+    ASK = "ask"  # "Hai detto «...»?" first; a yes answers it
+    DROP = "drop"  # dropped, as without the guess
+
+
+@dataclass(frozen=True)
+class Recovery:
+    """What became of a Doubt: the verdict, the request to answer (or to ask about), the
+    question to say for ASK ("Hai detto: ...?") and the figures for metrics.jsonl (guess,
+    probability, time, cost)."""
+
+    verdict: Verdict
+    said: str = ""
+    info: dict[str, Any] = field(default_factory=dict)
+    question: str = ""
+
+
+def verdict(
+    guess: Guess | None, doubt: Doubt, act_at: float, ask_at: float, asks_first: bool = False
+) -> Verdict:
+    """What Claudio does with Claude's guess. A voice far from the microphone (the TV) is
+    never acted on, and `asks_first` (pausing, switching Claudio off) is never done on a
+    guess alone, however sure."""
+    if guess is None or not guess.said.strip() or guess.probability < ask_at:
+        return Verdict.DROP
+    if doubt.close is False:
+        return Verdict.DROP
+    if asks_first or guess.probability < act_at:
+        return Verdict.ASK
+    return Verdict.ACT
 
 
 @dataclass(frozen=True)

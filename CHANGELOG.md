@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased] - IT-0: Claude guesses misheard commands
+
+### Added
+- A phrase about to be dropped (false wake, not addressed to Claudio in the conversation
+  window, noise Whisper was unsure of) that comes close to a command, by letters or by sound,
+  goes to Haiku with Whisper's other hearings, how it was heard (wake word and score, loudness,
+  confidence, the reply before) and the closest commands (`CommandMatcher.nearest`, exact-only
+  commands included). Haiku answers in JSON (structured output, effort low, no thinking) which
+  command JenJo most likely asked and how likely: from `[guess] act_at` (0.8) it runs, from
+  `ask_at` (0.5) Claudio asks "Hai detto: ...?" first, below it is dropped as before. Pausing
+  and switching off are always asked; a far voice, the echo of Claudio's own voice and silence
+  are never guessed. Real drops from JenJo's logs: "Spenditi." (shutdown, 88), "Audio Bust."
+  ("Claudio basta", 67), "Apremi qualcosa." (71). About 0.0001 USD and 0.5 s, only for those
+  phrases; counted in the spending ledger; `guess*` columns in metrics.jsonl.
+- The answer to "Hai detto: ...?": "sì" runs it (a level 2 command without a second
+  "Confermi?"), "no" drops it, "no, alza il volume" is a new request; the question's own echo
+  is not an answer.
+- `claudio_command`, a tool for Claude: the volume, media keys, chat window, spending, pause
+  and switching off, for requests that reach Claude garbled ("Claudio, ok, la chata", 26/10).
+  Pausing and switching off ask "Confermi?".
+- `scripts/replay_guess.py`: the dropped phrases of `logs/metrics.jsonl` through the same steps
+  (`--dry`: closeness only, free).
+
 ## [Unreleased] - Jack keeps one voice in a reply
 
 ### Changed
