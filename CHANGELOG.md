@@ -17,8 +17,9 @@
   temperature, a fixed seed, the code predictor's temperature and the streaming chunk
   boundaries made no steady difference. Long replies start a little later.
 - `jack_speed` back to 1.0 (JenJo 28/10: no slowing).
-- The Jack sentence timeout counts from the last audio received, and the worker allows up to
-  2000 frames for a long piece.
+- The Jack sentence timeout counts from the last audio received. The worker gives each piece
+  frames in proportion to its text (24 + 1.5 per character, at most 2000): a live check caught
+  "Chrome è aperto. Prego." babbling on for 6.7 s, which the old fixed 300 frames allowed.
 
 ## [Unreleased] - Jack on Qwen3-TTS 1.7B
 
