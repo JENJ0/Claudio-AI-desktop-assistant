@@ -91,7 +91,7 @@ MIN_HISTORY = 3
 
 class VoiceMonitor:
     """Saves every piece Jack says as NNN.wav in `folder` and logs its pitch; a piece off
-    the usual register, or with octave jumps, flicker or a flat melody, is logged as a
+    the usual register, or with octave jumps or a flat melody, is logged as a
     warning with its file name. One thread checks the pieces in order: the reply never
     waits for it."""
 
@@ -168,6 +168,10 @@ class VoiceMonitor:
                 self._medians.append(median)
         if usual and median > 0 and 12 * np.log2(median / usual) > HIGH_SEMITONES:
             reasons.append(f"registro alto, di solito {usual:.0f} Hz")
-        if suspicious(stats):
-            reasons.append("intonazione sospetta")
+        # Flicker is not a reason: on JenJo's PC (29/10, jack_variants R vs K) normal pieces
+        # had 0-8 of it, so it flagged nearly every piece; octave jumps marked the robotic one.
+        if stats["jumps"] >= 2:
+            reasons.append("salti d'ottava")
+        if 0 < stats["range_st"] < 1.5:
+            reasons.append("melodia piatta")
         return ", ".join(reasons)
