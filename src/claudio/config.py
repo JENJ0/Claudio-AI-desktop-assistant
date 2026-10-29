@@ -195,7 +195,7 @@ class TtsSettings(BaseModel):
     effect: Literal["none", "estremo", "jarvis", "ultron", "ultron_estremo"] = "none"
     # Engine "jack": a worker process with its own venv; paths are relative to models_dir.
     jack_python: Path = Path("voices/jack/worker/env/Scripts/python.exe")
-    jack_checkpoint: Path = Path("voices/jack/ft/1.7B/checkpoint-epoch-7")  # JenJo, 28/10
+    jack_checkpoint: Path = Path("voices/jack/ft/1.7B-calmo/checkpoint-epoch-7")  # JenJo, 29/10
     jack_rvc_model: Path = Path("voices/jack/rvc/Applio/logs/jack/jack_100e_2800s.pth")
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
@@ -210,8 +210,10 @@ class TtsSettings(BaseModel):
     # Jack says a reply's sentences together, up to this many characters per piece: one
     # generation keeps one voice, sentence by sentence the tone drifts (JenJo 28/10; measured
     # on long paragraphs: same-voice score 0.69 vs 0.63). Long replies start a little later.
+    # 220 chars is about 11 s of speech: the voice was trained on clips up to 12 s and loses
+    # its timbre past that (JenJo 29/10), so a longer reply goes out in several pieces.
     # 0 = sentence by sentence.
-    jack_group_chars: int = Field(600, ge=0, le=2000)
+    jack_group_chars: int = Field(220, ge=0, le=2000)
     # Qwen3 sampling: lower is steadier (fewer odd stresses), higher is livelier.
     jack_temperature: float = Field(0.7, ge=0.1, le=1.5)  # JenJo's pick by ear, 24/10
     # How RVC turns Qwen3's voice into Jack's: "blocks" of 250 ms as it is generated (first

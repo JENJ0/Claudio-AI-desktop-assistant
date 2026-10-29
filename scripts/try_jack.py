@@ -38,7 +38,7 @@ class Silent:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", type=Path, default=ROOT / "models")
-    parser.add_argument("--checkpoint", default="voices/jack/ft/1.7B/checkpoint-epoch-7")
+    parser.add_argument("--checkpoint", default="voices/jack/ft/1.7B-calmo/checkpoint-epoch-7")
     parser.add_argument("--play", action="store_true", help="also play through the default output")
     args = parser.parse_args()
     jack = args.models / "voices" / "jack"

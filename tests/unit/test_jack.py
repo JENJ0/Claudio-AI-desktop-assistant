@@ -205,7 +205,7 @@ def test_build_synth_wraps_the_fallback_when_the_worker_starts(monkeypatch, tmp_
     assert name == "Jack (fallback Fallback)"
     assert synth.command[2:4] == [
         "--checkpoint",
-        str(tmp_path / "voices/jack/ft/1.7B/checkpoint-epoch-7"),
+        str(tmp_path / "voices/jack/ft/1.7B-calmo/checkpoint-epoch-7"),
     ]
 
 
