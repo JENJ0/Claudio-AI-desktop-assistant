@@ -1,0 +1,155 @@
+"""stt_testset.py and stt_bench.py: the test set's files, the scores, the variants, the cut."""
+
+from __future__ import annotations
+
+import sys
+
+import numpy as np
+import pytest
+
+from claudio.audio.vad import Endpointer
+from claudio.config import PROJECT_ROOT
+
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+
+import stt_bench as bench
+import stt_testset as testset
+
+SR = 16000
+
+
+def tone(seconds: float, amplitude: float = 0.5) -> np.ndarray:
+    t = np.arange(int(seconds * SR)) / SR
+    return (np.sin(2 * np.pi * 220 * t) * amplitude).astype(np.float32)
+
+
+def silence(seconds: float) -> np.ndarray:
+    return np.zeros(int(seconds * SR), dtype=np.float32)
+
+
+def test_sentences_skip_blank_lines_and_comments(tmp_path) -> None:
+    path = tmp_path / "frasi.txt"
+    path.write_text("# a comment\nClaudio, apri Chrome.\n\n  Stop.  \n", encoding="utf-8")
+    assert testset.read_sentences(path) == ["Claudio, apri Chrome.", "Stop."]
+
+
+def test_the_shipped_sentences() -> None:
+    sentences = testset.read_sentences(testset.SENTENCES)
+    assert len(sentences) == 40 and len(set(sentences)) == 40
+
+
+def test_folder_names_and_what_is_left_to_record(tmp_path) -> None:
+    assert testset.folder_name("Microfono (Logi C270 HD WebCam)") == "Microfono_Logi_C270_HD_WebCam"
+    assert testset.folder_name("()") == "microfono"
+    a, b = tmp_path / "a", tmp_path / "b"
+    for folder, done in ((a, 3), (b, 2)):
+        folder.mkdir()
+        for n in range(1, done + 1):
+            (folder / f"{n:02d}.wav").touch()
+    assert testset.first_missing([a, b], 5) == 2  # b still lacks the third sentence
+    assert testset.first_missing([a], 3) == 3
+
+
+def test_peak_is_the_loudest_32_ms() -> None:
+    quiet_then_loud = np.concatenate((tone(0.5, 0.01), tone(0.1, 0.1)))
+    assert testset.peak_dbfs(quiet_then_loud) == pytest.approx(-23.0, abs=0.1)  # 0.1 sine
+    as_int16 = (quiet_then_loud * 32768).astype(np.int16)
+    assert testset.peak_dbfs(as_int16) == pytest.approx(-23.0, abs=0.1)
+    assert testset.peak_dbfs(np.zeros(100, np.int16)) == -120.0
+
+
+def test_words_ignore_case_punctuation_and_spelling() -> None:
+    assert bench.words("Ehi Claudio, cos'è un buco nero?") == [
+        "ehi",
+        "claudio",
+        "cos'",
+        "è",
+        "un",
+        "buco",
+        "nero",
+    ]
+    assert bench.words("Hey Claudio! Apri  Chrome.") == bench.words("ehi claudio apri chrome")
+    assert bench.words("C’è") == bench.words("c'è")
+
+
+def test_word_error_rate() -> None:
+    assert bench.word_errors(["apri", "la", "chat"], ["apri", "la", "chat"]) == 0
+    assert bench.word_errors(["apri", "la", "chat"], ["abri", "la", "chatte"]) == 2
+    assert bench.word_errors(["apri", "chrome"], ["apri"]) == 1  # a word lost
+    assert bench.word_errors(["stop"], ["stop", "grazie", "mille"]) == 2  # words invented
+    assert bench.word_errors([], ["ciao"]) == 1
+    references = ["Claudio, apri la chat.", "Stop."]
+    assert bench.wer(references, ["Claudio apri la chat", ""]) == pytest.approx(1 / 5)
+
+
+def test_variants_are_changes_from_live() -> None:
+    live = bench.parse_variant("live")
+    assert (live.gain, live.prompt, live.beam, live.vad, live.engine) == (
+        True,
+        "nomi",
+        None,
+        True,
+        "whisper",
+    )
+    v = bench.parse_variant("live+grezzo+vuoto+beam1+novad+large")
+    assert (v.gain, v.prompt, v.beam, v.vad, v.model) == (False, "vuoto", 1, False, "large-v3")
+    assert bench.parse_variant("frasi").prompt == "frasi"
+    assert bench.parse_variant("parakeet").engine == "parakeet"
+    with pytest.raises(SystemExit, match="rumore"):
+        bench.parse_variant("live+rumore")
+    for name in bench.DEFAULT_VARIANTS:
+        bench.parse_variant(name)
+
+
+def test_the_gain_autogain_would_settle_on() -> None:
+    def at(dbfs: float) -> np.ndarray:  # a sine whose loudest 32 ms is at `dbfs`
+        return (tone(0.2, np.sqrt(2) * 10 ** (dbfs / 20)) * 32768).astype(np.int16)
+
+    assert bench.microphone_gain_db([at(-40), at(-35), at(-45)]) == pytest.approx(20.0, abs=0.2)
+    assert bench.microphone_gain_db([at(-5)]) == 0.0
+    assert bench.microphone_gain_db([at(-70)]) == bench.MAX_GAIN_DB
+
+
+def test_silero_cut_reports_a_sentence_ended_too_soon(fake_vad, vad_settings) -> None:
+    endpointer = Endpointer(fake_vad, vad_settings, SR)
+    whole = np.concatenate((silence(0.3), tone(0.8), silence(0.3)))
+    audio, cut = bench.silero_cut(whole, endpointer)
+    assert not cut and 1.0 < len(audio) / SR < 1.3  # pre-roll + the voice + ~100 ms
+    paused = np.concatenate((silence(0.3), tone(0.8), silence(0.8), tone(0.4)))
+    audio, cut = bench.silero_cut(paused, endpointer)
+    assert cut and len(audio) / SR < 1.3  # the end of the sentence never reaches Whisper
+    audio, cut = bench.silero_cut(silence(1.0), endpointer)
+    assert audio.size == 0 and not cut
+
+
+def test_run_applies_the_gain_and_counts_the_cuts(fake_vad, vad_settings) -> None:
+    quiet = (np.concatenate((silence(0.3), tone(0.8, 0.02), silence(0.3))) * 32768).astype(np.int16)
+    mic = bench.Microphone("C270", testset.OUT, [1, 2], [quiet, quiet], gain_db=20.0)
+    heard: list[float] = []
+
+    def transcribe(audio: np.ndarray, variant: bench.Variant) -> str:
+        heard.append(float(np.abs(audio).max()))
+        return "apri chrome"
+
+    endpointer = Endpointer(fake_vad, vad_settings, SR)
+    score = bench.run(bench.parse_variant("live"), mic, transcribe, endpointer)
+    assert score.texts == ["apri chrome"] * 2 and len(score.ms) == 2 and score.cuts == 0
+    assert len(heard) == 3  # a warm-up, then the two sentences
+    assert heard[-1] == pytest.approx(0.2, abs=0.01)  # +20 dB: loud enough for the fake VAD
+    raw = bench.run(bench.parse_variant("live+grezzo+novad"), mic, transcribe, endpointer)
+    assert raw.texts == ["apri chrome"] * 2 and heard[-1] == pytest.approx(0.02, abs=0.002)
+
+
+def test_report_scores_words_and_commands(matcher, capsys) -> None:
+    mic = bench.Microphone("C270", testset.OUT, [1, 2], [], gain_db=12.0)
+    references = ["Claudio, apri Chrome.", "Che tempo fa domani?"]
+    good = bench.Score("live", ["Claudio, apri Chrome.", "Che tempo fa domani?"], [300, 320])
+    bad = bench.Score("live+vuoto", ["Claudio, abri come.", "Che tempo fa domani?"], [250, 260])
+    bench.report(mic, references, [good, bad], matcher, details=True)
+    out = capsys.readouterr().out
+    assert "guadagno +12 dB" in out
+    rows = {line.split()[0]: line.split() for line in out.splitlines() if line.startswith("  live")}
+    assert rows["live"][1:3] == ["0.0%", "1/1"]
+    assert rows["live+vuoto"][1:3] == ["28.6%", "0/1"]  # 2 words wrong of 7
+    assert "01 «Claudio, apri Chrome.»" in out and "'Claudio, abri come.'" in out
+    assert "02 «" not in out  # right in every variant: not listed

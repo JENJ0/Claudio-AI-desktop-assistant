@@ -53,6 +53,9 @@ QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphon
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
 CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for the rest
+# The outcomes of a request that was really said to Claudio: the microphone level learns from
+# these only (a false wake, noise, the TV in the conversation window or a timeout are not it).
+LEVEL_OUTCOMES = frozenset({"ok", "interrupted", "stopped", "paused"})
 
 
 class State(enum.StrEnum):
@@ -1108,10 +1111,13 @@ class Assistant:
             # Not a phrase said over the reply: louder than usual, with the reply's echo in it
             # (JenJo 25/10: the gain fell to +0 dB after one and the next requests were -42 dBFS).
             if self.endpointer.started and inter.info.get("wake_word") != BARGE_IN:
-                if self.level is not None:
-                    self.level.observe(stats)
-                else:
+                if self.level is None:
                     self._check_level(stats["speech_dbfs"])
+                elif outcome in LEVEL_OUTCOMES and inter.info.get("text"):
+                    # Only a request Whisper heard words in: noise, a breath or the TV says
+                    # nothing about the voice (26/10 19:50: an empty phrase at -50 dBFS
+                    # raised the gain, the next request saturated).
+                    self.level.observe(stats)
             if self.audio_sink is not None:
                 heard = np.concatenate((self._prewake, self.endpointer.listened()))
                 try:

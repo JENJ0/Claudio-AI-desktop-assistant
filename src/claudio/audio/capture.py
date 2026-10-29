@@ -15,10 +15,12 @@ from claudio.audio.devices import (
     choose_input,
     default_device,
     describe_device,
+    microphone_key,
     pick_device,
     probe_inputs,
     stream_settings,
 )
+from claudio.audio.level import soft_limit
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +35,10 @@ STILL_MISSING_EVERY = 30  # retries between two "still missing" warnings (~30 s)
 
 
 def apply_gain(frame: np.ndarray, gain: float) -> np.ndarray:
-    """int16 frame times a linear gain, clipped instead of wrapping around."""
-    return np.clip(frame * gain, -32768, 32767).astype(np.int16)
+    """int16 frame times a linear gain; the peaks it pushes over -3 dBFS bend smoothly
+    towards full scale (level.soft_limit) instead of clipping."""
+    boosted = soft_limit(frame.astype(np.float32) * np.float32(gain / 32768.0))
+    return np.round(boosted * 32767.0).astype(np.int16)
 
 
 class AudioCapture:
@@ -60,6 +64,9 @@ class AudioCapture:
         self.gain = 1.0
         self.set_gain_db(gain_db)
         self.overflows = 0
+        # Told the name of every microphone the stream opens on (AutoGain.use: each one has
+        # its own gain). None: nobody needs it.
+        self.on_device: Callable[[str], None] | None = None
         # With no device configured: the microphone Windows uses, followed while running
         # (checked every FOLLOW_S; a change reopens the stream on the new one).
         self.windows_default = (windows_default or WindowsDefaultInput()) if device == "" else None
@@ -126,9 +133,12 @@ class AudioCapture:
                     callback=callback,
                     extra_settings=stream_settings(index),
                 ):
+                    description = describe_device(index, "input")
+                    if self.on_device is not None:
+                        self.on_device(microphone_key(description))  # may change the gain
                     log.info(
                         "Microfono: %s%s",
-                        describe_device(index, "input"),
+                        description,
                         f", guadagno +{20 * np.log10(self.gain):.0f} dB" if self.gain > 1 else "",
                     )
                     checked = loud = time.monotonic()

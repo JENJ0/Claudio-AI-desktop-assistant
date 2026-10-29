@@ -518,6 +518,38 @@ async def test_microphone_level_is_adjusted_after_speech_only(
     assert [r["gain_db"] for r in assistant.history] == [6.0, 9.0]
 
 
+async def test_a_phrase_without_words_does_not_move_the_microphone_level(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    """26/10 19:50: an empty phrase at -50 dBFS raised the gain, the next request saturated."""
+
+    class Level:
+        gain_db = 6.0
+
+        def __init__(self) -> None:
+            self.seen: list[dict] = []
+
+        def observe(self, stats) -> None:
+            self.seen.append(dict(stats))
+
+    level = Level()
+    assistant = Assistant(
+        FakeWake({1}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(""),
+        FakeResponder(),
+        FakeSpeaker(),
+        clock=AudioClock(),
+        level=level,
+    )
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert assistant.history[0]["outcome"] not in {"ok", "timeout"}
+    assert level.seen == []
+
+
 @pytest.mark.parametrize("state", list(State))
 def test_states_are_strings(state: State) -> None:
     assert isinstance(state.value, str)

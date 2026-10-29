@@ -1,0 +1,43 @@
+# The sentences JenJo reads for scripts/stt_testset.py: what he really says to Claudio
+# (logs of 25-29/10), commands and free requests, names of his folders and programs.
+# One per line, written the way Whisper should write them; "#" starts a comment.
+Claudio, apri la chat.
+Claudio, che ore sono?
+Claudio, apri Chrome.
+Apri la cartella Tesi.
+Claudio, apri la cartella PSS.
+Claudio, apri la cartella Università.
+Apri la cartella Progetti.
+Claudio, apri Rocket League.
+Chiudi Rocket League.
+Claudio, chiuditi.
+Claudio, vai in pausa.
+Claudio, svegliati.
+Alza il volume.
+Abbassa il volume di 10.
+Claudio, apri il Blocco note e scrivi una poesia.
+Claudio, chiudi il Blocco note.
+Cancella tutto quello che è scritto.
+Apri Chrome e cerca Dainese Moto.
+Cerca la cartella BB Port Windows.
+Claudio, cosa sto guardando?
+Claudio, cosa c'è sullo schermo?
+Claudio, dimmi quanto fa 100 per 70.
+Raccontami una storia lunga.
+Basta, grazie.
+Stop.
+Sì, confermo.
+No, lascia stare.
+Ripeti quello che hai detto.
+Claudio, cambia voce.
+Parla più lentamente.
+Claudio, apri Discord.
+Apri la cartella Download.
+Ehi Claudio, come stai?
+Perché hai la voce così robotica? Che è successo?
+Non si dice sono sempre ragione, si dice ho sempre ragione.
+Claudio, che tempo fa domani a Milano?
+Ricordami di comprare il pane stasera.
+Claudio, metti in pausa la musica.
+Quanto manca a Natale?
+Claudio, spiegami in due parole cos'è un buco nero.

@@ -170,6 +170,14 @@ def describe_device(device: int | None, kind: str) -> str:
     return f"{info['name']} ({sd.query_hostapis(info['hostapi'])['name']})"
 
 
+def microphone_key(description: str) -> str:
+    """The microphone's own name in a describe_device() text, the same under every host API:
+    "Microfono (Wireless Stereo Headset) (Windows WASAPI)" and MME's cut "Microfono (Wireless
+    Stereo Head (MME)" are one microphone."""
+    name = description.rsplit(" (", 1)[0] if description.endswith(")") else description
+    return name[:MME_NAME_LENGTH]
+
+
 def stream_settings(device: int | None) -> Any:
     """WASAPI shared mode only accepts the mixer's rate (e.g. 48 kHz): let Windows convert
     our 16 kHz / 22.05 kHz streams. Other host APIs convert on their own."""

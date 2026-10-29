@@ -102,14 +102,26 @@ def test_first_match_without_wasapi() -> None:
     assert resolve_device("Wireless Stereo", "output", SAME_NAME[:2], HOSTAPIS) == 0
 
 
-def test_input_gain_boosts_and_clips_instead_of_wrapping() -> None:
+def test_input_gain_boosts_and_limits_instead_of_wrapping() -> None:
     import numpy as np
 
-    frame = np.array([0, 1000, -1000, 20000, -20000], dtype=np.int16)
-    boosted = apply_gain(frame, 10 ** (12 / 20))
+    frame = np.array([0, 1000, -1000, 12000, -12000, 20000, 32767], dtype=np.int16)
+    boosted = apply_gain(frame, 10 ** (6 / 20))
     assert boosted.dtype == np.int16
-    assert list(boosted[:3]) == [0, 3981, -3981]
-    assert list(boosted[3:]) == [32767, -32768]
+    assert list(boosted[:3]) == [0, 1995, -1995]  # quiet samples: just the boost
+    assert 23900 < boosted[3] < 23950 and boosted[4] == -boosted[3]  # just over the knee
+    assert boosted[3] < boosted[5] < boosted[6] < 32767  # bent, still ordered: no flat tops
+    overdriven = apply_gain(np.array([20000, -32768], dtype=np.int16), 10 ** (12 / 20))
+    assert list(overdriven) == [32767, -32767]  # far over full scale: at the top, not wrapped
+
+
+def test_microphone_key_is_the_same_under_every_host_api() -> None:
+    from claudio.audio.devices import microphone_key
+
+    wasapi = microphone_key("Microfono (Wireless Stereo Headset) (Windows WASAPI)")
+    mme = microphone_key("Microfono (Wireless Stereo Head (MME)")
+    assert wasapi == mme == "Microfono (Wireless Stereo Head"
+    assert microphone_key("Mic") == "Mic"
 
 
 WASAPI_DEFAULTS = [
