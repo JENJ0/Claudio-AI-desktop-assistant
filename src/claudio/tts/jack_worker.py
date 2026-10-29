@@ -51,6 +51,18 @@ CONTEXT = 480  # Qwen samples of the previous chunk kept to resample a chunk wit
 TAIL_S = 0.15  # speech ends this long after the input: RVC output follows the input by ~70 ms
 SENTENCE_RATE = 16_000  # what Applio's offline pipeline takes
 SPEAK_TOKENS = 300
+
+
+def frame_budget(text: str) -> int:
+    """Most codec frames (12 a second) Qwen3 may spend on this text.
+
+    Italian runs ~13 characters a second, about one frame a character; 1.5 a character plus 2 s
+    leaves room for slow, theatrical reads, yet a generation that loses the end of the text and
+    babbles on stops within a couple of seconds instead of running to a fixed 25 s.
+    """
+    return min(24 + round(1.5 * len(text)), 2000)
+
+
 INDEX_RATE = 0.0
 PROTECT = 0.33
 # Applio's mel pitch scale (rvc/infer/pipeline.py), the one the RVC model was trained on.
@@ -500,7 +512,7 @@ class Worker:
         rvc.begin()
         if not cancelled:
             for chunk, _rate, _timing in self.generate(
-                request["text"], request.get("language", "Auto")
+                request["text"], request.get("language", "Auto"), frame_budget(request["text"])
             ):
                 send(rvc.feed(chunk))
                 if rid <= self.cancelled_upto:

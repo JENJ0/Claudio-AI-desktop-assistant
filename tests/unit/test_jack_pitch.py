@@ -135,3 +135,10 @@ def test_no_rvc_applies_the_speed_without_rvc() -> None:
     tone = (0.3 * np.sin(np.arange(24_000) / 8)).astype(np.float32)
     pcm = b"".join(rvc.feed(tone) + rvc.flush())
     assert len(pcm) // 2 == round(24_000 / 0.9)
+
+
+def test_the_frame_budget_follows_the_text() -> None:
+    # 12 frames a second: a short reply cannot babble for long, a long one has room
+    assert w.frame_budget("Fatto, socio.") / 12 < 4
+    assert w.frame_budget("x" * 220) / 12 > 220 / 13 * 1.4
+    assert w.frame_budget("x" * 5000) == 2000

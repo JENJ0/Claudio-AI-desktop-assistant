@@ -192,3 +192,11 @@ async def test_played_stops_where_the_reply_was_cut() -> None:
     player.write = write
     await speaker.speak(stream("Uno. Due. Tre."))
     assert speaker.played == ["Uno."]
+
+
+async def test_grouped_reply_is_said_in_pieces_up_to_the_limit() -> None:
+    synth, player = FakeSynth(), FakePlayer()
+    speaker = StreamingSpeaker(synth, player, group_chars=20)
+    await speaker.speak(stream("Uno. Due", ". Tre lunghissimo davvero. Quattro."))
+    assert [t for t, _ in synth.calls] == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]
+    assert speaker.played == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]

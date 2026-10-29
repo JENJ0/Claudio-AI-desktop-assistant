@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased] - Jack keeps one voice in a reply
+
+### Changed
+- `[tts] jack_checkpoint` default `voices/jack/ft/1.7B-calmo/checkpoint-epoch-7`: 1.7B retrained
+  on calm Jack only. A quarter of the old training lines were battle shouts (median pitch above
+  165 Hz) and lines lasted at most 15 s (90% under 3.6 s), so a long generation could slide into
+  a high register the codec renders robotic and stay there. `jack_finetune.py --max-f0 165
+  --join-gap 1.0 --batch-size 1` keeps the calm lines and joins neighbours into clips up to 12 s;
+  whole paragraphs now stay at 99-122 Hz median (real Jack 100-126 Hz). JenJo's pick by ear, 29/10.
+- Jack says a reply's sentences together (`[tts] jack_group_chars` 220, about 11 s, the longest
+  stretch the voice was trained on; past it the timbre fades. 0 = one by one): each
+  sentence generated on its own drew a slightly different Jack, so the tone changed between
+  sentences (JenJo 28/10). Measured on 3 long paragraphs x 2 seeds (`jack_tone.py`): same-voice
+  score 0.69 whole vs 0.63 sentence by sentence, pitch spread 3.2 vs 5.5 semitones; talker
+  temperature, a fixed seed, the code predictor's temperature and the streaming chunk
+  boundaries made no steady difference. Long replies start a little later.
+- `jack_speed` back to 1.0 (JenJo 28/10: no slowing).
+- The Jack sentence timeout counts from the last audio received. The worker gives each piece
+  frames in proportion to its text (24 + 1.5 per character, at most 2000): a live check caught
+  "Chrome è aperto. Prego." babbling on for 6.7 s, which the old fixed 300 frames allowed.
+
 ## [Unreleased] - Jack on Qwen3-TTS 1.7B
 
 ### Changed
