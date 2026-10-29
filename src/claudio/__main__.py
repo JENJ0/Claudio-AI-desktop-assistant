@@ -159,9 +159,12 @@ def build_brain(
     return brain
 
 
-def make_jack(settings: Settings) -> JackSynth:
-    """Jack's worker, not started yet; its fallback voice is set by build_synth()."""
+def make_jack(settings: Settings, session: Path | None = None) -> JackSynth:
+    """Jack's worker, not started yet; its fallback voice is set by build_synth(). With a
+    `session` folder (and logging.save_voice) every piece Jack says is saved and checked
+    there, in jack/."""
     from claudio.tts.jack import JackSynth, worker_command
+    from claudio.tts.voice_check import VoiceMonitor
 
     tts = settings.tts
     models = settings.resolve(settings.models_dir)
@@ -173,6 +176,9 @@ def make_jack(settings: Settings) -> JackSynth:
         rvc=tts.jack_rvc,
         words=tts.jack_words,
         first_wait_s=tts.jack_first_wait_s,
+        monitor=VoiceMonitor(session / "jack")
+        if session is not None and settings.logging.save_voice
+        else None,
     )
 
 
@@ -261,6 +267,7 @@ def build_speaker(
         {language: voice for language, (voice, _) in voices.items()},
         first_clause_chars=settings.tts.first_clause_chars,
         group_chars=settings.tts.jack_group_chars if settings.tts.engine == "jack" else 0,
+        group_first_chars=settings.tts.jack_group_first_chars,
     )
     speaker.warm_up()
     others = "".join(f", {lang}: {label}" for lang, (_, label) in voices.items())
@@ -408,7 +415,7 @@ async def run_assistant(
     t0 = time.perf_counter()
     # Jack's worker is a process of its own: it loads (8-30 s) while everything else does,
     # and Claudio listens without waiting for it (a reply meanwhile waits jack_first_wait_s).
-    jack = make_jack(settings) if settings.tts.engine == "jack" else None
+    jack = make_jack(settings, session) if settings.tts.engine == "jack" else None
     jack_error: list[Exception | None] = []
     if jack is not None:
         jack.start_in_background(jack_error.append)

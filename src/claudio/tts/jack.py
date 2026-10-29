@@ -60,6 +60,10 @@ def worker_command(models: Path, tts: Any, **overrides: Any) -> list[str]:
         str(get("jack_speed")),
         "--temperature",
         str(get("jack_temperature")),
+        "--seed",
+        str(get("jack_seed")),
+        "--top-p",
+        str(get("jack_top_p")),
         *(["--pitch-fix"] if get("jack_pitch_fix") else []),
     ]
 
@@ -77,7 +81,9 @@ class JackSynth:
         rvc: str = "blocks",
         words: dict[str, str] | None = None,
         first_wait_s: float = 30.0,
+        monitor: Any = None,
     ) -> None:
+        self.monitor = monitor  # VoiceMonitor: every piece said is saved and its pitch logged
         self.words = dict(words or {})  # respellings: "file" -> "fàil" (see spoken_text)
         self.command = command
         # Told to Qwen3. Always Italian (JenJo, 24/10): "Auto" guessed the language per
@@ -305,6 +311,7 @@ class JackSynth:
         )
         deadline = time.monotonic() + self.sentence_timeout_s
         finished = False
+        said: list[np.ndarray] = []  # for the monitor
         try:
             while True:
                 event = self._next_event(max(deadline - time.monotonic(), 0.01))
@@ -315,12 +322,17 @@ class JackSynth:
                     # A reply said in one piece can last longer than the timeout: it counts
                     # from the last audio, so only a worker that stops producing fails.
                     deadline = time.monotonic() + self.sentence_timeout_s
-                    yield np.frombuffer(event["pcm"], dtype="<i2").astype(np.int16)
+                    chunk = np.frombuffer(event["pcm"], dtype="<i2").astype(np.int16)
+                    if self.monitor is not None:
+                        said.append(chunk)
+                    yield chunk
                 elif kind == "done":
                     self.last_first_ms = event.get("first_ms")
                     self.last_total_ms = int(event.get("total_ms", 0))
                     finished = True
                     self._last_done = time.monotonic()
+                    if self.monitor is not None and said and not event.get("cancelled"):
+                        self.monitor.check(text, np.concatenate(said), self.sample_rate)
                     return
                 elif kind == "error":
                     raise WorkerError(event.get("message", "errore"))

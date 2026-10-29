@@ -69,12 +69,14 @@ class StreamingSpeaker:
         voices: Mapping[str, Any] | None = None,
         first_clause_chars: int = 0,
         group_chars: int = 0,
+        group_first_chars: int = 0,
     ) -> None:
         self.synth = synth
         self.first_clause_chars = first_clause_chars  # the first piece may end at a comma
         # > 0: the sentences of a reply are said together, up to this many characters per
         # piece (Jack keeps one voice); 0: sentence by sentence, the first one at once.
         self.group_chars = group_chars
+        self.group_first_chars = group_first_chars  # the first piece leaves at this length
         self.voices = dict(voices or {})
         self.player = player
         self.effect = effect
@@ -156,7 +158,9 @@ class StreamingSpeaker:
         async def produce() -> None:
             try:
                 if self.group_chars:
-                    pieces = group_stream(split_stream(text_stream), self.group_chars)
+                    pieces = group_stream(
+                        split_stream(text_stream), self.group_chars, self.group_first_chars
+                    )
                 else:
                     pieces = split_stream(text_stream, first_clause_chars=self.first_clause_chars)
                 async for sentence in pieces:

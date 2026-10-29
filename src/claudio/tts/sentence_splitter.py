@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import re
 from collections.abc import AsyncIterator
 
@@ -133,20 +135,62 @@ async def split_stream(
         yield sentence
 
 
-async def group_stream(sentences: AsyncIterator[str], max_chars: int) -> AsyncIterator[str]:
+async def group_stream(
+    sentences: AsyncIterator[str], max_chars: int, first_chars: int = 0
+) -> AsyncIterator[str]:
     """Sentences joined into pieces of up to max_chars, each one said in a single breath.
 
     Jack's voice drifts between sentences generated one by one (each draws its own take
-    of Jack from the training lines); a whole reply in one generation keeps one voice
-    (JenJo 28/10: tone changing between sentences). A piece waits for its text, so a
-    reply starts once it is complete or long enough. A sentence longer than max_chars
-    stays whole.
+    of Jack from the training lines); a reply in few generations keeps one voice (JenJo
+    28/10: tone changing between sentences). But waiting for max_chars before the first
+    piece delayed every reply by up to 2 s (JenJo 29/10: M1 up to 3.4 s), so a piece takes
+    only what has ARRIVED by the time it is asked for: the first one leaves as soon as it
+    has `first_chars` (or the reply is over), and the rest of the reply, which Claude
+    writes while the first piece is generated and played, goes out together in the next
+    one. A sentence longer than max_chars stays whole.
     """
-    piece = ""
-    async for sentence in sentences:
-        if piece and len(piece) + 1 + len(sentence) > max_chars:
+    ready: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def read() -> None:
+        try:
+            async for sentence in sentences:
+                await ready.put(sentence)
+        finally:
+            await ready.put(None)
+
+    reader = asyncio.create_task(read())
+    held: str | None = None  # a sentence that did not fit the previous piece
+    first = True
+    try:
+        while True:
+            piece = held or await ready.get()
+            held = None
+            if piece is None:
+                break
+            ended = False
+            # Wait for more text only while the first piece is too short to start with;
+            # afterwards take what is there and never wait.
+            while True:
+                if first and len(piece) < first_chars:
+                    nxt = await ready.get()
+                elif ready.empty():
+                    break
+                else:
+                    nxt = ready.get_nowait()
+                if nxt is None:
+                    ended = True
+                    break
+                if len(piece) + 1 + len(nxt) > max_chars:
+                    held = nxt
+                    break
+                piece = f"{piece} {nxt}"
+            first = False
             yield piece
-            piece = ""
-        piece = f"{piece} {sentence}" if piece else sentence
-    if piece:
-        yield piece
+            if ended:
+                break
+        await reader  # a failure of the text stream reaches the caller
+    finally:
+        if not reader.done():
+            reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reader
