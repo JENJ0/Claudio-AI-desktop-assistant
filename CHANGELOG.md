@@ -18,9 +18,12 @@
   the device latency, logged at start-up as "Uscita audio: ... (latenza N ms)"), so HDMI and
   Bluetooth speakers get a longer deafness than headphones.
 - JenJo's own phrases in the conversation window are no longer taken for CLAUDIO's echo once
-  the room is quiet: the letter-by-letter echo check now applies only to a phrase heard at
-  once (`listened_ms` <= 300, new in metrics.jsonl). On 28-29/10 "apri la chat" after
-  "Chiudo la chat.", "Ehi, basta." and "non si dice sono sempre ragione..." were dropped.
+  the room is quiet: the letter-by-letter echo check now applies only to a short phrase
+  heard at once (`listened_ms` <= 300 and at most 1 s of voice, `voice_ms`; both new in
+  metrics.jsonl). On 28/10 "apri la chat" after "Chiudo la chat." was dropped (said 1.1 s
+  into the window), on 29/10 "non si dice sono sempre ragione..." (3 s of voice, started over
+  the end of the reply). "Ehi, basta." (0.4 s, at once) is still checked: probably the echo
+  of "...abbastanza".
 - `echo_tail_ms` applies also with `barge_in = false`.
 
 ## [Unreleased] - Jack keeps one voice in a reply

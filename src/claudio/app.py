@@ -59,6 +59,10 @@ CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for
 # later than this once it listens cannot be the reply's echo, whatever words it shares with
 # it (28-29/10: "apri la chat" after "Chiudo la chat." was dropped as CLAUDIO's own voice).
 ECHO_GRACE_MS = 300
+# Nor can a phrase with more voice than this: the echo left after the reply and its tail is a
+# fading word or two (29/10: 3 s of "non si dice sono sempre ragione..." said over the end of
+# the reply were dropped as its echo).
+ECHO_VOICE_MS = 1000
 
 
 class State(enum.StrEnum):
@@ -582,10 +586,11 @@ class Assistant:
             and decision.kind is not Kind.CONTINUE
             and not self.responder.awaiting  # "sì" to "Confermi?" may be in the question
             and info.get("listened_ms", 0) <= ECHO_GRACE_MS
+            and self.endpointer.stats()["voice_ms"] <= ECHO_VOICE_MS
             and self._is_echo(text, self._said)
         ):
             # The end of the reply, still in the room when the window opened (a speaker
-            # slower than measured): only a phrase heard at once.
+            # slower than measured): only a short phrase heard at once.
             log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", text)
             return Decision(Kind.NOT_REQUEST, text, "echo")
         if decision.reason and not decision.dropped and decision.kind is not Kind.CONTINUE:

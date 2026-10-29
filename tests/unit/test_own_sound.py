@@ -386,3 +386,28 @@ async def test_a_phrase_said_once_the_room_is_quiet_is_never_the_echo(
     assert [row["outcome"] for row in rows][:2] == ["ok", "ok"]
     assert [row["command"] for row in rows][:2] == ["close_chat", "open_chat"]
     assert len(speaker.spoken) >= 2 and rows[1]["listened_ms"] > 300
+
+
+async def test_a_long_phrase_said_over_the_end_of_the_reply_is_never_the_echo(
+    fake_vad, vad_settings, matcher
+) -> None:
+    """29/10 01:30: JenJo started "non si dice sono sempre ragione..." over the end of the
+    reply and went on for 3 s; heard at once, with the reply's words, it was dropped as its
+    echo. What is left of the echo once the window listens is a word or two, not seconds."""
+    stt = EchoStt(["chiudi la chat", "apri la chat"], echo="")
+    assistant, speaker, _ = assistant_for(
+        fake_vad, vad_settings, matcher, stt, FakeWake({3}), conversation_s=3.0
+    )
+
+    async def steps() -> AsyncIterator[np.ndarray]:
+        for f in several(SILENCE, 3) + several(VOICE, 10):
+            yield f
+        async for f in until(assistant, lambda: bool(speaker.spoken)):
+            yield f
+        for f in several(VOICE, 25) + several(SILENCE, 30):  # from the reply's last words
+            yield f
+
+    await play(assistant, steps())
+    rows = list(assistant.history)
+    assert [row["command"] for row in rows][:2] == ["close_chat", "open_chat"]
+    assert rows[1]["listened_ms"] <= 300 and rows[1]["voice_ms"] > 1000
