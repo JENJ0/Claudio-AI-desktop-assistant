@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -42,6 +43,7 @@ class AudioPlayer:
         sample_rate: int,
         device: str | int = "",
         windows_default: Callable[[], str | None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.sample_rate = sample_rate
         self.device = device
@@ -54,6 +56,11 @@ class AudioPlayer:
         # Volume of what is played, read at every slice (lowered while a voice may be
         # interrupting). Only replies sent with `cancel` are sliced, so beeps keep their level.
         self.gain = 1.0
+        # When the last audio written has left the stream (on `clock`), and the delay the
+        # device adds after that: how long CLAUDIO's own sound is still coming out.
+        self.clock = clock
+        self._ends_at = 0.0
+        self._latency_s = 0.0
 
     def start(self) -> None:
         name = self.windows_default() if self.windows_default else None
@@ -83,7 +90,12 @@ class AudioPlayer:
             )
         stream.start()
         self._stream, self._index = stream, index
-        log.info("Uscita audio: %s", describe_device(index, "output"))
+        self._latency_s = float(getattr(stream, "latency", 0.0) or 0.0)
+        log.info(
+            "Uscita audio: %s (latenza %.0f ms)",
+            describe_device(index, "output"),
+            self._latency_s * 1000,
+        )
 
     def _follow_default(self) -> None:
         """Move to Windows' default output if it changed since the last sentence."""
@@ -128,8 +140,15 @@ class AudioPlayer:
                 chunk = data[start : start + step]
                 if cancel is not None and self.gain < 1.0:
                     chunk = (chunk * max(self.gain, 0.0)).astype(np.int16)
+                # It plays after what is already queued, or now if the stream ran dry.
+                self._ends_at = max(self._ends_at, self.clock()) + len(chunk) / self.sample_rate
                 self._write(chunk)
         return True
+
+    def queued_s(self) -> float:
+        """Seconds until the audio already written has come out of the speakers: write()
+        returns once it is queued, and the device adds its own delay (HDMI, Bluetooth)."""
+        return max(self._ends_at + self._latency_s - self.clock(), 0.0)
 
     def _write(self, data: np.ndarray) -> None:
         try:

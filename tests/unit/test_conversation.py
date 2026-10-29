@@ -800,17 +800,21 @@ async def test_once_its_echo_is_known_the_reply_stops_lowering_itself(
 # --- 28/10: CLAUDIO's own beeps and a "stop" lost in the echo ----------------------------
 
 
-def test_the_wake_word_does_not_hear_claudios_own_sounds(fake_vad, vad_settings, matcher) -> None:
+async def test_the_wake_word_does_not_hear_claudios_own_sounds(
+    fake_vad, vad_settings, matcher
+) -> None:
     """JenJo 28/10: the low beep that ends a conversation woke the "claudio" model."""
     assistant, _, _, _ = build(fake_vad, vad_settings, matcher, ["x"])
     assistant.echo_tail_ms = 400
     frame = np.zeros(1280, dtype=np.int16)  # 80 ms
-    assistant._beeps.add(object())  # a beep is playing
-    assert assistant._hears_itself(frame)
-    assistant._beeps.clear()
-    assistant._wake_deaf_for_tail()  # the beep is over: its tail
-    deaf = [assistant._hears_itself(frame) for _ in range(6)]
-    assert deaf == [True] * 5 + [False]  # 400 ms, then the wake word listens again
+    assistant._beep("cancel")  # a beep is playing
+    await assistant.handle_frame(frame)
+    await assistant.wait_idle()  # the beep is over: its tail
+    for _ in range(5):  # 400 ms
+        await assistant.handle_frame(frame)
+    assert assistant.wake.calls == 0
+    await assistant.handle_frame(frame)
+    assert assistant.wake.calls == 1  # then the wake word listens again
     assert assistant.wake.resets == 1  # starting clean, without the beep in its buffer
 
 

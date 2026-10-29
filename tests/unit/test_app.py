@@ -103,6 +103,10 @@ class FakeSpeaker:
         self.beeps: list[str] = []
         self.ducks: list[float | None] = []
         self.played: list[str] = []
+        self.queued = 0.0  # seconds still coming out of the speakers after a sound
+
+    def queued_s(self) -> float:
+        return self.queued
 
     def interrupt(self) -> None:
         pass

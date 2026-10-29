@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased] - IT-0: CLAUDIO never hears itself
+
+### Fixed
+- One gate for every sound of CLAUDIO's own (`audio/own_sound.py`): while a reply, a beep or
+  "Sono pronto" plays, and until the speakers have played it out plus `echo_tail_ms`, the wake
+  word does not listen and the windows that open after CLAUDIO spoke are deaf. Before, only some
+  sounds were covered: the low beep after a phrase dropped in the conversation window, the
+  pause/"basta"/error beeps, "Sono pronto" and typed replies read aloud reached the wake word
+  in full (the 28/10 self-wakes after the low beep).
+- The answer to "Confermi?" / "Per procedere dì: confermo." no longer hears the question's own
+  end: in a test with its echo, the level 3 action ran on CLAUDIO's own "confermo", and a level
+  2 one was cancelled by its own "Confermi?".
+- The second chance and the audio before a wake word never hold CLAUDIO's own sound: a reply
+  saying the name could wake it through Whisper.
+- The player measures how long its sound is still coming out (`queued_s`: what is queued plus
+  the device latency, logged at start-up as "Uscita audio: ... (latenza N ms)"), so HDMI and
+  Bluetooth speakers get a longer deafness than headphones.
+- JenJo's own phrases in the conversation window are no longer taken for CLAUDIO's echo once
+  the room is quiet: the letter-by-letter echo check now applies only to a phrase heard at
+  once (`listened_ms` <= 300, new in metrics.jsonl). On 28-29/10 "apri la chat" after
+  "Chiudo la chat.", "Ehi, basta." and "non si dice sono sempre ragione..." were dropped.
+- `echo_tail_ms` applies also with `barge_in = false`.
+
 ## [Unreleased] - Jack keeps one voice in a reply
 
 ### Changed

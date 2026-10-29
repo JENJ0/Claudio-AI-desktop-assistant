@@ -106,8 +106,10 @@ command ("basta" / "stop" only stops; `barge_in_needs_name = false` takes any ph
 is answered, the cut reply goes on ("Dicevo: ...", `resume_s`). Noise brings
 the volume back. Its own voice coming back through speakers is ignored, also when Whisper
 mishears it ("Sono le 19 e 42" -> "Se non le diciamo"): the phrase is compared letter by letter
-with what was just said (`echo_similarity`), and the conversation window starts deaf for
-`echo_tail_ms`. Headphones still work best. All of it is in `[conversation]` (`window_s = 0` turns the window
+with what was just said (`echo_similarity`). After every sound of its own (a reply, a beep,
+"Sono pronto") nothing listens until the speakers have played it out (CLAUDIO measures their
+delay) plus `echo_tail_ms` for the room: not the wake word, not the conversation window, not the
+answer to "Confermi?" (it never confirms its own question). Headphones still work best. All of it is in `[conversation]` (`window_s = 0` turns the window
 off, `barge_in = false` the listening while speaking, `barge_in_mode` how it reacts).
 
 ## Claude (questions)
