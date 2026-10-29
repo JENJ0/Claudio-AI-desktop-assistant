@@ -329,7 +329,7 @@ class NoiseSettings(BaseModel):
 class GuessSettings(BaseModel):
     """A phrase about to be dropped (false wake, not addressed to Claudio, noise) that sounds
     like a command: Haiku guesses what JenJo said and how likely it is (brain/guess.py).
-    Only those phrases cost a call (~0.5 s, ~0.0001 $); the others are dropped for free."""
+    Only those phrases cost a call (1-1.5 s, ~0.0001 $); the others are dropped for free."""
 
     enabled: bool = True  # needs [claude] enabled
     near_floor: float = Field(65.0, ge=0, le=100)  # closeness (letters or sound) to a command

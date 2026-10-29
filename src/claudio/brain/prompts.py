@@ -196,7 +196,7 @@ Claudio's commands (id: what JenJo says):
 {commands}
 
 Answer with:
-- why: at most 8 words, in English: what the sounds and the evidence point to.
+- why: at most 4 words, in English.
 - command: the id of the command JenJo most likely asked Claudio for; "" when it was not \
 for Claudio or not one of these commands.
 - said: that command as JenJo would say it, one of its phrases as listed, with the number \

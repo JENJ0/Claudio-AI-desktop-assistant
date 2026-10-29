@@ -12,7 +12,7 @@
   `ask_at` (0.5) Claudio asks "Hai detto: ...?" first, below it is dropped as before. Pausing
   and switching off are always asked; a far voice, the echo of Claudio's own voice and silence
   are never guessed. Real drops from JenJo's logs: "Spenditi." (shutdown, 88), "Audio Bust."
-  ("Claudio basta", 67), "Apremi qualcosa." (71). About 0.0001 USD and 0.5 s, only for those
+  ("Claudio basta", 67), "Apremi qualcosa." (71). About 0.00013 USD and 1-1.5 s (measured on the PC, 29/10), only for those
   phrases; counted in the spending ledger; `guess*` columns in metrics.jsonl.
 - The answer to "Hai detto: ...?": "sì" runs it (a level 2 command without a second
   "Confermi?"), "no" drops it, "no, alza il volume" is a new request; the question's own echo

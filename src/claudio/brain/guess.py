@@ -7,7 +7,8 @@ other guesses, how it was heard (wake word, loudness, confidence, the reply befo
 closest commands, and answers in JSON: what JenJo most likely said, how likely, which command.
 intake.verdict() turns that into act / ask / drop.
 
-One short call (~1,000 tokens in, ~40 out: ~0.0001 $ with Haiku 5.5, ~0.5 s), counted by the
+One short call (~1,100 tokens in, ~40 out: ~0.00013 $ with Haiku 5.5, 1-1.5 s on JenJo's
+line, 29/10: mostly the network, the length of the answer barely counts), counted by the
 spending counter like every other. No answer in time, no key, budget spent: None, and the
 phrase is dropped as before."""
 
