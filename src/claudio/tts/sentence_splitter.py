@@ -135,10 +135,14 @@ async def split_stream(
         yield sentence
 
 
+_PAUSED = ""  # the text stopped: split_stream never yields an empty sentence
+
+
 async def group_stream(
-    sentences: AsyncIterator[str], max_chars: int, first_chars: int = 0
+    text: AsyncIterator[str], max_chars: int, first_chars: int = 0, pause_s: float = 0.0
 ) -> AsyncIterator[str]:
-    """Sentences joined into pieces of up to max_chars, each one said in a single breath.
+    """The sentences of streamed `text` joined into pieces of up to max_chars, each one
+    said in a single breath.
 
     Jack's voice drifts between sentences generated one by one (each draws its own take
     of Jack from the training lines); a reply in few generations keeps one voice (JenJo
@@ -148,15 +152,39 @@ async def group_stream(
     has `first_chars` (or the reply is over), and the rest of the reply, which Claude
     writes while the first piece is generated and played, goes out together in the next
     one. A sentence longer than max_chars stays whole.
+
+    `pause_s` > 0: the first piece also leaves, shorter, once no new text has come for
+    that long: Claude is running a tool (30/10 14:07, "Ci guardo, socio." waited 2.1 s for
+    three calls). It is timed on the text, not on whole sentences, so a long sentence still
+    being written is not a pause; whitespace alone does not count as new text.
     """
+    loop = asyncio.get_running_loop()
+    moved = loop.time()  # when the last text arrived
     ready: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def noted() -> AsyncIterator[str]:
+        nonlocal moved
+        async for chunk in text:
+            if chunk.strip():
+                moved = loop.time()
+            yield chunk
 
     async def read() -> None:
         try:
-            async for sentence in sentences:
+            async for sentence in split_stream(noted()):
                 await ready.put(sentence)
         finally:
             await ready.put(None)
+
+    async def more() -> str | None:
+        """The next sentence for the first piece; _PAUSED once the text stopped coming."""
+        while pause_s > 0:
+            left = pause_s - (loop.time() - moved)
+            if left <= 0:
+                return _PAUSED
+            with contextlib.suppress(TimeoutError):
+                return await asyncio.wait_for(ready.get(), left)
+        return await ready.get()
 
     reader = asyncio.create_task(read())
     held: str | None = None  # a sentence that did not fit the previous piece
@@ -172,7 +200,9 @@ async def group_stream(
             # afterwards take what is there and never wait.
             while True:
                 if first and len(piece) < first_chars:
-                    nxt = await ready.get()
+                    nxt = await more()
+                    if nxt == _PAUSED:
+                        break  # say what is there while Claude is busy
                 elif ready.empty():
                     break
                 else:

@@ -70,6 +70,7 @@ class StreamingSpeaker:
         first_clause_chars: int = 0,
         group_chars: int = 0,
         group_first_chars: int = 0,
+        group_pause_s: float = 0.0,
     ) -> None:
         self.synth = synth
         self.first_clause_chars = first_clause_chars  # the first piece may end at a comma
@@ -77,6 +78,7 @@ class StreamingSpeaker:
         # piece (Jack keeps one voice); 0: sentence by sentence, the first one at once.
         self.group_chars = group_chars
         self.group_first_chars = group_first_chars  # the first piece leaves at this length
+        self.group_pause_s = group_pause_s  # or once Claude's text stops for this long
         self.voices = dict(voices or {})
         self.player = player
         self.effect = effect
@@ -163,7 +165,10 @@ class StreamingSpeaker:
             try:
                 if self.group_chars:
                     pieces = group_stream(
-                        split_stream(text_stream), self.group_chars, self.group_first_chars
+                        text_stream,
+                        self.group_chars,
+                        self.group_first_chars,
+                        self.group_pause_s,
                     )
                 else:
                     pieces = split_stream(text_stream, first_clause_chars=self.first_clause_chars)

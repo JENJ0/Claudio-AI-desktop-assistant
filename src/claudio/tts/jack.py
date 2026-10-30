@@ -113,6 +113,7 @@ class JackSynth:
         self._restarting = False
         self._started = threading.Event()  # set = no first start in progress
         self._started.set()
+        self._wait_until = 0.0  # replies wait for a loading worker until then (monotonic)
         self._abort_wait = threading.Event()  # "basta" while waiting for the first start
         atexit.register(self.close)
 
@@ -151,11 +152,17 @@ class JackSynth:
         log.info("Worker Jack pronto in %.1f s (VRAM GPU %d MB)", self.load_s, self.vram_mb)
 
     def start_in_background(
-        self, on_done: Callable[[WorkerError | None], None] | None = None
+        self,
+        on_done: Callable[[WorkerError | None], None] | None = None,
+        wait_s: float | None = None,
     ) -> None:
         """Start the worker without waiting for it: its models load (8-30 s) while Claudio
         loads the rest and listens. `on_done` gets None once it is ready, or the error. A
-        worker that fails here is not retried: its fallback speaks, as with start()."""
+        worker that fails here is not retried: its fallback speaks, as with start().
+        Replies wait for it up to `wait_s` (default first_wait_s) from now, all together:
+        later pieces of a reply do not wait again, and 0 lets the fallback speak at once
+        (the graphics card is full: Jack may load late, or never)."""
+        self._wait_until = time.monotonic() + (self.first_wait_s if wait_s is None else wait_s)
         self._restarting = True  # a sentence meanwhile must not start a second worker
         self._started.clear()
 
@@ -284,13 +291,14 @@ class JackSynth:
         yield audio
 
     def _wait_for_start(self) -> bool:
-        """Wait up to first_wait_s for the worker still loading. False if cancelled."""
+        """Wait for the worker still loading, until the deadline of its start: each piece
+        waited first_wait_s anew before, so a reply in three pieces could wait 90 s when
+        the worker hung (IT-1 5.3). False if cancelled."""
         self._abort_wait.clear()
-        deadline = time.monotonic() + self.first_wait_s
         while not self._started.wait(0.05):
             if self._abort_wait.is_set():
                 return False
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= self._wait_until:
                 log.info("Jack si sta ancora caricando: questa frase la dice la voce di riserva")
                 break
         return True
