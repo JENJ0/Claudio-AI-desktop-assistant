@@ -32,7 +32,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
 uv sync                                   # senza GPU: uv sync --no-group gpu
-uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper turbo + small
+uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper large-v3 + small (~3 GB)
 uv run claudio --check                    # tutte le righe devono essere OK
 uv run python scripts/check_gpu.py        # verifica che Whisper giri davvero sulla RTX
 ```
@@ -221,7 +221,7 @@ riusa il passaggio dell'encoder della trascrizione, quindi non costa quasi nulla
 incerto (sotto `language_confidence`, 0.6; per l'inglese `other_confidence`, 0.8, perché l'italiano
 veloce a Whisper sembra spesso inglese) Claudio tiene la lingua della richiesta precedente. Una
 richiesta sentita come inglese che nessun comando capisce viene ritrascritta in italiano (circa
-120 ms, solo in quel caso): "cue the calculator" diventa "apri la calcolatrice".
+0,2 s, solo in quel caso): "cue the calculator" diventa "apri la calcolatrice".
 `retry_in_first_language = false` lo disattiva. Con
 una lingua sola (`CLAUDIO_STT__LANGUAGES=it` in `.env`) il riconoscimento non c'è proprio. Il prompt di
 Whisper è per lingua, in `[stt.prompts]`. I messaggi del programma (console, log, `--check`) sono
@@ -265,9 +265,10 @@ punteggio massimo raggiunto: `benchmark_latency.py --log` li elenca per capire q
 la soglia.
 
 Un tentativo mancato ha anche una seconda possibilità (`wakeword.second_chance`): Whisper ascolta
-l'ultimo secondo e mezzo, circa 130 ms sulla GPU e solo in quei momenti, e se sente il nome
-CLAUDIO si attiva lo stesso. La riga dice cosa ha sentito (`second_chance`, `second_chance_ms`),
-così si vedono anche i tentativi mancati che non erano la wake word.
+l'ultimo secondo e mezzo, circa 130 ms sulla GPU con turbo (di più con large-v3) e solo in quei
+momenti, e se sente il nome CLAUDIO si attiva lo stesso. La riga dice cosa ha sentito
+(`second_chance`, `second_chance_ms`), così si vedono anche i tentativi mancati che non erano la
+wake word.
 
 ```powershell
 uv run python scripts/benchmark_latency.py --log                      # dal vivo
@@ -281,8 +282,8 @@ uv run python scripts/benchmark_latency.py --replay                    # rifà l
 e mostra per ognuno il testo di allora, quello di adesso e il comando riconosciuto, poi il tempo
 mediano di Whisper. Con `--lead-in 0.4` (secondi) o `--lead-in none` cambia quanto audio detto
 prima del bip arriva a Whisper (di base tutto, wake word compresa); con `--beam 1` Whisper prova
-una sola ipotesi invece di 5, con `--model large-v3` un altro modello (va prima scaricato con
-`download_models.py --whisper large-v3`).
+una sola ipotesi invece di 5, con `--model large-v3-turbo` il modello più veloce che Claudio usava
+fino al 29/10 (se manca: `download_models.py --whisper large-v3-turbo`).
 
 `compare_stt.py` confronta i motori di trascrizione sulle stesse richieste salvate e conta quante
 ognuno ne trasforma in un comando conosciuto, con tempo mediano e p90:
@@ -305,7 +306,26 @@ Quando Whisper è insicuro di una richiesta che va a Claude (un segmento con `av
 `stt.alternatives` (2) trascrizioni alternative dall'n-best di Whisper: `[it | unsure: "Apri la
 cartella Tesi."] Apri la cartella desi.` Il prompt di sistema chiede a Haiku di dedurre cosa è
 stato detto più probabilmente. Si riusa l'n-best della lista chiusa; altrimenti parte un'altra
-passata di Whisper (~120 ms), solo su queste richieste. `alternatives = 0` lascia solo la nota.
+passata di Whisper (~0,2 s), solo su queste richieste. `alternatives = 0` lascia solo la nota.
+
+Per misurare quanto CLAUDIO capisce *te*, registra una volta un set di prova e dagli un voto:
+`stt_testset.py` mostra una alla volta le 40 frasi di `scripts/stt_frasi_it.txt` (quello che dici
+davvero a Claudio) e registra ognuna da tutti i microfoni insieme, senza guadagno, in
+`data/stt_testset/`; `stt_bench.py` dà poi, per ogni microfono, la percentuale di parole sbagliate
+(WER), i comandi capiti e il tempo per frase di quello che CLAUDIO fa oggi (`live`: il suo
+guadagno, il suo prompt, il taglio di Silero) e delle varianti (`grezzo` senza guadagno,
+`frasi`/`vuoto` altri prompt, `beam1`, `large`/`turbo` altri modelli, `novad`, `parakeet`); con
+`--details` ogni frase sbagliata e, per una vuota, il perché (Silero non ha sentito voce, Whisper
+l'ha presa per silenzio o per un'allucinazione nota). Chiudi prima CLAUDIO.
+
+```powershell
+uv run python scripts/stt_testset.py          # Invio, leggi la frase, Invio (r = di nuovo, q = basta)
+uv run python scripts/stt_testset.py --controlla    # registrazioni mute o tagliate alla fine
+uv run python scripts/stt_testset.py --rifai 10 25  # registra di nuovo quelle frasi
+uv run python scripts/stt_bench.py --details
+uv run python scripts/stt_bench.py --variants live live+beam1 parakeet
+uv run python scripts/stt_bench.py --set data/stt_testset_2   # un altro set
+```
 
 ## Sviluppo
 

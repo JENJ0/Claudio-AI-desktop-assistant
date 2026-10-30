@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from claudio.stt.vocabulary import (
     Vocabulary,
     folder_names,
@@ -59,6 +61,22 @@ def test_spoken_form_and_usable_names() -> None:
     assert spoken_form("PSS") == "PSS" and spoken_form("bbport-windows") == "bbport-windows"
     assert usable("Rocket League") and not usable("2024") and not usable("Nuova cartella")
     assert not usable("x" * 40)
+
+
+@pytest.mark.parametrize(
+    ("name", "said"),
+    [
+        ("claudio-it0-fluidita", False),  # a worktree: Whisper wrote it for "chiuditi"
+        ("it0-microfono-lavoro", False),
+        ("python3.11", False),
+        ("bbport-windows", True),  # no digits: a name JenJo says
+        ("Tesi_2025", True),  # a year is a word too
+        ("PS5 Giochi", True),  # spaces: written to be read
+        ("Windows11", True),  # one piece
+    ],
+)
+def test_names_written_for_programs_are_left_out(name: str, said: bool) -> None:
+    assert usable(name) is said
 
 
 def test_most_recent_first_and_each_name_once(tmp_path: Path) -> None:

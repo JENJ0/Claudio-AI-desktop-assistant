@@ -459,6 +459,8 @@ async def run_assistant(
         if settings.audio.auto_gain
         else None
     )
+    if level is not None:
+        capture.on_device = level.use  # every microphone keeps its own gain
 
     logs = settings.resolve(settings.logs_dir)
     chat = ChatStore(settings.resolve(settings.data_dir) / CHAT_DB, session.name)

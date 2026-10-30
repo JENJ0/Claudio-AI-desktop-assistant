@@ -26,8 +26,8 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 # is weaker: Whisper confirms each of its detections. v0.1.0 used the pre-trained "hey_jarvis".
 [wakeword]
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
-confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more)
-second_chance = true       # after one, Whisper listens to the last 2.5 s (~130 ms) and wakes CLAUDIO if it hears the name
+confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more with turbo, more with large-v3)
+second_chance = true       # after one, Whisper listens to the last 2.5 s (~130 ms with turbo) and wakes CLAUDIO if it hears the name
 unclear_min = 0.6          # a "claudio" this strong heard by Whisper as nothing or "Grazie." wakes, then the request needs the name or a command
 off_threshold_boost = 0.1  # while off ("spegniti") every wake threshold is this much higher; only "accenditi" is heard
 verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
@@ -37,7 +37,8 @@ name = "hey_claudio"
 threshold = 0.30           # benchmark on JenJo's 50 takes: 44 heard, 0 false wakes in the room noise
 
 # "Claudio" alone (JenJo, 23/10): the model is weak (9 takes in 50 at 0.5, ~60 false wakes an
-# hour), so every detection is checked by Whisper (~130 ms): it wakes only if the name is heard.
+# hour), so every detection is checked by Whisper (~130 ms with turbo, more with large-v3): it
+# wakes only if the name is heard.
 # A low threshold catches more; the noise it lets through costs a Whisper pass, not a wake.
 [[wakeword.models]]
 name = "claudio"
@@ -56,7 +57,10 @@ long_after_s = 1.5         # shorter phrases (commands) still end after end_sile
 continue_s = 2.0           # a phrase left halfway ("apri Chrome e cerca...") waits this long for the rest (0 = off)
 
 [stt]
-model = "large-v3-turbo"
+# large-v3 (JenJo 29/10): on JenJo's 40 test sentences 20.7% words wrong instead of 28.7% with the
+# headset, 38.8% instead of 59.6% with the webcam, for ~0.1 s more per request on the GPU
+# (scripts/stt_bench.py). "large-v3-turbo" is the faster one.
+model = "large-v3"
 device = "auto"            # auto | cuda | cpu
 compute_type = "float16"
 fallback_model = "small"
@@ -71,7 +75,7 @@ retry_in_first_language = true # an English request no command understands is re
 closed_list = true             # a request not understood: Whisper proposes 5 transcriptions, the first known command wins
 closed_list_max_words = 5      # longer requests skip it (~150 ms saved): a question for Claude, not a misheard command
 unsure_logprob = -0.2          # Whisper below this on a request for Claude: Haiku is told it may be misheard
-alternatives = 2               # ...and gets up to 2 other transcriptions (one more Whisper pass, ~120 ms, only then; 0 = note only)
+alternatives = 2               # ...and gets up to 2 other transcriptions (one more Whisper pass, ~0.2 s, only then; 0 = note only)
 beam_size = 5              # on JenJo's recordings: 17/22 commands instead of 14, +2 ms on the GPU
 # The names on the PC go in Whisper's prompt ("Cartelle: Tesi, PSS. Programmi: Rocket League."),
 # so short names are written right ("Tesi", not "desi"): the most recent folders of Desktop and
@@ -85,11 +89,16 @@ no_speech_threshold = 0.6
 cpu_threads = 4
 
 [stt.prompts]              # Whisper's prompt per language, read as the words said just before
-# Whole sentences, as JenJo talks (25/10, scripts/compare_stt.py on 23 of his requests): fixed
-# "pure sono", "Chiaro son" -> "che ore sono", "Il punto è" -> "raccontami", "Projecti" ->
-# "Progetti", which a list of commands got wrong; same speed.
-it = "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. Apri Chrome e la cartella Download, poi alza il volume. Basta, grazie."
-en = "Hey Claudio, what time is it? Claudio, tell me a short story. Open Chrome and the Downloads folder, then turn up the volume. Stop, thanks."
+# Whole sentences, as JenJo talks (25/10, scripts/compare_stt.py on 23 of JenJo's requests):
+# fixed "pure sono", "Chiaro son" -> "che ore sono", "Il punto è" -> "raccontami", "Projecti" ->
+# "Progetti", which a list of commands got wrong; same speed. The commands go last: the end of
+# the prompt weighs most, and with them first 3-7 points more of the words came out wrong on
+# every microphone and take of the test set (30/10). On unclear audio Whisper repeats the end
+# of its prompt ("Basta, grazie." was heard for 7 different requests, 29/10): such a text is
+# transcribed again without the prompt (~0.2 s, so a bare "alza il volume" pays it), never run
+# as if said.
+it = "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. Apri Chrome e la cartella Download, poi alza il volume."
+en = "Hey Claudio, what time is it? Claudio, tell me a short story. Open Chrome and the Downloads folder, then turn up the volume."
 
 [tts]
 engine = "jack"            # "jack" (Claudio's voice, JenJo 23/10), "kokoro" (Nicola) or "piper"; the others are fallbacks
