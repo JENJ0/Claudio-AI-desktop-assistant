@@ -15,7 +15,15 @@ from claudio.router.responder import LocalResponder
 from claudio.system import SystemControl
 from claudio.wakeword.detector import best_detection, raised
 from tests.unit.test_actions import Recorder
-from tests.unit.test_app import AudioClock, FakeSpeaker, FakeStt, OnsetWake, run_requests
+from tests.unit.test_app import (
+    AudioClock,
+    FakeSpeaker,
+    FakeStt,
+    FakeWake,
+    OnsetWake,
+    run_frames,
+    run_requests,
+)
 
 # --- the words: Whisper's spellings of the same sounds ------------------------------------
 
@@ -244,6 +252,34 @@ async def test_off_without_the_name_whispers_other_guesses_are_searched_for_acce
     row = assistant.history[-1]
     assert row["second_chance"] == "Dai, accenditi." and row["second_chance_from"] == "Grazie a te."
     assert row["closed_list_from"] == "Grazie a te." and row["text"] == "Dai, accenditi."
+
+
+async def test_off_accenditi_heard_by_the_second_chance_alone_turns_claudio_on(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    """The model fired 1.2 s after "Claudio, accenditi." had ended: too late for the
+    lead-in, but the second chance heard the whole command, and that is the request."""
+    system = SystemControl()
+    system.apply("off")
+    rec = Recorder()
+    speaker, stt = FakeSpeaker(), FakeStt(["Claudio, accenditi."])
+    checks = Heard(["Claudio, accenditi."])
+    assistant = Assistant(
+        FakeWake({26}),
+        Endpointer(fake_vad, vad_settings),
+        stt,
+        LocalResponder(matcher, ActionRunner(rec.ctx(), system)),
+        speaker,
+        clock=AudioClock(),
+        system=system,
+        second_chance=checks,
+        conversation_s=0,
+    )
+    frames = make_frames("silence", 160) + make_frames("speech", 800)
+    await run_frames(assistant, frames + make_frames("silence", 2400))
+    assert checks.calls == 1 and stt.heard  # the second chance's audio, transcribed
+    assert not system.off and speaker.spoken == ["Eccomi, sono acceso."]
+    assert speaker.beeps == ["tick"]
 
 
 async def test_off_noise_never_reaches_whisper(

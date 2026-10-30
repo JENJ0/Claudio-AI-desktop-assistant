@@ -491,6 +491,13 @@ class Assistant:
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
             self._on_wake(name, score, second_chance=text, **info)
+            if not self.endpointer.started and self.responder.understands(text, language):
+                # A command said whole before the wake word fired, too long ago for the
+                # lead-in ("Claudio, accenditi." heard here, then a timeout): what the second
+                # chance heard is the request; it ends with the usual pause.
+                self.endpointer.resume(heard)
+                if self._interaction is not None:
+                    self._interaction.mark("speech_start")
             return
         if self.state is State.IDLE and self._unsure_wake(name, score, text, voice is not None):
             # Not a second chance: the request must have the name or be a command (verify).
