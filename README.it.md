@@ -168,7 +168,8 @@ Claude vede tutte le regole e i fatti più recenti dopo il prompt di sistema (in
 0,00001 $ a richiesta); i fatti che non stanno in `[memory] block_chars` vanno con una richiesta
 solo se ne condividono le parole. Claude può anche salvare ("segnatelo", un "ricordati" capito
 male) e dimenticare con i suoi strumenti: una regola o una cancellazione proposta da lui vuole il
-tuo sì. Password, PIN, carte e IBAN non vengono mai salvati. "Ricordami di... alle 5" è un
+tuo sì. Salva anche da solo una preferenza duratura che gli dici, e lo dice ("Me lo segno"):
+`[memory] learn = false` lo spegne. Password, PIN, carte e IBAN non vengono mai salvati. "Ricordami di... alle 5" è un
 promemoria, non un ricordo: non c'è ancora.
 
 ## Azioni sul PC

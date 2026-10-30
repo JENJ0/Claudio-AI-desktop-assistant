@@ -41,11 +41,20 @@ Nel log: `route=memory`, nessuna riga `Claude haiku...` per queste frasi.
 | "Claudio, cosa ricordi?" | "Ricordo 3 cose. Le ultime: ..." (le regole lette con "da ora in poi") |
 | "Claudio, cosa ricordi di mia sorella?" | "Mi hai detto: mia sorella si chiama Anna." |
 | "Claudio, ricordati che mia sorella abita a Torino", poi "Claudio, dimentica mia sorella" | "Ne ricordo 2: ... Quale dimentico?" e resta in ascolto senza wake word |
-| "la prima" (entro 45 s) | "Dimenticato: ..." quella letta per prima |
-| "Claudio, dimenticalo" | dimentica l'ultimo ricordo salvato in questa sessione |
+| "nessuna delle due" (entro 45 s) | "Va bene, non dimentico niente." (nessun ricordo perso) |
+| di nuovo "Claudio, dimentica mia sorella", poi "la prima" | "Dimenticato: ..." quella letta per prima |
+| "Claudio, ricordati che il treno parte alle 8", poi subito "Claudio, dimenticalo" | "Dimenticato: il treno parte alle 8." ("dimenticalo" vale solo per il ricordo di cui avete appena parlato, entro un minuto) |
+| "Claudio, dimentica l'ultimo ricordo" | dimentica l'ultimo salvato in questa sessione, anche dopo molto |
+| "Claudio, dimentica Anna" con salvato solo "mio padre ha 60 anni" | "Dimentico questo: mio padre ha 60 anni?" (chiede, perché "Anna" e "anni" non sono la stessa parola); rispondi "no" |
 | "Claudio, dimentica tutto" | "Cancello tutti i ricordi, per sempre. Per procedere dì: confermo." |
 | "sì" | "Non ho capito: non lo faccio." (serve proprio "confermo") |
 | "Claudio, dimentica tutto", poi "confermo" | "Fatto: ho dimenticato tutto." |
+
+## 3b. Senza wake word (la TV nella finestra di conversazione)
+
+Subito dopo una risposta di Claudio, entro 6 secondi e **senza** dire "Claudio", di':
+"da ora in poi parla in rima". Atteso: "Da ora in poi: parla in rima. La tengo come regola?".
+Rispondi "no": "Va bene, non la salvo." Una regola detta col nome si salva subito.
 
 ## 4. Dopo un riavvio
 

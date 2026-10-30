@@ -177,7 +177,8 @@ These phrases are understood locally, for free, also offline or with the budget 
 Claude sees every rule and the newest facts after the system prompt (cached: about 0.00001 $ a
 request); the facts that do not fit in `[memory] block_chars` go with a request only when they
 share its words. Claude can also save ("segnatelo", a misheard "ricordati") and forget with its
-tools: a rule or a forget it proposes needs your yes. Passwords, PINs, cards and IBANs are never
+tools: a rule or a forget it proposes needs your yes. It also keeps, by itself, a lasting
+preference you mention, and says so ("Me lo segno"): `[memory] learn = false` turns that off. Passwords, PINs, cards and IBANs are never
 kept. "Ricordami di... alle 5" is a reminder, not a memory: not available yet.
 
 ## Acting on the PC

@@ -281,7 +281,7 @@ relevant = 3                   # facts beyond the block sent with a request that
 max_items = 500
 max_chars = 300                # one memory: one spoken sentence
 tools = true                   # Claude can save and forget too ("segnatelo"); needs [pc] enabled
-learn = false                  # true: Claude saves lasting preferences you tell it, without "ricordati"
+learn = true                   # Claude saves lasting preferences you tell it, without "ricordati", and says so (false: only when asked)
 
 [logging]
 level = "INFO"

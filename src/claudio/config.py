@@ -505,7 +505,8 @@ class MemorySettings(BaseModel):
     max_items: int = Field(500, ge=1, le=5000)
     max_chars: int = Field(300, ge=20, le=2000)  # one memory: a spoken sentence
     tools: bool = True  # Claude may save and forget too (needs [pc] enabled)
-    learn: bool = False  # Claude saves lasting preferences without being asked
+    # Claude saves lasting preferences without being asked, and says so (JenJo 30/10: B1)
+    learn: bool = True
 
 
 class LoggingSettings(BaseModel):

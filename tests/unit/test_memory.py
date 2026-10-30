@@ -687,7 +687,10 @@ def test_claude_remembers_and_forgets(store: MemoryStore) -> None:
     tools = MemoryTools(store)
     assert tools.run(REMEMBER, {"text": "JenJo tifa Napoli"}).startswith("Saved as [1]")
     assert store.items()[0].source == "claude"
-    assert tools.run(REMEMBER, {"text": "JenJo tifa Napoli"}) == "Already in your memory as [1]."
+    assert tools.run(REMEMBER, {"text": "JenJo tifa Napoli"}).startswith(
+        "Already in your memory as [1]"
+    )
+    assert "never its number" in tools.run(REMEMBER, {"text": "JenJo tifa la Roma"})
     assert tools.describe(FORGET, {"ids": [1]}, "it") == 'dimentico "JenJo tifa Napoli"'
     assert tools.run(FORGET, {"ids": [1, 7]}) == "Forgotten: [1] JenJo tifa Napoli"
     with pytest.raises(MemoryToolError):
