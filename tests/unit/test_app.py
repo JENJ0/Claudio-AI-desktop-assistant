@@ -70,6 +70,10 @@ class FakeResponder:
         self.answer_expected = False
         self.prepared = 0
 
+    @property
+    def needs_voice(self) -> bool:
+        return self.awaiting  # the fake's questions are all "Confermi?"
+
     def prepare(self) -> None:
         self.prepared += 1
 

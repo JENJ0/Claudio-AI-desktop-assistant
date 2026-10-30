@@ -461,7 +461,8 @@ EN: dict[str, str] = {
         "Memory refused: it looks like a password or a code"
     ),
     "Ricordo salvato (%s, %s): %s": "Memory saved (%s, %s): %s",
-    "Ricordo dimenticato: %s": "Memory forgotten: %s",
+    "Ricordi dimenticati: %s": "Memories forgotten: %s",
+    "Memoria non disponibile": "Memory unavailable",
     "Memoria svuotata: %d ricordi dimenticati": "Memory wiped: %d memories forgotten",
 }
 

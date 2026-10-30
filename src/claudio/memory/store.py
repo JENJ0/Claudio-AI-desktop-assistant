@@ -4,11 +4,12 @@ One row per memory, in JenJo's own words ("mia sorella si chiama Anna"): a fact,
 rule ("chiamami capo", said as "da ora in poi chiamami capo"). The set is small (things said
 aloud, a few hundred at most): it is read once at start and kept in a list, so building the
 prompt and searching never touch the disk. A connection is opened per write and a lock keeps
-the list and the file in step, so the store works from any thread (the PC tools run on a
-worker thread).
+the list and the file in step, so the store works from any thread. A write waits at most
+BUSY_S for a database another program holds (it runs on the event loop: the voice must not
+freeze), and a forgotten memory is overwritten in the file, not only unlinked.
 
-Never stored: what looks like a password, a PIN, a card or an IBAN. Every memory goes to
-Anthropic with the requests, and a voice assistant has no business keeping those."""
+Never stored: what looks like a password, a PIN, a code, a card or an IBAN. Every memory goes
+to Anthropic with the requests, and a voice assistant has no business keeping those."""
 
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ Kind = Literal["fact", "rule"]
 Source = Literal["jenjo", "claude"]  # who decided: JenJo (by voice or in the chat) or Claude
 Refusal = Literal["empty", "too_long", "sensitive", "full"]
 
+BUSY_S = 1.0  # a locked database (another program, a second Claudio): give up after this
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,14 +45,30 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 """
 
-# On normalised text (lowercase, no accents or punctuation). A word is enough: "il pin del
-# bancomat è..." is refused even without the digits.
-_SENSITIVE = re.compile(
-    r"\b(password|passwd|pass word|passphrase|pin|puk|cvv|cvc|iban|otp|seed|token"
-    r"|parola d ordine|chiave api|api key|carta di credito|numero della carta"
-    r"|codice (segreto|di sicurezza|fiscale|della carta|di accesso|dell allarme|pin))\b"
+# On normalised text (lowercase, no accents, punctuation as spaces, digit groups joined).
+# Always a secret, value or not: "il pin del bancomat", "la chiave del wifi"...
+_ALWAYS = re.compile(
+    r"\b(pin|pins|puk|cvv|cvc|iban|otp|passwd|passcodes?|passphrases?|seed phrase|tokens?"
+    r"|parola d ordine|chiav[ei] api|api keys?|codice fiscale|codic[ei] (segret[oi]|di sblocco"
+    r"|di sicurezza|di accesso|pin|dell allarme|dell antifurto|del bancomat)"
+    r"|security codes?|access codes?|pin codes?"
+    r"|chiav[ei] (del |della |di )?(wifi|wi fi|rete)|(wifi|wi fi|network) (keys?|passwords?)"
+    r"|passwords? (del |della |di )?(wifi|wi fi|rete))\b"
 )
-_LONG_NUMBER = re.compile(r"\d{13,}")  # a card (13-19 digits) or an IBAN; a phone is shorter
+# A word that names a secret, then within six words a value: digits, a word mixing letters
+# and digits, or "è" / "is" (the value follows). "Pago con la carta di credito" and "uso
+# Bitwarden per le password" say no value: kept.
+_SECRET = re.compile(
+    r"\b(passwords?|codic[ei]|codes?|combinazion[ei]|carta di credito|carte di credito"
+    r"|numero della carta|card numbers?|credit cards?)\b(?P<after>(?: \w+){1,6})"
+)
+_VALUE = re.compile(r"\b(\d{3,}|(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{4,}|e|sono|is|are|era|was)\b")
+_NOT_SECRET = re.compile(
+    r"\b(codice postale|codice di avviamento postale|postal code|zip code|area code"
+    r"|dress code|codice della strada|codice civile|codice penale)\b"
+)
+# 13+ digits: a card (13-19) or an IBAN; not a phone with its 00 prefix (at most 17).
+_LONG_NUMBER = re.compile(r"(?<!\d)(?!00\d{11,15}(?!\d))\d{13,}")
 _DIGIT_GAP = re.compile(r"(?<=\d) (?=\d)")  # "4111 1111 1111 1111": Whisper spaces the groups
 _TRIM = " \t\r\n.,;:!?\"'«»“”"
 
@@ -77,9 +96,12 @@ class MemoryRefused(ValueError):
 
 
 def sensitive(text: str) -> bool:
-    """A password, a PIN, a card, an IBAN...: never kept, never sent."""
+    """A password, a PIN, a code, a card, an IBAN...: never kept, never sent."""
     norm = _DIGIT_GAP.sub("", normalize(text, drop_fillers=False))
-    return bool(_SENSITIVE.search(norm) or _LONG_NUMBER.search(norm))
+    if _ALWAYS.search(norm) or _LONG_NUMBER.search(norm):
+        return True
+    plain = _NOT_SECRET.sub(" ", norm)
+    return any(_VALUE.search(m.group("after")) for m in _SECRET.finditer(plain))
 
 
 def clean(text: str) -> str:
@@ -102,18 +124,22 @@ class MemoryStore:
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
-            db.executescript(SCHEMA)
             rows = db.execute(
                 "SELECT id, text, kind, source, created FROM memories ORDER BY id"
             ).fetchall()
         self._items = [Memory(int(r[0]), str(r[1]), r[2], r[3], float(r[4])) for r in rows]
         self._added: list[Memory] = []  # this run's memories, newest last ("dimenticalo")
         self.version = 0  # bumped by every change: the prompt is rebuilt only then
+        self.removals = 0  # bumped by every forget: Claude's conversation starts over then
 
     @contextlib.contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path, timeout=5)
+        """The schema each time: a file deleted while Claudio runs comes back empty and
+        working, instead of failing every save until a restart."""
+        db = sqlite3.connect(self.path, timeout=BUSY_S)
         try:
+            db.execute("PRAGMA secure_delete = ON")  # a forgotten text is zeroed in the file
+            db.executescript(SCHEMA)
             with db:  # commit or roll back
                 yield db
         finally:
@@ -128,7 +154,8 @@ class MemoryStore:
 
     def add(self, text: str, kind: Kind = "fact", source: Source = "jenjo") -> tuple[Memory, bool]:
         """Keep `text`; (the memory, True) when new, (the one already there, False) when it was
-        known. Raises MemoryRefused when it is empty, too long, sensitive or the store is full."""
+        known. Raises MemoryRefused when it is empty, too long, sensitive or the store is full,
+        sqlite3.Error when the database cannot be written."""
         text = clean(text)
         if not text:
             raise MemoryRefused("empty")
@@ -169,8 +196,8 @@ class MemoryStore:
             self._items = [m for m in self._items if m.id not in wanted]
             self._added = [m for m in self._added if m.id not in wanted]
             self.version += 1
-        for memory in gone:
-            log.info("Ricordo dimenticato: %s", memory.text)
+            self.removals += 1
+        log.info("Ricordi dimenticati: %s", ", ".join(str(m.id) for m in gone))
         return gone
 
     def clear(self) -> int:
@@ -181,9 +208,10 @@ class MemoryStore:
                 db.execute("DELETE FROM memories")
             self._items, self._added = [], []
             self.version += 1
+            self.removals += 1
         log.info("Memoria svuotata: %d ricordi dimenticati", count)
         return count
 
     def last_added(self) -> Memory | None:
-        """The newest memory of this run that is still there ("dimenticalo" forgets it)."""
+        """The newest memory of this run that is still there."""
         return self._added[-1] if self._added else None

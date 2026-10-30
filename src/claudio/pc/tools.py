@@ -66,6 +66,9 @@ BROWSERS = {
 }
 # Tools that may take a while: Claudio says "Ci guardo" first when Haiku said nothing yet.
 SLOW = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
+# Tools that bring text from outside (windows, the screen, files, a command) into the request:
+# after one, a memory Claude saves needs JenJo's yes (memory/tools.py).
+OUTSIDE_TEXT = frozenset({*SLOW, "list_windows"})
 
 
 @dataclass(frozen=True)
@@ -352,6 +355,7 @@ class PcTools:
         self.sleep = sleep
         self._launched: tuple[App, float] | None = None  # the last app started, and when
         self._free: set[str] = set()  # type_text calls into a free_typing window (prepare)
+        self._outside_text = False  # this request read a window, the screen, files...
         self._apps: list[App] | None = None
         self._apps_at = -float("inf")
         self.folders = files.FolderNames(
@@ -380,9 +384,19 @@ class PcTools:
     def definitions(self) -> list[dict[str, Any]]:
         return self._definitions
 
+    def begin_request(self) -> None:
+        """A new request from JenJo (not the answer to "Confermi?"): nothing read yet."""
+        self._outside_text = False
+
     def refusal(self, call: ToolCall, calls: Sequence[ToolCall]) -> str | None:
         """Why `call` is refused before JenJo is even asked; None when it may go on. A command
-        on the deny list is never offered for confirmation, and a reply gets one command."""
+        on the deny list is never offered for confirmation, and a reply gets one command and
+        one forget (a single yes never wipes the memory call after call)."""
+        if call.name == memory_tools.FORGET:
+            first = next((c for c in calls if c.name == memory_tools.FORGET), call)
+            if first.id != call.id:
+                return "only one forget per confirmation: put all the numbers in it"
+            return None
         if call.name != "run_command":
             return None
         if not self.settings.commands:
@@ -414,7 +428,7 @@ class PcTools:
         if call.name == command_tool.NAME and self.commands is not None:
             return self.commands.level(call.args)
         if call.name in memory_tools.NAMES and self.memory is not None:
-            return self.memory.level(call.name, call.args)
+            return self.memory.level(call.name, call.args, self._outside_text)
         base = LEVELS.get(call.name, LEVEL_SAFE)  # unknown tools fail without doing anything
         if call.name == "type_text" and call.id in self._free:
             return LEVEL_SAFE
@@ -446,9 +460,11 @@ class PcTools:
 
     async def question(self, calls: Sequence[ToolCall], language: str) -> str:
         """What Claudio says before running `calls` (those of level 2-3): what will happen,
-        then "Confermi?" (or, at level 3, how to confirm). Brief: level 2 asks only "Confermi?"."""
+        then "Confermi?" (or, at level 3, how to confirm). Brief: level 2 asks only "Confermi?",
+        except for a memory, which is always read out (JenJo must hear what is kept or lost)."""
         top = max((self.level(c) for c in calls), default=LEVEL_CONFIRM)
-        if top <= LEVEL_CONFIRM and self.settings.confirm_brief:
+        memory = any(c.name in memory_tools.NAMES for c in calls)
+        if top <= LEVEL_CONFIRM and self.settings.confirm_brief and not memory:
             return ASK_LEVEL_2.get(language) or ASK_LEVEL_2[DEFAULT_LANGUAGE]
         say = _SAY.get(language) or _SAY[DEFAULT_LANGUAGE]
         parts = [await self._describe(call, say, language) for call in calls]
@@ -515,6 +531,7 @@ class PcTools:
             elif call.name in memory_tools.NAMES:
                 done = self._memory_call(call)  # quick, and the same thread as the router's
             else:
+                self._outside_text = self._outside_text or call.name in OUTSIDE_TEXT
                 done = await self._call(self._dispatch, call)
             outcome = done if isinstance(done, ToolOutcome) else ToolOutcome(done)
         except (ToolFailed, PathRefused, keys.BadKey, CommandRefused) as exc:

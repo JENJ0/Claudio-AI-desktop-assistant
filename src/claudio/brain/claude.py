@@ -49,6 +49,7 @@ from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.i18n import tr
 from claudio.intake import Hearing
+from claudio.memory.prompt import without_recalled
 from claudio.router.normalizer import normalize, strip_wake_words
 from claudio.safety.confirmation import (
     CANCELLED,
@@ -128,6 +129,7 @@ class ClaudeBrain:
         # What JenJo asked Claudio to remember: a block after the system prompt, cached, and
         # the facts that match a request (None: no long-term memory).
         self.memory = memory
+        self._memory_block = ""  # the memories as this request's rounds see them
 
     def reset(self) -> None:
         self._history.clear()
@@ -239,6 +241,8 @@ class ClaudeBrain:
                     async for chunk in self._haiku(messages, language, start, tools=False):
                         yield chunk
                 return
+        if self.tools is not None:
+            self.tools.begin_request()  # nothing read from windows or files in this one yet
         messages = self._messages(text, language)
         if self.wants_smart(text, language):  # JenJo asked for it: that is the approval
             log.info("Richiesta di ragionare: chiedo direttamente a Sonnet")
@@ -297,7 +301,8 @@ class ClaudeBrain:
                     leg.handoff
                     and not leg.calls
                     and offer_from is not None
-                    and self.never_offer(offer_from[-1]["content"], language)
+                    # JenJo's words only: a "storia" in a recalled memory is not a story asked for
+                    and self.never_offer(without_recalled(offer_from[-1]["content"]), language)
                 ):
                     # Haiku asked for Sonnet for a story: it tells it itself, no question.
                     log.info("Sonnet chiesto per una storia: risponde Haiku")
@@ -520,6 +525,10 @@ class ClaudeBrain:
     def _messages(self, text: str, language: str) -> list[dict[str, Any]]:
         if self.clock() - self._last_turn > self.settings.history_reset_s:
             self._history.clear()  # a new conversation: old context costs and confuses
+        if self.memory is not None and self.memory.forgotten():
+            # JenJo had something forgotten: the conversation may still quote it. Its cache
+            # was to be written again anyway (the memory block changed).
+            self._history.clear()
         messages: list[dict[str, Any]] = []
         if self.settings.history_turns:
             for question, answer in self._history:
@@ -527,9 +536,13 @@ class ClaudeBrain:
                 messages.append({"role": "assistant", "content": answer})
         hearing, self._hearing = self._hearing, Hearing()
         tag = self._tag(language, hearing)
-        recalled = self.memory.relevant(text) if self.memory is not None else ""
-        if recalled:  # after the cached prefix, like the time: it changes nothing cached
-            tag = f"{tag} {recalled}"
+        if self.memory is not None:
+            # One snapshot for every round of this request: a memory Claude saves with its
+            # tool shows from the next request, so the rounds read each other's cache.
+            self._memory_block = self.memory.block()
+            recalled = self.memory.relevant(text, (q for q, _ in self._history))
+            if recalled:  # after the cached prefix, like the time: it changes nothing cached
+                tag = f"{tag} {recalled}"
         messages.append({"role": "user", "content": f"{tag} {text}"})
         return messages
 
@@ -549,7 +562,7 @@ class ClaudeBrain:
     def _common(
         self, model: str, max_tokens: int, messages: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        memory = self.memory.block() if self.memory is not None else ""
+        memory = self._memory_block
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
