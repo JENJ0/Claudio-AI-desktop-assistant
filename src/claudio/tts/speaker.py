@@ -84,6 +84,9 @@ class StreamingSpeaker:
         self.effect = effect
         self._earcons = make_earcons(player.sample_rate, beep_volume)
         self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
+        # Wakes speak() when it waits for the next piece: Claude may be running a tool for
+        # seconds while the first one has already been said (IT-1 5.1).
+        self._wake: Callable[[], None] | None = None
         # The sentences of the current reply that started playing; the last one may have been
         # cut short. Where an interrupted reply resumes.
         self.played: list[str] = []
@@ -94,6 +97,8 @@ class StreamingSpeaker:
         for synth in (self.synth, *self.voices.values()):
             if cancel := getattr(synth, "cancel", None):  # a worker generating audio stops too
                 cancel()
+        if (wake := self._wake) is not None:
+            wake()
 
     def duck(self, volume: float | None) -> None:
         """Lower the reply being spoken to `volume` (a voice may be interrupting); None
@@ -156,6 +161,9 @@ class StreamingSpeaker:
         self._cancel.clear()
         self.duck(None)  # every reply starts at full volume
         self.played = []
+        for synth in (self.synth, *self.voices.values()):
+            if begin := getattr(synth, "begin_reply", None):  # Jack: one voice per reply
+                begin()
         # Rendering runs ahead of playback: the next sentences are ready before they are due
         # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued. The first
         # piece of each sentence carries its text.
@@ -183,9 +191,17 @@ class StreamingSpeaker:
                 await queue.put(None)
 
         producer = asyncio.create_task(produce())
+        loop = asyncio.get_running_loop()
+
+        def wake() -> None:  # interrupt() may come from another thread
+            loop.call_soon_threadsafe(_end_now, queue)
+
+        self._wake = wake
         first = True
         try:
-            while (item := await queue.get()) is not None:
+            # "basta" while waiting for a piece, or while it was made: nothing more plays,
+            # and it is not counted as played (the resume and the echo filter read that).
+            while (item := await queue.get()) is not None and not self._cancel.is_set():
                 if first and on_first_audio is not None:
                     on_first_audio()
                 first = False
@@ -194,9 +210,11 @@ class StreamingSpeaker:
                     self.played.append(sentence)
                 done = await asyncio.to_thread(self.player.write, audio, rate, self._cancel)
                 if done is False or self._cancel.is_set():
-                    log.info("Risposta interrotta")
                     break
+            if self._cancel.is_set():
+                log.info("Risposta interrotta")
         finally:
+            self._wake = None
             if not producer.done():
                 producer.cancel()
             while not producer.done():  # it ends by queueing None: make room for it
@@ -206,3 +224,9 @@ class StreamingSpeaker:
             (result,) = await asyncio.gather(producer, return_exceptions=True)
         if isinstance(result, Exception):
             raise result
+
+
+def _end_now(queue: asyncio.Queue[Any]) -> None:
+    """speak() waiting for the next piece stops at once ("basta" while Claude runs a tool)."""
+    with contextlib.suppress(asyncio.QueueFull):  # full: it is playing and sees the cancel
+        queue.put_nowait(None)

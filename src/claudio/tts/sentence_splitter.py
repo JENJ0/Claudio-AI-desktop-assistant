@@ -87,6 +87,17 @@ class SentenceSplitter:
         rest, self._buf = self._buf.strip(), ""
         return [rest] if rest else []
 
+    def ended(self) -> list[str]:
+        """Claude stopped writing (a tool is running): the sentence held back for what might
+        follow it ("3." before "5") is complete after all. An unfinished one, or one ending
+        in an abbreviation ("il dott."), stays."""
+        rest = self._buf.strip()
+        core = rest.rstrip("\"'»)")
+        if not core or core[-1] not in _END_CHARS or self._is_abbreviation(core):
+            return []
+        self._buf, self._first = "", False
+        return [rest]
+
     def _find_cut(self) -> int | None:
         buf = self._buf
         for i, ch in enumerate(buf):
@@ -135,7 +146,7 @@ async def split_stream(
         yield sentence
 
 
-_PAUSED = ""  # the text stopped: split_stream never yields an empty sentence
+_PAUSED = ""  # the text stopped: the splitter never gives an empty sentence
 
 
 async def group_stream(
@@ -156,53 +167,61 @@ async def group_stream(
     `pause_s` > 0: the first piece also leaves, shorter, once no new text has come for
     that long: Claude is running a tool (30/10 14:07, "Ci guardo, socio." waited 2.1 s for
     three calls). It is timed on the text, not on whole sentences, so a long sentence still
-    being written is not a pause; whitespace alone does not count as new text.
+    being written is not a pause; whitespace alone does not count as new text. The text
+    written after such a pause starts a first piece again: nothing of it arrives while the
+    piece before plays, Claude is busy.
     """
     loop = asyncio.get_running_loop()
     moved = loop.time()  # when the last text arrived
     ready: asyncio.Queue[str | None] = asyncio.Queue()
-
-    async def noted() -> AsyncIterator[str]:
-        nonlocal moved
-        async for chunk in text:
-            if chunk.strip():
-                moved = loop.time()
-            yield chunk
+    splitter = SentenceSplitter()
 
     async def read() -> None:
+        nonlocal moved
         try:
-            async for sentence in split_stream(noted()):
+            async for chunk in text:
+                if chunk.strip():
+                    moved = loop.time()
+                for sentence in splitter.feed(chunk):
+                    await ready.put(sentence)
+            for sentence in splitter.flush():
                 await ready.put(sentence)
         finally:
             await ready.put(None)
 
     async def more() -> str | None:
-        """The next sentence for the first piece; _PAUSED once the text stopped coming."""
+        """The next sentence for a first piece; _PAUSED once the text has stopped for
+        pause_s and nothing complete is left, the sentence the splitter held included."""
         while pause_s > 0:
             left = pause_s - (loop.time() - moved)
-            if left <= 0:
-                return _PAUSED
-            with contextlib.suppress(TimeoutError):
-                return await asyncio.wait_for(ready.get(), left)
+            if left > 0:
+                with contextlib.suppress(TimeoutError):
+                    return await asyncio.wait_for(ready.get(), left)
+                continue
+            if ready.empty():
+                for sentence in splitter.ended():
+                    ready.put_nowait(sentence)
+            return _PAUSED if ready.empty() else ready.get_nowait()
         return await ready.get()
 
     reader = asyncio.create_task(read())
     held: str | None = None  # a sentence that did not fit the previous piece
-    first = True
+    first = True  # the piece waits for first_chars (or a pause, or the end)
     try:
         while True:
             piece = held or await ready.get()
             held = None
             if piece is None:
                 break
-            ended = False
-            # Wait for more text only while the first piece is too short to start with;
-            # afterwards take what is there and never wait.
+            ended = paused = False
+            # Wait for more text only while a first piece is too short to start with;
+            # otherwise take what is there and never wait.
             while True:
                 if first and len(piece) < first_chars:
                     nxt = await more()
                     if nxt == _PAUSED:
-                        break  # say what is there while Claude is busy
+                        paused = True  # say what is there while Claude is busy
+                        break
                 elif ready.empty():
                     break
                 else:
@@ -214,7 +233,7 @@ async def group_stream(
                     held = nxt
                     break
                 piece = f"{piece} {nxt}"
-            first = False
+            first = paused
             yield piece
             if ended:
                 break

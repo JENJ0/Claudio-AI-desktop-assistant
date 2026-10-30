@@ -217,9 +217,12 @@ Before Jack speaks, symbols, acronyms, Markdown and emoji become Italian words (
 `src/claudio/tts/spoken_text.py`. Add a word there when Jack says it wrong.
 
 The worker loads in 10-30 s, in the background: Claudio listens as soon as Whisper and the
-wake word are loaded, and a reply asked meanwhile waits for Jack up to `jack_first_wait_s`
-(30 s; 0 = the fallback speaks at once). When Jack is ready Claudio says "Sono pronto"
-(`[startup] announce_ready`). Kokoro (Piper if Kokoro is missing) is the fallback for English
+wake word are loaded, and a reply asked meanwhile waits for Jack until `jack_first_wait_s`
+after the worker started (30 s, Claudio's own loading included; 0 = the fallback speaks at
+once). With less than `jack_min_free_vram_mb` (6000 MB) free on the graphics card at start,
+a game for instance, replies do not wait at all: the fallback speaks until Jack is ready, and
+a worker that timed out is tried again once the card has room. When Jack is ready Claudio
+says "Sono pronto" (`[startup] announce_ready`). Kokoro (Piper if Kokoro is missing) is the fallback for English
 and for any sentence the worker cannot speak. If the worker does not start, Claudio says so
 out loud ("La voce di Jack non è partita") and the reason is in
 `console.log` (`Jack non disponibile (...)`). The same happens when Whisper cannot use the GPU.

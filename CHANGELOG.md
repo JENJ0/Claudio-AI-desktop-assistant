@@ -7,23 +7,32 @@
 #### Changed
 - With PC tools the first words no longer wait for every call: the brain ends Claude's
   sentence before running the tools, and Jack's first piece leaves once Claude's text has
-  stopped for `[tts] jack_group_pause_ms` (200 ms) instead of waiting for 40 characters.
-  Replay of 30/10 14:07 (three calls): "TTS prima frase" 2026 ms -> 311 ms.
-- A request that only runs Claudio's own commands (`claudio_command`: volume, media keys,
-  chat, spending, pause, off, close) is answered with the command's own reply in the
-  request's language: no second Claude call just to say "Fatto" (0.6-1 s and one call less).
-  The media keys stay silent, as with the router.
+  stopped for `[tts] jack_group_pause_ms` (200 ms) instead of waiting for 40 characters
+  (with the sentence the splitter was still holding). The text after the tools is grouped
+  again. Replay of 30/10 14:07 (three calls): "TTS prima frase" 1972-2026 ms -> 293-311 ms.
+- "basta" while Claude runs a tool stops the reply at once: the speaker no longer waits for
+  the next piece, and a piece cut before it played is not counted as played.
+- `claudio_command` has a `last` flag: when Claude marks the command as the whole request,
+  Claudio says the command's own reply (the router's, in the request's language) and Claude
+  is not called again just to say "Fatto" (0.6-1 s and one call less). Unmarked, or after
+  other tools, or with a Sonnet request in the same reply, Claude goes on as before. Real
+  Haiku, 30/10: a lone garbled "quanto ho speso" -> `last=true`, 1 call; "quanto ho speso
+  e che giorno è domani" -> `last=false`, 2 calls, both answered.
 - Replies wait for Jack's loading worker until one deadline from its start
-  (`jack_first_wait_s`), not `jack_first_wait_s` again for every piece.
+  (`jack_first_wait_s`), not `jack_first_wait_s` again for every piece, and a reply begun
+  in the fallback voice ends in it.
 
 #### Added
 - Per-call Claude timing: first token, first word, end (`claude_calls` in metrics, the
   usage log line, "TTFT" in conversazione.md), and the warm-up's round trip as the network
-  share (`api_rtt_ms`). Measured 30/10: first token 470-610 ms warm, network ~220 ms.
+  share (`api_rtt_ms`, flagged when it opened a new connection), only on the request it was
+  made for. Measured 30/10: first token 470-610 ms warm (~1030 ms on a cache write),
+  network ~220 ms.
 - `[tts] jack_min_free_vram_mb` (6000): at start, with less free graphics memory (a game),
   replies do not wait for Jack (the fallback voice speaks until he is ready), the console
-  says why, and the spoken notice names the busy card if Jack does not start. Read with
-  `nvidia-smi` (`src/claudio/gpu.py`), no new dependency.
+  says why, and the spoken notice mentions the full card if Jack does not start. A worker
+  that timed out on a full card is tried again once the card has room. Read with
+  `nvidia-smi` (`src/claudio/gpu.py`, first card only), no new dependency.
 
 ## [0.4.0] - 2026-10-30 - IT-0: reliability
 

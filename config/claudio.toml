@@ -118,7 +118,8 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_applio = "voices/jack/rvc/Applio"
 # jack_startup_timeout_s = 90
 # jack_sentence_timeout_s = 15
-# jack_first_wait_s = 30    # Claudio listens while Jack loads: a reply meanwhile waits this long for Jack (0 = fallback voice at once)
+# jack_first_wait_s = 30    # Claudio listens while Jack loads: replies wait for Jack until this long after his worker started (0 = fallback voice at once)
+# jack_min_free_vram_mb = 6000  # less free graphics memory at start (a game): replies do not wait for Jack, the fallback speaks until he is ready (0 = no check)
 jack_speed = 1.0           # Jack's pace: < 1 slower; 1.0 = as generated (JenJo 28/10: no slowing)
 jack_group_chars = 220     # a reply's sentences said together (one voice), up to ~11 s (training clips <= 12 s); 0 = one by one
 jack_group_first_chars = 40  # the first piece starts as soon as Claude wrote this much; the rest of the reply follows in one piece

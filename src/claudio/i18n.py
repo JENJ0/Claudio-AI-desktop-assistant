@@ -325,16 +325,17 @@ EN: dict[str, str] = {
     "La voce di Jack non è partita: uso quella di riserva.": (
         "Jack's voice did not start: using the backup voice."
     ),
-    "La scheda video è occupata: la voce di Jack non è partita, uso quella di riserva.": (
-        "The graphics card is busy: Jack's voice did not start, using the backup voice."
+    "All'avvio la scheda video era quasi piena.": "At startup the graphics card was almost full.",
+    "Scheda video occupata (libera %d MB su %d%s): finché Jack non è pronto risponde la "
+    "voce di riserva": (
+        "Graphics card busy (%d MB free of %d%s): the backup voice answers until Jack is ready"
     ),
-    "Scheda video occupata (libera %d MB su %d, in uso al %d%%): finché Jack non è "
-    "pronto risponde la voce di riserva": (
-        "Graphics card busy (%d MB free of %d, %d%% in use): the backup voice answers "
-        "until Jack is ready"
-    ),
+    ", calcolo al {pct}%": ", compute at {pct}%",
     # gpu
     "nvidia-smi non disponibile: %s": "nvidia-smi not available: %s",
+    "nvidia-smi non disponibile: nessuna risposta in %.0f s": (
+        "nvidia-smi not available: no answer in %.0f s"
+    ),
     "nvidia-smi: risposta non letta: %r": "nvidia-smi: answer not understood: %r",
     "La scheda video non è disponibile: ti capisco più lentamente.": (
         "The graphics card is not available: I understand you more slowly."

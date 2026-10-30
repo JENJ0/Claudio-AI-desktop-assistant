@@ -205,8 +205,8 @@ class TtsSettings(BaseModel):
     jack_startup_timeout_s: float = Field(90.0, gt=0)
     jack_sentence_timeout_s: float = Field(15.0, gt=0)
     # Claudio listens while Jack's worker is still loading: a reply in that time waits for
-    # Jack until this long after the worker started, then the fallback voice speaks it
-    # (0 = fallback at once).
+    # Jack until this long after the worker started (Claudio's own loading counts too),
+    # then the fallback voice speaks it (0 = fallback at once).
     jack_first_wait_s: float = Field(30.0, ge=0)
     # Free graphics memory needed at start: Jack and Whisper large-v3 load together (7.2 GB
     # in use once both were ready on 30/10, the desktop's share included). With less (a

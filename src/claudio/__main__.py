@@ -21,7 +21,7 @@ from claudio.config import (
     configured_language,
     load_settings,
 )
-from claudio.gpu import GpuMemory, read_gpu
+from claudio.gpu import GpuMemory, has_room, read_gpu
 from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
@@ -308,11 +308,11 @@ def jack_wait_s(settings: Settings, gpu: GpuMemory | None) -> float | None:
     if gpu is None or not need or gpu.free_mb >= need:
         return None
     log.warning(
-        "Scheda video occupata (libera %d MB su %d, in uso al %d%%): finché Jack non è "
-        "pronto risponde la voce di riserva",
+        "Scheda video occupata (libera %d MB su %d%s): finché Jack non è pronto risponde la "
+        "voce di riserva",
         gpu.free_mb,
         gpu.total_mb,
-        gpu.busy_pct,
+        tr(", calcolo al {pct}%", pct=gpu.busy_pct) if gpu.busy_pct is not None else "",
     )
     return 0.0
 
@@ -324,11 +324,9 @@ def startup_notices(
     alone went unnoticed (on 23/10 Jack's worker failed and Kokoro answered all evening)."""
     notices = []
     if settings.tts.engine == "jack" and not jack_running:
-        notices.append(
-            tr("La scheda video è occupata: la voce di Jack non è partita, uso quella di riserva.")
-            if gpu_busy
-            else tr("La voce di Jack non è partita: uso quella di riserva.")
-        )
+        notices.append(tr("La voce di Jack non è partita: uso quella di riserva."))
+        if gpu_busy:  # a fact, maybe not the cause: the cause is in the log
+            notices.append(tr("All'avvio la scheda video era quasi piena."))
     if settings.stt.device == "auto" and stt_device == "cpu":
         notices.append(tr("La scheda video non è disponibile: ti capisco più lentamente."))
     if notices:
@@ -462,8 +460,11 @@ async def run_assistant(
     jack_error: list[Exception | None] = []
     gpu_busy = False
     if jack is not None:
-        wait_s = jack_wait_s(settings, read_gpu())
+        need = settings.tts.jack_min_free_vram_mb
+        wait_s = jack_wait_s(settings, read_gpu() if need else None)
         gpu_busy = wait_s is not None
+        if need:  # a worker that timed out on a full card is tried again once it has room
+            jack.can_start = lambda: has_room(need)
         jack.start_in_background(jack_error.append, wait_s)
     system = SystemControl()
     tracker = build_tracker(settings)  # SQLite: opened on the thread that uses it

@@ -179,8 +179,41 @@ async def test_each_call_logs_headers_first_word_and_end(
         {"model": "claude-haiku-5-5", "ttft_ms": 500, "word_ms": 570, "total_ms": 770}
     ]
     assert b.last_call["api_rtt_ms"] == 220 and b.last_call["claude_first_ms"] == 570
+    assert b.last_call["api_rtt_new_connection"]  # the first one opens the connection
     assert "primo token 500 ms, prima parola 570 ms, fine 770 ms" in caplog.text
     await ask(b, "e della Francia?")  # no new warm-up: no network figure
+    assert "api_rtt_ms" not in b.last_call
+
+
+async def test_a_round_trip_is_only_given_to_its_own_request(pricing: Pricing) -> None:
+    """Review of 5.2: a warm-up still running when the request goes out is not reported
+    with the next request, and one from a wake word long ago (a local command) is not
+    reported with a later Claude request."""
+    client = ScriptedClient(*[(["Ok."], "end_turn", [])] * 3)
+    b = brain(pricing, client)
+    clock = b.clock
+    assert isinstance(clock, Monotonic)
+    gate = asyncio.Event()
+
+    async def retrieve(model: str) -> Any:
+        await gate.wait()
+        clock.t += 0.9
+        return SimpleNamespace(id=model)
+
+    client.models = SimpleNamespace(retrieve=retrieve)
+    b.warm_up()
+    await asyncio.sleep(0)
+    clock.t += 0.5
+    await ask(b, "ciao")  # asked while the warm-up is still on its way
+    gate.set()
+    await asyncio.gather(*b._warming)
+    await ask(b, "e poi?")
+    assert "api_rtt_ms" not in b.last_call
+    clock.t += 100  # a wake word answered by the router: warm-up, no Claude request
+    b.warm_up()
+    await asyncio.gather(*b._warming)
+    clock.t += 60
+    await ask(b, "che tempo fa?")
     assert "api_rtt_ms" not in b.last_call
 
 

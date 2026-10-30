@@ -137,8 +137,8 @@ class ToolOutcome:
     error: bool = False
     image: bytes | None = None  # a JPEG (look_at_screen), sent after the text
     ms: int = 0  # how long the call took
-    # Claudio's own reply (claudio_command, "" = silent): when every call of a round has
-    # one, it is said and Claude is not called again just to say "Fatto" (IT-1 5.3).
+    # Claudio's own reply (claudio_command marked "last", "" = silent): when every call of
+    # a round has one, it is said and Claude is not called again just to say "Fatto".
     spoken: str | None = None
 
     def content(self) -> str | list[dict[str, Any]]:
@@ -541,7 +541,8 @@ class PcTools:
             reply = self.commands.run(call.args, language)
         except command_tool.UnknownCommand as exc:
             raise ToolFailed(str(exc)) from exc
-        return ToolOutcome(reply or "Done.", spoken=reply)
+        last = call.args.get("last") is True  # Claude has nothing to add (IT-1 5.3)
+        return ToolOutcome(reply or "Done.", spoken=reply if last else None)
 
     async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
         loop = asyncio.get_running_loop()
