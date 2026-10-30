@@ -204,9 +204,15 @@ class TtsSettings(BaseModel):
     jack_applio: Path = Path("voices/jack/rvc/Applio")
     jack_startup_timeout_s: float = Field(90.0, gt=0)
     jack_sentence_timeout_s: float = Field(15.0, gt=0)
-    # Claudio listens while Jack's worker is still loading: a reply in that time waits this
-    # long for Jack, then the fallback voice speaks it (0 = fallback at once).
+    # Claudio listens while Jack's worker is still loading: a reply in that time waits for
+    # Jack until this long after the worker started, then the fallback voice speaks it
+    # (0 = fallback at once).
     jack_first_wait_s: float = Field(30.0, ge=0)
+    # Free graphics memory needed at start: Jack and Whisper large-v3 load together (7.2 GB
+    # in use once both were ready on 30/10, the desktop's share included). With less (a
+    # game holding the card) replies do not wait for Jack: the fallback voice speaks until
+    # he is ready. 0 = never check.
+    jack_min_free_vram_mb: int = Field(6000, ge=0)
     # Jack's pace: < 1 slower (0.9 = 10% slower, JenJo 23/10); the pitch stays the same. With
     # RVC the audio is resampled before it and RVC raises the pitch back; without RVC
     # ("none") a time stretch (WSOLA) changes the pace only.
@@ -222,6 +228,10 @@ class TtsSettings(BaseModel):
     # has this many characters (or the reply is over), the rest of the reply follows in one
     # piece while it plays (JenJo 29/10: M1 up to 3.4 s waiting for 220 characters).
     jack_group_first_chars: int = Field(40, ge=0, le=2000)
+    # ...or once Claude's text has stopped for this long, shorter: Claude is running a tool
+    # (30/10: "Ci guardo, socio." waited 2.1 s for three calls). 0 = always wait for
+    # jack_group_first_chars.
+    jack_group_pause_ms: int = Field(200, ge=0, le=5000)
     # Qwen3 sampling: lower is steadier (fewer odd stresses), higher is livelier.
     jack_temperature: float = Field(0.7, ge=0.1, le=1.5)  # JenJo's pick by ear, 24/10
     # Every generation draws its own take of Jack, so the timbre changed from one reply to

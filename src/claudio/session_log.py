@@ -120,6 +120,11 @@ def format_row(row: dict[str, Any]) -> str:
             details.append(f"{label} {row[key]:.0f} ms")
     if row.get("claude_first_ms") is not None:
         details.append(f"Claude prima parola {row['claude_first_ms']} ms")
+    if calls := row.get("claude_calls"):
+        # The first token of each call (a tool round adds one), then the network alone.
+        ttft = " · ".join(str(c.get("ttft_ms", "-")) for c in calls)
+        rtt = row.get("api_rtt_ms")
+        details.append(f"TTFT {ttft} ms" + (f" (rete {rtt} ms)" if rtt is not None else ""))
     if row.get("cost") is not None:
         details.append(
             f"{row.get('model')} {row.get('input_tokens')} in / {row.get('output_tokens')} out"

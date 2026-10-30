@@ -122,6 +122,7 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 jack_speed = 1.0           # Jack's pace: < 1 slower; 1.0 = as generated (JenJo 28/10: no slowing)
 jack_group_chars = 220     # a reply's sentences said together (one voice), up to ~11 s (training clips <= 12 s); 0 = one by one
 jack_group_first_chars = 40  # the first piece starts as soon as Claude wrote this much; the rest of the reply follows in one piece
+jack_group_pause_ms = 200  # ...or, shorter, once Claude stops writing this long (a tool is running); 0 = always wait for the 40 chars
 jack_seed = 7              # same random draws for every piece: Jack keeps one timbre between replies (-1 = new draw each time)
 jack_top_p = 0.9           # Qwen3 sampling drops the rarest 10% of codes: fewer robotic / high-pitched takes (1.0 = off)
 jack_temperature = 0.7     # Qwen3 sampling: lower = steadier pronunciation (JenJo's pick C, 24/10)

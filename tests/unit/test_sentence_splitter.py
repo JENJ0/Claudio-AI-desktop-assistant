@@ -98,8 +98,9 @@ def test_sentences_glued_without_a_space_are_split() -> None:
 
 
 async def _sentences(*items: str):
+    """Claude's text, one sentence per chunk (the space after it ends the sentence)."""
     for item in items:
-        yield item
+        yield f"{item} "
 
 
 async def _collect(gen) -> list[str]:
@@ -124,10 +125,11 @@ async def test_group_stream_keeps_a_long_sentence_whole_and_skips_empty_replies(
 
 
 async def _timed(*items: tuple[float, str]):
-    """Sentences that arrive late, as Claude writes them: (delay before it, sentence)."""
-    for delay, sentence in items:
+    """Text that arrives late, as Claude writes it: (delay before it, chunk). A chunk ending
+    in "." gets the space that ends its sentence."""
+    for delay, chunk in items:
         await asyncio.sleep(delay)
-        yield sentence
+        yield f"{chunk} " if chunk.endswith(".") else chunk
 
 
 async def test_group_stream_starts_with_what_has_arrived_and_groups_the_rest() -> None:
@@ -150,6 +152,56 @@ async def test_group_stream_first_piece_waits_for_first_chars_or_the_end() -> No
     got = await _collect(group_stream(_timed((0, "Ah."), (0.02, "Chrome è aperto.")), 220, 10))
     assert got == ["Ah. Chrome è aperto."]  # a lone "Ah." would be a generation of its own
     assert await _collect(group_stream(_timed((0, "Fatto.")), 220, 60)) == ["Fatto."]
+
+
+async def test_group_stream_first_piece_leaves_when_claude_pauses_for_a_tool() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    # 30/10 14:07: "Ci guardo, socio." then three tool calls; the next text 2.1 s later.
+    pieces = group_stream(
+        _timed((0, "Ci guardo, socio."), (0.5, "Trovata sul desktop, la apro.")),
+        220,
+        first_chars=40,
+        pause_s=0.05,
+    )
+    first = await asyncio.wait_for(pieces.__anext__(), 0.2)  # not after the tools
+    assert first == "Ci guardo, socio."
+    assert [p async for p in pieces] == ["Trovata sul desktop, la apro."]
+
+
+async def test_group_stream_a_sentence_still_being_written_is_no_pause() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    # A long second sentence streams in for longer than the pause: one piece, as before.
+    rest = "Accomodati, socio, che il narratore più bravo comincia."
+    words = [(0.03, f" {word}") for word in rest.split()]  # 8 x 30 ms > the 100 ms pause
+    got = await _collect(group_stream(_timed((0, "Ah."), *words), 220, 40, pause_s=0.1))
+    assert got == [f"Ah. {rest}"]
+
+
+async def test_group_stream_whitespace_is_no_new_text() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    # The brain ends the sentence with a space once the tools are called (the text stopped
+    # 0.2 s earlier): the piece leaves at once, the pause has already passed.
+    pieces = group_stream(
+        _timed((0, "Ci guardo"), (0, ", socio"), (0, "!"), (0.2, " "), (0.6, "Fatto.")),
+        220,
+        first_chars=40,
+        pause_s=0.1,
+    )
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    assert await pieces.__anext__() == "Ci guardo, socio!"
+    assert loop.time() - start < 0.27  # ~0.2 s, not 0.2 + 0.1
+    assert [p async for p in pieces] == ["Fatto."]
+
+
+async def test_group_stream_without_pause_waits_for_first_chars() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    got = await _collect(group_stream(_timed((0, "Ci guardo."), (0.1, "Fatto.")), 220, 40))
+    assert got == ["Ci guardo. Fatto."]
 
 
 async def test_group_stream_passes_on_a_failing_text_stream() -> None:

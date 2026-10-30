@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased] - IT-1
+
+### Latency (thread "latenza": IT-1 handoff 5.1-5.3)
+
+#### Changed
+- With PC tools the first words no longer wait for every call: the brain ends Claude's
+  sentence before running the tools, and Jack's first piece leaves once Claude's text has
+  stopped for `[tts] jack_group_pause_ms` (200 ms) instead of waiting for 40 characters.
+  Replay of 30/10 14:07 (three calls): "TTS prima frase" 2026 ms -> 311 ms.
+- A request that only runs Claudio's own commands (`claudio_command`: volume, media keys,
+  chat, spending, pause, off, close) is answered with the command's own reply in the
+  request's language: no second Claude call just to say "Fatto" (0.6-1 s and one call less).
+  The media keys stay silent, as with the router.
+- Replies wait for Jack's loading worker until one deadline from its start
+  (`jack_first_wait_s`), not `jack_first_wait_s` again for every piece.
+
+#### Added
+- Per-call Claude timing: first token, first word, end (`claude_calls` in metrics, the
+  usage log line, "TTFT" in conversazione.md), and the warm-up's round trip as the network
+  share (`api_rtt_ms`). Measured 30/10: first token 470-610 ms warm, network ~220 ms.
+- `[tts] jack_min_free_vram_mb` (6000): at start, with less free graphics memory (a game),
+  replies do not wait for Jack (the fallback voice speaks until he is ready), the console
+  says why, and the spoken notice names the busy card if Jack does not start. Read with
+  `nvidia-smi` (`src/claudio/gpu.py`), no new dependency.
+
 ## [0.4.0] - 2026-10-30 - IT-0: reliability
 
 Iteration 0: five threads merged locally on the `it-0` branch (30/10).
