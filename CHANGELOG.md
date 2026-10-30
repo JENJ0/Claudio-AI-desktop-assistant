@@ -1,8 +1,12 @@
 # Changelog
 
-## [Unreleased] - Off by voice, start at login
+## [Unreleased] - IT-0: reliability
 
-### Added
+Iteration 0: five threads merged locally on the `it-0` branch (30/10).
+
+### Off by voice, start at login
+
+#### Added
 - "Claudio, spegniti" turns CLAUDIO off: no beeps, no replies, no Claude, no second-chance or
   retry Whisper passes. Only the wake word listens, every threshold raised by
   `[wakeword] off_threshold_boost` (0.1), and the one phrase after a clear wake is matched
@@ -12,15 +16,15 @@
   (Task Scheduler task "Claudio", current user, 30 s delay, `pythonw.exe`, restart on crash).
   Prepared only: nothing is registered until JenJo runs it.
 
-### Changed
+#### Changed
 - "spegniti" no longer closes the program: "chiuditi" does (also "ora chiuditi", "puoi
   chiuderti", "esci dal programma"; English "turn yourself off" is now off, "shut down" and
   "quit" close).
 - No console log handler when there is no console (pythonw): the log file only.
 
-## [Unreleased] - IT-0: the microphone level stops garbling requests
+### The microphone level stops garbling requests
 
-### Changed
+#### Changed
 - `[stt] model` default `large-v3` instead of `large-v3-turbo` (JenJo 29/10): on the 40 test
   sentences, with the fixes below, 16.0% of the words wrong instead of 28.7% with the headset
   and 35.6% instead of 59.6% with the webcam (commands right 9/12 instead of 8/12 and 10/12
@@ -29,7 +33,7 @@
   are a little slower. `download_models.py` fetches it (about 3 GB); `model = "large-v3-turbo"`
   brings the faster one back.
 
-### Fixed
+#### Fixed
 - The automatic microphone level learns only from requests in which Whisper heard words: an
   empty phrase at -50 dBFS (a breath, a bump) raised the gain and the next request saturated
   (26/10 19:50).
@@ -63,7 +67,7 @@
   one piece) stay out of Whisper's prompt: it wrote one for "Claudio, chiuditi".
 - A request Whisper drops as silence is logged with its scores, like the other filters.
 
-### Added
+#### Added
 - `scripts/stt_testset.py` records `scripts/stt_frasi_it.txt` (40 sentences from JenJo's real
   requests) from every microphone at once; `scripts/stt_bench.py` scores them (WER, commands,
   ms per sentence, Silero's early cuts) for CLAUDIO's live settings and their variants, and with
@@ -74,9 +78,9 @@
   Silero, under -60 dBFS), averages the time only over transcribed sentences, says which
   Whisper model and device it loaded and takes another set with `--set`.
 
-## [Unreleased] - IT-0: CLAUDIO never hears itself
+### CLAUDIO never hears itself
 
-### Fixed
+#### Fixed
 - One gate for every sound of CLAUDIO's own (`audio/own_sound.py`): while a reply, a beep or
   "Sono pronto" plays, and until the speakers have played it out plus `echo_tail_ms`, the wake
   word does not listen and the windows that open after CLAUDIO spoke are deaf. Before, only some
@@ -100,9 +104,9 @@
   of "...abbastanza".
 - `echo_tail_ms` applies also with `barge_in = false`.
 
-## [Unreleased] - IT-0: Claude guesses misheard commands
+### Claude guesses misheard commands
 
-### Added
+#### Added
 - A phrase about to be dropped (false wake, not addressed to Claudio in the conversation
   window, noise Whisper was unsure of) that comes close to a command, by letters or by sound,
   goes to Haiku with Whisper's other hearings, how it was heard (wake word and score, loudness,
@@ -111,7 +115,7 @@
   command JenJo most likely asked and how likely: from `[guess] act_at` (0.8) it runs, from
   `ask_at` (0.5) Claudio asks "Hai detto: ...?" first, below it is dropped as before. Pausing
   and switching off are always asked; a far voice, the echo of Claudio's own voice and silence
-  are never guessed. Real drops from JenJo's logs: "Spenditi." (shutdown, 88), "Audio Bust."
+  are never guessed. Real drops from JenJo's logs: "Spenditi." (off, 88), "Audio Bust."
   ("Claudio basta", 67), "Apremi qualcosa." (71). About 0.00013 USD and 1-1.5 s (measured on the PC, 29/10), only for those
   phrases; counted in the spending ledger; `guess*` columns in metrics.jsonl.
 - The answer to "Hai detto: ...?": "sì" runs it (a level 2 command without a second
@@ -122,6 +126,25 @@
   Pausing and switching off ask "Confermi?".
 - `scripts/replay_guess.py`: the dropped phrases of `logs/metrics.jsonl` through the same steps
   (`--dry`: closeness only, free).
+
+### Smoother replies, one Jack
+
+#### Changed
+- Jack's first piece starts as soon as Claude has written `[tts] jack_group_first_chars` (40)
+  characters, or the reply is over; the rest of the reply, written while Jack speaks, follows
+  in one piece. Before, Jack waited for 220 characters: "TTS prima frase" took 0.8-1.65 s on
+  long replies (29/10 log), now about 0.25-0.45 s.
+- `[tts] jack_seed` (7) is set before every piece and `jack_top_p` (0.9) cuts Qwen3's rarest
+  codes: Jack keeps one timbre between replies. A/B on 6 replies (`scripts/jack_variants.py
+  --only R K`, 29/10): Whisper's WER 0.021 instead of 0.087, no octave jumps instead of 4,
+  timbre spread 0.030 instead of 0.052. `jack_seed = -1` brings back a new draw each time.
+
+#### Added
+- `[logging] save_voice`: every piece Jack says is kept in `logs/sessions/<run>/jack/NNN.wav`
+  (last 200) and its pitch is logged ("Voce Jack NNN.wav: f0 ..."); a take too high, with
+  octave jumps or a flat melody is a WARNING naming the file (`tts/voice_check.py`).
+- `scripts/jack_variants.py`: variants `R` (before) and `K` (seed + top_p), `--seeds` to pick
+  the seed by ear.
 
 ## [Unreleased] - Jack keeps one voice in a reply
 
