@@ -205,6 +205,7 @@ def make_jack(settings: Settings, session: Path | None = None) -> JackSynth:
         takes=takes,
         seed=tts.jack_seed,
         retries=tts.jack_take_retries,
+        first_retries=tts.jack_first_retries,
     )
 
 

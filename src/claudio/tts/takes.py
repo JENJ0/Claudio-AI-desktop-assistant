@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 # takes saved before would no longer match a take generated now.
 TAKES_VERSION = 1
 LIMIT = 2000  # texts remembered; the least recently said go first, saved WAVs never
+MAX_BAD = 10  # bad seeds remembered per text
 
 
 # The [tts] settings that shape a take (not jack_seed: a remembered seed is a seed).
@@ -74,7 +75,11 @@ class TakeStore:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             takes = data.get("takes", {})
-            return {k: v for k, v in takes.items() if isinstance(v, dict) and "seed" in v}
+            return {
+                k: v
+                for k, v in takes.items()
+                if isinstance(v, dict) and ("seed" in v or "bad" in v)
+            }
         except FileNotFoundError:
             return {}
         except (OSError, ValueError, AttributeError) as exc:
@@ -92,7 +97,14 @@ class TakeStore:
             if entry is None:
                 return None
             entry["used"] = self._stamp()
-            return int(entry["seed"])
+            seed = entry.get("seed")
+            return None if seed is None else int(seed)
+
+    def bad_seeds(self, key: str) -> set[int]:
+        """Seeds whose take of this text was judged bad: not tried first again."""
+        with self._lock:
+            entry = self._takes.get(key) or {}
+            return {int(s) for s in entry.get("bad", [])}
 
     def remember(self, key: str, seed: int, text: str) -> None:
         """A take of `text` with this seed passed the check: keep the seed for next time."""
@@ -102,6 +114,19 @@ class TakeStore:
                 entry["used"] = self._stamp()
                 return
             entry.update(seed=seed, text=text[:120], used=self._stamp())
+            self._trim()
+            self._save()
+
+    def avoid(self, key: str, seed: int, text: str) -> None:
+        """A take of `text` with this seed was bad: the next time starts from another one."""
+        with self._lock:
+            entry = self._takes.setdefault(key, {})
+            older = [s for s in entry.get("bad", []) if s != seed]
+            bad = [*older[-(MAX_BAD - 1) :], seed]
+            entry.update(bad=bad, text=text[:120], used=self._stamp())
+            if entry.get("seed") == seed:  # it was good once (another checkpoint run?)
+                entry.pop("seed")
+                entry.pop("wav", None)
             self._trim()
             self._save()
 

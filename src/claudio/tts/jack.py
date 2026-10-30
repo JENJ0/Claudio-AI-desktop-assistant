@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import itertools
 import json
 import logging
 import queue
@@ -45,13 +46,13 @@ RESTART_COOLDOWN_S = 30.0
 REPLY_GAP_S = 1.0
 CREATE_NO_WINDOW = 0x08000000  # Windows: no console window for the worker
 # The take check. A piece with less than OPENING_S still to play before it opens a reply:
-# it is judged on its first FIRST_CHECK_S (one Qwen3 chunk), up to FIRST_CHECK_MAX_S when
-# that has too little voice to tell, and generated again at most once (+0.3-0.5 s, JenJo
-# 30/10). A later piece is held until it is whole, or until what plays before it has
-# RELEASE_MARGIN_S left, and generated again only with RETRY_MIN_S still to play.
+# it is judged on its first chunk (~0.67 s of audio) and played unless that already shows it
+# is bad: waiting for more audio when the first chunk has too little voice to tell put the
+# first word at 0.8-1.7 s on JenJo's PC (30/10). A later piece gets an early look at its
+# first FIRST_CHECK_S, then is held until it is whole, or until what plays before it has
+# RELEASE_MARGIN_S left, and is generated again only with RETRY_MIN_S still to play.
 OPENING_S = 0.3
 FIRST_CHECK_S = 0.6
-FIRST_CHECK_MAX_S = 1.3
 RELEASE_MARGIN_S = 0.4
 RETRY_MIN_S = 1.0
 
@@ -71,6 +72,10 @@ class _Take:
     @property
     def released(self) -> bool:
         return bool(self.played)
+
+
+def _random_seeds() -> int:
+    return random.randrange(2**31)
 
 
 def _raw(event: dict[str, Any]) -> dict[str, float]:
@@ -130,12 +135,16 @@ class JackSynth:
         takes: TakeStore | None = None,
         seed: int = -1,
         retries: int = 2,
+        first_retries: int = 1,
     ) -> None:
         self.monitor = monitor  # VoiceMonitor: every piece said is saved and its pitch logged
         self.judge = judge  # None: every take is played as it comes
         self.takes = takes  # None: no seed per text, no saved takes
         self.seed = seed  # the first seed tried for a new text (-1: a random one)
-        self.retries = retries  # more takes of a piece at most (the opening one: 1)
+        self.retries = retries  # more takes of a piece at most
+        # ...of a piece that opens a reply, which the listener waits for: each one costs about
+        # 0.8 s (0 = never held back, never generated again)
+        self.first_retries = first_retries
         # When the audio handed out so far ends, at the earliest (it plays after it is
         # handed out): how long a held take may wait without leaving a gap.
         self._horizon = 0.0
@@ -394,21 +403,34 @@ class JackSynth:
         the configured one and the ones after it (random ones with seed -1)."""
         if self.judge is None and self.takes is None:
             return [None]  # the worker's own --seed, as before
-        known = self.takes.seed(key) if self.takes is not None and key is not None else None
-        if self.seed >= 0:
-            fresh = [self.seed + i for i in range(count + 1)]
+        known, bad = None, set()
+        if self.takes is not None and key is not None:
+            known, bad = self.takes.seed(key), self.takes.bad_seeds(key)
+        seeds: list[int | None] = [known] if known is not None else []
+        fresh = itertools.count(self.seed) if self.seed >= 0 else iter(_random_seeds, None)
+        for seed in itertools.islice(fresh, count + len(bad) + 1):
+            if len(seeds) >= count:
+                break
+            if seed != known and seed not in bad:
+                seeds.append(seed)
+        return seeds
+
+    def _note(self, key: str | None, seed: int | None, text: str, good: bool) -> None:
+        """A judged take: its seed is kept for this text when good, never tried first again
+        when bad (30/10: the same text kept getting the same shouted take)."""
+        if self.takes is None or key is None or seed is None:
+            return
+        if good:
+            self.takes.remember(key, seed, text)
         else:
-            fresh = [random.randrange(2**31) for _ in range(count + 1)]
-        seeds = [known] if known is not None else []
-        seeds += [s for s in fresh if s != known]
-        return list(seeds[:count])
+            self.takes.avoid(key, seed, text)
 
     def _speak(self, text: str) -> Iterator[np.ndarray]:
         spoken = self._spoken(text)
         rvc = self._rvc_for_next()
         key = self.takes.key(spoken, rvc) if self.takes is not None else None
         opening = self._horizon - time.monotonic() < OPENING_S
-        retries = min(self.retries, 1) if opening else self.retries
+        retries = min(self.retries, self.first_retries) if opening else self.retries
         seeds = self._seeds(key, 1 + (retries if self.judge is not None else 0))
         take = _Take(None)
         for attempt, seed in enumerate(seeds):
@@ -418,14 +440,15 @@ class JackSynth:
                 break
             reasons = ", ".join(take.verdict.reasons) if take.verdict else ""
             log.info("Take di Jack scartata (seme %s): %s - %s", seed, reasons, text[:50])
+            self._note(key, seed, text, good=False)
         if take.cancelled or not take.played:
             return
         verdict = take.verdict
         if verdict is not None and not verdict.ok:
             reasons = ", ".join(verdict.reasons)
             log.info("Take di Jack suonata anche se non buona (%s) - %s", reasons, text[:50])
-        elif verdict is not None and key is not None and take.seed is not None and self.takes:
-            self.takes.remember(key, take.seed, text)
+        if verdict is not None:
+            self._note(key, take.seed, text, good=verdict.ok)
         if self.monitor is not None:
             audio = np.concatenate(take.played)
             self.monitor.check(text, audio, self.sample_rate, raw=take.raw, spoken=spoken)
@@ -488,15 +511,14 @@ class JackSynth:
                         continue
                     held.append(chunk)
                     seconds = sum(len(c) for c in held) / self.sample_rate
-                    if judged or seconds < FIRST_CHECK_S:
+                    if judged or (not opening and seconds < FIRST_CHECK_S):
                         continue
                     verdict = self._judge(held, spoken, take.raw, complete=False)
                     if not verdict.ok and self._may_retry(opening, last):
                         take.verdict, take.rejected = verdict, True
                         return take
-                    if not opening or verdict.stats.known or seconds >= FIRST_CHECK_MAX_S:
-                        judged = True
-                    if opening and judged:
+                    judged = True
+                    if opening:  # the reply is waiting for it: no proof it is bad, out it goes
                         take.verdict = verdict
                         yield from self._release(held, take)
                 elif kind == "done":
