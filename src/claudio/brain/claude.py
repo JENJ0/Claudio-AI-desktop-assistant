@@ -38,6 +38,7 @@ from claudio.brain.prompts import (
     BRIDGE_RUN,
     BUDGET_BLOCKED,
     BUDGET_WARNING,
+    CUT_AT_LIMIT,
     NETWORK_ERROR,
     NO_KEY,
     OFFER,
@@ -49,6 +50,7 @@ from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.i18n import tr
 from claudio.intake import Hearing
+from claudio.protocols import CUT_SHORT
 from claudio.router.normalizer import normalize, strip_wake_words
 from claudio.safety.confirmation import (
     CANCELLED,
@@ -639,6 +641,16 @@ class ClaudeBrain:
             if not "".join(leg.parts).strip():
                 yield in_language(REFUSED, language)
             return
+        if final is not None and final.stop_reason == "max_tokens":
+            # 30/10: a story stopped inside "Attraverso" and the voice said "Attra". The
+            # marker drops the unfinished sentence; the closing one stays in the history too,
+            # so a later "continua" makes sense to Claude.
+            log.warning("Claude: risposta tagliata al limite di %d token", params["max_tokens"])
+            self.last_call["cut"] = "max_tokens"
+            said = " " + in_language(CUT_AT_LIMIT, language)
+            leg.parts.append(said)
+            yield CUT_SHORT
+            yield said
         leg.read(final)
         leg.complete = True
 

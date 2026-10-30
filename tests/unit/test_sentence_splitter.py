@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from claudio.protocols import CUT_SHORT
 from claudio.tts.sentence_splitter import SentenceSplitter, split_stream
 
 
@@ -95,6 +96,44 @@ def test_sentences_glued_without_a_space_are_split() -> None:
     assert splitter.feed("Gli U.S.A. e 3.5 restano. ") + splitter.flush() == [
         "Gli U.S.A. e 3.5 restano."
     ]
+
+
+CLOSING = " Mi fermo qui: se vuoi, continuo."
+
+
+@pytest.mark.parametrize(
+    ("chunks", "expected"),
+    [
+        # 30/10: Claude stopped at the token limit inside "Attraverso": "Attra" was said.
+        (["Fine. Attra", CUT_SHORT], ["Fine."]),
+        (["Fine.", CUT_SHORT], ["Fine."]),  # a sentence ending right at the cut is said
+        (["Fine. Attra", CUT_SHORT, CLOSING], ["Fine.", CLOSING.strip()]),
+        ([CUT_SHORT, CLOSING], [CLOSING.strip()]),
+        (["Uno. Due", ". Tre"], ["Uno.", "Due.", "Tre"]),  # no marker: the rest is said
+    ],
+)
+async def test_a_cut_reply_drops_its_unfinished_sentence(
+    chunks: list[str], expected: list[str]
+) -> None:
+    assert [s async for s in split_stream(_sentences(*chunks))] == expected
+
+
+def test_a_cut_reply_said_again_has_no_fragment() -> None:
+    """ "ripeti" and "Dicevo: ..." say a reply again from its chunks: never "Attra"."""
+    from claudio.protocols import CUT_SHORT
+    from claudio.tts.sentence_splitter import joined_reply
+
+    parts = ["C'era una volta Jack. ", "Poi arrivò. Attra", CUT_SHORT, " Mi fermo qui."]
+    assert joined_reply(parts) == "C'era una volta Jack. Poi arrivò. Mi fermo qui."
+    assert joined_reply(["Ciao,\n", "socio.  "]) == "Ciao,\nsocio."  # untouched without a cut
+
+
+def test_drop_unfinished_keeps_what_the_cut_completes() -> None:
+    s = SentenceSplitter()
+    assert s.feed("Ecco. Dove si trova Roma? In Ita") == ["Ecco.", "Dove si trova Roma?"]
+    assert s.drop_unfinished() == []
+    assert s.feed(CLOSING) == [] and s.flush() == [CLOSING.strip()]
+    assert SentenceSplitter().drop_unfinished() == []
 
 
 async def _sentences(*items: str):

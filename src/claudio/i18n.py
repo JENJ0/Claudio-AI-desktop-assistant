@@ -377,6 +377,7 @@ EN: dict[str, str] = {
         "Claude blocked: today's budget is spent (%d%%)"
     ),
     "Claude ha rifiutato la richiesta": "Claude refused the request",
+    "Claude: risposta tagliata al limite di %d token": "Claude: reply cut at the %d token limit",
     "Claude %s: %d in, %d out, cache %d letti / %d scritti (TTL %s)%s": (
         "Claude %s: %d in, %d out, cache %d read / %d written (TTL %s)%s"
     ),

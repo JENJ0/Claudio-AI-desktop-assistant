@@ -35,6 +35,7 @@ from claudio.safety.confirmation import (
     question,
 )
 from claudio.system import ON
+from claudio.tts.sentence_splitter import joined_reply
 from claudio.wakeword.verifier import after_clipped_name
 
 log = logging.getLogger(__name__)
@@ -285,7 +286,7 @@ class LocalResponder:
         async for chunk in self._respond(text, language):
             parts.append(chunk)
             yield chunk
-        reply = "".join(parts).strip()
+        reply = joined_reply(parts)  # as said: a reply cut at the token limit has no fragment
         if reply and self.last_route.get("command") != "repeat":
             self._last_reply = (reply, self.language)
             self._last_reply_at = self.clock()
