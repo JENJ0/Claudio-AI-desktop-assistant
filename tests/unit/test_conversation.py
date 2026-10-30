@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 
 import numpy as np
 import pytest
@@ -14,8 +14,10 @@ import pytest
 from claudio.app import Assistant, BargeIn, State
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.config import VadSettings, load_settings
+from claudio.intake import Segment
 from claudio.router.actions import MEDIA_KEYS
 from claudio.router.matcher import CommandMatcher
+from claudio.router.responder import LocalResponder
 from claudio.tts.speaker import StreamingSpeaker
 from tests.unit.test_actions import Recorder, run
 from tests.unit.test_app import AudioClock, FakeSpeaker, FakeStt, FakeWake
@@ -474,7 +476,7 @@ async def test_a_request_over_the_reply_stops_it_and_is_answered(
         matcher,
         ["che ore sono", "che giorno è oggi"],
         speaker=speaker,
-        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+        barge_in=barge(vad_settings, ["che giorno è oggi"], resume_min_chars=0),
     )
     await speak_over(assistant, make_frames, speaker)
     assert speaker.cut
@@ -517,6 +519,85 @@ async def test_basta_does_not_resume(fake_vad, vad_settings, make_frames, matche
     await speak_over(assistant, make_frames, speaker)
     assert speaker.cut and assistant._cut is None
     assert not any(t.startswith("Dicevo") for t in speaker.spoken)
+
+
+# --- IT-1 5.4: no "Dicevo:" after a question, nor after the answer to a doubtful hearing --
+
+
+STORY = (  # no word like "giorno" or "oggi": "che giorno è oggi" would sound like its echo
+    "C'era una volta un drago che viveva sulla montagna più alta della valle. Al mattino"
+    " volava sopra il lago e contava le barche dei pescatori, una per una, senza mai sbagliare."
+    " Una volta ne trovò una in più, tutta d'oro, e decise di seguirla."
+)
+QUESTION = (
+    "Non è chiaro cosa intendi, socio: chi ha fatto cosa? Se parli della tesi, dimmi il titolo"
+    " e ti dico cosa trovo."
+)  # 30/10 14:08, the answer to "Chi ce l'ha fatta?" (said: "chiudi la chat")
+
+
+def claude_says(r: LocalResponder, reply: str) -> None:
+    """Claude's reply to whatever no command understands."""
+
+    async def fallback(text: str, language: str) -> AsyncGenerator[str, None]:
+        yield reply
+
+    r.fallback = fallback
+
+
+async def cut_by_a_request(
+    fake_vad, vad_settings, make_frames, matcher, reply: str, unsure: bool = False
+) -> tuple[list[dict], LongSpeaker]:
+    """A request Claude answers with `reply`, cut by "che giorno è oggi" said over it."""
+    speaker = LongSpeaker()
+    assistant, _, _, r = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["chi ce l'ha fatta", "che giorno è oggi"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+    )
+    claude_says(r, reply)
+    if unsure:  # Whisper doubted the first request (stt_unsure in metrics.jsonl)
+        assistant.on_heard = r.heard
+        assistant.unsure_logprob = -0.2
+        assistant.stt_segments = lambda: [Segment(0.05, -0.65)]
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut
+    return list(assistant.history), speaker
+
+
+async def test_a_story_cut_by_a_request_goes_on(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    rows, speaker = await cut_by_a_request(fake_vad, vad_settings, make_frames, matcher, STORY)
+    assert speaker.spoken[-1] == f"Dicevo: {STORY}" and rows[1]["resumed"] is True
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        QUESTION,
+        f"{STORY} Ti è piaciuta o ne vuoi un'altra?",  # long, but it ends asking something
+        "Sono le 14 e 5.",  # short: an answer, not a story
+    ],
+)
+async def test_a_question_or_a_short_answer_is_not_resumed(
+    fake_vad, vad_settings, make_frames, matcher, reply: str
+) -> None:
+    rows, speaker = await cut_by_a_request(fake_vad, vad_settings, make_frames, matcher, reply)
+    assert [r["outcome"] for r in rows[:2]] == ["interrupted", "ok"]
+    assert not any(t.startswith("Dicevo") for t in speaker.spoken) and "resumed" not in rows[1]
+
+
+async def test_the_answer_to_a_doubtful_hearing_is_not_resumed(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    rows, speaker = await cut_by_a_request(
+        fake_vad, vad_settings, make_frames, matcher, STORY, unsure=True
+    )
+    assert rows[0]["stt_unsure"] is True and rows[1]["outcome"] == "ok"
+    assert not any(t.startswith("Dicevo") for t in speaker.spoken) and "resumed" not in rows[1]
 
 
 async def test_noise_over_the_reply_only_lowers_it_for_a_moment(

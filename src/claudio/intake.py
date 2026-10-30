@@ -364,6 +364,15 @@ REQUEST_STARTS = frozenset(
 )
 
 
+QUESTION_TAIL_CHARS = 60  # a "?" this close to the end of a reply asks something
+
+
+def asks_something(reply: str) -> bool:
+    """Claudio's reply asks JenJo something: a "?" at its end, maybe followed by a short
+    sentence ("Che tema vuoi? Dimmelo e la scrivo.")."""
+    return "?" in reply.rstrip()[-QUESTION_TAIL_CHARS:]
+
+
 def addressed_to_claudio(text: str) -> bool:
     """A question (Whisper writes the "?"), a request verb at the start ("dimmi di più") or
     the name: worth asking Claude without the wake word."""

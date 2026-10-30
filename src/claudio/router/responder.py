@@ -18,7 +18,7 @@ from claudio.config import (
     in_language,
 )
 from claudio.echo import WORD_SHARE, word_share
-from claudio.intake import Doubt, Guess, Hearing, Recovery, Verdict, verdict
+from claudio.intake import Doubt, Guess, Hearing, Recovery, Verdict, asks_something, verdict
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import Command, CommandMatcher, Match, Near
 from claudio.router.normalizer import extract_number, normalize, strip_wake_words
@@ -39,7 +39,6 @@ from claudio.wakeword.verifier import after_clipped_name
 
 log = logging.getLogger(__name__)
 
-QUESTION_TAIL_CHARS = 60  # a "?" this close to the end of a reply asks something
 ANSWER_WINDOW_S = 45.0  # then the question is old: a phrase without the name is not its answer
 
 # Asked with (request, reply language): Claude's reply, streamed.
@@ -151,7 +150,7 @@ class LocalResponder:
         return (
             self.last_route.get("route") == "claude"
             and self._last_reply is not None
-            and "?" in self._last_reply[0].rstrip()[-QUESTION_TAIL_CHARS:]
+            and asks_something(self._last_reply[0])
         )
 
     @property
