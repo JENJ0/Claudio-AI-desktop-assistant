@@ -358,6 +358,24 @@ def test_worker_command_takes_the_settings_and_overrides(tmp_path) -> None:
     assert command[command.index("--checkpoint") + 1] == str(tmp_path / "ck3")
     assert command[command.index("--temperature") + 1] == "0.7"
     assert command[command.index("--speed") + 1] == "0.9"
+    assert command[command.index("--seed") + 1] == "7"  # one timbre between replies
+    assert command[command.index("--top-p") + 1] == "0.9"
+
+
+def test_every_piece_said_goes_to_the_voice_monitor(tmp_path, synths) -> None:
+    class Monitor:
+        def __init__(self) -> None:
+            self.checked: list[tuple[str, int, int]] = []
+
+        def check(self, text: str, audio: np.ndarray, rate: int) -> None:
+            self.checked.append((text, len(audio), rate))
+
+    monitor = Monitor()
+    synth, _ = make(tmp_path, "ok", monitor=monitor)
+    synths.append(synth)
+    synth.start()
+    synth.synthesize("Ciao eroe.")
+    assert monitor.checked == [("Ciao eroe.", 300, 24000)]  # the whole piece, once
 
 
 FAKE_APPLIO = textwrap.dedent(

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from claudio.tts.sentence_splitter import SentenceSplitter, split_stream
@@ -119,3 +121,43 @@ async def test_group_stream_keeps_a_long_sentence_whole_and_skips_empty_replies(
     long = "x" * 50 + "."
     assert await _collect(group_stream(_sentences("Hi.", long, "Ok."), 20)) == ["Hi.", long, "Ok."]
     assert await _collect(group_stream(_sentences(), 20)) == []
+
+
+async def _timed(*items: tuple[float, str]):
+    """Sentences that arrive late, as Claude writes them: (delay before it, sentence)."""
+    for delay, sentence in items:
+        await asyncio.sleep(delay)
+        yield sentence
+
+
+async def test_group_stream_starts_with_what_has_arrived_and_groups_the_rest() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    pieces = group_stream(
+        _timed((0, "Primo pezzo di risposta."), (0.05, "Due."), (0, "Tre."), (0, "Quattro.")),
+        220,
+        first_chars=10,
+    )
+    first = await asyncio.wait_for(pieces.__anext__(), 0.03)  # not waiting for the rest
+    assert first == "Primo pezzo di risposta."
+    await asyncio.sleep(0.1)  # the first piece is being said: the rest of the reply arrives
+    assert [p async for p in pieces] == ["Due. Tre. Quattro."]
+
+
+async def test_group_stream_first_piece_waits_for_first_chars_or_the_end() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    got = await _collect(group_stream(_timed((0, "Ah."), (0.02, "Chrome è aperto.")), 220, 10))
+    assert got == ["Ah. Chrome è aperto."]  # a lone "Ah." would be a generation of its own
+    assert await _collect(group_stream(_timed((0, "Fatto.")), 220, 60)) == ["Fatto."]
+
+
+async def test_group_stream_passes_on_a_failing_text_stream() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    async def broken():
+        yield "Ciao."
+        raise RuntimeError("rete")
+
+    with pytest.raises(RuntimeError):
+        await _collect(group_stream(broken(), 220))
