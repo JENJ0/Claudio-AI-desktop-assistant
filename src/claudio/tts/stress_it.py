@@ -131,6 +131,8 @@ class StressLexicon:
         index = stress_index(accented)
         if index is None or len(accented) != len(word):
             return None
+        if index == 0 and accented[0] == "ù":  # "ùtile", "ùltimo": a token the voice garbles
+            return None
         return put_accent(word, index, accented[index])
 
     def with_pronouns(self, key: str) -> str | None:

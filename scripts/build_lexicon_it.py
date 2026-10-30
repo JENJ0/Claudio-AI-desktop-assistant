@@ -74,6 +74,9 @@ _SIMPLE = {
     "ʦ": "z",
     "ʣ": "z",
 }
+# Words Jack says right as written and worse with the accent (scripts/stress_ab.py, 30/10):
+# "càlmati" heard "chiamati", "cialmati", "calmate" 3 times in 5, "calmati" 5/5 without.
+_SAID_WORSE = {"calmati"}
 # Common English words Wiktionary gives no Italian IPA for, written by hand (JenJo asked for
 # "on", "off", 30/10): proposals to hear like the others.
 _HAND_PROPOSALS = {
@@ -416,6 +419,9 @@ def build(collector: Collector) -> Lexicon:
         else:  # "aprile", "capitali"
             out.words[key] = KEEP
             out.stats["parole che sembrano verbo + pronome (lasciate)"] += 1
+    for key in _SAID_WORSE:
+        out.at_start.pop(key, None)
+        out.words[key] = KEEP
     out.stats["verbi che prendono pronomi"] = len(out.hosts)
     return out
 

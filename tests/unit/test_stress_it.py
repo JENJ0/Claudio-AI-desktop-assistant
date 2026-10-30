@@ -98,6 +98,12 @@ def test_an_imperative_that_is_also_a_participle_is_accented_where_a_clause_star
     assert mark_stress("Si sono fermati qui.", lexicon) == "Si sono fermati qui."
 
 
+def test_no_accent_on_a_starting_u() -> None:
+    lexicon = StressLexicon(words={"utile": "ùtile", "ospiti": "òspiti"}, hosts={"x": "x"})
+    assert lexicon.stressed("Utile") is None  # "ùtile" was heard "etile" (A/B 30/10)
+    assert lexicon.stressed("ospiti") == "òspiti"
+
+
 def test_mark_stress_leaves_accented_words_and_the_table_alone() -> None:
     lexicon = _lexicon()
     text = "Socio, accenditi: abitano a Brindisi, accènditi già."
@@ -156,6 +162,8 @@ def real() -> StressLexicon:
         ("È tutto pronto in cartella.", "È tutto pronto in cartella."),
         ("Ad aprile, socio.", "Ad aprile, socio."),
         ("Costa un euro.", "Costa un euro."),  # èu-ro, not è-u-ro
+        ("Calmati, socio.", "Calmati, socio."),  # "càlmati" was heard "chiamati" (A/B 30/10)
+        ("Ultimo file utile.", "Ultimo file utile."),  # a starting "ù" is garbled
     ],
 )
 def test_the_real_lexicon(real: StressLexicon, text: str, spoken: str) -> None:
