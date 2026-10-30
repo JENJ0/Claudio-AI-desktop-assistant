@@ -16,11 +16,13 @@ from claudio.brain.claude import CUT_NOTE, ClaudeBrain
 from claudio.brain.prompts import ASK_SONNET_TOOL, SYSTEM_PROMPT
 from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
+from claudio.protocols import CUT_SHORT
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import CommandMatcher
 from claudio.router.responder import LocalResponder
+from claudio.tts.sentence_splitter import split_stream
 from tests.unit.test_actions import Recorder
-from tests.unit.test_app import run_frames
+from tests.unit.test_app import FakeSpeaker, run_frames
 from tests.unit.test_app_verify_closed_list import request
 from tests.unit.test_app_verify_closed_list import setup as setup_closed_list
 from tests.unit.test_conversation import build as build_conversation
@@ -238,6 +240,41 @@ async def test_refusal_without_text_is_said(pricing: Pricing) -> None:
     assert b.tracker.calls_today() == 1  # the input was billed
 
 
+CUT_STORY = ["C'era una volta un re. ", "Attraverso il bosco ", "arrivò al castello. Attra"]
+CLOSING = " Mi fermo qui: se vuoi, continuo."
+
+
+async def test_a_reply_cut_at_the_token_limit_ends_with_a_closing_sentence(
+    pricing: Pricing,
+) -> None:
+    """30/10: Haiku stopped at the token limit inside "Attraverso" and Jack said "Attra". The
+    marker tells the voice to drop the fragment; the closing sentence after it stays in the
+    history, so "continua" makes sense to Claude."""
+    b = brain(pricing, FakeClient(CUT_STORY, stop="max_tokens"))
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert chunks[: len(CUT_STORY)] == CUT_STORY
+    marker, closing = chunks[len(CUT_STORY) :]
+    assert marker is CUT_SHORT and marker == ""  # found by identity, nothing when joined
+    assert closing == CLOSING
+    assert b.last_call["cut"] == "max_tokens"  # in metrics.jsonl
+    assert b.tracker.calls_today() == 1
+    assert b._history[-1] == ("[it] raccontami una storia", "".join(CUT_STORY) + CLOSING)
+
+
+async def test_the_closing_sentence_follows_the_reply_language(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(["Once upon a time, a ki"], stop="max_tokens"))
+    assert (
+        await ask(b, "tell me a story", "en")
+        == "Once upon a time, a ki I'll stop here: ask and I'll go on."
+    )
+
+
+async def test_a_finished_reply_has_no_marker(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(["Fine."]))
+    assert [c async for c in b.ask("dimmi una cosa", "it")] == ["Fine."]
+    assert "cut" not in b.last_call
+
+
 async def test_cut_short_still_counts_the_tokens(pricing: Pricing) -> None:
     """ "basta" while Claude speaks: the speaker closes the stream after the first sentence."""
     client = FakeClient(["Prima frase lunga. ", "Seconda frase. ", "Terza frase."])
@@ -347,6 +384,43 @@ async def test_conversation_follow_up_goes_to_claude(
     assert len(client.calls) == 2
     assert [row["outcome"] for row in assistant.history] == ["ok", "ok", "conversation_end"]
     assert assistant.history[0]["route"] == "claude"
+
+
+class SentenceSpeaker(FakeSpeaker):
+    """Splits the reply as StreamingSpeaker does: the sentences the voice would say."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sentences: list[str] = []
+
+    async def speak(
+        self, text_stream: AsyncIterator[str], on_first_audio: Any = None, language: Any = "it"
+    ) -> None:
+        said = [s async for s in split_stream(text_stream)]
+        if on_first_audio:
+            on_first_audio()
+        self.sentences += said
+        self.spoken.append(" ".join(said))
+
+
+async def test_the_fragment_of_a_cut_reply_never_reaches_the_voice(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    """The marker crosses the responder, the drained stream and the app as it is (30/10)."""
+    client = FakeClient(CUT_STORY, stop="max_tokens")
+    speaker = SentenceSpeaker()
+    assistant, _, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["raccontami una storia"], speaker=speaker
+    )
+    with_claude(assistant, r, brain(pricing, client))
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert speaker.sentences == [
+        "C'era una volta un re.",
+        "Attraverso il bosco arrivò al castello.",
+        CLOSING.strip(),
+    ]
+    row = assistant.history[0]
+    assert row["cut"] == "max_tokens" and row["reply"] == ("".join(CUT_STORY) + CLOSING).strip()
 
 
 async def test_tv_in_the_window_costs_nothing(
@@ -558,6 +632,26 @@ async def test_asking_to_think_goes_straight_to_sonnet(pricing: Pricing) -> None
     assert await ask(b, "Pensaci bene: quanto fa 17 per 23?") == "Allora."
     assert [c["model"] for c in client.calls] == ["claude-sonnet-5-5"]
     assert b.last_call["escalated"] == "asked" and "smart_first_ms" in b.last_call
+
+
+@pytest.mark.parametrize(
+    ("replies", "text"),
+    [
+        ([(["Fa 391. Il cal"], "max_tokens", [])], "Pensaci bene: quanto fa 17 per 23?"),
+        (  # the story Haiku tells itself after asking for Sonnet: _haiku()
+            [([], "tool_use", HANDOFF), (["C'era una volta. Un pir"], "max_tokens", [])],
+            "raccontami una storia lunga sui pirati",
+        ),
+    ],
+)
+async def test_sonnet_and_the_second_haiku_pass_the_cut_marker_on(
+    pricing: Pricing, replies: list[tuple[list[str], str, list[Any]]], text: str
+) -> None:
+    b = brain(pricing, ScriptedClient(*replies))
+    chunks = [c async for c in b.ask(text, "it")]
+    assert chunks[-2] is CUT_SHORT and chunks[-1] == CLOSING
+    assert b.last_call["cut"] == "max_tokens"
+    assert b._history[-1][1].endswith(CLOSING)
 
 
 async def test_think_phrase_in_another_language(pricing: Pricing) -> None:

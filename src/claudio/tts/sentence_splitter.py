@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+
+from claudio.protocols import CUT_SHORT
 
 ABBREVIATIONS = {
     "ecc",
@@ -87,6 +89,13 @@ class SentenceSplitter:
         rest, self._buf = self._buf.strip(), ""
         return [rest] if rest else []
 
+    def drop_unfinished(self) -> list[str]:
+        """The reply was cut (token limit): the sentences the cut completes ("fine." right
+        at the cut waited for what follows), never the fragment after them ("Attra", 30/10)."""
+        done = self.feed(" ")
+        self._buf = ""
+        return done
+
     def _find_cut(self) -> int | None:
         buf = self._buf
         for i, ch in enumerate(buf):
@@ -124,11 +133,27 @@ class SentenceSplitter:
         return word.lower() in ABBREVIATIONS
 
 
+def joined_reply(parts: Sequence[str]) -> str:
+    """The chunks of a reply joined as the voice said them: without the fragment a
+    CUT_SHORT dropped, for what says a reply again ("ripeti", "Dicevo: ...")."""
+    if not any(part is CUT_SHORT for part in parts):
+        return "".join(parts).strip()
+    splitter = SentenceSplitter(max_chars=len("".join(parts)) + 1)
+    said: list[str] = []
+    for part in parts:
+        said += splitter.drop_unfinished() if part is CUT_SHORT else splitter.feed(part)
+    return " ".join(said + splitter.flush())
+
+
 async def split_stream(
     chunks: AsyncIterator[str], max_chars: int = 220, first_clause_chars: int = 0
 ) -> AsyncIterator[str]:
     splitter = SentenceSplitter(max_chars, first_clause_chars)
     async for chunk in chunks:
+        if chunk is CUT_SHORT:  # what follows it (a closing sentence) is said as usual
+            for sentence in splitter.drop_unfinished():
+                yield sentence
+            continue
         for sentence in splitter.feed(chunk):
             yield sentence
     for sentence in splitter.flush():
