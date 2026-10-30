@@ -46,9 +46,9 @@ from claudio.wakeword.verifier import wake_confirmed
 ENGINES = ("turbo", "large-v3", "lista", "frase", "nomi", "parakeet")
 # How JenJo talks to CLAUDIO, written as Whisper would: the prompt is read as the text said just
 # before, so whole sentences bias it less toward commands than a list of them.
-NATURAL_PROMPT = (
-    "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. "
-    "Apri Chrome e la cartella Download, poi alza il volume. Basta, grazie."
+NATURAL_PROMPT = (  # config/claudio.toml [stt.prompts] it, the one CLAUDIO uses
+    "Apri Chrome e la cartella Download, poi alza il volume. "
+    "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve."
 )
 LEAD_IN_S = 1.5  # app.LEAD_IN_S: the audio before the detection that reaches Whisper
 

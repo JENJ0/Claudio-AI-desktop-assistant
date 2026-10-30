@@ -550,6 +550,89 @@ async def test_a_phrase_without_words_does_not_move_the_microphone_level(
     assert level.seen == []
 
 
+class SeenLevel:
+    gain_db = 6.0
+    microphone = "Cuffie"
+
+    def __init__(self) -> None:
+        self.seen: list[dict] = []
+
+    def observe(self, stats) -> None:
+        self.seen.append(dict(stats))
+
+
+class FailingResponder(FakeResponder):
+    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+        self.seen.append(text)
+        raise RuntimeError("Claude non risponde")
+        yield ""  # an async generator
+
+
+class StopResponder(FakeResponder):
+    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+        self.seen.append(text)
+        self.last_route = {"route": "local", "command": "stop"}
+        yield "Ok."
+
+
+class SwitchingResponder(FakeResponder):
+    """The capture moves to the webcam while the reply is still going."""
+
+    def __init__(self, level: SeenLevel) -> None:
+        super().__init__()
+        self.level = level
+
+    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+        self.level.microphone = "Webcam"
+        async for part in super().respond(text, language):
+            yield part
+
+
+@pytest.mark.parametrize(
+    ("responder", "outcome", "learns"),
+    [(FailingResponder, "error", False), (StopResponder, "stopped", True)],
+)
+async def test_only_the_outcomes_of_a_real_request_move_the_microphone_level(
+    fake_vad, vad_settings, make_frames, responder, outcome: str, learns: bool
+) -> None:
+    level = SeenLevel()
+    assistant = Assistant(
+        FakeWake({1}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        responder(),
+        FakeSpeaker(),
+        clock=AudioClock(),
+        level=level,
+    )
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert assistant.history[0]["outcome"] == outcome and assistant.history[0]["text"]
+    assert bool(level.seen) is learns
+
+
+async def test_a_phrase_heard_on_another_microphone_does_not_move_this_ones_level(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    level = SeenLevel()
+    assistant = Assistant(
+        FakeWake({1}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        SwitchingResponder(level),
+        FakeSpeaker(),
+        clock=AudioClock(),
+        level=level,
+    )
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert assistant.history[0]["outcome"] == "ok" and level.seen == []
+
+
 @pytest.mark.parametrize("state", list(State))
 def test_states_are_strings(state: State) -> None:
     assert isinstance(state.value, str)

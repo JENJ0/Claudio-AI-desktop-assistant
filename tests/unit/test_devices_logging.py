@@ -113,6 +113,8 @@ def test_input_gain_boosts_and_limits_instead_of_wrapping() -> None:
     assert boosted[3] < boosted[5] < boosted[6] < 32767  # bent, still ordered: no flat tops
     overdriven = apply_gain(np.array([20000, -32768], dtype=np.int16), 10 ** (12 / 20))
     assert list(overdriven) == [32767, -32767]  # far over full scale: at the top, not wrapped
+    untouched = apply_gain(frame, 1.0)  # no gain: the frame as the microphone gave it
+    assert untouched is not frame and list(untouched) == list(frame)
 
 
 def test_microphone_key_is_the_same_under_every_host_api() -> None:

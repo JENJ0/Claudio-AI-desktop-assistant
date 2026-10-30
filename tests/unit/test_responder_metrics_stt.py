@@ -138,25 +138,72 @@ def test_short_hallucinations_only_as_whole_text(text: str, expected: bool) -> N
         ("Grazie mille.", False),
         ("Basta, basta!", False),
         ("Grazie a tutti, apri Chrome.", False),
+        ("Bye bye.", True),  # itself a repetition
+        ("Bye bye, bye bye.", True),
+        ("Grazie per aver guardato il video.", True),
+        ("Scrivi nel blocco note: grazie per aver guardato il video", False),  # dictation
     ],
 )
 def test_invented_endings_also_repeated_or_after_a_thanks(text: str, expected: bool) -> None:
     assert is_hallucination(text) is expected
 
 
-def test_the_shipped_prompts_do_not_end_in_a_sentence_whisper_can_repeat_unseen() -> None:
+def test_the_shipped_prompts_do_not_end_in_a_command(matcher) -> None:
     """On unclear audio Whisper repeats the end of its prompt ("Basta, grazie." for "Claudio,
-    chiudi il Blocco note", 29/10): a last sentence of ECHO_MIN_WORDS words or more is
-    dropped as an echo, a shorter one would be taken for a request."""
+    chiudi il Blocco note", 29/10): every end of it is caught as an echo, and none is a
+    command, so a repeat runs no action and no frequent command pays the second pass."""
     from claudio.config import DEFAULT_CONFIG, load_settings
-    from claudio.stt.transcriber import ECHO_MIN_WORDS
+    from claudio.stt.transcriber import ECHO_END_WORDS, is_prompt_echo
 
     prompts = load_settings(DEFAULT_CONFIG).stt.prompts
     assert prompts
     for language, prompt in prompts.items():
-        last = re.split(r"(?<=[.?!])\s+", prompt.strip())[-1]
-        assert len(last.split()) >= ECHO_MIN_WORDS, (language, last)
-        assert is_hallucination(last, prompt)
+        words = re.split(r"(?<=[.?!])\s+", prompt.strip())[-1].split()
+        for start in range(len(words) - ECHO_END_WORDS + 1):
+            end = " ".join(words[start:])
+            assert is_prompt_echo(end, prompt) and is_hallucination(end, prompt), end
+            assert matcher.match(end) is None, (language, end)
+
+
+def test_a_piece_of_the_prompt_is_transcribed_again_without_it() -> None:
+    """ "Poi alza il volume." on unclear audio is the prompt repeated; without the prompt
+    Whisper writes what was said. The same request really said stays."""
+    import numpy as np
+
+    from claudio.config import SttSettings
+
+    class EchoingWhisper(FakeWhisper):
+        def __init__(self, without: str) -> None:
+            super().__init__()
+            self.without, self.prompts = without, []
+
+        def transcribe(self, audio, **kwargs):
+            self.prompts.append(kwargs["initial_prompt"])
+            self.text = " Poi alza il volume." if kwargs["initial_prompt"] else self.without
+            return super().transcribe(audio, **kwargs)
+
+    stt = make_stt()
+    stt.settings = SttSettings(prompts={"it": "Ehi Claudio. Apri Chrome, poi alza il volume."})
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    stt._model = EchoingWhisper(" Chiudi il blocco note.")
+    assert stt.transcribe(speech) == "Chiudi il blocco note."
+    assert stt._model.prompts == ["Ehi Claudio. Apri Chrome, poi alza il volume.", None]
+    stt._model = EchoingWhisper(" Poi alza il volume.")  # really said
+    assert stt.transcribe(speech) == "Poi alza il volume."
+    stt._model = EchoingWhisper(" Grazie a tutti.")
+    assert stt.transcribe(speech) == ""  # the second pass is filtered too
+
+
+def test_an_ordinary_request_takes_one_pass() -> None:
+    import numpy as np
+
+    from claudio.config import SttSettings
+
+    stt = make_stt()
+    stt.settings = SttSettings(prompts={"it": "Apri Chrome, poi alza il volume."})
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    stt._model.text = " Claudio, alza il volume."
+    assert stt.transcribe(speech) == "Claudio, alza il volume." and stt._model.calls == 1
 
 
 class FakeWhisper:
@@ -303,14 +350,14 @@ def test_language_detection_reuses_the_encoder_pass() -> None:
     stt = make_stt()
     stt.settings = SttSettings(
         languages=["it", "en"],
-        prompts={"it": "Apri Chrome.", "en": "Open Chrome."},
+        prompts={"it": "Apri la cartella.", "en": "Open the folder."},
         other_confidence=0.8,
     )
     stt._model = FakeMultilingualWhisper([("<|en|>", 0.8), ("<|it|>", 0.15), ("<|de|>", 0.05)])
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     assert stt.transcribe(speech) == "Open Chrome."
     assert stt.language == "en" and stt._model.kwargs["language"] == "en"
-    assert stt._model.kwargs["initial_prompt"] == "Open Chrome."
+    assert stt._model.kwargs["initial_prompt"] == "Open the folder."
     assert stt._model.encoded == 1 and stt._reused == 1  # one encoder pass, not two
     assert "encode" not in vars(stt._model)  # Whisper's own encoder is back
     stt._model.model = type("Ct2", (), {"detect_language": lambda s, e: [[("<|it|>", 0.5)]]})()

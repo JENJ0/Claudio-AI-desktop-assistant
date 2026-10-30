@@ -105,6 +105,19 @@ def test_the_old_value_of_the_setting_starts_a_new_microphone(tmp_path) -> None:
     assert saved(tmp_path) == {"": 11.9, "Microfono (Wireless Stereo Head": 6.0}
 
 
+def test_a_first_phrase_that_clips_still_goes_straight_down(tmp_path) -> None:
+    """The headset started at the old single value, +27 dB, needs about +1: 6 dB a phrase
+    would have saturated three requests in a row."""
+    (tmp_path / "audio_level.json").write_text('{"auto": 27.0}', encoding="utf-8")
+    gain, applied = make(tmp_path, start=0.0, mic="auto")
+    gain.use("Microfono (Wireless Stereo Head")
+    gain.observe(speech(-2.0, clipped=0.3))  # read through the limiter: the voice seems -29
+    assert gain.gain_db == 6.0 and applied == [27.0, 27.0, 6.0]
+    gain.use("Microfono (Logi C270 HD WebCam)")  # never heard: the old value, then measured
+    gain.observe(speech(-25.0, clipped=0.002))  # a click clipped: still at least 6 dB off
+    assert gain.gain_db == 21.0
+
+
 @pytest.mark.parametrize("content", ["not json", "[1, 2]"])
 def test_broken_state_file_starts_from_the_config(tmp_path, content: str) -> None:
     (tmp_path / "audio_level.json").write_text(content, encoding="utf-8")

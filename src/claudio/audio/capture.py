@@ -36,7 +36,9 @@ STILL_MISSING_EVERY = 30  # retries between two "still missing" warnings (~30 s)
 
 def apply_gain(frame: np.ndarray, gain: float) -> np.ndarray:
     """int16 frame times a linear gain; the peaks it pushes over -3 dBFS bend smoothly
-    towards full scale (level.soft_limit) instead of clipping."""
+    towards full scale (level.soft_limit) instead of clipping. No gain: the frame as it is."""
+    if gain == 1.0:
+        return frame.astype(np.int16, copy=True)
     boosted = soft_limit(frame.astype(np.float32) * np.float32(gain / 32768.0))
     return np.round(boosted * 32767.0).astype(np.int16)
 
@@ -107,7 +109,7 @@ class AudioCapture:
             if status:
                 log.debug("Stato audio in ingresso: %s", status)
             frame = indata[:, 0]
-            frame = apply_gain(frame, self.gain) if self.gain != 1.0 else frame.copy()
+            frame = apply_gain(frame, self.gain)
             loop.call_soon_threadsafe(put, frame)
 
         portaudio_default = False  # the WASAPI default failed once: use PortAudio's (MME)

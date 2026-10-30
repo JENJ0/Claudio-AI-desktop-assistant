@@ -210,7 +210,23 @@ def test_run_says_why_a_sentence_came_out_empty(fake_vad, vad_settings) -> None:
     score = bench.run(bench.parse_variant("live"), mic, transcribe, endpointer)
     assert score.texts == ["", "Stop.", ""]
     assert score.why == {0: "Trascrizione scartata (x)", 2: "Silero non ha sentito voce"}
+    assert len(score.ms) == 2  # the time of what was transcribed only
     assert not logging.getLogger("claudio.stt.transcriber").handlers  # taken off again
+
+
+def test_run_never_transcribes_what_claudio_would_not(fake_vad, vad_settings) -> None:
+    whisper = (tone(1.0, 0.0005) * 32768).astype(np.int16)  # -66 dBFS: "Stop." on the headset
+    mic = bench.Microphone("Cuffie", testset.OUT, [1], [whisper], gain_db=0.0)
+    calls: list[int] = []
+
+    def transcribe(audio: np.ndarray, variant: bench.Variant) -> str:
+        calls.append(audio.size)
+        return "invented"
+
+    endpointer = Endpointer(fake_vad, vad_settings, SR)
+    score = bench.run(bench.parse_variant("live+grezzo+novad"), mic, transcribe, endpointer)
+    assert score.texts == [""] and score.why == {0: "sotto -60 dBFS: non trascritta"}
+    assert calls == [] and score.ms == []
 
 
 def test_report_scores_words_and_commands(matcher, capsys) -> None:

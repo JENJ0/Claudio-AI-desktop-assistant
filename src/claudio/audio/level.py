@@ -102,12 +102,15 @@ class AutoGain:
         """Stats of a phrase in which Whisper heard words (Endpointer.stats())."""
         speech = stats["speech_dbfs"]
         voice = speech - self.gain_db  # before the boost
-        if stats.get("clipped", 0.0) > CLIPPED_LIMIT:
-            gain, why = self.gain_db - MAX_DOWN_DB, "voce saturata"
-            self._voice = voice if self._voice is None else max(self._voice, voice)
-        elif self._voice is None:  # the first phrase on this microphone: straight to it
+        clipped = stats.get("clipped", 0.0) > CLIPPED_LIMIT
+        if self._voice is None:  # the first phrase on this microphone: straight to it
             self._voice = voice
             gain, why = TARGET_DBFS - FIRST_MARGIN_DB - voice, f"prima frase a {speech:.0f} dBFS"
+            if clipped:  # measured through the limiter, the voice reads too low: at least -6
+                gain, why = min(gain, self.gain_db - MAX_DOWN_DB), "prima frase, voce saturata"
+        elif clipped:
+            gain, why = self.gain_db - MAX_DOWN_DB, "voce saturata"
+            self._voice = max(self._voice, voice)
         else:
             weight = LOUDER_WEIGHT if voice > self._voice else QUIETER_WEIGHT
             self._voice += weight * (voice - self._voice)

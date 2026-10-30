@@ -6,10 +6,12 @@ how many commands come out right and the time per sentence.
     uv run python scripts/stt_bench.py --details
     uv run python scripts/stt_bench.py --variants live live+beam1 parakeet
 
-A variant is a "+"-joined list of changes from what CLAUDIO does today ("live"):
-    live      the gain CLAUDIO learns on that microphone (its sentences' loudest 32 ms at
-              -20 dBFS, soft limiter), the names on this PC and the sentences of [stt.prompts]
-              as Whisper's prompt, Silero's cut of the sentence ([vad] settings)
+A variant is a "+"-joined list of changes from how CLAUDIO transcribes today ("live"):
+    live      about the gain CLAUDIO learns on that microphone (its sentences' typical loudest
+              32 ms at -20 dBFS, soft limiter), the names on this PC and the sentences of
+              [stt.prompts] as Whisper's prompt, Silero's cut of the sentence ([vad] settings).
+              What comes after the transcription live (the closed list, waiting for the rest
+              of a phrase left halfway) is not in it: compare_stt.py measures the closed list
     grezzo    the recording as the microphone gives it, no gain
     frasi     prompt: only the sentences of [stt.prompts], no names
     vuoto     no prompt at all
@@ -108,8 +110,9 @@ def wer(references: list[str], texts: list[str]) -> float:
 
 
 def microphone_gain_db(recordings: list[np.ndarray]) -> float:
-    """The gain AutoGain settles on for this microphone: its typical sentence (the median of
-    the loudest 32 ms) at TARGET_DBFS, within 0..MAX_GAIN_DB."""
+    """About the gain AutoGain settles on for this microphone (live it follows the louder
+    phrases a little more): its typical sentence (the median of the loudest 32 ms) at
+    TARGET_DBFS, within 0..MAX_GAIN_DB."""
     typical = statistics.median(peak_dbfs(audio) for audio in recordings)
     return round(min(max(TARGET_DBFS - typical, 0.0), MAX_GAIN_DB), 1)
 
@@ -166,6 +169,8 @@ class Notes(logging.Handler):
 def load_microphones(out: Path) -> tuple[list[str], list[Microphone]]:
     import soundfile as sf
 
+    if not (out / "frasi.txt").is_file():
+        raise SystemExit(f"Nessuna registrazione in {out}: prima scripts/stt_testset.py")
     sentences = read_sentences(out / "frasi.txt")
     microphones = []
     for folder in sorted(p for p in out.iterdir() if p.is_dir()):
@@ -197,6 +202,9 @@ def whisper_engine(
         stt_settings = settings.stt.model_copy(update={"model": model})
         root = settings.resolve(settings.models_dir) / "whisper"
         cache.update(model=model, stt=WhisperTranscriber(stt_settings, root))
+        loaded = cache["stt"]
+        assert isinstance(loaded, WhisperTranscriber)
+        print(f"  Whisper {loaded.model_name} su {loaded.device}", flush=True)  # CPU: fell back
     stt = cache["stt"]
     assert isinstance(stt, WhisperTranscriber)
     if "names" not in cache:
@@ -237,28 +245,40 @@ def run(
     transcribe: Callable[[np.ndarray, Variant], str],
     endpointer: Endpointer,
 ) -> Score:
+    from claudio.stt.transcriber import MIN_RMS
+
     score = Score(variant.name)
     gain = 10 ** ((microphone.gain_db if variant.gain else 0.0) / 20)
+    engine = variant.engine.capitalize()
     notes, logger = Notes(), logging.getLogger("claudio.stt.transcriber")
     level = logger.level
     logger.addHandler(notes)
     logger.setLevel(logging.INFO)
+    warm = False
     try:
         for i, recording in enumerate(microphone.recordings):
             audio = apply_gain(recording, gain).astype(np.float32) / 32768.0
             if variant.vad:
                 audio, cut = silero_cut(audio, endpointer)
                 score.cuts += cut
-            if i == 0:
+            if not audio.size:
+                score.texts.append("")
+                score.why[i] = "Silero non ha sentito voce"
+                continue
+            if float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
+                score.texts.append("")  # CLAUDIO does not transcribe it either
+                score.why[i] = "sotto -60 dBFS: non trascritta"
+                continue
+            if not warm:
                 transcribe(audio, variant)  # warm-up: the first pass on the GPU is slow
+                warm = True
             notes.lines.clear()
             start = time.perf_counter()
-            text = transcribe(audio, variant) if audio.size else ""
-            score.ms.append((time.perf_counter() - start) * 1000)
+            text = transcribe(audio, variant)
+            score.ms.append((time.perf_counter() - start) * 1000)  # only what was transcribed
             score.texts.append(text)
             if not text:
-                said = "; ".join(notes.lines) or "Whisper non ha scritto niente"
-                score.why[i] = said if audio.size else "Silero non ha sentito voce"
+                score.why[i] = "; ".join(notes.lines) or f"{engine} non ha scritto niente"
     finally:
         logger.removeHandler(notes)
         logger.setLevel(level)
@@ -287,7 +307,7 @@ def report(
         )
         print(
             f"  {s.variant:<22} {wer(references, s.texts):>6.1%}  {right:>3}/{commands:<4}"
-            f"  {statistics.mean(s.ms):>8.0f}  {s.cuts:>5}"
+            f"  {statistics.mean(s.ms) if s.ms else 0:>8.0f}  {s.cuts:>5}"
         )
     if details:
         for i, reference in enumerate(references):
@@ -327,6 +347,7 @@ def main(argv: list[str] | None = None) -> None:
     # Grouped by engine and model: each big model is loaded once.
     model_of = {v.name: v.model or settings.stt.model for v in variants}
     for variant in sorted(variants, key=lambda v: (v.engine, model_of[v.name])):
+        transcribe = None  # it holds the last model: let it go before the next one loads
         if variant.engine == "parakeet":
             transcribe = parakeet(cache)
         else:

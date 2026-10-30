@@ -27,7 +27,6 @@ HALLUCINATIONS = (
     "sottotitoli e revisione a cura di qtss",
     "sottotitoli a cura di",
     "grazie per la visione",
-    "per aver guardato il video",
     "grazie per l attenzione",
     "iscriviti al canale",
     "amara org",
@@ -41,6 +40,9 @@ HALLUCINATIONS = (
 HALLUCINATIONS_EXACT = {
     "buon appetito",
     "grazie a tutti",
+    "grazie a tutti per aver guardato il video",  # a whole piece: "scrivi: grazie per aver
+    "grazie per aver guardato il video",  # guardato il video" is a request
+    "per aver guardato il video",
     "ciao a tutti",
     "alla prossima",
     "you",
@@ -48,6 +50,7 @@ HALLUCINATIONS_EXACT = {
 }
 THANKS = frozenset({"grazie", "grazie mille", "thank you", "thanks"})  # JenJo's own, alone
 ECHO_MIN_WORDS = 6  # shorter pieces of the prompt are also real requests ("apri chrome")
+ECHO_END_WORDS = 2  # ...but the prompt's last words are what Whisper repeats on unclear audio
 _PIECES = re.compile(r"[.,;:!?\u2026]+")
 MIN_RMS = 1e-3  # about -60 dBFS: below this there is nothing to transcribe
 MAX_NEW_TOKENS = 80  # an 8 s request is about 50 tokens; a repetition loop stops here
@@ -83,10 +86,26 @@ def only_sign_offs(text: str) -> bool:
     """Every piece of the text (between punctuation) is a short invented ending, alone or
     repeated, and the rest is at most a thanks: "Grazie. Grazie a tutti." yes, "Grazie a
     tutti, apri Chrome" and "Grazie, grazie." no."""
-    pieces = (repeated_unit(normalize(p, drop_fillers=False).split()) for p in _PIECES.split(text))
-    said = [" ".join(words) for words in pieces if words]
-    said = [piece for piece in said if piece not in THANKS]
+    said = []
+    for piece in _PIECES.split(text):
+        words = normalize(piece, drop_fillers=False).split()
+        whole, unit = " ".join(words), " ".join(repeated_unit(words))
+        if words and not {whole, unit} & THANKS:
+            said.append(whole if whole in HALLUCINATIONS_EXACT else unit)
     return bool(said) and all(piece in HALLUCINATIONS_EXACT for piece in said)
+
+
+def is_prompt_echo(text: str, prompt: str) -> bool:
+    """The text is a piece of Whisper's prompt: one of ECHO_MIN_WORDS words or more, or its
+    last ECHO_END_WORDS+ words ("Basta, grazie." for "Claudio, chiudi il Blocco note",
+    29/10). It may also be what was really said ("alza il volume"): transcribe() asks again
+    without the prompt."""
+    words = normalize(text, drop_fillers=False).split()
+    said = f" {normalize(prompt, drop_fillers=False)} "
+    norm = f" {' '.join(words)} "
+    if len(words) >= ECHO_MIN_WORDS and norm in said:
+        return True
+    return len(words) >= ECHO_END_WORDS and said.endswith(norm)
 
 
 def is_hallucination(text: str, prompt: str = "") -> bool:
@@ -96,11 +115,7 @@ def is_hallucination(text: str, prompt: str = "") -> bool:
     if any(h in norm for h in HALLUCINATIONS) or only_sign_offs(text):
         return True
     # Whisper sometimes echoes the initial prompt on near-silent audio.
-    return (
-        bool(prompt)
-        and len(norm.split()) >= ECHO_MIN_WORDS
-        and norm in normalize(prompt, drop_fillers=False)
-    )
+    return bool(prompt) and is_prompt_echo(text, prompt)
 
 
 def pick_language(
@@ -237,7 +252,6 @@ class WhisperTranscriber:
         prompt (it must not put "Claudio" in noise) and without touching the language kept for
         the next unsure request. `language`: no detection, transcribe in that one (the retry
         of a request not understood in the language Whisper guessed)."""
-        s = self.settings
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             if not quick:
                 self.last_segments = []
@@ -248,6 +262,27 @@ class WhisperTranscriber:
         else:
             self.language, self.language_confidence = language, 1.0
         prompt = "" if quick else self.prompt(language)
+        text, kept = self._decode(audio, language, prompt, quick)
+        if text and prompt and is_prompt_echo(text, prompt):
+            # Whisper repeats its prompt on unclear audio, but "alza il volume" is also a
+            # request: asked again without the prompt, Whisper says what was really there.
+            log.info("Trascrizione uguale a un pezzo del prompt, la rifaccio senza: %r", text)
+            text, kept = self._decode(audio, language, "", quick)
+        if not quick:  # the second chance must not overwrite the request's own figures
+            self.last_segments = kept
+        if text and is_hallucination(text):
+            log.info("Trascrizione scartata (allucinazione nota): %r", text)
+            return ""
+        if text and not quick and not only_wake_words(text):
+            self.last_language = language
+        return text
+
+    def _decode(
+        self, audio: np.ndarray, language: str, prompt: str, quick: bool
+    ) -> tuple[str, list[Segment]]:
+        """One Whisper pass: the text of the segments that are not silence or a loop, and
+        Whisper's confidence in each."""
+        s = self.settings
         reuse = self._encoded is not None
         if reuse:
             self._model.encode = self._encode
@@ -283,15 +318,7 @@ class WhisperTranscriber:
             if reuse:
                 del self._model.encode
             self._encoded = None
-        text = " ".join(p for p in parts if p).strip()
-        if not quick:  # the second chance must not overwrite the request's own figures
-            self.last_segments = kept
-        if text and is_hallucination(text, prompt):
-            log.info("Trascrizione scartata (allucinazione nota): %r", text)
-            return ""
-        if text and not quick and not only_wake_words(text):
-            self.last_language = language
-        return text
+        return " ".join(p for p in parts if p).strip(), kept
 
     def candidates(
         self, audio: np.ndarray, n: int = CANDIDATES, *, language: str | None = None

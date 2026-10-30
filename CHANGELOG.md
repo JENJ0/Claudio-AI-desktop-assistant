@@ -4,11 +4,14 @@
 
 ### Changed
 - `[stt] model` default `large-v3` instead of `large-v3-turbo` (JenJo 29/10): on the 40 test
-  sentences 20.7% of the words wrong instead of 28.7% with the headset and 38.8% instead of
-  59.6% with the webcam (commands right 8/12 both, webcam 8/12 instead of 6/12), for 199 ms per
-  sentence instead of 102 on the RTX 5070 Ti and about 1.5 GB more video memory.
-  `download_models.py` fetches it (about 3 GB); `model = "large-v3-turbo"` brings the faster
-  one back.
+  sentences, with the fixes below, 18.6% of the words wrong instead of 28.7% with the headset
+  and 36.2% instead of 59.6% with the webcam (commands right 9/12 instead of 8/12 and 10/12
+  instead of 6/12), for about 176 ms per sentence instead of 89 on the RTX 5070 Ti and about
+  1.5 GB more video memory. The wake word's second chance and confirmation use it too, so they
+  are a little slower. `download_models.py` fetches it (about 3 GB); `model = "large-v3-turbo"`
+  brings the faster one back.
+- Whisper's prompt ends in a request for Claude ("Claudio, raccontami una storia breve.",
+  "Claudio, tell me a short story."), not a command.
 
 ### Fixed
 - The automatic microphone level learns only from requests in which Whisper heard words: an
@@ -27,11 +30,18 @@
   louder than the others is compressed, not torn into harmonics Whisper cannot read.
 - Whisper's prompt no longer ends in "Basta, grazie." (and "Stop, thanks."): on unclear audio
   Whisper repeats the end of its prompt, and on the test set "Basta, grazie." came out for 7
-  different requests (it is a command: it would stop Claudio). A test keeps the last sentence of
-  every shipped prompt at 6+ words, the length the echo filter drops.
+  different requests (it is a command: it would stop Claudio). A transcription equal to a piece
+  of the prompt (6+ words, or its last 2+) is now done again without the prompt: Whisper then
+  writes what was really there, so a real "poi alza il volume" is no longer dropped as an echo.
+  A test checks that no ending of a shipped prompt is a command.
 - The invented endings are dropped also when repeated or after a thanks ("Grazie a tutti. Grazie
-  a tutti.", "Grazie. Grazie a tutti.", "... per aver guardato il video"), what Whisper wrote for
-  a third of the webcam's requests. "Grazie, grazie." alone stays: it is JenJo's.
+  a tutti.", "Grazie. Grazie a tutti.", "Bye bye, bye bye."), what Whisper wrote for a third of
+  the webcam's requests. "Grazie, grazie." alone stays: it is JenJo's. "... per aver guardato il
+  video" is dropped only as a whole piece, so dictating it still works.
+- A microphone's first request that saturates lowers its gain (at least 6 dB) instead of
+  raising it: measured through the limiter, the voice read too low.
+- The level learns from a request only on the microphone that heard it: if Windows switches the
+  input device during a request, the phrase is not credited to the new one.
 - Folder names written for programs ("claudio-it0-fluidita": joined, with letters and digits in
   one piece) stay out of Whisper's prompt: it wrote one for "Claudio, chiuditi".
 - A request Whisper drops as silence is logged with its scores, like the other filters.
@@ -43,7 +53,9 @@
   `--details` says why a sentence came out empty. The recorder keeps 0.3 s after the Enter that
   stops (cutting 0.25 s off the end had left the voice running to the last frame in 23 of the
   80 first recordings), flags a recording mute or cut at once, and `--controlla` / `--rifai`
-  find and redo them.
+  find and redo them. The bench skips what CLAUDIO would not transcribe either (no voice for
+  Silero, under -60 dBFS), averages the time only over transcribed sentences, says which
+  Whisper model and device it loaded and takes another set with `--set`.
 
 ## [Unreleased] - Jack keeps one voice in a reply
 

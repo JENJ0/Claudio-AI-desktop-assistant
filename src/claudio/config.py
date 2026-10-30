@@ -81,7 +81,8 @@ class WakeWordSettings(BaseModel):
     # A peak between this and the threshold is a missed wake word: it is logged and, with
     # second_chance, Whisper listens to the last 2.5 s and wakes CLAUDIO if it hears the name.
     near_miss_floor: float = Field(0.15, gt=0, lt=1)
-    # A wake scoring below this is confirmed by Whisper first (the second chance, ~130 ms):
+    # A wake scoring below this is confirmed by Whisper first (the second chance, ~130 ms with
+    # turbo, more with large-v3):
     # a weak detection on Claudio's own voice or the TV stays silent. 0 = off.
     confirm_below: float = Field(0.45, ge=0, lt=1)
     second_chance: bool = True
@@ -126,7 +127,7 @@ class SttSettings(BaseModel):
     # A language other than the first must be this sure (fast Italian often sounds English).
     other_confidence: float = Field(0.9, ge=0, le=1)
     # A request in another language that no command understands is transcribed again in the
-    # first one (~120 ms on the GPU, only then): "cue the calculator" -> "apri la calcolatrice".
+    # first one (~0.2 s on the GPU, only then): "cue the calculator" -> "apri la calcolatrice".
     retry_in_first_language: bool = True
     # A request no command understands: Whisper proposes 5 transcriptions and the first known
     # command wins (one more Whisper pass, only on requests not understood).
@@ -134,7 +135,7 @@ class SttSettings(BaseModel):
     closed_list_max_words: int = Field(5, ge=0)  # longer requests skip it (0 = no limit)
     # A request for Claude that Whisper was unsure of (a segment's avg_logprob below this) goes
     # with a note and up to `alternatives` other transcriptions from Whisper's n-best (one more
-    # pass, ~120 ms, only on these requests; reused when the closed list already ran), so
+    # pass, ~0.2 s, only on these requests; reused when the closed list already ran), so
     # Claude can work out what JenJo said. 0 alternatives: only the note.
     unsure_logprob: float = Field(-0.2, le=0)
     alternatives: int = Field(2, ge=0, le=4)
