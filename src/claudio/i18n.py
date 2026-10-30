@@ -258,9 +258,15 @@ EN: dict[str, str] = {
     "Sentito mentre parlo, senza il mio nome: lo ignoro: %r": (
         "Heard while speaking, without my name: ignored: %r"
     ),
-    "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
-        "Voice too quiet while speaking (%.0f dBFS): ignored"
+    "Voce troppo debole mentre parlo (%.0f dBFS, %.0f prima del guadagno): ignorata": (
+        "Voice too quiet while speaking (%.0f dBFS, %.0f before the gain): ignored"
     ),
+    "La frase era cominciata mentre non ascoltavo: tengo anche quell'audio": (
+        "The phrase began while I was not listening: keeping that audio too"
+    ),
+    "Misura della voce sorda non riuscita": "Measuring the voice heard while deaf failed",
+    "Impossibile salvare l'audio scartato": "Could not save the dropped audio",
+    "Salvato in %s (%.0f dBFS)": "Saved in %s (%.0f dBFS)",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"

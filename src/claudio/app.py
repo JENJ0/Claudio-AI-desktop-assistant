@@ -18,6 +18,7 @@ import numpy as np
 from claudio.audio.own_sound import OwnSound
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
+from claudio.audio.vad import dbfs as level_dbfs
 from claudio.config import NoiseSettings, in_language
 from claudio.echo import is_echo, recent_reply
 from claudio.intake import (
@@ -79,6 +80,13 @@ ECHO_GRACE_MS = 300
 # the reply were dropped as its echo).
 ECHO_VOICE_MS = 1000
 OTHER_HEARINGS = 3  # of Whisper's other guesses, given to Claude with a phrase to guess
+# A phrase said over the reply is judged whole: its slices are only checked for "basta" while
+# the voice goes on, up to this long (then it is judged anyway: the TV never pauses).
+BARGE_PHRASE_MAX_S = 8.0
+# What a window heard while it was deaf (the reply's tail, the beep) is kept this long, and
+# put before a phrase whose voice was already there when the window began to listen.
+DEAF_FRAMES = 12  # ~1 s of 80 ms frames
+DEAF_JOIN_S = 0.3
 
 
 class State(enum.StrEnum):
@@ -97,7 +105,8 @@ class BargeIn:
 
     `mode`: "duck" lowers the reply as soon as a loud voice starts and stops it when Whisper
     hears words; "stop" stops it at once; "confirm" waits for Whisper at full volume.
-    `min_dbfs`: the loudest 32 ms of the voice must reach this (the TV and the echo do not).
+    `min_dbfs`: the loudest 32 ms of the voice must reach this before the microphone's gain
+    (the TV and the echo do not): AutoGain moves by up to 12 dB, the room does not.
     `needs_name`: a new request said over the reply must have the name ("Claudio, che ore
     sono") or be a local command; "basta" always works. With speakers the reply's echo is
     never taken for a request (JenJo 26/10: it answered its own voice).
@@ -107,7 +116,7 @@ class BargeIn:
     endpointer: Endpointer
     transcribe: Callable[[np.ndarray], str]
     mode: str = "duck"
-    min_dbfs: float = -30.0
+    min_dbfs: float = -42.0
     duck_volume: float = 0.3
     needs_name: bool = False
     echo_similarity: float = 70.0
@@ -164,6 +173,7 @@ class Assistant:
         voice_meter: Callable[[np.ndarray], int] | None = None,
         wake_min_voice_ms: int = 0,
         rejected_sink: Callable[[np.ndarray, str], str | None] | None = None,
+        input_gain_db: float = 0.0,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -183,8 +193,11 @@ class Assistant:
         self.voice_meter = voice_meter
         self.wake_min_voice_ms = wake_min_voice_ms
         # Saves what a second chance rejected, apart from the requests, with a cap of its own
-        # (the negatives to retrain "claudio" on). None: in audio_sink, as before.
+        # (the negatives to retrain "claudio" on), and what was heard over a reply that was
+        # not for CLAUDIO. None: near misses in audio_sink, as before.
         self.rejected_sink = rejected_sink
+        # The microphone's digital boost when there is no AutoGain (level None).
+        self.input_gain_db = input_gain_db
         # Whether a phrase is a request: the rules live in intake.py. Their settings are also
         # attributes of the Assistant (properties below).
         self.intake = RequestFilter(
@@ -226,6 +239,12 @@ class Assistant:
         self._barge_checking = False
         # A phrase heard over the reply while Whisper was busy (audio, loudest dBFS).
         self._barge_pending: tuple[np.ndarray, float] | None = None
+        # The slices of a phrase still being said over the reply (audio, loudest dBFS).
+        self._barge_slices: list[tuple[np.ndarray, float]] = []
+        self._barge_quiet = 0  # samples of silence since the last slice was cut
+        # What the window heard while deaf, and what it was for this window (metrics).
+        self._deaf: deque[np.ndarray] = deque(maxlen=DEAF_FRAMES)
+        self._deaf_heard = np.zeros(0, dtype=np.float32)
         self._interrupted = False  # the reply being spoken was cut short by "basta"
         # A voice took over while CLAUDIO spoke: the start of the next request, then the frames
         # heard until the reply has stopped. None: nobody interrupted.
@@ -530,12 +549,15 @@ class Assistant:
         talking over the beep: that phrase is heard whole."""
         assert self._interaction is not None
         if own and self._interaction.info.get("wake_word") in (CONVERSATION, FOLLOW_UP):
+            if not self.endpointer.started:
+                self._deaf.append(frame)  # kept: the phrase may have begun in it
             return
         if not self.endpointer.started:
             self._listened += len(frame)
         event = self.endpointer.process(frame)
         if event is EndpointEvent.START:
             self._interaction.mark("speech_start")
+            self._join_deaf(self._interaction)
             if self._interaction.info.get("wake_word") == CONVERSATION:
                 self.responder.prepare()  # no wake word in the conversation window
                 sr = self.endpointer.sample_rate
@@ -558,6 +580,50 @@ class Assistant:
             self._held.clear()
             self._set_state(State.TRANSCRIBING)
             self._task = asyncio.create_task(self._handle_utterance(self.endpointer.audio()))
+
+    def _join_deaf(self, inter: Interaction) -> None:
+        """The phrase began while the conversation window was still deaf (the reply's tail,
+        the beep: echo_tail_ms goes mostly on the speakers' delay, 0.17-0.41 s on 30/10).
+        When the voice was there as soon as the window listened, the loud end of the deaf
+        frames is its start. Only a voice louder than CLAUDIO's echo can be: the reply's end
+        never goes to Whisper. Never in the window that answers "Confermi?": there a "sì"
+        lost to the deafness only leaves the action undone."""
+        if not self._deaf:
+            return
+        frames = list(self._deaf)
+        self._deaf.clear()
+        self._deaf_heard = np.concatenate(frames).astype(np.float32) / 32768.0
+        sr = self.endpointer.sample_rate
+        if inter.info.get("wake_word") != CONVERSATION or self._listened > DEAF_JOIN_S * sr:
+            return  # an answer, or a voice that began later: the deafness hid nothing of it
+        voice = self._loud_end(frames)
+        if not voice.size:
+            return
+        self.endpointer.prepend(voice)
+        inter.info["deaf_joined_ms"] = round(len(voice) * 1000 / sr)
+        log.info("La frase era cominciata mentre non ascoltavo: tengo anche quell'audio")
+
+    def _loud_end(self, frames: list[np.ndarray]) -> np.ndarray:
+        """The last frames, back to the first that is not a voice at the microphone: louder,
+        before the gain, than barge_in_min_dbfs and the echo heard so far (float32)."""
+        floor = self.barge_in.min_dbfs if self.barge_in is not None else BargeIn.min_dbfs
+        if self._echo_dbfs is not None:
+            floor = max(floor, self._echo_dbfs + ECHO_MARGIN_DB)
+        kept: list[np.ndarray] = []
+        for frame in reversed(frames):
+            audio = frame.astype(np.float32) / 32768.0
+            win = self.endpointer.vad.window_size
+            loudest = max(
+                (
+                    float(np.dot(w, w)) / len(w)
+                    for w in np.split(audio, range(win, len(audio), win))
+                ),
+                default=0.0,
+            )
+            if self._before_gain(level_dbfs(loudest)) < floor:
+                break
+            kept.append(audio)
+        return np.concatenate(kept[::-1]) if kept else np.zeros(0, dtype=np.float32)
 
     async def _handle_utterance(self, audio: np.ndarray) -> None:
         inter = self._interaction
@@ -890,6 +956,8 @@ class Assistant:
         self._heard_on = self._microphone()
         self._beep("wake")  # deaf until it and the reply before it are out of the room
         self._listened = 0
+        self._deaf.clear()
+        self._deaf_heard = np.zeros(0, dtype=np.float32)
         self._prewake = np.zeros(0, dtype=np.float32)
         self._recent.clear()
         self.endpointer.reset(timeout_s=self.conversation_s if conversation else None)
@@ -902,6 +970,7 @@ class Assistant:
         self._since_check.append(frame)
         event = barge.endpointer.process(frame)
         if event is EndpointEvent.START:
+            self._barge_quiet = 0
             if not self._barge_loud(barge):
                 return
             if self._sounds_like_echo(barge):
@@ -914,27 +983,61 @@ class Assistant:
         elif event is EndpointEvent.TIMEOUT:
             barge.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
         elif event is EndpointEvent.END:
-            audio = barge.endpointer.audio()
-            dbfs = barge.endpointer.stats()["speech_dbfs"]
-            barge.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
-            if dbfs < barge.min_dbfs:
-                # Logged with its level: the data barge_in_min_dbfs is tuned on.
-                log.info("Voce troppo debole mentre parlo (%.0f dBFS): ignorata", dbfs)
+            ep = barge.endpointer
+            audio, dbfs, cut = ep.audio(), ep.stats()["speech_dbfs"], ep.cut
+            ep.reset(timeout_s=WHILE_SPEAKING_S)
+            self._barge_slices.append((audio, dbfs))
+            heard = sum(len(a) for a, _ in self._barge_slices)
+            if cut and heard < BARGE_PHRASE_MAX_S * ep.sample_rate:
+                # The voice goes on: this slice is only checked for "basta", the phrase is
+                # judged whole when it ends (30/10: transcribed slice by slice, without the
+                # prompt, "Apri la chat." came out "apri la ciotola" and "Grazie a te").
+                self._barge_quiet = 0
+                if not self._barge_checking and self._before_gain(dbfs) >= barge.min_dbfs:
+                    self._start_barge_check(audio, barge, dbfs, slice_only=True)
                 return
-            if self._barge_checking:
-                # Still looking at the last phrase: this one waits its turn, never dropped
-                # (JenJo 28/10: with the echo keeping Whisper busy, some "stop" were lost).
-                prev = self._barge_pending
-                if prev is not None:
-                    audio, dbfs = np.concatenate((prev[0], audio)), max(prev[1], dbfs)
-                self._barge_pending = (audio, dbfs)
-                return
-            self._start_barge_check(audio, barge, dbfs)
+            self._judge_barge_phrase(barge)
+        elif self._barge_slices and not barge.endpointer.started:
+            # A slice was cut just as the voice stopped: the usual pause ends the phrase.
+            self._barge_quiet += len(frame)
+            ep = barge.endpointer
+            if self._barge_quiet * 1000 >= ep.settings.end_silence_ms * ep.sample_rate:
+                self._judge_barge_phrase(barge)
 
-    def _start_barge_check(self, audio: np.ndarray, barge: BargeIn, dbfs: float) -> None:
+    def _judge_barge_phrase(self, barge: BargeIn) -> None:
+        """The phrase said over the reply is over: its slices, whole, go to Whisper."""
+        slices, self._barge_slices = self._barge_slices, []
+        if not slices:
+            return
+        audio = np.concatenate([a for a, _ in slices])
+        dbfs = max(d for _, d in slices)
+        if self._before_gain(dbfs) < barge.min_dbfs:
+            # Logged with its level: the data barge_in_min_dbfs is tuned on.
+            log.info(
+                "Voce troppo debole mentre parlo (%.0f dBFS, %.0f prima del guadagno): ignorata",
+                dbfs,
+                self._before_gain(dbfs),
+            )
+            return
+        if self._barge_checking:
+            # Still looking at the last phrase: this one waits its turn, never dropped
+            # (JenJo 28/10: with the echo keeping Whisper busy, some "stop" were lost).
+            prev = self._barge_pending
+            if prev is not None:
+                audio, dbfs = np.concatenate((prev[0], audio)), max(prev[1], dbfs)
+            self._barge_pending = (audio, dbfs)
+            return
+        self._start_barge_check(audio, barge, dbfs)
+
+    def _start_barge_check(
+        self, audio: np.ndarray, barge: BargeIn, dbfs: float, slice_only: bool = False
+    ) -> None:
+        """`slice_only`: a piece of a phrase still being said, checked for "basta" alone;
+        the frames heard meanwhile still belong to the phrase."""
         self._barge_checking = True
-        self._since_check.clear()
-        task = asyncio.create_task(self._check_barge_in(audio, barge, dbfs))
+        if not slice_only:
+            self._since_check.clear()
+        task = asyncio.create_task(self._check_barge_in(audio, barge, dbfs, slice_only))
         self._checks.add(task)
         task.add_done_callback(self._checks.discard)
 
@@ -949,17 +1052,22 @@ class Assistant:
         speakers the reply would keep lowering (or stopping) itself on its own voice."""
         if self._echo_dbfs is None:
             return False
-        return barge.endpointer.stats()["speech_dbfs"] < self._echo_dbfs + ECHO_MARGIN_DB
+        speech = self._before_gain(barge.endpointer.stats()["speech_dbfs"])
+        return speech < self._echo_dbfs + ECHO_MARGIN_DB
 
-    @staticmethod
-    def _barge_loud(barge: BargeIn) -> bool:
-        return barge.endpointer.stats()["speech_dbfs"] >= barge.min_dbfs
+    def _barge_loud(self, barge: BargeIn) -> bool:
+        return self._before_gain(barge.endpointer.stats()["speech_dbfs"]) >= barge.min_dbfs
 
     async def _check_barge_in(
-        self, audio: np.ndarray, barge: BargeIn, dbfs: float | None = None
+        self,
+        audio: np.ndarray,
+        barge: BargeIn,
+        dbfs: float | None = None,
+        slice_only: bool = False,
     ) -> None:
         """Whisper on what was heard while speaking: "basta" stops the reply, other words
-        stop it and become the next request, noise or CLAUDIO's own echo change nothing."""
+        stop it and become the next request, noise or CLAUDIO's own echo change nothing.
+        `slice_only`: a piece of a phrase that goes on, which only "basta" can stop."""
         text = ""
         try:
             async with self._stt_lock:
@@ -972,35 +1080,45 @@ class Assistant:
             self._barge_pending = None
             return  # the reply had already ended, or someone already took over
         try:
-            self._judge_barge_in(text, audio, dbfs)
+            if not slice_only:
+                self._judge_barge_in(text, audio, dbfs)
+            elif text and (self.responder.is_stop(text) or self._says_stop(text)):
+                self._stop_reply(text)
         finally:
             self._next_barge_check(barge)
+
+    def _stop_reply(self, text: str, with_echo: bool = False) -> None:
+        """ "basta" was heard over the reply: it stops, and the conversation with it.
+        `with_echo`: "stop" said over the reply, written together with the reply's echo."""
+        if with_echo:
+            log.info("Interrotto a voce (insieme alla mia eco): %r", text)
+        else:
+            log.info("Interrotto a voce: %r", text)
+        self._interrupted = True
+        self._barge_slices = []
+        if self._interaction is not None:
+            self._interaction.info["barge_in"] = text
+        self.speaker.interrupt()
+        self.speaker.duck(None)
 
     def _judge_barge_in(self, text: str, audio: np.ndarray, dbfs: float | None) -> None:
         if self._interaction is not None and dbfs is not None:
             self._interaction.info["barge_dbfs"] = round(dbfs, 1)
         if text and self.responder.is_stop(text):
-            log.info("Interrotto a voce: %r", text)
-            self._interrupted = True
-            if self._interaction is not None:
-                self._interaction.info["barge_in"] = text
-            self.speaker.interrupt()
-            self.speaker.duck(None)
+            self._stop_reply(text)
         elif self._is_talking_to_me(text):
             self._take_over(audio, text)
         elif self._says_stop(text):
-            # "stop" said over the reply, written together with the reply's own echo.
-            log.info("Interrotto a voce (insieme alla mia eco): %r", text)
-            self._interrupted = True
-            if self._interaction is not None:
-                self._interaction.info["barge_in"] = text
-            self.speaker.interrupt()
-            self.speaker.duck(None)
+            self._stop_reply(text, with_echo=True)
         else:
             if self._heard_echo and dbfs is not None:
-                # How loud the speakers come back: quieter voices no longer lower the reply.
-                self._echo_dbfs = max(self._echo_dbfs or dbfs, dbfs)
+                # How loud the speakers come back, before the gain: quieter voices no longer
+                # lower the reply.
+                echo = self._before_gain(dbfs)
+                self._echo_dbfs = max(self._echo_dbfs or echo, echo)
             log.info("Sentito mentre parlo, non è per me: %r", text)
+            if text and (saved := self._save_rejected(audio, "barge_ignored")):
+                log.info("Salvato in %s (%.0f dBFS)", saved, dbfs if dbfs is not None else 0)
             self.speaker.duck(None)
 
     def _is_talking_to_me(self, text: str) -> bool:
@@ -1053,6 +1171,7 @@ class Assistant:
         log.info("Interrotto da una nuova richiesta: %r", text)
         self._takeover = (audio, list(self._since_check) if rest is None else rest)
         self._since_check.clear()
+        self._barge_slices = []
         self._interrupted = True
         if self._interaction is not None:
             self._interaction.info["barge_in"] = text or "voice"
@@ -1236,6 +1355,7 @@ class Assistant:
         if self.barge_in is not None:
             self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
             self._since_check.clear()
+            self._barge_slices = []
         self._set_state(State.SPEAKING)
 
     async def _echoed(self, stream: AsyncIterator[str]) -> AsyncIterator[str]:
@@ -1275,6 +1395,7 @@ class Assistant:
         if self.barge_in is not None:
             self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
             self._since_check.clear()
+            self._barge_slices = []
         self._set_state(State.SPEAKING)
 
     def _finish(self, outcome: str) -> None:
@@ -1286,6 +1407,7 @@ class Assistant:
             inter.info.update(stats)
             if self.level is not None:
                 inter.info["gain_db"] = self.level.gain_db
+            self._measure_deaf(inter)
             # Not a phrase said over the reply: louder than usual, with the reply's echo in it
             # (JenJo 25/10: the gain fell to +0 dB after one and the next requests were -42 dBFS).
             if self.endpointer.started and inter.info.get("wake_word") != BARGE_IN:
@@ -1313,9 +1435,42 @@ class Assistant:
         self.wake.reset()
         self._set_state(State.IDLE)
 
+    def _measure_deaf(self, inter: Interaction) -> None:
+        """How much voice the window's deaf start held (deaf_speech_ms): a "sì" said over the
+        beep's tail used to be lost without a trace. Only for windows that opened deaf."""
+        deaf = self._deaf_heard
+        if not deaf.size and self._deaf:
+            deaf = np.concatenate(self._deaf).astype(np.float32) / 32768.0
+        self._deaf.clear()
+        self._deaf_heard = np.zeros(0, dtype=np.float32)
+        if not deaf.size or self.voice_meter is None:
+            return
+        try:
+            inter.info["deaf_speech_ms"] = self.voice_meter(deaf)
+        except Exception:
+            log.exception("Misura della voce sorda non riuscita")
+
     def _microphone(self) -> str | None:
         """The microphone AutoGain is following now (None: no automatic gain)."""
         return getattr(self.level, "microphone", None)
+
+    def _gain_db(self) -> float:
+        """The microphone's digital boost now: AutoGain's, else the configured one."""
+        return self.level.gain_db if self.level is not None else self.input_gain_db
+
+    def _before_gain(self, dbfs: float) -> float:
+        """A level measured on the boosted microphone, as it was before the boost."""
+        return dbfs - self._gain_db()
+
+    def _save_rejected(self, audio: np.ndarray, kind: str) -> str | None:
+        """Audio CLAUDIO heard and left alone, apart from the requests (None: not saved)."""
+        if self.rejected_sink is None:
+            return None
+        try:
+            return self.rejected_sink(audio, kind)
+        except Exception:
+            log.exception("Impossibile salvare l'audio scartato")
+            return None
 
     def _check_level(self, speech_dbfs: float) -> None:
         if speech_dbfs < QUIET_SPEECH_DBFS and not self._warned_quiet:
