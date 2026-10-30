@@ -28,7 +28,8 @@ auto_gain = true           # Claudio adjusts the boost itself after every reques
 near_miss_floor = 0.15     # a score between this and the threshold is a missed wake word (logged)
 confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more with turbo, more with large-v3)
 second_chance = true       # after one, Whisper listens to the last 2.5 s (~130 ms with turbo) and wakes CLAUDIO if it hears the name
-unclear_min = 0.6          # a "claudio" this strong heard by Whisper as nothing or "Grazie." wakes, then the request needs the name or a command
+unclear_min = 1.0          # 1 = off. A "claudio" this strong heard by Whisper as nothing or "Grazie." wakes, then the request needs the name or a command.
+                           # Off since the second chance has the prompt (30/10: 12 of 12 names heard; the one "Grazie." wake was a false one)
 off_threshold_boost = 0.1  # while off ("spegniti") every wake threshold is this much higher; Whisper must hear the name (or "accenditi")
 min_voice_ms = 96          # a second chance needs this much voice (Silero) before Whisper listens: clicks and the headset's gate are dropped for free
 verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
@@ -171,9 +172,9 @@ error_reply = { it = "Non ci sono riuscito.", en = "I couldn't do it." }
 [conversation]
 window_s = 6.0             # after a reply, listen this long without the wake word (0 = off)
 barge_in = true            # talking while CLAUDIO speaks interrupts it: "basta" ends, anything else is the next request
-barge_in_max_s = 1.2       # speech heard while speaking is checked in slices this long
+barge_in_max_s = 1.2       # speech heard while speaking is checked for "basta" every this many seconds of voice; the whole phrase is judged when it ends
 barge_in_mode = "duck"     # duck: lower the reply at once, stop on real words | stop: stop at once | confirm: wait for words
-barge_in_min_dbfs = -30.0  # the voice must be this loud (JenJo at the microphone: -11..-30; the TV and the echo: quieter)
+barge_in_min_dbfs = -42.0  # the voice must be this loud BEFORE the microphone's gain (30/10: JenJo -22..-31, the echo -47 at most; the old -30 at +12 dB)
 barge_in_vad = 0.6         # speech probability needed while speaking (stricter than [vad] threshold)
 barge_in_min_speech_ms = 300  # voice this long before anything happens (a cough is shorter)
 resume_s = 60.0            # a reply cut by a question goes on after the answer ("Dicevo: ..."); 0 = never

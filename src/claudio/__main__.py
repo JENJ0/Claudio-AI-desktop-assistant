@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("claudio")
 
 CHAT_DB = "claudio.db"  # in data_dir: every conversation, shown by `claudio --ui`
+BARGE_LEAD_MS = 250  # kept before a voice heard over the reply: its soft first sound
 
 
 def build_tracker(settings: Settings) -> CostTracker:
@@ -397,7 +398,11 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
             "min_speech_ms": c.barge_in_min_speech_ms,
             "end_silence_ms": 300,
             "long_end_silence_ms": 0,
-            "max_utterance_s": c.barge_in_max_s,
+            # The voice that started the phrase and BARGE_LEAD_MS before it: the request's
+            # 800 ms were mostly the reply's echo, and filled 2/3 of every slice (30/10).
+            "pre_roll_ms": c.barge_in_min_speech_ms + BARGE_LEAD_MS,
+            # barge_in_max_s of voice in a slice: what came before the voice does not count.
+            "max_utterance_s": c.barge_in_max_s + BARGE_LEAD_MS / 1000,
         }
     )
     return BargeIn(
@@ -555,9 +560,15 @@ async def run_assistant(
         continue_s=settings.vad.continue_s,
         echo_tail_ms=settings.conversation.echo_tail_ms,
         guess=responder.guess if responder.fallback_guess else None,
-        voice_meter=VoiceMeter(wake_vad, settings.vad.threshold, settings.audio.sample_rate),
+        # At the endpointer's "not silence" level: a name clipped by the headset's gate
+        # stays above [vad] threshold for 64 ms only (30/10: 128 ms or more at this level,
+        # clicks and the gate 0).
+        voice_meter=VoiceMeter(
+            wake_vad, max(settings.vad.threshold - 0.15, 0.01), settings.audio.sample_rate
+        ),
         wake_min_voice_ms=settings.wakeword.min_voice_ms,
         rejected_sink=rejected,
+        input_gain_db=settings.audio.input_gain_db,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -103,6 +104,7 @@ class Endpointer:
         self._spoke_again = False
         self._lead_only = False  # the phrase is all from the lead-in: nothing said since
         self._tell_start = False
+        self._cut = False  # ended at max_utterance_s while the voice went on
         if lead_in is not None:
             self._begin_with(lead_in)
 
@@ -113,6 +115,22 @@ class Endpointer:
     @property
     def trailing_silence_s(self) -> float:
         return self._silence_run / self.sample_rate
+
+    @property
+    def cut(self) -> bool:
+        """The phrase ended at max_utterance_s, not on a pause: the voice may go on."""
+        return self._cut
+
+    def prepend(self, audio: np.ndarray) -> None:
+        """`audio` (float32) came just before the phrase began but was not heard: the window
+        was deaf while CLAUDIO's own sound could be in the room. It goes at its start."""
+        if not self._started or not audio.size:
+            return
+        audio = audio.astype(np.float32, copy=False)
+        self._chunks.insert(0, audio)
+        self._listened.insert(0, audio)  # the saved WAV has it too
+        self._utterance_len += len(audio)
+        self._start_len += len(audio)
 
     def process(self, frame: np.ndarray) -> EndpointEvent:
         if self._finished:
@@ -164,11 +182,9 @@ class Endpointer:
             self._lead_only = False
             self._start_len = self._utterance_len - self._win
         self._silence_run = self._silence_run + self._win if prob < self._neg_threshold else 0
-        if (
-            self._silence_run * 1000 >= self._end_silence_ms() * self.sample_rate
-            or self._utterance_len >= s.max_utterance_s * self.sample_rate
-        ):
-            self._finished = True
+        paused = self._silence_run * 1000 >= self._end_silence_ms() * self.sample_rate
+        if paused or self._utterance_len >= s.max_utterance_s * self.sample_rate:
+            self._finished, self._cut = True, not paused
             return EndpointEvent.END
         return EndpointEvent.NONE
 
@@ -309,14 +325,16 @@ class VoiceMeter:
         self.vad = vad
         self.threshold = threshold
         self.sample_rate = sample_rate
+        self._lock = threading.Lock()  # one VAD state: a second chance and a window may ask
 
     def __call__(self, audio: np.ndarray) -> int:
         """Milliseconds of `audio` (float32) in windows that sound like speech."""
-        self.vad.reset()
         win = self.vad.window_size
         audio = audio.astype(np.float32, copy=False)
-        voiced = sum(
-            self.vad(audio[i : i + win]) >= self.threshold
-            for i in range(0, len(audio) - win + 1, win)
-        )
+        with self._lock:
+            self.vad.reset()
+            voiced = sum(
+                self.vad(audio[i : i + win]) >= self.threshold
+                for i in range(0, len(audio) - win + 1, win)
+            )
         return voiced * win * 1000 // self.sample_rate
