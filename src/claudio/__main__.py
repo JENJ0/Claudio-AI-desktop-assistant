@@ -179,12 +179,17 @@ def build_brain(
 def make_jack(settings: Settings, session: Path | None = None) -> JackSynth:
     """Jack's worker, not started yet; its fallback voice is set by build_synth(). With a
     `session` folder (and logging.save_voice) every piece Jack says is saved and checked
-    there, in jack/."""
+    there, in jack/. Takes are checked before they are played (jack_take_check) and each
+    text keeps the seed of its good take in data/jack_takes.json."""
     from claudio.tts.jack import JackSynth, worker_command
-    from claudio.tts.voice_check import VoiceMonitor
+    from claudio.tts.takes import TakeStore, voice_profile
+    from claudio.tts.voice_check import TakeJudge, VoiceMonitor
 
     tts = settings.tts
     models = settings.resolve(settings.models_dir)
+    target = tts.jack_lufs or -24.0  # with the level guard off, still the reference
+    judge = TakeJudge(target_lufs=target, usual_hz=tts.jack_usual_hz)
+    takes = TakeStore(settings.resolve(settings.data_dir) / "jack_takes.json", voice_profile(tts))
     return JackSynth(
         worker_command(models, tts),
         None,
@@ -193,9 +198,13 @@ def make_jack(settings: Settings, session: Path | None = None) -> JackSynth:
         rvc=tts.jack_rvc,
         words=tts.jack_words,
         first_wait_s=tts.jack_first_wait_s,
-        monitor=VoiceMonitor(session / "jack")
+        monitor=VoiceMonitor(session / "jack", judge=judge)
         if session is not None and settings.logging.save_voice
         else None,
+        judge=judge if tts.jack_take_check else None,
+        takes=takes,
+        seed=tts.jack_seed,
+        retries=tts.jack_take_retries,
     )
 
 

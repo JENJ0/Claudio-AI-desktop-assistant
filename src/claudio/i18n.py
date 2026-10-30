@@ -234,9 +234,22 @@ EN: dict[str, str] = {
     "Interrotto a voce: %r": "Interrupted by voice: %r",
     "Risposta interrotta": "Reply interrupted",
     "Controllo voce Jack fallito: %s": "Jack voice check failed: %s",
-    "Voce Jack %s: f0 %.0f Hz, melodia %.1f st, salti %d, tremolii %d%s - %s": (
-        "Jack voice %s: f0 %.0f Hz, melody %.1f st, jumps %d, flicker %d%s - %s"
+    "Voce Jack %s: f0 %s, melodia %s, salti %d, tremolii %d, %.1f LUFS, "
+    "picco %.1f dBFS (take %.1f LUFS)%s - %s": (
+        "Jack voice %s: f0 %s, melody %s, jumps %d, flicker %d, %.1f LUFS, "
+        "peak %.1f dBFS (take %.1f LUFS)%s - %s"
     ),
+    "Take di Jack scartata (seme %s): %s - %s": "Jack take dropped (seed %s): %s - %s",
+    "Take di Jack suonata anche se non buona (%s) - %s": (
+        "Jack take played although not good (%s) - %s"
+    ),
+    "Tabella delle take di Jack illeggibile (%s): riparto da zero": (
+        "Jack takes table unreadable (%s): starting from scratch"
+    ),
+    "Take salvata di Jack illeggibile (%s): la genero": (
+        "Saved Jack take unreadable (%s): generating it"
+    ),
+    "Tabella delle take di Jack non salvata: %s": "Jack takes table not saved: %s",
     "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
     "Riprendo la risposta interrotta: %r": "Resuming the interrupted reply: %r",
     "Frase lasciata a metà, ascolto il resto: %r": "Phrase left halfway, waiting for the rest: %r",
