@@ -74,7 +74,9 @@ possibilità di sentire il nome (vedi `wakeword.second_chance`).
 | "che ore sono", "che giorno è oggi" | risponde a voce |
 | "vai in pausa", "vai a dormire" | pausa: finché non dici "svegliati" non risponde ad altro |
 | "svegliati" | esce dalla pausa |
-| "spegniti" | chiude CLAUDIO |
+| "spegniti" | spento: niente beep né risposte, niente Claude; ascolta solo la wake word (un po' più severa, `[wakeword] off_threshold_boost`) per "Claudio, accenditi" |
+| "accenditi" | si riaccende (esce anche dalla pausa) |
+| "chiuditi" | chiude CLAUDIO |
 | "quanto ho speso oggi" | la spesa di oggi per Claude e la quota del budget giornaliero |
 | "chiudi la finestra" | chiude la finestra in primo piano, dopo "Confermi?" e un "sì" |
 | "metti in pausa la musica", "canzone successiva", "canzone precedente" | tasti media: play/pausa, successivo, precedente (Spotify, YouTube...) |
@@ -232,6 +234,18 @@ Piper, impostate in `[tts.voices.en]`, con lo stesso effetto. La velocità si re
 (più basso = più veloce, 0.77 = +30%, il valore predefinito). Il tono robotico è
 `CLAUDIO_TTS__EFFECT`: `ultron_estremo` (predefinito), `estremo`, `ultron`, `jarvis` o `none` per
 la voce pulita. L'effetto costa circa 5 ms a frase.
+
+## Avvio all'accesso
+
+CLAUDIO può partire da solo 30 s dopo l'accesso a Windows (Utilità di pianificazione, solo il
+tuo utente, senza diritti di amministratore, senza finestra: `pythonw.exe`, log in `logs/`).
+Non si registra niente finché non esegui, dalla cartella del progetto:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -DryRun   # solo mostra
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1           # installa
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
+```
 
 ## Latenza
 

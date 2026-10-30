@@ -169,6 +169,12 @@ class CommandMatcher:
             sounds = self._by_sound[language] = {}
             for phrase, cmd in self._by_phrase.get(language, {}).items():
                 sounds.setdefault(sound_key(phrase), cmd)
+        # The same sounds with the spaces gone: Whisper splits a word it did not know
+        # ("a cenditi", "spegni ti") or joins two.
+        self._by_joined_sound = {
+            language: {k.replace(" ", ""): cmd for k, cmd in reversed(sounds.items())}
+            for language, sounds in self._by_sound.items()
+        }
         self._sound_choices = {
             language: [k for k, cmd in sounds.items() if not cmd.exact]
             for language, sounds in self._by_sound.items()
@@ -221,7 +227,7 @@ class CommandMatcher:
             if not norm:
                 continue
             key = sound_key(norm)
-            cmd = sounds.get(key)
+            cmd = sounds.get(key) or self._by_joined_sound[lang].get(key.replace(" ", ""))
             if cmd is not None and not (
                 cmd.exact
                 and (number is not None or (raw and raw[-1] in language_rules(lang).articles))

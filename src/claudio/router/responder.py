@@ -23,6 +23,7 @@ from claudio.safety.confirmation import (
     parse_answer,
     question,
 )
+from claudio.system import ON
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +72,8 @@ class LocalResponder:
     def prepare(self) -> None:
         """JenJo started speaking to Claudio: whatever the request needs can get ready now.
         Never raises: a slow or failed preparation only loses the head start."""
-        if self.on_prepare is None or self.actions.system.paused:
+        system = self.actions.system
+        if self.on_prepare is None or system.paused or system.off:
             return
         try:
             self.on_prepare()
@@ -180,6 +182,10 @@ class LocalResponder:
             )
         else:
             self.language = self._reply_language(language, bool(self.unknown_reply.get(language)))
+        if self.actions.system.off and not _turns_on(match):
+            self.last_route = {"route": "off"}
+            log.info("Spento, ignoro: %r", text, extra={"route": "off"})
+            return  # off: not even a beep, only "accenditi" is answered
         if self.actions.system.paused and not _is_system(match):
             self.last_route = {"route": "paused"}
             log.info("In pausa, ignoro: %r", text, extra={"route": "paused"})
@@ -284,3 +290,8 @@ class LocalResponder:
 
 def _is_system(match: Match | None) -> bool:
     return match is not None and match.command.action == "system"
+
+
+def _turns_on(match: Match | None) -> bool:
+    """ "Accenditi": the one command heard while CLAUDIO is off."""
+    return _is_system(match) and match is not None and match.command.params.get("do") == ON
