@@ -641,9 +641,15 @@ def main(argv: list[str] | None = None) -> int:
         open_window(settings.resolve(settings.data_dir) / CHAT_DB)
         return 0
     session = None
+    instance = None
     if not args.check and not args.text:
         from claudio.session_log import start_session
+        from claudio.single_instance import EXIT_ALREADY_RUNNING, SingleInstance
 
+        instance = SingleInstance()  # one CLAUDIO per microphone: login task, a terminal...
+        if not instance.acquire():
+            log.warning("CLAUDIO è già acceso: questa copia si chiude")
+            return EXIT_ALREADY_RUNNING
         session = start_session(settings.resolve(settings.logs_dir), settings.logging.keep_sessions)
     log.info("CLAUDIO %s", __version__)
     if session is not None:
@@ -667,6 +673,9 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ValueError) as exc:
         log.error("%s", exc)
         return 1
+    finally:
+        if instance is not None:
+            instance.release()
     return 0
 
 

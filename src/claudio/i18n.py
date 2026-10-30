@@ -452,6 +452,8 @@ EN: dict[str, str] = {
     ),
     "Sì: rispondo a %r": "Yes: answering %r",
     "Non era %r: nuova richiesta %r": "It was not %r: new request %r",
+    # IT-1: always on (single_instance.py, supervisor.py, tray.py)
+    "CLAUDIO è già acceso: questa copia si chiude": "CLAUDIO is already running: this copy closes",
 }
 
 
