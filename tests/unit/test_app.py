@@ -388,6 +388,110 @@ async def test_second_chance_keeps_the_near_miss_when_it_hears_something_else(
     assert row["second_chance"] == "il gatto dorme sul divano" and row["second_chance_ms"] >= 0
 
 
+class NoCommands(FakeResponder):
+    def understands(self, text: str, language: str = "it") -> bool:
+        return False
+
+
+def second_chance_with(
+    fake_vad, vad_settings, check: SecondChance, tmp_path, responder=None, **options
+):
+    """A near miss of "hey_claudio" (0.3) at frame 20, with the given Assistant options."""
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        FakeWake(set(), miss_on={20}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        responder or FakeResponder(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        second_chance=check,
+        **options,
+    )
+    return assistant, speaker
+
+
+async def test_no_voice_no_whisper(fake_vad, vad_settings, make_frames, tmp_path) -> None:
+    """A click, a key, the headset's gate opening: Silero hears no voice, Whisper is not even
+    asked, and the audio is kept apart, named after why it was rejected."""
+    saved: list[str] = []
+    check = SecondChance("Claudio.")
+    assistant, speaker = second_chance_with(
+        fake_vad,
+        vad_settings,
+        check,
+        tmp_path,
+        voice_meter=lambda audio: 32,
+        wake_min_voice_ms=96,
+        rejected_sink=lambda audio, kind: saved.append(kind) or f"rejected/{kind}.wav",
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert check.heard == [] and speaker.beeps == [] and assistant.state is State.IDLE
+    assert saved == ["no_voice"]
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["rejected"] == "no_voice"
+    assert row["wake_voice_ms"] == 32 and row["audio_file"] == "rejected/no_voice.wav"
+
+
+async def test_a_voice_goes_on_to_whisper(fake_vad, vad_settings, make_frames, tmp_path) -> None:
+    check = SecondChance("Claudio.")
+    assistant, speaker = second_chance_with(
+        fake_vad, vad_settings, check, tmp_path, voice_meter=lambda audio: 480, wake_min_voice_ms=96
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert len(check.heard) == 1 and speaker.beeps == ["wake"]
+    assert assistant._interaction is not None
+    assert assistant._interaction.info["wake_voice_ms"] == 480
+
+
+@pytest.mark.parametrize(
+    ("heard", "voice", "wakes"),
+    [
+        ("", None, False),  # 30/10 14:00:43: too quiet for Whisper, then "Nessuna richiesta"
+        ("", 480, True),  # a voice Whisper could not write: the request will be verified
+        ("Grazie.", None, True),  # Whisper's guess on a lone word
+    ],
+)
+async def test_an_unclear_name_wakes_only_on_a_voice(
+    fake_vad, vad_settings, make_frames, tmp_path, heard: str, voice: int | None, wakes: bool
+) -> None:
+    assistant, speaker = second_chance_with(
+        fake_vad,
+        vad_settings,
+        SecondChance(heard),
+        tmp_path,
+        voice_meter=None if voice is None else (lambda audio: voice),
+        wake_min_voice_ms=96,
+        verify_wake=True,
+        always_confirm=frozenset({"hey_claudio"}),
+        unclear_min=0.2,
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert (speaker.beeps == ["wake"]) is wakes
+    assert (assistant.state is State.LISTENING) is wakes
+
+
+async def test_a_noisy_models_misfires_leave_only_their_audio(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """ "claudio" alone fires often on noise: its rejected detections are saved apart (the
+    negatives to retrain it on), without a metrics row each."""
+    saved: list[str] = []
+    assistant, speaker = second_chance_with(
+        fake_vad,
+        vad_settings,
+        SecondChance("il gatto dorme"),
+        tmp_path,
+        responder=NoCommands(),
+        always_confirm=frozenset({"hey_claudio"}),
+        rejected_sink=lambda audio, kind: saved.append(kind) or f"{kind}.wav",
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert saved == ["no_name"] and speaker.beeps == []
+    assert not (tmp_path / "metrics.jsonl").exists()
+
+
 async def test_a_failing_second_chance_is_a_plain_near_miss(
     fake_vad, vad_settings, make_frames, tmp_path, caplog
 ) -> None:
@@ -710,7 +814,12 @@ async def run_requests(assistant: Assistant, make_frames, n: int) -> None:
                 clock.t += 0.08
                 yield silence
                 await asyncio.sleep(0.001)
-                if assistant.state is State.IDLE and assistant.endpointer.started:
+                # Over: back to idle, and no second chance still deciding whether to wake.
+                if (
+                    assistant.state is State.IDLE
+                    and assistant.endpointer.started
+                    and not assistant._checks
+                ):
                     break
 
     await assistant.run(gen())

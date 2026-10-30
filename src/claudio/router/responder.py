@@ -117,8 +117,12 @@ class LocalResponder:
             log.exception("Preparazione della risposta non riuscita")
 
     def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
-        """A local command matches `text` (the assistant retries in Italian when not)."""
-        return self.matcher.match(text, language) is not None
+        """A local command matches `text` (the assistant retries in Italian when not). While
+        CLAUDIO is off only "accenditi" counts: no other command is answered then."""
+        match = self.matcher.match(text, language)
+        if self.actions.system.off:
+            return _turns_on(match)
+        return match is not None
 
     def is_stop(self, text: str) -> bool:
         """`text` is only "basta" / "stop" (in any language): said while CLAUDIO speaks, it

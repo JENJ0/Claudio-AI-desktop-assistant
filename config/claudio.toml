@@ -29,7 +29,8 @@ near_miss_floor = 0.15     # a score between this and the threshold is a missed 
 confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more with turbo, more with large-v3)
 second_chance = true       # after one, Whisper listens to the last 2.5 s (~130 ms with turbo) and wakes CLAUDIO if it hears the name
 unclear_min = 0.6          # a "claudio" this strong heard by Whisper as nothing or "Grazie." wakes, then the request needs the name or a command
-off_threshold_boost = 0.1  # while off ("spegniti") every wake threshold is this much higher; only "accenditi" is heard
+off_threshold_boost = 0.1  # while off ("spegniti") every wake threshold is this much higher; Whisper must hear the name (or "accenditi")
+min_voice_ms = 96          # a second chance needs this much voice (Silero) before Whisper listens: clicks and the headset's gate are dropped for free
 verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
 
 [[wakeword.models]]
@@ -275,4 +276,5 @@ level = "INFO"
 save_audio = true          # keep a WAV of what CLAUDIO heard after each wake word (logs/audio/)
 save_voice = true          # keep every piece Jack says (logs/sessions/<run>/jack/NNN.wav) and flag robotic / too high takes in the log
 keep_audio = 50            # how many to keep
-retention_days = 30        # the chat (data/claudio.db), logs/sessions/ and logs/audio/ forget what is older (at startup)
+keep_rejected = 200        # WAVs of what the second chance rejected and of what was heard over a reply (logs/audio/rejected/); 0 = none
+retention_days = 30        # the chat (data/claudio.db), logs/sessions/ and logs/audio/ (rejected/ too) forget what is older (at startup)
