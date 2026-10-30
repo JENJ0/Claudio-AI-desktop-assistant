@@ -155,6 +155,25 @@ def test_a_text_keeps_the_seed_of_its_good_take(tmp_path, jacks) -> None:
     assert jack.seeds()[-2:] == [7, 8]  # a new text starts from the configured seed
 
 
+def test_a_text_whose_take_was_bad_starts_from_another_seed(tmp_path, jacks) -> None:
+    """30/10: the same text said again got the same shouted take, every time."""
+    takes = TakeStore(tmp_path / "jack_takes.json", "p")
+    jack = make(jacks, tmp_path, bad="7,8", takes=takes)
+    jack.synth.synthesize(TEXT)  # the opening piece: seeds 7 and 8, both bad, 8 is played
+    assert jack.seeds() == [7, 8]
+    assert takes.bad_seeds(takes.key(TEXT, jack.synth.rvc)) == {7, 8}
+    audio = jack.synth.synthesize(TEXT)
+    assert jack.seeds()[2:] == [9] and abs(pitch(audio) - 120) < 5
+
+
+def test_the_opening_piece_can_be_left_alone(tmp_path, jacks) -> None:
+    """jack_first_retries = 0: the first piece is never held back, whatever it sounds like."""
+    jack = make(jacks, tmp_path, bad="7", pause=1.0, first_retries=0)
+    started = time.monotonic()
+    first = next(iter(jack.synth.stream(TEXT)))
+    assert time.monotonic() - started < 0.5 and abs(pitch(first) - 300) < 5
+
+
 def test_a_reply_saved_in_advance_needs_no_worker(tmp_path) -> None:
     takes = TakeStore(tmp_path / "jack_takes.json", "p")
     pcm = (np.sin(np.arange(24_000) / 7) * 2000).astype(np.int16)
@@ -181,8 +200,11 @@ def test_the_seeds_tried_start_with_the_known_good_one() -> None:
         def seed(self, key):
             return 8
 
+        def bad_seeds(self, key):
+            return {9}
+
     synth.takes = Known()  # type: ignore[assignment]
-    assert synth._seeds("k", 3) == [8, 7, 9]
+    assert synth._seeds("k", 3) == [8, 7, 10]  # 9 was bad for this text
     synth.seed = -1  # random draws, the known one still first
     seeds = synth._seeds("k", 3)
     assert seeds[0] == 8 and len(set(seeds)) == 3

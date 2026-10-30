@@ -252,9 +252,12 @@ class TtsSettings(BaseModel):
     # Every take is checked before it is played: a high, shouted or babbling one is
     # generated again with the next seed (8 of the 36 takes of 30/10). Pieces after the first
     # are checked whole while the one before plays; the first piece of a reply on its first
-    # 0.6 s, and generated again only when bad (+0.3-0.5 s, JenJo 30/10).
+    # chunk, and generated again only when that shows it is bad (JenJo 30/10: accepted).
     jack_take_check: bool = True
-    jack_take_retries: int = Field(2, ge=0, le=5)  # the first piece of a reply: 1 at most
+    jack_take_retries: int = Field(2, ge=0, le=5)
+    # ...for the first piece of a reply, which the listener waits for: each costs ~0.8 s
+    # (measured 30/10). 0 = the first piece is never held back.
+    jack_first_retries: int = Field(1, ge=0, le=2)
     # Jack's usual register, the reference of "too high": the median of the takes of 30/10
     # (checkpoint 1.7B-calmo). Another checkpoint may need its own: scripts/jack_takes.py
     # prints it.

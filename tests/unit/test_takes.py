@@ -22,6 +22,21 @@ def test_a_good_seed_is_kept_for_the_same_words(tmp_path) -> None:
     assert again.seed(key) == 9
 
 
+def test_bad_seeds_are_kept_and_a_bad_good_seed_is_forgotten(tmp_path) -> None:
+    takes = store(tmp_path)
+    key = takes.key("Niente magia, socio.", "none")
+    takes.avoid(key, 7, "Niente magia, socio.")
+    takes.avoid(key, 8, "Niente magia, socio.")
+    again = store(tmp_path)
+    assert again.bad_seeds(key) == {7, 8} and again.seed(key) is None
+    again.remember(key, 9, "Niente magia, socio.")
+    again.avoid(key, 9, "Niente magia, socio.")  # judged bad later: no longer the good one
+    assert again.seed(key) is None and again.bad_seeds(key) == {7, 8, 9}
+    for seed in range(20, 40):
+        again.avoid(key, seed, "Niente magia, socio.")
+    assert len(again.bad_seeds(key)) == 10  # the last ten only
+
+
 def test_the_key_depends_on_the_words_the_voice_and_the_conversion(tmp_path) -> None:
     takes = store(tmp_path)
     key = takes.key("Apro la chat.", "none")
