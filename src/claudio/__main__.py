@@ -409,6 +409,7 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
         needs_name=c.barge_in_needs_name,
         echo_similarity=c.echo_similarity,
         resume_s=c.resume_s,
+        resume_min_chars=c.resume_min_chars,
     )
 
 

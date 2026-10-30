@@ -176,6 +176,7 @@ barge_in_min_dbfs = -30.0  # the voice must be this loud (JenJo at the microphon
 barge_in_vad = 0.6         # speech probability needed while speaking (stricter than [vad] threshold)
 barge_in_min_speech_ms = 300  # voice this long before anything happens (a cough is shorter)
 resume_s = 60.0            # a reply cut by a question goes on after the answer ("Dicevo: ..."); 0 = never
+resume_min_chars = 200     # ...only a long one (a story): never a short answer, a question or one to a phrase Whisper doubted
 duck_volume = 0.3          # the reply's volume while Whisper checks what was said
 barge_in_needs_name = true # over the reply a new request needs the name ("Claudio, ...") or a command; "basta" always works
 echo_similarity = 70.0     # 0-100: heard this close to what was just said = CLAUDIO's own echo (0 = word check only)

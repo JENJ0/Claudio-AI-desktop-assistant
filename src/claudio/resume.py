@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Sequence
 
+from claudio.intake import asks_something
 from claudio.router.normalizer import normalize
 
 # The new request ends the old reply instead of pausing it ("ok, va bene, grazie").
@@ -79,6 +80,14 @@ def remainder(text: str, played: Sequence[str]) -> str:
             continue
         start, position = found, found + len(sentence.strip())
     return text[start:].strip()
+
+
+def worth_resuming(reply: str, min_chars: int) -> bool:
+    """A long reply that does not end asking something: a story or an explanation. Of the 14
+    replies resumed in JenJo's logs up to 30/10 the 9 wrong ones were answers, banter and
+    questions ("Dicevo: Non è chiaro cosa intendi, socio: chi ha fatto cosa?"); every reply
+    worth resuming had more than 200 characters."""
+    return len(reply.strip()) >= min_chars and not asks_something(reply)
 
 
 def ends_the_reply(request: str) -> bool:

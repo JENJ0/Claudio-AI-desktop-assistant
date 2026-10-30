@@ -49,7 +49,13 @@ from claudio.protocols import (
     Transcriber,
     WakeWordDetector,
 )
-from claudio.resume import RESUME_PREFIX, DrainedStream, ends_the_reply, remainder
+from claudio.resume import (
+    RESUME_PREFIX,
+    DrainedStream,
+    ends_the_reply,
+    remainder,
+    worth_resuming,
+)
 from claudio.router.normalizer import heard_wake_word, normalize
 from claudio.system import SystemControl
 from claudio.wakeword.verifier import clipped_name, unclear
@@ -112,19 +118,22 @@ class BargeIn:
     needs_name: bool = False
     echo_similarity: float = 70.0
     # A reply cut by a new request goes on ("Dicevo: ...") after that request is answered,
-    # if it took less than this (0: never).
+    # if it took less than this (0: never) and the reply was long enough to be worth it.
     resume_s: float = 60.0
+    resume_min_chars: int = 200
 
 
 @dataclass(frozen=True)
 class CutReply:
     """A reply a new request cut short: the stream still reading it, the sentences that had
-    started playing, when it was cut, its language, and (once read) the part not said."""
+    started playing, when it was cut, its language, whether it answered a request Whisper was
+    unsure of, and (once read) the part not said."""
 
     stream: DrainedStream
     played: list[str]
     at: float
     language: str
+    unsure: bool = False
     rest: str = ""
 
 
@@ -1135,18 +1144,31 @@ class Assistant:
         finally:
             if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
                 language_now = lang() if callable(lang) else lang
-                self._cut = CutReply(drained, list(self.speaker.played), self.clock(), language_now)
+                played, now = list(self.speaker.played), self.clock()
+                unsure = bool(inter.info.get("stt_unsure"))
+                self._cut = CutReply(drained, played, now, language_now, unsure)
             else:
                 drained.cancel()
 
     async def _unsaid(self, cut: CutReply | None) -> CutReply | None:
         """The reply this request cut, with its last words (Claude is usually done by now):
-        `cut` with only the part that was not said, None when nothing is left."""
+        `cut` with only the part that was not said, None when nothing is left or it is not
+        worth going on with: the answer to a phrase Whisper was unsure of, a short reply or a
+        question (30/10: "Dicevo: Non è chiaro cosa intendi, socio: chi ha fatto cosa?" after
+        "Chi ce l'ha fatta?", misheard for "chiudi la chat", which had replaced it)."""
         if cut is None:
+            return None
+        assert self.barge_in is not None
+        if cut.unsure:
+            cut.stream.cancel()
+            log.info("Non riprendo la risposta interrotta: rispondeva a una frase incerta")
             return None
         await cut.stream.finish(CUT_FINISH_S)
         if self.responder.awaiting:
             return None  # it asked something ("Lo uso?"): not a story to go on with
+        if not worth_resuming(cut.stream.text, self.barge_in.resume_min_chars):
+            log.info("Non riprendo la risposta interrotta: breve o una domanda")
+            return None
         rest = remainder(cut.stream.text, cut.played)
         return replace(cut, rest=rest) if rest else None
 

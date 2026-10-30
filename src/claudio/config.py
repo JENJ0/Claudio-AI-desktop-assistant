@@ -320,8 +320,10 @@ class ConversationSettings(BaseModel):
     # the room still echoes it. 0 = deaf only while the sound plays.
     echo_tail_ms: int = Field(400, ge=0, le=2000)
     # A reply cut by a new request ("che ore sono?") goes on after it is answered ("Dicevo:
-    # ..."), if that took less than this many seconds (0 = never; JenJo 25/10).
+    # ..."), if that took less than this many seconds (0 = never; JenJo 25/10) and the reply
+    # had at least resume_min_chars: a story or an explanation, never an answer or a question.
     resume_s: float = Field(60.0, ge=0, le=600)
+    resume_min_chars: int = Field(200, ge=0, le=5000)
     # true: in the window only questions, "dimmi..." or the name reach Claude (the TV costs
     # nothing). false: everything is answered until "basta" or silence.
     only_addressed: bool = False
