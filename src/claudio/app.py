@@ -9,12 +9,13 @@ import functools
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 
+from claudio.audio.own_sound import OwnSound
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.config import NoiseSettings, in_language
@@ -22,6 +23,7 @@ from claudio.echo import is_echo, recent_reply
 from claudio.intake import (
     BARGE_IN,
     CONVERSATION,
+    FOLLOW_UP,
     Decision,
     Heard,
     Hearing,
@@ -63,6 +65,14 @@ CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for
 # The outcomes of a request that was really said to Claudio: the microphone level learns from
 # these only (a false wake, noise, the TV in the conversation window or a timeout are not it).
 LEVEL_OUTCOMES = frozenset({"ok", "interrupted", "stopped", "paused"})
+# The conversation window is deaf while the reply can still be in the room: a phrase heard
+# later than this once it listens cannot be the reply's echo, whatever words it shares with
+# it (28-29/10: "apri la chat" after "Chiudo la chat." was dropped as CLAUDIO's own voice).
+ECHO_GRACE_MS = 300
+# Nor can a phrase with more voice than this: the echo left after the reply and its tail is a
+# fading word or two (29/10: 3 s of "non si dice sono sempre ragione..." said over the end of
+# the reply were dropped as its echo).
+ECHO_VOICE_MS = 1000
 
 
 class State(enum.StrEnum):
@@ -205,16 +215,15 @@ class Assistant:
         self._heard_echo = False  # the last phrase over the reply was CLAUDIO's own voice
         # The loudest echo of CLAUDIO's voice heard so far (None: none, e.g. headphones).
         self._echo_dbfs: float | None = None
-        # The conversation window opens deaf for this long: the reply's last syllables are
-        # still coming out of the speakers (output buffer, room).
-        self.echo_tail_ms = echo_tail_ms
-        self._deaf_samples = 0
-        self._wake_deaf = 0  # samples the wake word still ignores (a sound of CLAUDIO's own)
+        # When the microphone may be hearing CLAUDIO itself (a beep, a reply, their tail):
+        # the wake word and the windows that open after CLAUDIO spoke do not listen then.
+        self.own_sound = OwnSound(endpointer.sample_rate, echo_tail_ms)
         self._wake_stale = False  # the wake word model heard CLAUDIO: reset it before use
         # A reply cut by a new request, still read to its end: resumed once that request is
         # answered. None: no reply was cut.
         self._cut: CutReply | None = None
         self._kept_after_empty = False  # the window already outlived one empty phrase
+        self._listened = 0  # samples the window heard before its phrase began
         # Frames heard since the last phrase went to Whisper: if it was someone talking, they
         # are the rest of the request.
         self._since_check: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
@@ -286,6 +295,16 @@ class Assistant:
     def only_addressed(self, value: bool) -> None:
         self.intake.only_addressed = value
 
+    @property
+    def echo_tail_ms(self) -> int:
+        """How long the room and the microphone keep a sound of CLAUDIO's own after it came
+        out of the speakers: nothing listens to it ([conversation] echo_tail_ms)."""
+        return self.own_sound.tail_ms
+
+    @echo_tail_ms.setter
+    def echo_tail_ms(self, value: int) -> None:
+        self.own_sound.tail_ms = value
+
     def _set_state(self, state: State) -> None:
         if state != self.state:
             log.debug("Stato: %s -> %s", self.state, state)
@@ -303,12 +322,13 @@ class Assistant:
             await self.wait_idle()
 
     async def handle_frame(self, frame: np.ndarray) -> None:
+        own = self.own_sound.in_frame(len(frame))  # CLAUDIO's own sound may be in it
         if self.state == State.IDLE:
-            self._recent.append(frame.astype(np.float32) / 32768.0)
-            if self._hears_itself(frame):
+            if self._hears_itself(own):
                 return
             if isinstance(self.wake, StrictWake):
                 self.wake.strict = self.system.off
+            self._recent.append(frame.astype(np.float32) / 32768.0)
             detection = self.wake.process(frame)
             if self.system.off:
                 # Off: no second chance on Whisper. Only a clear wake (the strict threshold)
@@ -325,7 +345,7 @@ class Assistant:
             elif (miss := self.wake.pop_near_miss()) is not None:
                 self._on_near_miss(*miss)
         elif self.state == State.LISTENING:
-            self._on_listen(frame)
+            self._on_listen(frame, own)
         elif self.state == State.TRANSCRIBING:
             self._held.append(frame)  # the request itself, if the phrase was only the wake word
         elif self.state == State.SPEAKING and self.barge_in is not None:
@@ -429,16 +449,23 @@ class Assistant:
         if self.metrics is not None:
             self.metrics.write(inter)
 
-    def _on_listen(self, frame: np.ndarray) -> None:
+    def _on_listen(self, frame: np.ndarray, own: bool = False) -> None:
+        """`own`: CLAUDIO's own sound may be in the frame. A window that opened after CLAUDIO
+        spoke (the conversation, the answer to "Confermi?") does not hear it: the end of the
+        reply and the beep are still in the room. After a wake word JenJo may already be
+        talking over the beep: that phrase is heard whole."""
         assert self._interaction is not None
-        if self._deaf_samples > 0:
-            self._deaf_samples -= len(frame)
+        if own and self._interaction.info.get("wake_word") in (CONVERSATION, FOLLOW_UP):
             return
+        if not self.endpointer.started:
+            self._listened += len(frame)
         event = self.endpointer.process(frame)
         if event is EndpointEvent.START:
             self._interaction.mark("speech_start")
             if self._interaction.info.get("wake_word") == "conversation":
                 self.responder.prepare()  # no wake word in the conversation window
+                sr = self.endpointer.sample_rate
+                self._interaction.info["listened_ms"] = round(self._listened * 1000 / sr)
         elif event is EndpointEvent.TIMEOUT:
             if self._interaction.info.get("wake_word") == "conversation":
                 log.info("Fine della conversazione: torno in attesa della wake word")
@@ -584,9 +611,12 @@ class Assistant:
             and not decision.dropped
             and decision.kind is not Kind.CONTINUE
             and not self.responder.awaiting  # "sì" to "Confermi?" may be in the question
+            and info.get("listened_ms", 0) <= ECHO_GRACE_MS
+            and self.endpointer.stats()["voice_ms"] <= ECHO_VOICE_MS
             and self._is_echo(text, self._said)
         ):
-            # The end of the reply, still in the room when the window opened.
+            # The end of the reply, still in the room when the window opened (a speaker
+            # slower than measured): only a short phrase heard at once.
             log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", text)
             return Decision(Kind.NOT_REQUEST, text, "echo")
         if decision.reason and not decision.dropped and decision.kind is not Kind.CONTINUE:
@@ -728,18 +758,17 @@ class Assistant:
     def _listen_for_answer(self, conversation: bool = False) -> None:
         """Listen again at once, no wake word needed: the answer to the question just asked,
         or (`conversation`) another request within conversation_s of the reply."""
-        kind = "conversation" if conversation else "follow_up"
+        kind = CONVERSATION if conversation else FOLLOW_UP
         self._interaction = Interaction(
             clock=self.clock, info={"wake_word": kind, "wake_score": 0.0}
         )
         self._interaction.mark("wake")
         self._heard_on = self._microphone()
-        self._beep("wake")
+        self._beep("wake")  # deaf until it and the reply before it are out of the room
+        self._listened = 0
         self._prewake = np.zeros(0, dtype=np.float32)
         self._recent.clear()
         self.endpointer.reset(timeout_s=self.conversation_s if conversation else None)
-        if conversation:
-            self._deaf_samples = self.endpointer.sample_rate * self.echo_tail_ms // 1000
         self._set_state(State.LISTENING)
 
     def _on_barge_frame(self, frame: np.ndarray, barge: BargeIn) -> None:
@@ -999,10 +1028,12 @@ class Assistant:
                 self.on_heard(Hearing())  # typed: nothing misheard
             stream = self._marked(self.responder.respond(text, language), inter)
             if speak:
-                await self.speaker.speak(
-                    stream,
-                    on_first_audio=lambda: inter.mark("first_audio"),
-                    language=lambda: self.responder.language,
+                await self._sound(
+                    self.speaker.speak(
+                        stream,
+                        on_first_audio=lambda: inter.mark("first_audio"),
+                        language=lambda: self.responder.language,
+                    )
                 )
             else:
                 async for _ in stream:
@@ -1040,7 +1071,9 @@ class Assistant:
         drained = DrainedStream(stream)
         text = self._echoed(drained.read()) if resumed else self._marked(drained.read(), inter)
         try:
-            await self.speaker.speak(text, on_first_audio=on_first_audio, language=lang)
+            await self._sound(
+                self.speaker.speak(text, on_first_audio=on_first_audio, language=lang)
+            )
         finally:
             if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
                 language_now = lang() if callable(lang) else lang
@@ -1097,7 +1130,7 @@ class Assistant:
             yield text
 
         try:
-            await self.speaker.speak(once())
+            await self._sound(self.speaker.speak(once()))
         except Exception:
             log.exception("Avviso a voce non riuscito")
         finally:
@@ -1158,8 +1191,6 @@ class Assistant:
             self.history.append(row)
         self._interaction = None
         self.wake.reset()
-        if inter is not None and "first_audio" in inter.marks:
-            self._wake_deaf_for_tail()  # the reply's last syllables are still in the room
         self._set_state(State.IDLE)
 
     def _microphone(self) -> str | None:
@@ -1178,39 +1209,51 @@ class Assistant:
     async def _beep_now(self, kind: str) -> None:
         """A beep, except while off ("spegniti"): then CLAUDIO makes no sound at all."""
         if not self.system.off:
-            await self.speaker.beep(kind)
+            await self._sound(self.speaker.beep(kind))
+
+    async def _sound(self, play: Awaitable[None]) -> None:
+        """Every sound of CLAUDIO's own is played through here (a reply, a beep, "Sono
+        pronto"): nothing listens to it nor to its tail, the part the speakers still had
+        queued when the player returned and the room's echo of it."""
+        self.own_sound.started()
+        try:
+            await play
+        finally:
+            self._sound_ended()
+
+    def _sound_ended(self) -> None:
+        try:
+            queued = self.speaker.queued_s()
+        except Exception:  # a sound that never ends would leave CLAUDIO deaf for good
+            log.exception("Durata dell'audio ancora in uscita non disponibile")
+            queued = 0.0
+        self.own_sound.ended(queued)
 
     def _beep(self, kind: str) -> None:
+        """A beep played alongside: the sound starts now, before its task runs."""
         if self.system.off:
             return
+        self.own_sound.started()
         task = asyncio.create_task(self.speaker.beep(kind))
         self._beeps.add(task)
         task.add_done_callback(self._beep_done)
 
     def _beep_done(self, task: asyncio.Task[None]) -> None:
         self._beeps.discard(task)
-        self._wake_deaf_for_tail()
+        self._sound_ended()
 
-    def _wake_deaf_for_tail(self) -> None:
-        """CLAUDIO has just made a sound: the wake word does not listen to its tail."""
-        tail = self.endpointer.sample_rate * self.echo_tail_ms // 1000
-        self._wake_deaf = max(self._wake_deaf, tail)
-        self._wake_stale = True
-
-    def _hears_itself(self, frame: np.ndarray) -> bool:
-        """True while a beep plays and for echo_tail_ms after it or after a reply: the wake
-        word model is not fed CLAUDIO's own sounds (JenJo 28/10: the low beep that closes a
-        conversation woke the "claudio" model at 0.6-0.8, beep after beep). Then the model
-        starts clean."""
-        if self._beeps:
+    def _hears_itself(self, own: bool) -> bool:
+        """While CLAUDIO's own sound may be in the microphone the wake word does not listen
+        and nothing is kept for the second chance or the lead-in: Whisper never hears CLAUDIO
+        say the name (JenJo 28/10: the low beep that closes a conversation woke the "claudio"
+        model at 0.6-0.8, beep after beep). Then the model starts clean."""
+        if own:
             self._wake_stale = True
-            return True
-        if self._wake_deaf > 0:
-            self._wake_deaf -= len(frame)
             return True
         if self._wake_stale:
             self._wake_stale = False
             self.wake.reset()
+            self._recent.clear()
         return False
 
     async def wait_idle(self) -> None:

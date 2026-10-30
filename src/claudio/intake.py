@@ -23,6 +23,7 @@ CONVERSATION = "conversation"  # the wake_word of a phrase heard in the conversa
 # The wake_word of a request said over CLAUDIO's reply: close to the microphone and already
 # heard as words by Whisper, so it is a request without the name.
 BARGE_IN = "barge_in"
+FOLLOW_UP = "follow_up"  # the wake_word of the answer to CLAUDIO's own question ("Confermi?")
 # An answer to Claudio's own question ("Confermi?", "quale delle due?") is a few words.
 ANSWER_MAX_WORDS = 4
 
@@ -75,7 +76,7 @@ class Decision:
 class Heard:
     """What is known about a phrase besides its text."""
 
-    wake_word: str  # the wake word model, CONVERSATION, BARGE_IN, "follow_up" or "typed"
+    wake_word: str  # the wake word model, CONVERSATION, BARGE_IN, FOLLOW_UP or "typed"
     relistened: bool = False  # the request after a phrase that was only the wake word
     second_chance: bool = False  # Whisper already heard the name in a near miss
     name_heard: bool = False  # Whisper heard the name in the wake word audio itself

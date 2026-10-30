@@ -112,6 +112,11 @@ class Speaker(Protocol):
 
     async def beep(self, kind: str = "wake") -> None: ...
 
+    def queued_s(self) -> float:
+        """Seconds until what speak() and beep() handed over has come out of the speakers
+        (they return once the audio is queued)."""
+        ...
+
     def interrupt(self) -> None:
         """Stop the reply being spoken."""
         ...

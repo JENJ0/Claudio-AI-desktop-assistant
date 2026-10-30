@@ -304,8 +304,9 @@ class ConversationSettings(BaseModel):
     barge_in_needs_name: bool = True
     # 0-100: a phrase this close (letter by letter) to what was just said is the reply's echo.
     echo_similarity: float = Field(70.0, ge=0, le=100)
-    # After any sound of its own (reply, beep) the wake word and the conversation window ignore
-    # this much audio: its tail is still in the room.
+    # After any sound of its own (reply, beep) has come out of the speakers, the wake word and
+    # the windows after it (conversation, the answer to "Confermi?") ignore this much audio:
+    # the room still echoes it. 0 = deaf only while the sound plays.
     echo_tail_ms: int = Field(400, ge=0, le=2000)
     # A reply cut by a new request ("che ore sono?") goes on after it is answered ("Dicevo:
     # ..."), if that took less than this many seconds (0 = never; JenJo 25/10).

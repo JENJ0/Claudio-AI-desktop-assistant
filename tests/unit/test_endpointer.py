@@ -56,7 +56,13 @@ def test_reset_allows_new_phrase(fake_vad, vad_settings, make_frames) -> None:
 
 def test_stats_and_listened_audio(fake_vad, vad_settings, make_frames) -> None:
     ep = Endpointer(fake_vad, vad_settings)
-    silent = {"vad_max": 0.0, "input_dbfs": -120.0, "speech_dbfs": -120.0, "clipped": 0.0}
+    silent = {
+        "vad_max": 0.0,
+        "input_dbfs": -120.0,
+        "speech_dbfs": -120.0,
+        "clipped": 0.0,
+        "voice_ms": 0,
+    }
     assert ep.stats() == silent
     feed(ep, make_frames("silence", 400))
     assert ep.stats() == silent
@@ -66,6 +72,7 @@ def test_stats_and_listened_audio(fake_vad, vad_settings, make_frames) -> None:
     # tone at half scale is -9.2 dBFS RMS; silent half the time -> -12.2 dBFS
     assert -12.6 < stats["input_dbfs"] < -11.8
     assert -9.6 < stats["speech_dbfs"] < -8.8  # loudest window: the tone itself
+    assert abs(stats["voice_ms"] - 400) <= 32  # the tone, not the silence (one VAD window)
     assert len(ep.listened()) == 16000 * 800 // 1000
     ep.reset()
     assert len(ep.listened()) == 0 and ep.stats()["vad_max"] == 0.0

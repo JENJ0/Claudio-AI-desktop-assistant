@@ -109,7 +109,10 @@ EN: dict[str, str] = {
         "Microphone level file unreadable: starting from zero"
     ),
     "Impossibile salvare il livello del microfono: %s": "Could not save the microphone level: %s",
-    "Uscita audio: %s": "Audio output: %s",
+    "Uscita audio: %s (latenza %.0f ms)": "Audio output: %s (latency %.0f ms)",
+    "Durata dell'audio ancora in uscita non disponibile": (
+        "Length of the audio still coming out of the speakers not available"
+    ),
     "Uscita predefinita di Windows cambiata in %s, che non c'era all'avvio: riavvia CLAUDIO per "
     "usarla": (
         "Windows default output changed to %s, which was not there at start-up: restart CLAUDIO "

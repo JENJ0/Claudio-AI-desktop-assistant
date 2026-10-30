@@ -238,7 +238,8 @@ class Endpointer:
 
     def stats(self) -> dict[str, float]:
         """Since reset(): highest speech probability, average level, loudest 32 ms of speech
-        (dBFS) and the share of speech samples at full scale (clipping)."""
+        (dBFS), the share of speech samples at full scale (clipping) and how much speech was
+        heard (ms, pauses left out)."""
         mean_square = self._energy / self._elapsed if self._elapsed else 0.0
         clipped = self._clipped / self._speech_samples if self._speech_samples else 0.0
         return {
@@ -246,6 +247,7 @@ class Endpointer:
             "input_dbfs": dbfs(mean_square),
             "speech_dbfs": dbfs(self._loudest),
             "clipped": round(clipped, 4),
+            "voice_ms": round(self._speech_samples * 1000 / self.sample_rate),
         }
 
     def audio(self) -> np.ndarray:
