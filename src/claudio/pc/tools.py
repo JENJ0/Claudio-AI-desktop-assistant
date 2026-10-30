@@ -29,6 +29,7 @@ from claudio.config import DEFAULT_LANGUAGE, PcSettings
 from claudio.pc import files, keys, screen, terminal
 from claudio.pc.files import Found, PathPolicy, PathRefused
 from claudio.pc.terminal import CommandRefused, CommandResult
+from claudio.router import command_tool
 from claudio.safety.confirmation import (
     ASK_LEVEL_2,
     ASK_LEVEL_3,
@@ -303,6 +304,7 @@ _SAY = {
         "close_window": 'chiudo la finestra "{window}"',
         "move_file": 'sposto "{source}" in "{destination}"',
         "run_command": "per {purpose}: il comando è nella chat",
+        "claudio_command": "{phrase}",
         "then": ", poi ",
         "active": "attiva",
     },
@@ -313,6 +315,7 @@ _SAY = {
         "close_window": 'I\'ll close the window "{window}"',
         "move_file": 'I\'ll move "{source}" to "{destination}"',
         "run_command": "to {purpose}: the command is in the chat",
+        "claudio_command": "{phrase}",
         "then": ", then ",
         "active": "active",
     },
@@ -335,9 +338,11 @@ class PcTools:
         home: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        commands: command_tool.CommandTool | None = None,
     ) -> None:
         self.desktop = desktop
         self.settings = settings
+        self.commands = commands  # Claudio's own commands (volume, chat, pause...), as a tool
         self.policy = PathPolicy(settings.roots, home)
         self.safe_keys = frozenset(_canonical_or_none(k) for k in settings.safe_keys) - {None}
         self.clock = clock
@@ -357,6 +362,8 @@ class PcTools:
         self._definitions = [
             d for d in DEFINITIONS if settings.commands or d["name"] != "run_command"
         ]
+        if commands is not None:
+            self._definitions.append(commands.definition)
         try:
             self._admin = bool(desktop.is_admin())
         except Exception:
@@ -399,6 +406,8 @@ class PcTools:
 
     def level(self, call: ToolCall) -> int:
         """Fixed per tool; press_keys is level 1 only when every combination is harmless."""
+        if call.name == command_tool.NAME and self.commands is not None:
+            return self.commands.level(call.args)
         base = LEVELS.get(call.name, LEVEL_SAFE)  # unknown tools fail without doing anything
         if call.name == "type_text" and call.id in self._free:
             return LEVEL_SAFE
@@ -474,6 +483,8 @@ class PcTools:
                 purpose = purpose[:SPOKEN_PURPOSE_CHARS].rsplit(" ", 1)[0] + "..."
             purpose = purpose[:1].lower() + purpose[1:]
             return say["run_command"].format(purpose=purpose)
+        if call.name == command_tool.NAME and self.commands is not None:
+            return say["claudio_command"].format(phrase=self.commands.phrase(a, language))
         return call.name
 
     async def _window_title(self, query: str, say: dict[str, str]) -> str:
@@ -488,7 +499,12 @@ class PcTools:
         """Run one call. Never raises: an error becomes a tool_result with is_error."""
         start = self.clock()
         try:
-            done = await self._call(self._dispatch, call)
+            if call.name == command_tool.NAME:
+                # Claudio's own commands run here, like the router's: the spending ledger
+                # (SQLite) only works on the thread that opened it.
+                done: str | ToolOutcome = self._own_command(call)
+            else:
+                done = await self._call(self._dispatch, call)
             outcome = done if isinstance(done, ToolOutcome) else ToolOutcome(done)
         except (ToolFailed, PathRefused, keys.BadKey, CommandRefused) as exc:
             outcome = ToolOutcome(str(exc), error=True)
@@ -513,6 +529,14 @@ class PcTools:
                 extra={"route": "tool", "tool": call.name},
             )
         return outcome
+
+    def _own_command(self, call: ToolCall) -> str:
+        if self.commands is None:
+            raise ToolFailed(f"unknown tool: {call.name}")
+        try:
+            return self.commands.run(call.args)
+        except command_tool.UnknownCommand as exc:
+            raise ToolFailed(str(exc)) from exc
 
     async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
         loop = asyncio.get_running_loop()

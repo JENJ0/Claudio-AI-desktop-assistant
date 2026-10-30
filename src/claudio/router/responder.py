@@ -6,24 +6,36 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection, Sequence
+from dataclasses import dataclass
 from typing import Any
 
-from claudio.config import DEFAULT_LANGUAGE, ERROR_REPLY, UNKNOWN_REPLY, in_language
-from claudio.intake import Hearing
+from claudio.config import (
+    DEFAULT_LANGUAGE,
+    ERROR_REPLY,
+    UNKNOWN_REPLY,
+    GuessSettings,
+    in_language,
+)
+from claudio.echo import WORD_SHARE, word_share
+from claudio.intake import Doubt, Guess, Hearing, Recovery, Verdict, verdict
 from claudio.router.actions import ActionRunner
-from claudio.router.matcher import CommandMatcher, Match
-from claudio.router.normalizer import normalize
+from claudio.router.matcher import Command, CommandMatcher, Match, Near
+from claudio.router.normalizer import extract_number, normalize, strip_wake_words
 from claudio.safety.confirmation import (
     CANCELLED,
+    LEVEL_CONFIRM,
     LEVEL_SAFE,
+    NO_WORDS,
     NOT_UNDERSTOOD,
+    YES_WORDS,
     Answer,
     Pending,
     parse_answer,
     question,
 )
 from claudio.system import ON
+from claudio.wakeword.verifier import after_clipped_name
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +44,21 @@ ANSWER_WINDOW_S = 45.0  # then the question is old: a phrase without the name is
 
 # Asked with (request, reply language): Claude's reply, streamed.
 Fallback = Callable[[str, str], AsyncGenerator[str, None]]
+# Claude's guess of what JenJo said (brain/guess.py), given the closest commands.
+GuessCall = Callable[[Doubt, Sequence[Near]], Awaitable[Guess | None]]
+
+# Claude guessed the request without being sure: Claudio asks before answering it.
+DID_YOU_SAY = {"it": "Hai detto: {text}?", "en": "Did you say: {text}?"}
+NOT_THAT = {"it": "Va bene, lascio stare.", "en": "Okay, never mind."}
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """A guessed request waiting for JenJo's yes ("Hai detto: alza il volume?")."""
+
+    text: str
+    language: str
+    question: str  # as said: its echo is not an answer
 
 
 class LocalResponder:
@@ -48,6 +75,9 @@ class LocalResponder:
         fallback_awaiting: Callable[[], bool] | None = None,
         fallback_cancel: Callable[[], None] | None = None,
         fallback_heard: Callable[[Hearing], None] | None = None,
+        fallback_guess: GuessCall | None = None,
+        fallback_guess_info: Callable[[], dict[str, Any]] | None = None,
+        guess: GuessSettings | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.matcher = matcher
@@ -62,6 +92,12 @@ class LocalResponder:
         self.fallback_awaiting = fallback_awaiting
         self.fallback_cancel = fallback_cancel
         self.fallback_heard = fallback_heard  # how sure Whisper was, for Claude's next request
+        # A phrase about to be dropped that sounds like a command: Claude guesses what JenJo
+        # said (None: dropped as always). `guess` holds the thresholds.
+        self.fallback_guess = fallback_guess
+        self.fallback_guess_info = fallback_guess_info
+        self.guess_settings = guess or GuessSettings()
+        self._proposal: Proposal | None = None  # "Hai detto: ...?" waiting for its yes
         self.last_route: dict[str, Any] = {}
         self.language = DEFAULT_LANGUAGE  # of the reply being spoken
         self._pending: Pending | None = None  # a level 2-3 action waiting for its yes
@@ -99,7 +135,7 @@ class LocalResponder:
     @property
     def awaiting(self) -> bool:
         """True after a confirmation question: the assistant listens again, no wake word."""
-        return self._pending is not None or self._fallback_waits()
+        return self._pending is not None or self._proposal is not None or self._fallback_waits()
 
     def _fallback_waits(self) -> bool:
         return (
@@ -129,6 +165,94 @@ class LocalResponder:
         if self.fallback_heard is not None:
             self.fallback_heard(hearing)
 
+    async def guess(self, doubt: Doubt) -> Recovery | None:
+        """A phrase about to be dropped: when it, or one of Whisper's other guesses, sounds
+        like a command ([guess] near_floor), Claude says which command JenJo most likely
+        asked and how likely. ASK also arms the question ("Hai detto: ...?"): the next
+        phrase is its answer. None when nothing sounds close (no call, no cost), when the
+        voice was far from the microphone (never acted on: no call either), when Claude is
+        not there or when Claudio is paused or off (only "svegliati" / "accenditi" are heard
+        then, for free)."""
+        settings = self.guess_settings
+        system = self.actions.system
+        if (
+            self.fallback_guess is None
+            or not settings.enabled
+            or doubt.close is False
+            or system.paused
+            or system.off
+            or self.awaiting
+        ):
+            return None
+        texts = [doubt.text, *doubt.alternatives]
+        texts += [rest for t in texts if (rest := after_clipped_name(t))]  # "Audio, alsa..."
+        near = self.matcher.nearest(texts, doubt.language, settings.candidates)
+        if not near or near[0].score < settings.near_floor:
+            return None
+        guess = await self.fallback_guess(doubt, near)
+        info: dict[str, Any] = dict(self.fallback_guess_info()) if self.fallback_guess_info else {}
+        info["guess_near"] = f"{near[0].command.id} {near[0].score:.0f}"
+        if guess is None:
+            return Recovery(Verdict.DROP, "", info)
+        command = self._guessed_command(guess)
+        said = self._request_for(guess, command)
+        # Only a command is recovered: any other phrase stays dropped, as before.
+        result = (
+            Verdict.DROP
+            if command is None
+            else verdict(
+                guess,
+                doubt,
+                settings.act_at,
+                settings.ask_at,
+                asks_first=command.action == "system",
+            )
+        )
+        info.update(guess=said, guess_p=round(guess.probability, 2), guess_verdict=result.value)
+        log.info(
+            "Frase incerta %r: forse %r (%d%%, %s) -> %s",
+            doubt.text,
+            said,
+            round(guess.probability * 100),
+            guess.why or "-",
+            result.value,
+            extra={"route": "guess"},
+        )
+        if result is Verdict.ASK:
+            return Recovery(result, said, info, self.propose(said, doubt.language))
+        return Recovery(result, said, info)
+
+    def _guessed_command(self, guess: Guess) -> Command | None:
+        """The local command Claude named, or the one its words match ("" said: none)."""
+        if guess.command:
+            return self.matcher.command(guess.command)
+        match = self.matcher.match(guess.said) if guess.said.strip() else None
+        return match.command if match else None
+
+    def _request_for(self, guess: Guess, command: Command | None) -> str:
+        """What to answer: Claude's words, or (when they do not match the command it named,
+        e.g. an exact-only one said differently) that command's own phrase, number kept."""
+        said = guess.said.strip()
+        if command is None:
+            return said
+        match = self.matcher.match(said)
+        if match is not None and match.command.id == command.id:
+            return said
+        _, number = extract_number(normalize(said))
+        phrase = command.phrases[0]
+        return f"{phrase} {number}" if number is not None else phrase
+
+    def propose(self, text: str, language: str) -> str:
+        """Claude guessed `text` without being sure: Claudio asks first. The next phrase is
+        the answer (awaiting): a yes answers `text` with no second "Confermi?" for a level 2
+        command; "no, abbassa il volume" is a new request."""
+        question = in_language(DID_YOU_SAY, language).format(text=text.strip().rstrip(".?!"))
+        self._proposal = Proposal(text, language, question)
+        self.language = language
+        self.last_route = {"route": "guess", "guess": text, "language": language}
+        log.info("Chiedo conferma della richiesta dedotta: %r", text, extra={"route": "guess"})
+        return question
+
     def cancel_pending(self, silence: bool = False) -> None:
         """Nothing was said after the question (or it was not understood as speech). After
         mere `silence` an action Claude proposed stays armed until it expires: JenJo may
@@ -140,6 +264,9 @@ class LocalResponder:
                 extra={"route": "confirm_timeout"},
             )
             self._pending = None
+        if self._proposal is not None:
+            log.info("Nessuna risposta: %r non eseguito", self._proposal.text)
+            self._proposal = None
         if self.fallback_cancel is not None and not silence:
             self.fallback_cancel()
 
@@ -163,9 +290,17 @@ class LocalResponder:
             self._last_reply = (reply, self.language)
             self._last_reply_at = self.clock()
 
-    async def _respond(self, text: str, language: str) -> AsyncIterator[str]:
+    async def _respond(
+        self, text: str, language: str, confirmed: bool = False
+    ) -> AsyncIterator[str]:
+        """`confirmed`: JenJo already said yes to this very request ("Hai detto: chiudi la
+        finestra?" "Sì"): a level 2 command runs without asking again."""
         if self._pending is not None:
             async for chunk in self._answer(text):
+                yield chunk
+            return
+        if self._proposal is not None:
+            async for chunk in self._answer_proposal(text, language):
                 yield chunk
             return
         if self._fallback_waits():
@@ -214,7 +349,9 @@ class LocalResponder:
         if match.command.action == "stop":
             log.info("Basta: fine della conversazione", extra={"route": "local"})
             return  # nothing to say: the assistant beeps and stops listening
-        if match.command.level > LEVEL_SAFE:
+        if match.command.level > LEVEL_SAFE and not (
+            confirmed and match.command.level <= LEVEL_CONFIRM
+        ):
             self._pending = Pending(match, self.language)
             self.last_route.update(route="confirm", level=match.command.level)
             log.info(
@@ -227,6 +364,38 @@ class LocalResponder:
             return
         async for chunk in self._execute(match):
             yield chunk
+
+    async def _answer_proposal(self, text: str, language: str) -> AsyncIterator[str]:
+        """The answer to "Hai detto: ...?". A yes (also "sì, grazie") answers the guessed
+        request; "no" alone drops it; anything else ("no, abbassa il volume", "apri Chrome")
+        is what JenJo wants instead, answered as a new request."""
+        proposal, self._proposal = self._proposal, None
+        assert proposal is not None
+        answer = parse_answer(text)
+        words = strip_wake_words(normalize(text, drop_fillers=False).split())
+        if answer is Answer.UNCLEAR and words and words[0] in YES_WORDS:
+            answer = Answer.YES  # "sì, grazie mille": a yes with something after it
+        if answer is Answer.UNCLEAR and word_share(text, proposal.question) >= WORD_SHARE:
+            # The question's own echo ("...detto spegniti"), never a yes: JenJo says "sì".
+            self.last_route = {"route": "guess_echo", "guess": proposal.text}
+            log.info("La mia domanda nel microfono, non è una risposta: %r", text)
+            return
+        if answer is Answer.YES:
+            log.info("Sì: rispondo a %r", proposal.text, extra={"route": "guess"})
+            async for chunk in self._respond(proposal.text, proposal.language, confirmed=True):
+                yield chunk
+            return
+        rest = [w for w in words if w not in NO_WORDS] if answer is Answer.NO else words
+        if len(rest) >= 2 or (rest and answer is Answer.UNCLEAR):
+            again = " ".join(rest) if answer is Answer.NO else text
+            log.info("Non era %r: nuova richiesta %r", proposal.text, again)
+            async for chunk in self._respond(again, language):
+                yield chunk
+            return
+        self.language = proposal.language
+        self.last_route = {"route": "guess_refused", "guess": proposal.text}
+        log.info("Richiesta dedotta rifiutata: %r", proposal.text, extra={"route": "guess"})
+        yield in_language(NOT_THAT if answer is Answer.NO else NOT_UNDERSTOOD, self.language)
 
     async def _ask_fallback(self, text: str) -> AsyncIterator[str]:
         assert self.fallback is not None

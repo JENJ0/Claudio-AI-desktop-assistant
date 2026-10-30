@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,16 @@ class Match:
     score: float
     number: int | None = None
     language: str = DEFAULT_LANGUAGE  # of the phrase that matched
+
+
+@dataclass(frozen=True)
+class Near:
+    """A command a phrase comes close to without matching it: its closest phrase (as written
+    in commands.toml) and how close, 0-100, by letters or by sound."""
+
+    command: Command
+    phrase: str
+    score: float
 
 
 def load_commands(path: Path) -> list[Command]:
@@ -142,11 +153,13 @@ class CommandMatcher:
     def __init__(self, commands: list[Command], threshold: float = 85) -> None:
         self.threshold = threshold
         self._by_phrase: dict[str, dict[str, Command]] = {}  # language -> phrase -> command
+        self._written: dict[str, dict[str, str]] = {}  # language -> phrase -> as in the file
         for cmd in commands:
             for language in cmd.languages:
                 table = self._by_phrase.setdefault(language, {})
                 for phrase in cmd.phrases_in(language):
                     norm = normalize(phrase, lang=language)
+                    self._written.setdefault(language, {}).setdefault(norm, phrase)
                     other = table.get(norm)
                     if other and other.id != cmd.id:
                         raise ValueError(
@@ -165,10 +178,12 @@ class CommandMatcher:
         # How each phrase sounds -> its command. Two phrases sounding alike are one command
         # (they were written as variants of the same words).
         self._by_sound: dict[str, dict[str, Command]] = {}
+        self._sound_phrase: dict[str, dict[str, str]] = {}  # language -> sound -> phrase
         for language in SOUND_LANGUAGES:
             sounds = self._by_sound[language] = {}
             for phrase, cmd in self._by_phrase.get(language, {}).items():
                 sounds.setdefault(sound_key(phrase), cmd)
+                self._sound_phrase.setdefault(language, {}).setdefault(sound_key(phrase), phrase)
         # The same sounds with the spaces gone: Whisper splits a word it did not know
         # ("a cenditi", "spegni ti") or joins two.
         self._by_joined_sound = {
@@ -183,6 +198,14 @@ class CommandMatcher:
     @property
     def languages(self) -> list[str]:
         return list(self._by_phrase)
+
+    def command(self, command_id: str) -> Command | None:
+        """The command with this id, in any language; None when there is none."""
+        for table in self._by_phrase.values():
+            for cmd in table.values():
+                if cmd.id == command_id:
+                    return cmd
+        return None
 
     def match(self, text: str, language: str = DEFAULT_LANGUAGE) -> Match | None:
         order = [language, *(lang for lang in self._by_phrase if lang != language)]
@@ -242,3 +265,38 @@ class CommandMatcher:
                 if needed is None or heard & {sound_key(w) for w in needed}:
                     return Match(cmd, float(score), number, lang)
         return None
+
+    def nearest(
+        self, texts: Sequence[str], language: str = DEFAULT_LANGUAGE, limit: int = 4
+    ) -> list[Near]:
+        """The commands `texts` (a transcription and Whisper's other guesses) come closest to
+        without matching, best first, one entry per command. Letters and sound are both
+        compared, and exact-only commands count too: "Claudio spegni ti" is 94 from
+        "spegniti", which never matches fuzzily. Keywords are not required: this only
+        lists candidates for Claude to judge (brain/guess.py). Only the phrases of `language`:
+        "Come stai?" is 74 from the English "come again", and means nothing like it."""
+        best: dict[str, Near] = {}
+
+        def keep(cmd: Command, phrase: str, score: float) -> None:
+            if cmd.id not in best or score > best[cmd.id].score:
+                best[cmd.id] = Near(cmd, phrase, float(score))
+
+        table = self._by_phrase.get(language, {})
+        sounds = self._by_sound.get(language, {})
+        written = self._written.get(language, {})
+        for text in texts:
+            norm, _ = extract_number(normalize(text, lang=language), language)
+            if not norm or not table:
+                continue
+            for phrase, score, _ in process.extract(
+                norm, list(table), scorer=fuzz.ratio, limit=limit * 3
+            ):
+                keep(table[phrase], written[phrase], score)
+            spelled, _ = extract_number(normalize(spell_capitals(text), lang=language), language)
+            if not sounds or not spelled:
+                continue
+            for key, score, _ in process.extract(
+                sound_key(spelled), list(sounds), scorer=fuzz.ratio, limit=limit * 3
+            ):
+                keep(sounds[key], written[self._sound_phrase[language][key]], score)
+        return sorted(best.values(), key=lambda near: -near.score)[:limit]
