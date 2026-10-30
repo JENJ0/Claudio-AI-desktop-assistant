@@ -124,7 +124,8 @@ def format_row(row: dict[str, Any]) -> str:
         # The first token of each call (a tool round adds one), then the network alone.
         ttft = " · ".join(str(c.get("ttft_ms", "-")) for c in calls)
         rtt = row.get("api_rtt_ms")
-        details.append(f"TTFT {ttft} ms" + (f" (rete {rtt} ms)" if rtt is not None else ""))
+        new = ", connessione nuova" if row.get("api_rtt_new_connection") else ""
+        details.append(f"TTFT {ttft} ms" + (f" (rete {rtt} ms{new})" if rtt is not None else ""))
     if row.get("cost") is not None:
         details.append(
             f"{row.get('model')} {row.get('input_tokens')} in / {row.get('output_tokens')} out"

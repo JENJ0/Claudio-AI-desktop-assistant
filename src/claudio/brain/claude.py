@@ -74,6 +74,7 @@ ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
 ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: open_app ok]"
 NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
+RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
 # What the history keeps of a reply cut short (read by Claude, never said aloud).
 CUT_NOTE = "[cut off: JenJo interrupted here]"
 CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
@@ -111,7 +112,9 @@ class ClaudeBrain:
         self._last_turn = -float("inf")
         self._last_contact = -float("inf")  # last time the connection to the API was used
         self._warming: set[asyncio.Task[None]] = set()
-        self._rtt_ms: int | None = None  # the warm-up's round trip, for the next request
+        # The warm-up's round trip for the next request: (ms, new connection, started at).
+        self._rtt: tuple[int, bool, float] | None = None
+        self._asked_at = -float("inf")  # when the last request went out
         # Haiku proposed Sonnet and Claudio asked "Vuoi che usi Sonnet?": (messages, language,
         # when). The next request is the answer.
         self._offer: tuple[list[dict[str, Any]], str, float] | None = None
@@ -154,12 +157,16 @@ class ClaudeBrain:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+        # Idle past the keep-alive, the connection is a new one: then the round trip also
+        # pays the handshakes, which the request after it no longer does.
+        new = self.clock() - self._last_contact > self.settings.keepalive_s
         self._last_contact = self.clock()
-        task = loop.create_task(self._warm())
+        self._rtt = None  # an older, unused figure is not the next request's
+        task = loop.create_task(self._warm(new))
         self._warming.add(task)
         task.add_done_callback(self._warming.discard)
 
-    async def _warm(self) -> None:
+    async def _warm(self, new: bool = False) -> None:
         start = self.clock()
         try:
             client: Any = self.client
@@ -168,8 +175,10 @@ class ClaudeBrain:
             log.debug("Claude: connessione anticipata non riuscita: %s", exc)
             return
         # No model runs for it: the network part of the next request's wait (~220 ms on
-        # 30/10, against a first token at ~470-610 ms).
-        self._rtt_ms = _ms_since(start, self.clock())
+        # 30/10, against a first token at ~470-610 ms). Not when the request has already
+        # gone out meanwhile: it would be reported with the one after.
+        if self._asked_at < start:
+            self._rtt = (_ms_since(start, self.clock()), new, start)
 
     def wants_smart(self, text: str, language: str) -> bool:
         """JenJo asked for Sonnet in words ("pensaci bene...")."""
@@ -192,8 +201,12 @@ class ClaudeBrain:
         """Claude's reply to `text`, in `language`, as it arrives. Problems become one short
         spoken sentence: Claudio never goes silent and never crashes because of the API."""
         self.last_call = {}
-        if self._rtt_ms is not None:
-            self.last_call["api_rtt_ms"], self._rtt_ms = self._rtt_ms, None
+        self._asked_at = self.clock()
+        rtt, self._rtt = self._rtt, None
+        if rtt is not None and self._asked_at - rtt[2] <= RTT_FRESH_S:
+            self.last_call["api_rtt_ms"] = rtt[0]
+            if rtt[1]:
+                self.last_call["api_rtt_new_connection"] = True
         if self.client is None:
             log.warning("Claude: chiave API mancante (ANTHROPIC_API_KEY nel file .env)")
             self.last_call = {"claude_error": "no_key"}
@@ -335,6 +348,7 @@ class ClaudeBrain:
                     ask = await self.tools.question(confirm, language)
                     self._action = _Action(messages, leg.calls, turn, language, level, round_no)
                     self._action.refused = refused
+                    self._action.handoff = leg.handoff
                     self._action.asked = self.clock()
                     self._show(confirm)
                     self._note_tools(confirm, "ask")
@@ -362,8 +376,9 @@ class ClaudeBrain:
                     # 14:07: the first word came 2.1 s later, after three calls).
                     turn.parts.append(end)
                     yield end
+                alone = not turn.done and not leg.handoff  # nothing else in this request
                 results, own = await self._run_calls(leg.calls, language, refused, turn)
-                if own is not None:
+                if own is not None and alone:
                     if said := self._end_with(turn, own):
                         yield said
                     return
@@ -397,10 +412,11 @@ class ClaudeBrain:
             said = in_language(BRIDGE_RUN, action.language) + " "  # a new reply: no lead space
             action.turn.parts.append(_space(action.turn) + said)
             yield said
+        alone = not action.turn.done and not action.handoff
         results, own = await self._run_calls(
             action.calls, action.language, action.refused, action.turn
         )
-        if own is not None:  # "spegniti" confirmed: its reply, no call to Claude
+        if own is not None and alone:  # "spegniti" confirmed: its reply, no call to Claude
             if said := self._end_with(action.turn, own, new_reply=True):
                 yield said
             return
@@ -457,8 +473,9 @@ class ClaudeBrain:
         return results, (" ".join(w for w in own if w) if own is not None else None)
 
     def _end_with(self, turn: _Turn, words: str, new_reply: bool = False) -> str:
-        """Only Claudio's own commands ran: their reply ends the request, without a second
-        call whose only job was "Fatto, socio" (IT-1 5.3: +0.6-1 s and one more call).
+        """Only Claudio's own commands ran, marked `last` by Claude, and nothing else in this
+        request (no earlier round, no Sonnet): their reply ends it, without a second call
+        whose only job was "Fatto, socio" (IT-1 5.3: +0.6-1 s and one more call).
         Returns what to say ("" = nothing: the media keys are silent, as with the router);
         a `new_reply` (after "sì") starts without the space that joins it to the turn."""
         if not words:
@@ -824,6 +841,7 @@ class _Action:
         self.round_no = round_no
         self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
+        self.handoff = False  # Haiku also asked for Sonnet: Claude goes on after the calls
 
 
 def _new_request(text: str, level: int) -> bool:

@@ -132,6 +132,13 @@ async def _timed(*items: tuple[float, str]):
         yield f"{chunk} " if chunk.endswith(".") else chunk
 
 
+async def _raw(*items: tuple[float, str]):
+    """Claude's chunks exactly as given, each after its delay."""
+    for delay, chunk in items:
+        await asyncio.sleep(delay)
+        yield chunk
+
+
 async def test_group_stream_starts_with_what_has_arrived_and_groups_the_rest() -> None:
     from claudio.tts.sentence_splitter import group_stream
 
@@ -195,6 +202,57 @@ async def test_group_stream_whitespace_is_no_new_text() -> None:
     assert await pieces.__anext__() == "Ci guardo, socio!"
     assert loop.time() - start < 0.27  # ~0.2 s, not 0.2 + 0.1
     assert [p async for p in pieces] == ["Fatto."]
+
+
+async def test_group_stream_a_pause_also_releases_the_sentence_the_splitter_held() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    # Review of 5.1: "Ci guardo subito." waits in the splitter for what follows (it could
+    # be "3." before "5") until the brain's space, ~0.35 s later when the tool's arguments
+    # are long. Both sentences go in one piece, before that space.
+    pieces = group_stream(
+        _raw((0, "Certo, socio."), (0, " Ci guardo subito."), (0.35, " "), (0.4, "Fatto.")),
+        220,
+        first_chars=40,
+        pause_s=0.1,
+    )
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    assert await pieces.__anext__() == "Certo, socio. Ci guardo subito."
+    assert loop.time() - start < 0.3  # the pause, not the space at 0.35 s
+    assert [p async for p in pieces] == ["Fatto."]
+
+
+async def test_group_stream_text_after_a_pause_is_grouped_again() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    # Review of 5.1: after the tools, the next round's sentences go together again (a
+    # lone "Trovata." would be a generation of its own).
+    got = await _collect(
+        group_stream(
+            _raw(
+                (0, "Ci guardo, socio. "),
+                (0.3, "Trovata. "),
+                (0.02, "La apro adesso, socio. "),
+                (0.02, "Altro?"),
+            ),
+            220,
+            first_chars=40,
+            pause_s=0.1,
+        )
+    )
+    assert got == ["Ci guardo, socio.", "Trovata. La apro adesso, socio. Altro?"]
+
+
+def test_the_splitter_gives_up_a_held_sentence_only_when_it_is_complete() -> None:
+    s = SentenceSplitter()
+    assert s.feed("Costa 3.") == [] and s.ended() == ["Costa 3."]
+    s = SentenceSplitter()
+    assert s.feed("Ha detto «ciao.»") == [] and s.ended() == ["Ha detto «ciao.»"]
+    for unfinished in ("Cerco il fil", "Chiedi al dott.", "Lo scrisse G."):
+        s = SentenceSplitter()
+        assert s.feed(unfinished) == [] and s.ended() == []
+        assert s.flush() == [unfinished]  # still there for the rest of the reply
 
 
 async def test_group_stream_without_pause_waits_for_first_chars() -> None:

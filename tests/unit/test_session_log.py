@@ -143,3 +143,5 @@ def test_each_claude_call_shows_its_first_word_and_headers() -> None:
     row = {"ts": NOW.timestamp(), "outcome": "ok", "route": "claude", "claude_calls": calls}
     assert "TTFT 610 · 560 ms" in format_row(row)
     assert "TTFT 610 · 560 ms (rete 220 ms)" in format_row({**row, "api_rtt_ms": 220})
+    new = {**row, "api_rtt_ms": 305, "api_rtt_new_connection": True}
+    assert "(rete 305 ms, connessione nuova)" in format_row(new)

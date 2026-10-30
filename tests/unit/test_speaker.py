@@ -200,3 +200,40 @@ async def test_grouped_reply_is_said_in_pieces_up_to_the_limit() -> None:
     await speaker.speak(stream("Uno. Due", ". Tre lunghissimo davvero. Quattro."))
     assert [t for t, _ in synth.calls] == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]
     assert speaker.played == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]
+
+
+async def test_basta_while_claude_runs_a_tool_stops_at_once() -> None:
+    """Review of IT-1 5.1: the first piece now plays while the tools run, so "basta" can
+    come while speak() waits for the next piece: it must not wait for the tools, nor count
+    the next piece as played."""
+    synth, player = FakeSynth(), FakePlayer()
+    speaker = StreamingSpeaker(synth, player, group_chars=220, group_first_chars=40)
+    speaker.group_pause_s = 0.05
+
+    async def text():
+        yield "Ci guardo, socio. "
+        await asyncio.sleep(2)  # the tools and the next call
+        yield "Trovata."
+
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.3, speaker.interrupt)
+    start = loop.time()
+    await speaker.speak(text())
+    assert loop.time() - start < 1.0
+    assert speaker.played == ["Ci guardo, socio."]
+    assert [t for t, _ in synth.calls] == ["Ci guardo, socio."]
+
+
+async def test_basta_from_another_thread_also_wakes_it() -> None:
+    synth, player = FakeSynth(), FakePlayer()
+    speaker = StreamingSpeaker(synth, player)
+
+    async def text():
+        yield "Uno. "
+        await asyncio.sleep(2)
+        yield "Due."
+
+    threading.Timer(0.3, speaker.interrupt).start()
+    start = time.perf_counter()
+    await speaker.speak(text())
+    assert time.perf_counter() - start < 1.0 and speaker.played == ["Uno."]

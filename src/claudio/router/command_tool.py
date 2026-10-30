@@ -7,8 +7,11 @@ actions. This tool runs them through the same ActionRunner as the router. Claude
 own tools for opening apps, folders and windows; the time and date come with each request;
 "basta", "ripeti" and "svegliati" never need Claude.
 
-The command's reply is the router's, in the request's language, and Claudio says it itself:
-Claude is not called again just to say "Fatto" (IT-1, 0.6-1 s and one call less)."""
+The command's reply is the router's, in the request's language. When Claude marks the call
+`last` (the command is the whole request), Claudio says that reply itself and Claude is not
+called again just to say "Fatto" (IT-1: 0.6-1 s and one call less). Unmarked, Claude gets
+the reply as the result and goes on: a request with more in it ("abbassa il volume e dimmi
+che ore sono") is never cut short."""
 
 from __future__ import annotations
 
@@ -48,13 +51,16 @@ class CommandTool:
                 "Claudio's chat window, today's AI spending, pausing Claudio or switching it "
                 "off. Use it whenever JenJo asks for one of these, also when the words came "
                 f"out misheard. Commands: {listed}. number: only when JenJo said how many "
-                "(volume steps of 2 percent, songs to skip)."
+                "(volume steps of 2 percent, songs to skip). last: true only when this "
+                "command is all JenJo asked for: Claudio then confirms it aloud himself and "
+                "you get no result back, so write nothing before or after it."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "enum": list(self.commands)},
                     "number": {"type": "integer", "minimum": 1, "maximum": MAX_NUMBER},
+                    "last": {"type": "boolean"},
                 },
                 "required": ["command"],
                 "additionalProperties": False,
