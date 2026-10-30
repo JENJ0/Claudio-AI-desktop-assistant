@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import importlib
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
-from claudio.config import Settings
+from claudio.config import Settings, SttSettings
 from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,76 @@ def kokoro_voices(kokoro_dir: Path) -> set[str] | None:
             return set(data.files)
     except (OSError, ValueError):
         return None
+
+
+# What faster-whisper loads from the model folder; without tokenizer.json it would go online.
+WHISPER_FILES = ("model.bin", "config.json", "tokenizer.json")
+WHISPER_VOCABULARIES = ("vocabulary.json", "vocabulary.txt")
+
+
+def whisper_models(stt: SttSettings, gpus: int) -> tuple[str, str | None]:
+    """(the Whisper model CLAUDIO will load, the one it falls back to or None), as
+    WhisperTranscriber chooses them: "auto" takes `model` on the GPU and `fallback_model` on
+    the CPU, "cuda" never falls back."""
+    if stt.device == "cpu":
+        return stt.fallback_model, None
+    if stt.device == "cuda":
+        return stt.model, None
+    first, other = (stt.model, stt.fallback_model) if gpus else (stt.fallback_model, stt.model)
+    return first, (other if other != first else None)
+
+
+def find_whisper_model(name: str, root: Path) -> Path:
+    """The folder of the downloaded Whisper model `name` (a size such as "large-v3", a
+    Hugging Face id or a local folder), found as WhisperModel does but without downloading.
+    FileNotFoundError when it is missing or half downloaded, ValueError for an unknown name."""
+    folder = Path(name)
+    if not folder.is_dir():
+        from faster_whisper.utils import download_model
+
+        try:
+            folder = Path(download_model(name, local_files_only=True, cache_dir=str(root)))
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                tr("modello Whisper {name} non scaricato in {folder}", name=name, folder=root)
+            ) from exc
+    missing = [f for f in WHISPER_FILES if not (folder / f).is_file()]
+    if not any((folder / f).is_file() for f in WHISPER_VOCABULARIES):
+        missing.append(WHISPER_VOCABULARIES[0])
+    if missing:
+        raise FileNotFoundError(
+            tr(
+                "modello Whisper {name} incompleto in {folder}: mancano {files}",
+                name=name,
+                folder=folder,
+                files=", ".join(missing),
+            )
+        )
+    return folder
+
+
+def check_whisper(settings: Settings, gpus: int, report: Callable[[bool, str], None]) -> None:
+    """The model Whisper will load must be on disk (an error otherwise: CLAUDIO would try to
+    download ~3 GB at startup); the fallback one only gets a warning."""
+    root = settings.resolve(settings.models_dir) / "whisper"
+    needed, other = whisper_models(settings.stt, gpus)
+    try:
+        folder = find_whisper_model(needed, root)
+        size = (folder / "model.bin").stat().st_size / 1e9
+        report(True, tr("modello Whisper {name} ({size} GB)", name=needed, size=f"{size:.1f}"))
+    except (OSError, ValueError) as exc:  # OSError: missing, or a cache it cannot read
+        report(False, f"{exc}. {tr('Scaricalo con')}: {download_hint(needed)}")
+    if other is None:
+        return
+    try:
+        find_whisper_model(other, root)
+    except (OSError, ValueError) as exc:
+        when = tr("senza GPU") if other == settings.stt.fallback_model else tr("con la GPU")
+        log.warning("WARN %s: serve solo %s (%s)", exc, when, download_hint(other))
+
+
+def download_hint(name: str) -> str:
+    return f"uv run python scripts/download_models.py --whisper {name}"
 
 
 def run_checks(settings: Settings) -> bool:
@@ -122,6 +193,7 @@ def run_checks(settings: Settings) -> bool:
         except FileNotFoundError as exc:
             report(False, str(exc))
 
+    gpus = 0
     try:
         from claudio.stt.transcriber import register_cuda_dlls
 
@@ -140,6 +212,7 @@ def run_checks(settings: Settings) -> bool:
             )
     except Exception as exc:
         log.warning("WARN controllo GPU fallito: %s", exc)
+    check_whisper(settings, gpus, report)
 
     from claudio.audio.devices import (
         WindowsDefaultOutput,

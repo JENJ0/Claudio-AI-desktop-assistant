@@ -150,6 +150,17 @@ EN: dict[str, str] = {
         "WARN no CUDA GPU: STT will use the CPU (%s)"
     ),
     "WARN controllo GPU fallito: %s": "WARN GPU check failed: %s",
+    "modello Whisper {name} ({size} GB)": "Whisper model {name} ({size} GB)",
+    "modello Whisper {name} non scaricato in {folder}": (
+        "Whisper model {name} not downloaded in {folder}"
+    ),
+    "modello Whisper {name} incompleto in {folder}: mancano {files}": (
+        "Whisper model {name} incomplete in {folder}: missing {files}"
+    ),
+    "Scaricalo con": "Download it with",
+    "senza GPU": "without a GPU",
+    "con la GPU": "with the GPU",
+    "WARN %s: serve solo %s (%s)": "WARN %s: only needed %s (%s)",
     # config
     "File di configurazione non trovato: {path}": "Configuration file not found: {path}",
     "{path}: TOML non valido ({error})": "{path}: invalid TOML ({error})",
