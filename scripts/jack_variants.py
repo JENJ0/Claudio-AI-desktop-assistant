@@ -38,6 +38,7 @@ from claudio.tts.jack import JackSynth  # noqa: E402
 from claudio.tts.number_words import digits_to_words_it  # noqa: E402
 from claudio.tts.sentence_splitter import SentenceSplitter  # noqa: E402
 from claudio.tts.spoken_text import to_spoken_it  # noqa: E402
+from claudio.tts.stress_it import StressLexicon  # noqa: E402
 from claudio.tts.voice_check import pitch_stats, suspicious  # noqa: E402
 
 # Replies like Haiku's with the Jack personality: commas, a question, numbers, an acronym.
@@ -132,11 +133,12 @@ class Silent:
 
 
 _CLOCK = re.compile(r"\b(\d{1,2})\.(\d{2})\b")  # Whisper writes "22 e 51" as "22.51"
+_NO_STRESS = StressLexicon()  # WER counts words said, not the accents written for the voice
 
 
 def words(text: str) -> list[str]:
-    text = digits_to_words_it(to_spoken_it(_CLOCK.sub(r"\1:\2", text))).lower()
-    return re.findall(r"[a-zàèéìòóù]+", text)
+    text = to_spoken_it(_CLOCK.sub(r"\1:\2", text), stress=_NO_STRESS)
+    return re.findall(r"[a-zàèéìòóù]+", digits_to_words_it(text).lower())
 
 
 def wer(reference: str, heard: str) -> float:
