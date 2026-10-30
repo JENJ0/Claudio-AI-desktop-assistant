@@ -461,6 +461,7 @@ async def test_an_unclear_name_wakes_only_on_a_voice(
         vad_settings,
         SecondChance(heard),
         tmp_path,
+        responder=NoCommands(),
         voice_meter=None if voice is None else (lambda audio: voice),
         wake_min_voice_ms=96,
         verify_wake=True,
