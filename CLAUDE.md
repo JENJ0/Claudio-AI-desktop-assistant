@@ -8,7 +8,7 @@ Sei un team senior: software architect, Python developer esperto, DevOps enginee
 
 Costruire "Claudio", un assistente vocale per Windows in Python che:
 
-- si avvia da solo all'accensione del PC e resta attivo nella system tray finché non lo spengo;
+- si avvia da solo all'accensione del PC e resta attivo nella system tray finché non lo chiudo;
 - si attiva con la parola chiave "Hey Claudio" oppure solo "Claudio";
 - ascolta, capisce e risponde a voce in italiano, con poca latenza e audio pulito;
 - controlla il PC: apre programmi e cartelle, cerca file, digita tasti, esegue comandi, legge le finestre e, solo se serve, guarda lo schermo;
@@ -43,7 +43,9 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 
 - "Claudio, vai in pausa": smette di elaborare richieste e ascolta solo il comando di risveglio, in locale e a costo zero.
 - "Claudio, svegliati": torna attivo.
-- "Claudio, spegniti": chiude il programma in modo pulito.
+- "Claudio, spegniti": si spegne senza chiudersi: niente bip, risposte né Claude; ascolta solo "Claudio, accenditi", in locale e a costo zero.
+- "Claudio, accenditi": si riaccende (vale anche dalla pausa).
+- "Claudio, chiuditi": chiude il programma in modo pulito.
 
 ## Regole per i costi
 
@@ -68,7 +70,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 2. **Cervello**: integrazione con Claude, smistamento Haiku/Sonnet, tool use base, streaming della voce, contatore di spesa.
 3. **Controllo PC**: pywinauto, tastiera, ricerca file, livelli di sicurezza, screenshot di riserva.
 4. **Memoria**: SQLite, CLAUDIO.md, riassunti e recupero del contesto.
-5. **Sempre attivo**: avvio automatico, system tray, comandi di pausa, risveglio e spegnimento, ripresa dagli errori, aggiornamento automatico con conferma e ritorno alla versione precedente.
+5. **Sempre attivo**: avvio automatico, system tray, comandi di pausa, risveglio, spegnimento, accensione e chiusura, ripresa dagli errori, aggiornamento automatico con conferma e ritorno alla versione precedente.
 6. **iPhone**: server FastAPI, accesso remoto con Tailscale, comando rapido "Hey Claudio".
 7. **Casa**: Home Assistant; accendere e spegnere luci, colore dei LED (Tapo, AwoX), aspirapolvere Lefant; timer.
 
