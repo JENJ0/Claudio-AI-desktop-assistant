@@ -136,6 +136,8 @@ class StressLexicon:
     def with_pronouns(self, key: str) -> str | None:
         """A verb with pronouns attached, accented if that moves its stress before the
         second-to-last syllable: "accenditi" -> "accènditi", "dimmelo" -> "dìmmelo"."""
+        if not self.hosts:  # no lexicon, no accents: not even on "dammelo"
+            return None
         for clitic, syllables in _CLITICS:
             if not key.endswith(clitic) or len(key) <= len(clitic) + 1:
                 continue
