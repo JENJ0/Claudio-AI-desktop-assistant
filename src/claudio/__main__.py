@@ -426,6 +426,7 @@ async def run_assistant(
     from claudio.session_log import ConversationLog, purge_old_logs
     from claudio.stt.transcriber import WhisperTranscriber
     from claudio.system import SystemControl
+    from claudio.tray import start_tray
     from claudio.wakeword.detector import OpenWakeWordDetector
 
     models = settings.resolve(settings.models_dir)
@@ -437,6 +438,7 @@ async def run_assistant(
     if jack is not None:
         jack.start_in_background(jack_error.append)
     system = SystemControl()
+    tray = start_tray(settings.startup.tray, system, chat_window)  # blue while loading
     tracker = build_tracker(settings)  # SQLite: opened on the thread that uses it
     loaded = load_all(
         {
@@ -548,6 +550,8 @@ async def run_assistant(
         echo_tail_ms=settings.conversation.echo_tail_ms,
         guess=responder.guess if responder.fallback_guess else None,
     )
+    if tray is not None:
+        tray.set_ready()
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',
         time.perf_counter() - t0,
