@@ -24,7 +24,7 @@ Live run (9 requests, Haiku): memory phrases answered locally in 3-5 ms at no co
 block read back from the cache (6489 tokens read, 101 written on the next request; after a
 memory change 6216 read and 474 written); 0.0013 $ in all.
 
-## [Unreleased] - IT-0: reliability
+## [0.4.0] - 2026-10-30 - IT-0: reliability
 
 Iteration 0: five threads merged locally on the `it-0` branch (30/10).
 
@@ -170,7 +170,7 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
 - `scripts/jack_variants.py`: variants `R` (before) and `K` (seed + top_p), `--seeds` to pick
   the seed by ear.
 
-## [Unreleased] - Jack keeps one voice in a reply
+## [0.4.0] - Jack keeps one voice in a reply
 
 ### Changed
 - `[tts] jack_checkpoint` default `voices/jack/ft/1.7B-calmo/checkpoint-epoch-7`: 1.7B retrained
@@ -191,7 +191,7 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
   frames in proportion to its text (24 + 1.5 per character, at most 2000): a live check caught
   "Chrome è aperto. Prego." babbling on for 6.7 s, which the old fixed 300 frames allowed.
 
-## [Unreleased] - Jack on Qwen3-TTS 1.7B
+## [0.4.0] - Jack on Qwen3-TTS 1.7B
 
 ### Changed
 - `[tts] jack_checkpoint` default `voices/jack/ft/1.7B/checkpoint-epoch-7`: Qwen3-TTS 1.7B
@@ -199,14 +199,14 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
   AdamW). JenJo's pick by ear, 28/10. First audio ~225 ms as with 0.6B; the worker loads
   slower and uses more VRAM.
 
-## [Unreleased] - Jack at his pace without RVC
+## [0.4.0] - Jack at his pace without RVC
 
 ### Added
 - `jack_speed` works with `jack_rvc = "none"` too: a streaming WSOLA time stretch in the
   worker (`TimeStretch`) slows Qwen3's audio (0.9 = 10% slower) and keeps its pitch, chunk by
   chunk, with no extra wait for the first audio.
 
-## [Unreleased] - Jack speaks with Qwen3 alone
+## [0.4.0] - Jack speaks with Qwen3 alone
 
 ### Changed
 - `[tts] jack_rvc` default `"none"` (new value): Qwen3 alone, no RVC. JenJo's A/B (28/10,
@@ -214,7 +214,7 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
   (even with `jack_pitch_fix`) brought the robotic tone and the wrong stresses. The timbre is
   less Jack's and `jack_speed` does not apply (RVC did the slowing) until Qwen3 is retrained
   on more of Jack's lines.
-## [Unreleased] - own voice through the speakers
+## [0.4.0] - own voice through the speakers
 
 ### Fixed
 - With speakers, the reply's echo became new requests to Haiku (JenJo's log 26/10 19:41:
@@ -238,7 +238,7 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
 - `[conversation] barge_in_needs_name = true`: over the reply, a new request needs the name
   ("Claudio, ...") or a local command; "basta" always works. `false` = the old behaviour.
 
-## [Unreleased] - no needless confirmations
+## [0.4.0] - no needless confirmations
 
 ### Added
 - `web_search(query, browser?)` (level 1): opens the browser on the search results page
@@ -264,7 +264,7 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
 - An empty phrase in the conversation window (noise Whisper drops, like "Grazie a tutti")
   closed it while a question waited: the window now stays open once more.
 
-## [Unreleased] - Whisper hears names and whole phrases
+## [0.4.0] - Whisper hears names and whole phrases
 
 ### Added
 - `[stt] vocabulary`: the names on the PC go first in Whisper's prompt (`stt/vocabulary.py`):
@@ -298,7 +298,7 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
   turns of history, every request from the 7th dropped the oldest turn, changed the prefix and
   wrote ~5,000 tokens again (0.0007 $ instead of ~0.0002 $ with Haiku).
 
-## [Unreleased] - file and folder search
+## [0.4.0] - file and folder search
 
 ### Fixed (JenJo's logs, 25-26/10)
 - "Università" did not match the folder `UNIVERSITA'` (accent, apostrophe): the walk ran its
@@ -316,7 +316,7 @@ Iteration 0: five threads merged locally on the `it-0` branch (30/10).
   the list has nothing (a folder made after the last read, files). `open_path` with a wrong
   folder name uses the same list.
 
-## [Unreleased] - Sonnet only when needed, "Claudio" wake word, Jack less robotic
+## [0.4.0] - Sonnet only when needed, "Claudio" wake word, Jack less robotic
 
 ### Changed
 - `ask_sonnet` tool text: Sonnet is a rare exception (hard maths or logic, code, long

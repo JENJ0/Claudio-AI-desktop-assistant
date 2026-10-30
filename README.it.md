@@ -7,14 +7,18 @@ A quello che nessun comando locale capisce risponde Claude (API Anthropic, Haiku
 giornaliero. Capisce italiano e inglese e risponde nella lingua in cui gli parli.
 
 ```
-Microfono ─► openWakeWord ("Hey Claudio") ─► bip
-         └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale ─► Kokoro, voce Nicola (frase per frase)
+Microfono ─► openWakeWord ("Hey Claudio", "Claudio") ─► bip
+         └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale o Claude ─► voce di Jack (Qwen3-TTS, frase per frase; Kokoro se non parte)
 ```
 
-Stato: **v0.2.0**, Fase 2 (Claude), prima iterazione. La wake word è il nostro "Hey Claudio", addestrato
-sulla voce del proprietario (vedi [scripts/wakeword/README.md](scripts/wakeword/README.md), in
-inglese; il file del modello non è su Git). Anche "Claudio" da solo è addestrato ma non è ancora
-abbastanza affidabile, quindi è spento. Specifica completa: [CLAUDE.md](CLAUDE.md).
+Stato: **v0.4.0** (30/10/2026): fasi 1-3 (comandi locali, Claude, controllo del PC) e i comandi
+vocali per la pausa, lo spegnimento ("spegniti"), la riaccensione ("accenditi") e la chiusura
+("chiuditi"); l'iterazione di affidabilità IT-0 è chiusa. Mancano ancora la memoria persistente
+(fase 4), l'icona nella system tray e gli aggiornamenti automatici (fase 5). Le wake word sono le
+nostre, addestrate sulla voce del proprietario (vedi
+[scripts/wakeword/README.md](scripts/wakeword/README.md), in inglese; i file dei modelli non sono su
+Git): "Hey Claudio" e "Claudio" da solo, più debole, quindi Whisper conferma ogni sua rilevazione.
+Specifica completa: [CLAUDE.md](CLAUDE.md).
 
 ## Requisiti
 
