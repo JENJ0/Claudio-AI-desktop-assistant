@@ -4,26 +4,40 @@
 
 ### Long-term memory (Phase 4)
 
+JenJo's choices (30/10): A1 hybrid prompt, B1 Claude learns by itself, C1 rules in the
+database, D1 conversation summaries later.
+
 #### Added
 - `src/claudio/memory/`: facts and standing rules in JenJo's own words in `data/memory.db`
-  (SQLite, never in Git), a local word-stem search (no new dependency), and the phrases
-  "ricordati che...", "da ora in poi..." / "ricordati sempre di...", "dimentica...", "cosa
-  ricordi di..." understood before any command, for free. "Quale dimentico?" when two memories
-  are as close; "il primo", "tutti e due", "nessuno" or words of the right one answer it.
-- Commands `memory_list` ("cosa ricordi?"), `memory_forget_last` ("dimenticalo") and
-  `memory_wipe` ("dimentica tutto", level 3: "confermo").
+  (SQLite, never in Git), a local search by stem and by whole word (no new dependency), and
+  the phrases "ricordati che...", "da ora in poi..." / "ricordati sempre di...",
+  "dimentica...", "dimenticalo", "dimentica l'ultimo ricordo", "cosa ricordi di..."
+  understood before any command, for free (also offline or with the budget spent).
+- Forgetting never guesses: "dimentica X" forgets at once only a whole-word match said with the
+  wake word, else "Dimentico questo: ...?" or "Quale dimentico?"; only a real answer counts
+  (yes/no, "la seconda", "tutti e due", words of one; never a request or the question's echo).
+- Heard without the name (the conversation window, words over a reply) a rule or a forget is
+  asked about first: the TV never sets a standing rule.
+- Commands `memory_list` ("cosa ricordi?") and `memory_wipe` ("dimentica tutto", level 3).
 - Claude sees every rule and the newest facts as a second cached system block (rebuilt only
-  when a memory changes); the facts beyond `[memory] block_chars` go with a request that shares
-  their words, as `[memory: ...]` after the tag.
-- Claude's tools `remember` (a fact: level 1; a rule: level 2) and `forget` (level 2), offered
-  with the PC tools. `[memory] learn = true` (JenJo's choice, the default): Claude also saves
-  lasting preferences JenJo tells it unasked, and says so aloud.
-- Passwords, PINs, cards, IBANs and long digit strings are refused: memories go to the API.
+  when a memory changes, one snapshot per request); facts beyond `[memory] block_chars` go
+  with a request that shares their words, as `[memory, data: ...]`, once per conversation.
+  After a forget the conversation with Claude starts over.
+- Claude's tools `remember` and `forget` with the PC tools: a fact is level 1, level 2 once the
+  conversation read a window, the screen, files or a command; a rule level 2; forget level 2
+  (3 for more than three, one per reply); what needs a yes is read out whole.
+  `[memory] learn = true` (the default): Claude also keeps lasting preferences unasked.
+- Secrets refused: passwords, PINs, codes, combinations, wifi and private keys, credentials,
+  IDs, cards, IBANs, recovery phrases; ordinary facts about cards and code are kept.
+- A locked database answers "Non riesco a usare la memoria..." within ~0.5 s; a deleted one
+  starts empty; forgotten text is zeroed in the file.
 - `[memory]` in `config/claudio.toml`.
 
-Live run (9 requests, Haiku): memory phrases answered locally in 3-5 ms at no cost; the memory
-block read back from the cache (6489 tokens read, 101 written on the next request; after a
-memory change 6216 read and 474 written); 0.0013 $ in all.
+Two multi-agent reviews (4 + 3 reviewers, adversarial verification): 23 + 14 problems, all
+fixed with a regression test each. Live runs (Haiku 5.5, 10-11 requests each): memory phrases
+answered locally in 0-13 ms; first Claude call ~6600 tokens written to the cache (0.00085 $),
+then ~6600 read and ~100 written (0.0001 $); after a forget ~6300 read and ~290 written;
+first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
 
 ## [0.4.0] - 2026-10-30 - IT-0: reliability
 

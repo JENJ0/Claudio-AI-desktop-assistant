@@ -170,8 +170,8 @@ These phrases are understood locally, for free, also offline or with the budget 
 | "Da ora in poi chiamami capo" (or "ricordati sempre di...") | keeps a standing rule |
 | "Cosa ricordi di mia sorella?" | reads what matches (Claude answers when nothing does) |
 | "Cosa ricordi?" | how many memories, and the latest three |
-| "Dimentica che mia sorella abita a Torino" | forgets the closest one; asks "Quale?" when two are as close |
-| "Dimenticalo" | forgets the last memory saved in this run |
+| "Dimentica che mia sorella abita a Torino" | forgets it when every word matches; otherwise asks first ("Dimentico questo: ...?", "Quale dimentico?") |
+| "Dimenticalo" | forgets the memory just talked about (within a minute) |
 | "Dimentica tutto" | asks for "confermo", then forgets everything |
 
 Claude sees every rule and the newest facts after the system prompt (cached: about 0.00001 $ a

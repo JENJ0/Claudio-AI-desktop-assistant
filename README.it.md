@@ -160,8 +160,8 @@ PC). Queste frasi le capisce in locale, gratis, anche senza internet o a budget 
 | "Da ora in poi chiamami capo" (o "ricordati sempre di...") | salva una regola fissa |
 | "Cosa ricordi di mia sorella?" | legge quello che corrisponde (se niente, risponde Claude) |
 | "Cosa ricordi?" | quanti ricordi ha e gli ultimi tre |
-| "Dimentica che mia sorella abita a Torino" | dimentica il più vicino; chiede "Quale?" se due sono vicini uguali |
-| "Dimenticalo" | dimentica l'ultimo ricordo salvato in questa sessione |
+| "Dimentica che mia sorella abita a Torino" | lo dimentica se tutte le parole corrispondono; altrimenti chiede ("Dimentico questo: ...?", "Quale dimentico?") |
+| "Dimenticalo" | dimentica il ricordo di cui avete appena parlato (entro un minuto) |
 | "Dimentica tutto" | chiede "confermo", poi dimentica tutto |
 
 Claude vede tutte le regole e i fatti più recenti dopo il prompt di sistema (in cache: circa
