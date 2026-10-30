@@ -1,8 +1,10 @@
 """Start CLAUDIO at Windows login: a Task Scheduler task, installed and removed on request.
 
-The task runs `pythonw.exe -m claudio` from the project's virtual environment (pythonw: no
-console window), 30 s after login so the microphone and the network are ready, for the
-logged-in user only and without admin rights. Installing twice replaces the task (/F), so
+The task runs `pythonw.exe -m claudio.supervisor` from the project's virtual environment
+(pythonw: no console window), 30 s after login so the microphone and the network are ready,
+for the logged-in user only and without admin rights. The supervisor starts CLAUDIO and
+starts it again after a crash: Task Scheduler's own RestartOnFailure (kept below) only
+covers a program that cannot be started at all. Installing twice replaces the task (/F), so
 the commands are idempotent. scripts/install_autostart.ps1 does the same in PowerShell."""
 
 from __future__ import annotations
@@ -20,8 +22,11 @@ from claudio.config import PROJECT_ROOT
 
 TASK_NAME = "Claudio"
 LOGON_DELAY = "PT30S"  # ISO 8601: the audio device is often not ready at the first second
-RESTARTS = 3  # if CLAUDIO crashes, Task Scheduler starts it again up to this many times
+# Task Scheduler retries only a start that failed (pythonw.exe missing for a moment): a
+# crash of CLAUDIO is handled by claudio.supervisor.
+RESTARTS = 3
 RESTART_EVERY = "PT1M"
+ARGUMENTS = "-m claudio.supervisor"
 
 
 @dataclass(frozen=True)
@@ -85,7 +90,7 @@ def task_xml(spec: TaskSpec) -> str:
   <Actions Context="Author">
     <Exec>
       <Command>{python}</Command>
-      <Arguments>-m claudio</Arguments>
+      <Arguments>{ARGUMENTS}</Arguments>
       <WorkingDirectory>{project}</WorkingDirectory>
     </Exec>
   </Actions>

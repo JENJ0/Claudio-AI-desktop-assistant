@@ -27,7 +27,8 @@ def test_xml_runs_pythonw_at_login_for_the_user(spec: TaskSpec) -> None:
     exec_ = root.find("t:Actions/t:Exec", NS)
     assert exec_ is not None
     assert exec_.findtext("t:Command", namespaces=NS) == str(spec.python)
-    assert exec_.findtext("t:Arguments", namespaces=NS) == "-m claudio"
+    # The supervisor, not CLAUDIO: it starts CLAUDIO again after a crash.
+    assert exec_.findtext("t:Arguments", namespaces=NS) == "-m claudio.supervisor"
     assert exec_.findtext("t:WorkingDirectory", namespaces=NS) == str(spec.project)
     trigger = root.find("t:Triggers/t:LogonTrigger", NS)
     assert trigger is not None
@@ -66,7 +67,7 @@ def test_dry_run_changes_nothing(spec: TaskSpec, monkeypatch, capsys) -> None:
     monkeypatch.setattr(autostart.subprocess, "run", no_run)
     assert autostart.install(spec, dry_run=True) == 0
     assert autostart.uninstall(dry_run=True) == 0
-    assert "-m claudio" in capsys.readouterr().out
+    assert "-m claudio.supervisor" in capsys.readouterr().out
 
 
 def test_uninstall_when_not_installed_is_fine(monkeypatch) -> None:
@@ -96,7 +97,7 @@ def test_install_writes_utf16_xml_and_calls_schtasks(spec: TaskSpec, monkeypatch
 
     monkeypatch.setattr(autostart.subprocess, "run", run)
     assert autostart.install(spec) == 0
-    assert "<Arguments>-m claudio</Arguments>" in seen["xml"]
+    assert "<Arguments>-m claudio.supervisor</Arguments>" in seen["xml"]
 
 
 def test_logging_without_a_console(tmp_path: Path, monkeypatch) -> None:
