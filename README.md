@@ -156,6 +156,27 @@ never touch it, and `<!-- notes -->` are not sent. It is read once and goes afte
 prompt, so it is cached: keep it short (`personality_max_chars = 3000`). Claudio answers in
 Italian unless the request is plainly English or you ask for English.
 
+## Memory
+
+Claudio remembers what you tell it between sessions, in `data/memory.db` (SQLite, local).
+These phrases are understood locally, for free, also offline or with the budget spent:
+
+| You say | Claudio |
+|---|---|
+| "Claudio, ricordati che mia sorella si chiama Anna" | keeps the fact and reads it back |
+| "Da ora in poi chiamami capo" (or "ricordati sempre di...") | keeps a standing rule |
+| "Cosa ricordi di mia sorella?" | reads what matches (Claude answers when nothing does) |
+| "Cosa ricordi?" | how many memories, and the latest three |
+| "Dimentica che mia sorella abita a Torino" | forgets the closest one; asks "Quale?" when two are as close |
+| "Dimenticalo" | forgets the last memory saved in this run |
+| "Dimentica tutto" | asks for "confermo", then forgets everything |
+
+Claude sees every rule and the newest facts after the system prompt (cached: about 0.00001 $ a
+request); the facts that do not fit in `[memory] block_chars` go with a request only when they
+share its words. Claude can also save ("segnatelo", a misheard "ricordati") and forget with its
+tools: a rule or a forget it proposes needs your yes. Passwords, PINs, cards and IBANs are never
+kept. "Ricordami di... alle 5" is a reminder, not a memory: not available yet.
+
 ## Acting on the PC
 
 With Claude on, Claudio also acts on Windows (`[pc]` in `config/claudio.toml`): it opens apps

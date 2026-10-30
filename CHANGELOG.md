@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased] - IT-1
+
+### Long-term memory (Phase 4)
+
+#### Added
+- `src/claudio/memory/`: facts and standing rules in JenJo's own words in `data/memory.db`
+  (SQLite, never in Git), a local word-stem search (no new dependency), and the phrases
+  "ricordati che...", "da ora in poi..." / "ricordati sempre di...", "dimentica...", "cosa
+  ricordi di..." understood before any command, for free. "Quale dimentico?" when two memories
+  are as close; "il primo", "tutti e due", "nessuno" or words of the right one answer it.
+- Commands `memory_list` ("cosa ricordi?"), `memory_forget_last` ("dimenticalo") and
+  `memory_wipe` ("dimentica tutto", level 3: "confermo").
+- Claude sees every rule and the newest facts as a second cached system block (rebuilt only
+  when a memory changes); the facts beyond `[memory] block_chars` go with a request that shares
+  their words, as `[memory: ...]` after the tag.
+- Claude's tools `remember` (a fact: level 1; a rule: level 2) and `forget` (level 2), offered
+  with the PC tools; `[memory] learn = true` lets Claude save lasting preferences unasked.
+- Passwords, PINs, cards, IBANs and long digit strings are refused: memories go to the API.
+- `[memory]` in `config/claudio.toml`.
+
+Live run (9 requests, Haiku): memory phrases answered locally in 3-5 ms at no cost; the memory
+block read back from the cache (6489 tokens read, 101 written on the next request; after a
+memory change 6216 read and 474 written); 0.0013 $ in all.
+
 ## [Unreleased] - IT-0: reliability
 
 Iteration 0: five threads merged locally on the `it-0` branch (30/10).
