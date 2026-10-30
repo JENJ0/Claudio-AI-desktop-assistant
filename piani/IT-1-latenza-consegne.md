@@ -1,7 +1,9 @@
 # IT-1 – Consegne: latenza (sezioni 5.1, 5.2, 5.3 di `IT-1-consegne.md`)
 
 Ramo locale `it1/latenza` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-latenza`),
-partito da `main` v0.4.0, mai pushato. Due commit: la funzione e le correzioni della revisione.
+partito da `main` v0.4.0, mai pushato. Tre commit: la funzione, le correzioni della revisione,
+test a tempo più robusti. **Non unito a `main`**: l'unione la fa il coordinatore con gli altri
+rami IT-1 (vedi "Unione con gli altri rami" sotto).
 
 ## Fatto
 
@@ -16,7 +18,10 @@ partito da `main` v0.4.0, mai pushato. Due commit: la funzione e le correzioni d
 | Test: 36 nuovi (pausa del testo, frase trattenuta, raggruppamento dopo gli strumenti, "basta" durante gli strumenti, tempi per chiamata, rete sulla richiesta giusta, comando detto subito solo con `last`, nessun lavoro perso, scheda piena, nvidia-smi bloccato, attesa unica, una voce per risposta, Jack che riparte) | `tests/unit/test_sentence_splitter.py`, `test_speaker.py`, `test_pc_tools.py`, `test_claude_brain.py`, `test_command_tool.py`, `test_session_log.py`, `test_gpu_busy.py` (nuovo) |
 | CHANGELOG (sezione IT-1), README (attesa di Jack), `config\claudio.toml` | |
 
-Risultati: `pytest` 1789 passed, 4 skipped (prima 1753); ruff e mypy puliti; `claudio --check` ok.
+Risultati: `pytest` 1789 passed, 4 skipped (prima 1753), anche con il PC carico (due suite
+insieme, GPU al 95 %); ruff e mypy puliti; `claudio --check` ok. Sotto carico, 1 fallimento su
+circa 20 giri dei test a tempo, non riprodotto né identificato: i test a tempo già esistenti
+in `test_sentence_splitter.py` e `test_speaker.py` hanno finestre di 20-50 ms.
 
 ## Revisione multi-agente (ultracode)
 
@@ -27,6 +32,39 @@ importanti: la frase trattenuta dallo splitter spezzava il primo pezzo in due ge
 "basta" durante gli strumenti non fermava nulla fino al pezzo dopo; la scorciatoia di
 `claudio_command` poteva perdere una seconda domanda ("abbassa il volume e dimmi che ore
 sono"), la risposta di un giro precedente o la proposta di Sonnet.
+
+## Unione con gli altri rami (prova fatta, 30/10 sera)
+
+Conflitti di testo (`git merge-tree`): `it1/voce` (sentence_splitter, speaker, jack, i18n,
+claudio.toml, test_speaker), `it1/memoria` (pc/tools.py, brain/claude.py import, CHANGELOG),
+`it1/sempreattivo` (CHANGELOG). Nessuno con ascolto, comandi, pronuncia. Quasi tutti "tieni
+entrambe le parti". Da fare con attenzione:
+
+1. **Conflitto di significato con `it1/voce`** (senza conflitto di testo!): `voce` mette nel
+   flusso il segnale `CUT_SHORT` (risposta tagliata a max_tokens, il "Attra" del 30/10) e lo
+   gestisce in `split_stream`; il mio `group_stream` legge il testo da sé, quindi con Jack il
+   frammento tornerebbe. In `group_stream.read()`, prima di `if chunk.strip():`, aggiungere:
+   ```python
+   if chunk is CUT_SHORT:  # cut at max_tokens: never the fragment ("Attra")
+       for sentence in splitter.drop_unfinished():
+           await ready.put(sentence)
+       continue
+   ```
+   (con `from claudio.protocols import CUT_SHORT`, già importato da `voce`). Tenere sia
+   `ended()` (mio) sia `drop_unfinished()` (voce) in `SentenceSplitter`.
+2. `tts/jack.py` `_next_event`: tenere il `_poll()` di `voce` ma sollevare il mio
+   `WorkerTimeout` (non `WorkerError`), altrimenti Jack non riparte quando la scheda si libera.
+3. Test di `voce` `test_a_cut_reply_drops_its_unfinished_sentence`: usa `_sentences(...)`, che
+   ora aggiunge uno spazio a ogni pezzo e perde il segnale: passarlo con `_raw((0, c) ...)`.
+4. `pc/tools.py` con `memoria`: la mia riga `self._own_command(call, language)` più il loro
+   `elif call.name in memory_tools.NAMES`.
+
+Prova completa sul ramo `it1/prova-latenza-voce` (unione già risolta, da cancellare dopo):
+1873 test ok, ruff e mypy puliti; senza il punto 1 due test falliscono ("Attra" detto con
+Jack). Con `memoria` sopra: 2045 ok, più 2 test instabili sotto carico che passano da soli
+(il mio sul raggruppamento, ora con margini più larghi, e
+`test_voice_check.py::test_the_log_says_n_d_when_the_pitch_is_unknown` di `voce`, che
+dipende dall'ordine dei test). I rami degli altri si sono mossi dopo la prova.
 
 ## Misure
 
