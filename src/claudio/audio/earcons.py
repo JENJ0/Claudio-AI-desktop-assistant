@@ -25,4 +25,6 @@ def make_earcons(sample_rate: int, volume: float) -> dict[str, np.ndarray]:
         "wake": tone([880.0, 1320.0], 0.12, sample_rate, volume),  # rising: "I'm listening"
         "cancel": tone([440.0, 330.0], 0.18, sample_rate, volume),  # falling: "never mind"
         "error": tone([220.0], 0.25, sample_rate, volume),
+        # Soft and short: while off, "I heard my name" (only once Whisper heard it).
+        "tick": tone([1760.0], 0.04, sample_rate, volume * 0.4),
     }

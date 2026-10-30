@@ -161,6 +161,9 @@ class Assistant:
         continue_s: float = 0.0,
         echo_tail_ms: int = 0,
         guess: Callable[[Doubt], Awaitable[Recovery | None]] | None = None,
+        voice_meter: Callable[[np.ndarray], int] | None = None,
+        wake_min_voice_ms: int = 0,
+        rejected_sink: Callable[[np.ndarray, str], str | None] | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -175,6 +178,13 @@ class Assistant:
         # Hears the last 1.5 s after a near miss (a score just under the threshold): if the
         # text has the wake word, CLAUDIO wakes anyway. None: near misses are only logged.
         self.second_chance = second_chance
+        # Milliseconds of voice in that audio (Silero): under wake_min_voice_ms Whisper is not
+        # even asked. None: every second chance goes to Whisper.
+        self.voice_meter = voice_meter
+        self.wake_min_voice_ms = wake_min_voice_ms
+        # Saves what a second chance rejected, apart from the requests, with a cap of its own
+        # (the negatives to retrain "claudio" on). None: in audio_sink, as before.
+        self.rejected_sink = rejected_sink
         # Whether a phrase is a request: the rules live in intake.py. Their settings are also
         # attributes of the Assistant (properties below).
         self.intake = RequestFilter(
@@ -340,9 +350,9 @@ class Assistant:
                 self.wake.strict = self.system.off
             self._recent.append(frame.astype(np.float32) / 32768.0)
             detection = self.wake.process(frame)
-            if self.system.off:
-                # Off: no second chance on Whisper. Only a clear wake (the strict threshold)
-                # gets the phrase after it transcribed, to look for "accenditi".
+            if self.system.off and self.second_chance is None:
+                # Off without Whisper's check: only a clear wake (the strict threshold) gets the
+                # phrase after it transcribed, to look for "accenditi".
                 self.wake.pop_near_miss()
                 if detection is not None:
                     self._on_wake(*detection)
@@ -368,7 +378,12 @@ class Assistant:
         self._interaction.mark("wake")
         self._heard_on = self._microphone()
         log.info("Wake word rilevata: %s (%.2f)", name, score)
-        self._beep("wake")
+        if not self.system.off:
+            self._beep("wake")
+        elif "second_chance" in info:
+            # Off, a soft tick once Whisper heard the name: "I heard you, say accenditi"
+            # (JenJo 30/10). Never on the model's score alone, which fires on noise.
+            self._beep("tick")
         recent = self._recent.get()
         self._prewake = recent[-int(PREWAKE_S * self.endpointer.sample_rate) :]
         self._recent.clear()
@@ -383,19 +398,25 @@ class Assistant:
         self.responder.prepare()
 
     def _weak(self, name: str, score: float) -> bool:
+        """Whisper checks the name before CLAUDIO wakes: a low score, a noisy model, and
+        every detection while off (only the name, or "accenditi", wakes it then)."""
         return self.second_chance is not None and (
-            score < self.confirm_below or name in self.always_confirm
+            self.system.off or score < self.confirm_below or name in self.always_confirm
         )
 
-    def _unsure_wake(self, name: str, score: float, text: str) -> bool:
+    def _unsure_wake(self, name: str, score: float, text: str, voiced: bool) -> bool:
         """A "claudio" detection Whisper did not spell as the name: a clipped "l'audio" or
         "fraudio" (the model fires late, the "C" falls out), or nothing / "Grazie." at a strong
         score (a lone name is too short for Whisper: 0.86-0.95 lost on 26/10). It wakes, but
         the request must have the name or be a command: a "l'audio" at 0.33 trusted outright
-        sent a stray "Ciao." to Haiku (26/10, 19:41). Only with verify on."""
-        if not self.verify_wake or name not in self.always_confirm:
+        sent a stray "Ciao." to Haiku (26/10, 19:41). Only with verify on, never while off,
+        and never on silence: an empty text counts only if the voice meter heard a voice
+        (`voiced`; 30/10 14:00:43: a wake on audio too quiet for Whisper, "Nessuna richiesta")."""
+        if not self.verify_wake or name not in self.always_confirm or self.system.off:
             return False
-        return clipped_name(text) or (score >= self.unclear_min and unclear(text))
+        if clipped_name(text):
+            return True
+        return score >= self.unclear_min and unclear(text) and (bool(text.strip()) or voiced)
 
     def _lead_in(self) -> np.ndarray:
         """The last LEAD_IN_S before the detection, wake word included. Cutting the wake word
@@ -418,44 +439,87 @@ class Assistant:
 
     async def _second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
         assert self.second_chance is not None
-        text, start = "", self.clock()
+        text, start, voice = "", self.clock(), None
         try:
-            async with self._stt_lock:
-                text = await asyncio.to_thread(self.second_chance, heard)
+            if self.voice_meter is not None:
+                voice = await asyncio.to_thread(self.voice_meter, heard)
+            if voice is None or voice >= self.wake_min_voice_ms:
+                async with self._stt_lock:
+                    text = await asyncio.to_thread(self.second_chance, heard)
         except Exception:
             log.exception("Seconda possibilità non riuscita")
         finally:
             self._checking = False
-        ms = round((self.clock() - start) * 1000)
-        # A weak detection said fast often loses the name ("apri cancolatrice"): a command counts.
+        info: dict[str, Any] = {"second_chance_ms": round((self.clock() - start) * 1000)}
+        if voice is not None:
+            info["wake_voice_ms"] = voice
+            if voice < self.wake_min_voice_ms:
+                log.info("Seconda possibilità: nessuna voce (%d ms), niente da fare", voice)
+                self._log_near_miss(name, score, heard, rejected="no_voice", **info)
+                return
+        # A weak detection said fast often loses the name ("apri cancolatrice"): a command
+        # counts. Off, the only command understood is "accenditi".
         language = self.transcriber.language
         weak = self._weak(name, score) and bool(text) and self.responder.understands(text, language)
+        if self.state is State.IDLE and not (heard_wake_word(text) or weak):
+            found = await self._turns_on(heard, text, language)
+            if found is not None:
+                log.info("Da spento, lista chiusa: %r -> %r", text, found)
+                info["second_chance_from"] = text
+                text, weak = found, True
         if self.state is State.IDLE and (heard_wake_word(text) or weak):
             log.info(
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
-            self._on_wake(name, score, second_chance=text, second_chance_ms=ms)
+            self._on_wake(name, score, second_chance=text, **info)
             return
-        if self.state is State.IDLE and self._unsure_wake(name, score, text):
+        if self.state is State.IDLE and self._unsure_wake(name, score, text, voice is not None):
             # Not a second chance: the request must have the name or be a command (verify).
             log.info("Whisper non ha capito %r (punteggio %.2f): ascolto e verifico", text, score)
-            self._on_wake(name, score, wake_unclear=text, second_chance_ms=ms)
+            self._on_wake(name, score, wake_unclear=text, **info)
             return
         log.info("Seconda possibilità: Whisper ha sentito %r: niente da fare", text)
-        if name in self.always_confirm:
-            return  # a noisy model: its rejected detections are not worth a WAV each
-        self._log_near_miss(name, score, heard, second_chance=text, second_chance_ms=ms)
+        self._log_near_miss(name, score, heard, second_chance=text, rejected="no_name", **info)
+
+    async def _turns_on(self, heard: np.ndarray, text: str, language: str) -> str | None:
+        """Off, a second chance that heard words but not the name: Whisper's other
+        transcriptions, searched for "accenditi" (30/10: "Grazie a te." was heard, "Dai,
+        accenditi." was the second guess). None: not off, nothing heard, or not found."""
+        if not (self.system.off and text and self.closed_list is not None):
+            return None
+        try:
+            async with self._stt_lock:
+                candidates = await asyncio.to_thread(self.closed_list, heard, language)
+        except Exception:
+            log.exception("Lista chiusa da spento non riuscita")
+            return None
+        understands = self.responder.understands
+        return next((c for c in candidates if understands(c, language)), None)
 
     def _log_near_miss(self, name: str, score: float, heard: np.ndarray, **info: Any) -> None:
+        """An attempt that did not wake CLAUDIO: its audio, apart from the requests when there
+        is a place for it (rejected_sink), and a metrics row. A noisy model (always_confirm)
+        leaves only the audio: a row for each of its misfires would fill the session log."""
+        noisy = name in self.always_confirm
+        sink, kind = self.audio_sink, "near_miss"
+        if self.rejected_sink is not None:  # named after why: no_voice, no_name
+            sink, kind = self.rejected_sink, str(info.get("rejected", kind))
+        elif noisy:
+            sink = None
+        audio_file = None
+        if sink is not None:
+            try:
+                audio_file = sink(heard, kind)
+            except Exception:
+                log.exception("Impossibile salvare l'audio della wake word mancata")
+        if noisy:
+            return
         inter = Interaction(
             clock=self.clock,
             info={"wake_word": name, "wake_score": round(score, 3), "outcome": "near_miss", **info},
         )
-        if self.audio_sink is not None:
-            try:
-                inter.info["audio_file"] = self.audio_sink(heard, "near_miss")
-            except Exception:
-                log.exception("Impossibile salvare l'audio della wake word mancata")
+        if sink is not None:
+            inter.info["audio_file"] = audio_file
         if self.metrics is not None:
             self.metrics.write(inter)
 
@@ -521,9 +585,11 @@ class Assistant:
                     # Whisper's confidence in the first pass: a retry only replaces it when
                     # understood.
                     segments = list(self.stt_segments()) if self.stt_segments is not None else []
-                    if not self.system.off:  # off: one Whisper pass, for "accenditi" only
-                        text, heard = await self._retry(audio, text, heard, inter)
-                        text = await self._closed_list(audio, text, heard, inter)
+                    # Off, the only command understood is "accenditi": the retry and the
+                    # closed list look for that one (30/10: "Dai, accenditi." was the second
+                    # transcription of an attempt dropped as "Grazie a te.").
+                    text, heard = await self._retry(audio, text, heard, inter)
+                    text = await self._closed_list(audio, text, heard, inter)
             inter.mark("stt_done")
             inter.info["text"] = text
             inter.info["stt_language"] = heard
@@ -1284,8 +1350,9 @@ class Assistant:
         self.own_sound.ended(queued)
 
     def _beep(self, kind: str) -> None:
-        """A beep played alongside: the sound starts now, before its task runs."""
-        if self.system.off:
+        """A beep played alongside: the sound starts now, before its task runs. While off
+        ("spegniti") only the soft tick of a name Whisper heard is played."""
+        if self.system.off and kind != "tick":
             return
         self.own_sound.started()
         task = asyncio.create_task(self.speaker.beep(kind))

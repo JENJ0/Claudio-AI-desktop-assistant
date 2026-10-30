@@ -96,6 +96,9 @@ class WakeWordSettings(BaseModel):
     # While off ("spegniti") every threshold is raised by this much: a wake word on the TV or
     # in a conversation should not make CLAUDIO transcribe what follows. 0 = same threshold.
     off_threshold_boost: float = Field(0.1, ge=0, lt=0.5)
+    # A second chance needs this much voice (Silero, in the audio it hears) before Whisper
+    # listens: a click, a key or the headset's gate opening is rejected for free. 0 = off.
+    min_voice_ms: int = Field(96, ge=0, le=2500)
 
 
 class VadSettings(BaseModel):
@@ -497,6 +500,10 @@ class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
     keep_audio: int = Field(50, ge=1)
+    # With save_audio: what the wake word's second chance rejected and what was heard over a
+    # reply that was not for CLAUDIO, apart in logs/audio/rejected/, at most this many WAVs
+    # (~80 KB each). They tune and retrain the wake word. 0 = none.
+    keep_rejected: int = Field(200, ge=0)
     # Every piece Jack says, as a WAV in the session folder (jack/), with its pitch in the
     # log: the robotic or too high takes are flagged there (local only).
     save_voice: bool = True

@@ -420,7 +420,7 @@ async def run_assistant(
     from claudio.audio.devices import resolve_device
     from claudio.audio.level import AutoGain
     from claudio.audio.recorder import UtteranceRecorder
-    from claudio.audio.vad import Endpointer, SileroVad
+    from claudio.audio.vad import Endpointer, SileroVad, VoiceMeter
     from claudio.chat.store import ChatStore
     from claudio.metrics import MetricsWriter
     from claudio.session_log import ConversationLog, purge_old_logs
@@ -505,6 +505,14 @@ async def run_assistant(
         if settings.logging.save_audio
         else None
     )
+    rejected = (
+        UtteranceRecorder(
+            logs / "audio" / "rejected", settings.logging.keep_rejected, settings.audio.sample_rate
+        )
+        if settings.logging.save_audio and settings.logging.keep_rejected
+        else None
+    )
+    wake_vad = SileroVad(models / "vad" / "silero_vad.onnx", settings.audio.sample_rate)
     assistant = Assistant(
         wake=wake,
         endpointer=Endpointer(vad, settings.vad, settings.audio.sample_rate),
@@ -547,6 +555,9 @@ async def run_assistant(
         continue_s=settings.vad.continue_s,
         echo_tail_ms=settings.conversation.echo_tail_ms,
         guess=responder.guess if responder.fallback_guess else None,
+        voice_meter=VoiceMeter(wake_vad, settings.vad.threshold, settings.audio.sample_rate),
+        wake_min_voice_ms=settings.wakeword.min_voice_ms,
+        rejected_sink=rejected,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

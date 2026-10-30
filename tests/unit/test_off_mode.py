@@ -104,6 +104,9 @@ async def test_while_off_only_accenditi_is_answered(matcher: CommandMatcher) -> 
         matcher, ActionRunner(rec.ctx(), system), on_prepare=lambda: prepared.append(1)
     )
     assert (await say(r, "spegniti")).startswith("Mi spengo") and system.off
+    # Off, "accenditi" is the only command understood: the closed list and the second
+    # chance look for it alone, and a phrase without the name is a false wake.
+    assert r.understands("Claudio, accenditi.") and not r.understands("apri chrome")
     for text in ("apri chrome", "che ore sono", "svegliati", "chiuditi", "basta"):
         assert await say(r, text) == "", text
         assert r.last_route == {"route": "off"}
@@ -111,6 +114,7 @@ async def test_while_off_only_accenditi_is_answered(matcher: CommandMatcher) -> 
     assert prepared == []  # nothing is got ready for Claude while off
     assert rec.ran == [] and not system.stopping
     assert await say(r, "accenditi") == "Eccomi, sono acceso." and not system.off
+    assert r.understands("apri chrome")
     assert await say(r, "apri chrome") == "Apro Chrome."
 
 
@@ -136,8 +140,7 @@ def test_boost_is_validated() -> None:
 
 
 class StrictOnsetWake(OnsetWake):
-    """OnsetWake that records whether the assistant asked it to be strict, and a near miss
-    ready on every frame (which must never reach Whisper while off)."""
+    """OnsetWake that records whether the assistant asked it to be strict."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -148,16 +151,31 @@ class StrictOnsetWake(OnsetWake):
         self.strict_seen.append(self.strict)
         return super().process(frame)
 
-    def pop_near_miss(self) -> tuple[str, float] | None:
-        return ("claudio", 0.2) if self.strict else None
+
+class Heard:
+    """Whisper on the second chance's audio: one text after another (the last repeats)."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self.texts, self.calls = texts, 0
+
+    def __call__(self, audio: np.ndarray) -> str:
+        self.calls += 1
+        return self.texts[min(self.calls, len(self.texts)) - 1]
 
 
-def build(fake_vad, vad_settings, matcher: CommandMatcher, texts: list[str]):
+def build(
+    fake_vad,
+    vad_settings,
+    matcher: CommandMatcher,
+    texts: list[str],
+    heard: list[str] | None = None,
+    **options,
+):
     system = SystemControl()
     rec = Recorder()
     responder = LocalResponder(matcher, ActionRunner(rec.ctx(), system))
     wake, speaker, stt = StrictOnsetWake(), FakeSpeaker(), FakeStt(texts)
-    checks: list[np.ndarray] = []
+    checks = Heard(heard or [""])
     assistant = Assistant(
         wake,
         Endpointer(fake_vad, vad_settings),
@@ -166,8 +184,9 @@ def build(fake_vad, vad_settings, matcher: CommandMatcher, texts: list[str]):
         speaker,
         clock=AudioClock(),
         system=system,
-        second_chance=lambda audio: checks.append(audio) or "",
+        second_chance=checks,
         conversation_s=0,
+        **options,
     )
     return assistant, speaker, system, wake, rec, checks
 
@@ -175,21 +194,74 @@ def build(fake_vad, vad_settings, matcher: CommandMatcher, texts: list[str]):
 async def test_off_is_silent_until_accenditi(
     fake_vad, vad_settings, make_frames, matcher: CommandMatcher
 ) -> None:
-    texts = ["Claudio, spegniti.", "Claudio, apri Chrome.", "che ore sono", "Claudio, accenditi."]
-    assistant, speaker, system, wake, rec, checks = build(fake_vad, vad_settings, matcher, texts)
+    """Off, Whisper checks every detection: only the name wakes CLAUDIO, with a soft tick
+    (JenJo 30/10), and of what follows only "accenditi" is answered."""
+    texts = ["Claudio, spegniti.", "Claudio, apri Chrome.", "Claudio, accenditi."]
+    heard = ["Claudio, apri", "che ore sono", "Claudio, accenditi."]
+    assistant, speaker, system, wake, rec, checks = build(
+        fake_vad, vad_settings, matcher, texts, heard
+    )
     assert isinstance(wake, StrictWake)
 
     await run_requests(assistant, make_frames, 1)
     assert system.off and speaker.spoken[-1].startswith("Mi spengo")
-    beeps_before_off = list(speaker.beeps)
+    assert speaker.beeps == ["wake"] and checks.calls == 0  # on: a clear wake needs no check
 
-    await run_requests(assistant, make_frames, 2)  # while off: no beep, no reply, no action
-    assert speaker.beeps == beeps_before_off
-    assert speaker.spoken[1:] == ["", ""]  # nothing was said
-    assert rec.ran == [] and checks == []  # no Chrome, no second Whisper pass
-    assert [row["outcome"] for row in assistant.history][1:] == ["off", "off"]
+    await run_requests(assistant, make_frames, 2)  # the name, then the TV without it
+    assert checks.calls == 2
+    assert speaker.beeps == ["wake", "tick"]  # the tick only for the name Whisper heard
+    assert speaker.spoken[1:] == [""] and rec.ran == []  # no reply, no Chrome
+    assert [row["outcome"] for row in assistant.history][1:] == ["off"]
     assert True in wake.strict_seen  # the wake word was stricter while off
 
     await run_requests(assistant, make_frames, 1)
     assert not system.off and speaker.spoken[-1] == "Eccomi, sono acceso."
+    assert speaker.beeps == ["wake", "tick", "tick"]
     assert assistant.state is State.IDLE and not system.stopping
+
+
+async def test_off_without_the_name_whispers_other_guesses_are_searched_for_accenditi(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    """30/10 14:02:24: "Claudio, accenditi" heard as "Grazie a te.", while "Dai, accenditi."
+    was Whisper's second guess: off, the closed list looks for it, in the second chance and
+    in the request."""
+    guesses: list[str] = []
+
+    def closed_list(audio: np.ndarray, language: str) -> list[str]:
+        guesses.append(language)
+        return ["Grazie a te.", "Dai, accenditi."]
+
+    texts = ["Claudio, spegniti.", "Grazie a te."]
+    assistant, speaker, system, *_ = build(
+        fake_vad, vad_settings, matcher, texts, ["Grazie a te."], closed_list=closed_list
+    )
+    await run_requests(assistant, make_frames, 1)
+    assert system.off
+    await run_requests(assistant, make_frames, 1)
+    assert not system.off and speaker.spoken[-1] == "Eccomi, sono acceso."
+    assert speaker.beeps == ["wake", "tick"] and len(guesses) == 2
+    row = assistant.history[-1]
+    assert row["second_chance"] == "Dai, accenditi." and row["second_chance_from"] == "Grazie a te."
+    assert row["closed_list_from"] == "Grazie a te." and row["text"] == "Dai, accenditi."
+
+
+async def test_off_noise_never_reaches_whisper(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    """A click or the headset's gate: the voice meter rejects it before Whisper, silently,
+    and its audio is kept apart to retrain the wake word on."""
+    saved: list[str] = []
+    assistant, speaker, system, _wake, _rec, checks = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["Claudio, spegniti."],
+        ["Claudio, accenditi."],
+        voice_meter=lambda audio: 0 if system.off else 500,
+        wake_min_voice_ms=96,
+        rejected_sink=lambda audio, kind: saved.append(kind) or f"{kind}.wav",
+    )
+    await run_requests(assistant, make_frames, 2)
+    assert system.off and checks.calls == 0 and saved == ["no_voice"]
+    assert speaker.beeps == ["wake"]
