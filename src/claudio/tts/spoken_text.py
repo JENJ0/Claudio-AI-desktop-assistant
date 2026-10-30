@@ -1,6 +1,7 @@
 """Text as Jack's voice should read it: the fine-tuned Qwen3 learned from spoken Italian, so
 symbols, acronyms, Markdown and emoji are guessed (often in another language). They become
-plain Italian words first, then digits_to_words_it spells the numbers."""
+plain Italian words first, mark_stress writes the accent on the words stressed before the
+second-to-last syllable ("accènditi"), then digits_to_words_it spells the numbers."""
 
 from __future__ import annotations
 
@@ -8,7 +9,13 @@ import re
 import unicodedata
 from collections.abc import Mapping
 
+from claudio.tts.loanwords import UnknownWords
 from claudio.tts.number_words import digits_to_words_it
+from claudio.tts.stress_it import StressLexicon, mark_stress, words_of
+
+# Loaded once on import (~0.1 s, when Jack's worker is made), not on a reply's first piece.
+STRESS = StressLexicon.load()
+UNKNOWN = UnknownWords()  # English words outside [tts.jack_words], logged once each
 
 # Italian letter names, for acronyms read letter by letter ("PDF" -> "pi di effe").
 _LETTERS = {
@@ -122,10 +129,15 @@ def respell(text: str, words: Mapping[str, str]) -> str:
     return pattern.sub(lambda m: lookup[m.group(0).lower()], text)
 
 
-def to_spoken_it(text: str, words: Mapping[str, str] | None = None) -> str:
+def to_spoken_it(
+    text: str, words: Mapping[str, str] | None = None, stress: StressLexicon = STRESS
+) -> str:
     """ "Il **PC** è al 50%! 😎" -> "Il pi ci è al cinquanta per cento!"
-    `words`: respellings applied first (see respell), e.g. [tts] jack_words."""
-    text = respell(text, words or {})
+    `words`: respellings applied first (see respell), e.g. [tts] jack_words; they win over
+    `stress`, the accents written on the sdrucciole ("accenditi" -> "accènditi")."""
+    words = words or {}
+    text = respell(text, words)
+    table = words_of([*words, *words.values()])
     text = _LINK.sub(r"\1", text)
     text = _URL.sub("il link", text)
     text = _MARKDOWN.sub("", text)
@@ -136,7 +148,10 @@ def to_spoken_it(text: str, words: Mapping[str, str] | None = None) -> str:
         text = pattern.sub(replacement, text)
     text = _strip_emoji(text)  # after the symbols: "°" is a symbol to Unicode too
     text = _GLUED.sub(r"\1 ", text)
+    UNKNOWN.note(text, table)  # before acronyms are spelled: "PDF" is not a word to respell
     text = _CAPS.sub(_caps, text)
     text = _APOSTROPHE_ACCENT.sub(lambda m: _ACCENTED[m.group(1)], text)
+    # Before the numbers become words: "tredici", "dodici" are words Jack says every day.
+    text = mark_stress(text, stress, leave=table)
     text = digits_to_words_it(text)
     return _SPACES.sub(" ", text).strip()

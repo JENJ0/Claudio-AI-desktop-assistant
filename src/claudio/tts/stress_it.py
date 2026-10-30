@@ -1,0 +1,180 @@
+"""Where the stress falls in the Italian words Jack would read wrong. Qwen3-TTS reads plain text
+and stresses a form it does not know on the second-to-last syllable: "accenditi" became
+"accendete". Words stressed earlier (sdrucciole: accènditi, àbitano) get their accent written;
+all the others stay as they are, because a written accent on a regular word made it worse
+("sòcio" was heard as "soccio", A/B of 30/10).
+
+The lexicon comes from Wiktionary (kaikki.org, CC BY-SA 4.0), built once by
+scripts/build_lexicon_it.py into data/stress_it.tsv. A verb with pronouns attached
+("accenditi", "dimmelo") is split: the verb's stress plus the pronoun syllables."""
+
+from __future__ import annotations
+
+import logging
+import re
+from collections.abc import Container, Iterable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+LEXICON = Path(__file__).resolve().parents[3] / "data" / "stress_it.tsv"
+KEEP = "-"  # second column of a word that must stay as written (homograph, not a verb + pronoun)
+HOST = "h"  # third column of a verb form that takes pronouns: "accendi" -> "accènditi"
+# Third column of an imperative + "ti" that is also a participle: accented only where a clause
+# starts ("Fermati!", "Socio, calmati") and left as written elsewhere ("si sono fermati").
+AT_START = "c"
+
+_PLAIN = str.maketrans("àèéìíòóùúÀÈÉÌÍÒÓÙÚ", "aeeiioouuAEEIIOOUU")
+_ACCENTED = frozenset("àèéìíòóùú")
+_STRONG = frozenset("aeo")
+_VOWELS = frozenset("aeiou")
+# Unstressed pronouns attached to a verb: one syllable each, two at most ("dammelo").
+_ONE = ("mi", "ti", "si", "ci", "vi", "lo", "la", "li", "le", "gli", "ne")
+_TWO = tuple(
+    a + b for a in ("me", "te", "se", "ce", "ve", "glie") for b in ("lo", "la", "li", "le", "ne")
+)
+_CLITICS = sorted([(c, 1) for c in _ONE] + [(c, 2) for c in _TWO], key=lambda c: -len(c[0]))
+# "da'", "di'", "fa'", "sta'", "va'" double the pronoun's consonant: "dammi", "vattene".
+_SHORT_IMPERATIVES = {"da": "dà", "di": "dì", "fa": "fà", "sta": "stà", "va": "và"}
+_WORD = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ]+")
+_CLAUSE_MARKS = frozenset('.,;:!?…"«“(')
+_CLAUSE_WORDS = frozenset(
+    {"e", "ma", "o", "oppure", "poi", "ora", "adesso", "dai", "su", "allora", "quindi", "però"}
+)
+
+
+def plain(word: str) -> str:
+    """The word without accents: "accènditi" -> "accenditi"."""
+    return word.translate(_PLAIN)
+
+
+def stress_index(word: str) -> int | None:
+    """Where the only written accent is, or None (no accent, or more than one)."""
+    found = [i for i, c in enumerate(word.lower()) if c in _ACCENTED]
+    return found[0] if len(found) == 1 else None
+
+
+def syllables_after(word: str, index: int) -> int:
+    """Syllables after the stressed vowel at `index`: 0 tronca, 1 piana, 2 sdrucciola. In a run
+    of vowels each a, e, o is a syllable and i, u only glide, unless the run has nothing else
+    ("àquila", "Itàlia" -> 2, 1); right after the stress i and u join it ("àuto" -> 1)."""
+    w = plain(word.lower())
+    count = 0
+    i = index + 1
+    joins_stress = True
+    while i < len(w):
+        if w[i] not in _VOWELS:
+            joins_stress = False
+            i += 1
+            continue
+        end = i
+        while end < len(w) and w[end] in _VOWELS:
+            end += 1
+        strong = sum(c in _STRONG for c in w[i:end])
+        count += strong if strong or joins_stress else 1
+        joins_stress = False
+        i = end
+    return count
+
+
+def put_accent(word: str, index: int, accented: str) -> str:
+    """`word` with the vowel at `index` replaced by `accented`, in the case it was written."""
+    if word[index].isupper():
+        accented = accented.upper()
+    return word[:index] + accented + word[index + 1 :]
+
+
+@dataclass
+class StressLexicon:
+    """`words`: plain lowercase word -> the word with its accent, or KEEP. `hosts`: verb forms
+    that take pronouns (imperatives, infinitives without the final e, gerunds) -> accented.
+    `at_start`: words accented only where a clause starts (see AT_START)."""
+
+    words: dict[str, str] = field(default_factory=dict)
+    hosts: dict[str, str] = field(default_factory=dict)
+    at_start: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, path: Path = LEXICON) -> StressLexicon:
+        """The lexicon in `path`; empty (accents off) if the file is missing or unreadable."""
+        lexicon = cls()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.warning("Accenti di Jack spenti: lessico non leggibile (%s)", exc)
+            return lexicon
+        for line in text.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            cells = line.split("\t")
+            if len(cells) == 3 and cells[2] == HOST:
+                lexicon.hosts[cells[0]] = cells[1]
+            elif len(cells) == 3 and cells[2] == AT_START:
+                lexicon.at_start[cells[0]] = cells[1]
+            elif len(cells) == 2:
+                lexicon.words[cells[0]] = cells[1]
+        return lexicon
+
+    def stressed(self, word: str, starts_clause: bool = False) -> str | None:
+        """`word` with its accent written if Jack would stress it wrong (stress before the
+        second-to-last syllable), else None. `word` has no accent of its own."""
+        key = word.lower()
+        if key in self.at_start:
+            accented: str | None = self.at_start[key] if starts_clause else None
+        else:
+            accented = self.words.get(key)
+            if accented is None:
+                accented = self.with_pronouns(key)
+        if not accented or accented == KEEP:
+            return None
+        index = stress_index(accented)
+        if index is None or len(accented) != len(word):
+            return None
+        return put_accent(word, index, accented[index])
+
+    def with_pronouns(self, key: str) -> str | None:
+        """A verb with pronouns attached, accented if that moves its stress before the
+        second-to-last syllable: "accenditi" -> "accènditi", "dimmelo" -> "dìmmelo"."""
+        for clitic, syllables in _CLITICS:
+            if not key.endswith(clitic) or len(key) <= len(clitic) + 1:
+                continue
+            host = key[: -len(clitic)]
+            accented = self.hosts.get(host)
+            if accented is None and host[:-1] in _SHORT_IMPERATIVES and host[-1] == clitic[0]:
+                accented = _SHORT_IMPERATIVES[host[:-1]] + host[-1]  # dammi, vattene
+            if accented is None:
+                continue
+            index = stress_index(accented)
+            if index is None:
+                return None
+            if syllables_after(accented, index) + syllables < 2:
+                return None
+            return put_accent(key, index, accented[index])
+        return None
+
+
+def mark_stress(text: str, lexicon: StressLexicon, leave: Container[str] = ()) -> str:
+    """Accents written on the words of `text` stressed before the second-to-last syllable.
+    Words that already have an accent, and those in `leave` (lowercase), stay as written."""
+    out: list[str] = []
+    end = 0
+    previous: str | None = None
+    for match in _WORD.finditer(text):
+        word, gap = match.group(0), text[end : match.start()]
+        starts_clause = (
+            previous is None
+            or any(c in _CLAUSE_MARKS for c in gap)
+            or previous.lower() in _CLAUSE_WORDS
+        )
+        if word.lower() not in leave and not any(c in _ACCENTED for c in word.lower()):
+            word = lexicon.stressed(word, starts_clause) or word
+        out += [gap, word]
+        end, previous = match.end(), match.group(0)
+    out.append(text[end:])
+    return "".join(out)
+
+
+def words_of(texts: Iterable[str]) -> set[str]:
+    """The lowercase words in `texts`: the respellings mark_stress must leave alone."""
+    return {w.lower() for text in texts for w in _WORD.findall(text)}
