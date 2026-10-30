@@ -10,7 +10,7 @@ engines and counts how many become a known local command:
     uv run python scripts/compare_stt.py --engines parakeet     # needs: uv pip install onnx-asr
 
 Engines:
-    turbo     Whisper large-v3-turbo, as CLAUDIO uses it today
+    turbo     Whisper large-v3-turbo (CLAUDIO's model until 29/10)
     large-v3  Whisper large-v3: slower, sometimes more accurate on fast speech
     lista     the "closed list": turbo proposes 5 transcriptions, the first known command wins
     frase     turbo with a natural-sentence prompt (NATURAL_PROMPT, or --prompt) instead of the
@@ -46,9 +46,9 @@ from claudio.wakeword.verifier import wake_confirmed
 ENGINES = ("turbo", "large-v3", "lista", "frase", "nomi", "parakeet")
 # How JenJo talks to CLAUDIO, written as Whisper would: the prompt is read as the text said just
 # before, so whole sentences bias it less toward commands than a list of them.
-NATURAL_PROMPT = (
+NATURAL_PROMPT = (  # config/claudio.toml [stt.prompts] it, the one CLAUDIO uses
     "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. "
-    "Apri Chrome e la cartella Download, poi alza il volume. Basta, grazie."
+    "Apri Chrome e la cartella Download, poi alza il volume."
 )
 LEAD_IN_S = 1.5  # app.LEAD_IN_S: the audio before the detection that reaches Whisper
 

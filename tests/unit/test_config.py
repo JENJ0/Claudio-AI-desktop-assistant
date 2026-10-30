@@ -7,7 +7,7 @@ from claudio.config import DEFAULT_CONFIG, ConfigError, load_settings
 
 def test_project_config_loads() -> None:
     s = load_settings(DEFAULT_CONFIG)
-    assert s.stt.model == "large-v3-turbo"
+    assert s.stt.model == "large-v3"
     assert s.stt.fallback_model == "small"
     assert s.tts.voice == "it_IT-paola-medium"
     assert s.audio.block_size == 1280

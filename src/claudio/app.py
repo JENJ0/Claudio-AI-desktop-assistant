@@ -60,6 +60,9 @@ QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphon
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
 CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for the rest
+# The outcomes of a request that was really said to Claudio: the microphone level learns from
+# these only (a false wake, noise, the TV in the conversation window or a timeout are not it).
+LEVEL_OUTCOMES = frozenset({"ok", "interrupted", "stopped", "paused"})
 
 
 class State(enum.StrEnum):
@@ -225,6 +228,9 @@ class Assistant:
         self._warned_quiet = False
         self.state = State.IDLE
         self._interaction: Interaction | None = None
+        # The microphone the request is heard on: the capture may move to another one before
+        # the reply ends, and the phrase's level must not be credited to that one.
+        self._heard_on: str | None = None
         self._task: asyncio.Task[None] | None = None
         self._beeps: set[asyncio.Task[None]] = set()
         # Finished interactions (for tests/benchmarks). Bounded: always-on runs last for weeks.
@@ -330,6 +336,7 @@ class Assistant:
             clock=self.clock, info={"wake_word": name, "wake_score": round(score, 3), **info}
         )
         self._interaction.mark("wake")
+        self._heard_on = self._microphone()
         log.info("Wake word rilevata: %s (%.2f)", name, score)
         self._beep("wake")
         recent = self._recent.get()
@@ -726,6 +733,7 @@ class Assistant:
             clock=self.clock, info={"wake_word": kind, "wake_score": 0.0}
         )
         self._interaction.mark("wake")
+        self._heard_on = self._microphone()
         self._beep("wake")
         self._prewake = np.zeros(0, dtype=np.float32)
         self._recent.clear()
@@ -1128,10 +1136,18 @@ class Assistant:
             # Not a phrase said over the reply: louder than usual, with the reply's echo in it
             # (JenJo 25/10: the gain fell to +0 dB after one and the next requests were -42 dBFS).
             if self.endpointer.started and inter.info.get("wake_word") != BARGE_IN:
-                if self.level is not None:
-                    self.level.observe(stats)
-                else:
+                if self.level is None:
                     self._check_level(stats["speech_dbfs"])
+                elif (
+                    outcome in LEVEL_OUTCOMES
+                    and inter.info.get("text")
+                    and self._heard_on == self._microphone()
+                ):
+                    # Only a request Whisper heard words in: noise, a breath or the TV says
+                    # nothing about the voice (26/10 19:50: an empty phrase at -50 dBFS
+                    # raised the gain, the next request saturated). And only on the
+                    # microphone that heard it.
+                    self.level.observe(stats)
             if self.audio_sink is not None:
                 heard = np.concatenate((self._prewake, self.endpointer.listened()))
                 try:
@@ -1145,6 +1161,10 @@ class Assistant:
         if inter is not None and "first_audio" in inter.marks:
             self._wake_deaf_for_tail()  # the reply's last syllables are still in the room
         self._set_state(State.IDLE)
+
+    def _microphone(self) -> str | None:
+        """The microphone AutoGain is following now (None: no automatic gain)."""
+        return getattr(self.level, "microphone", None)
 
     def _check_level(self, speech_dbfs: float) -> None:
         if speech_dbfs < QUIET_SPEECH_DBFS and not self._warned_quiet:

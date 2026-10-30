@@ -64,6 +64,15 @@ def spoken_form(name: str) -> str:
     return name
 
 
+def is_code_name(name: str, parts: Sequence[str]) -> bool:
+    """A name written for programs, not said: joined without spaces, with a piece of letters
+    and digits ("claudio-it0-fluidita", "python3.11", "build_x64"). In the prompt Whisper
+    writes it for what JenJo says ("Claudio, chiuditi" -> "Claudio-it0-fluidita", 29/10)."""
+    if len(parts) < 2 or " " in name:
+        return False
+    return any(_LETTER.search(p) and any(c.isdigit() for c in p) for p in parts)
+
+
 def usable(name: str) -> bool:
     """A name someone would say: has letters, is short, and is not generic."""
     if not name or name.startswith((".", "$", "~")) or len(name) > MAX_NAME_CHARS:
@@ -71,7 +80,7 @@ def usable(name: str) -> bool:
     if name.casefold() in SKIP_FOLDERS or not _LETTER.search(name):
         return False
     parts = [p for p in _PARTS.split(name) if p]
-    if len(parts) > MAX_NAME_PARTS:
+    if len(parts) > MAX_NAME_PARTS or is_code_name(name, parts):
         return False
     return not JUNK_WORDS.intersection(p.casefold() for p in parts)
 

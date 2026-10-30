@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from claudio.audio.level import CLIP_LEVEL
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.config import VadSettings
 from claudio.i18n import tr
@@ -46,7 +47,6 @@ class SileroVad:
         return float(out[0, 0])
 
 
-CLIP_LEVEL = 32767 / 32768  # an int16 sample at full scale
 ONE_BREATH_S = 0.3  # speech starting this soon after the wake word continues the same breath
 LEAD_IN_GAP_S = 0.25  # a pause this long separates the phrase from what was said before
 

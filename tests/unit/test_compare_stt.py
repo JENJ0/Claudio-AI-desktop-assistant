@@ -94,3 +94,9 @@ def test_frase_is_turbo_with_the_natural_prompt(
         ("large-v3-turbo", False, None),
         ("large-v3-turbo", False, "Ciao Claudio."),
     ]
+
+
+def test_the_natural_prompt_is_the_shipped_one() -> None:
+    from claudio.config import DEFAULT_CONFIG, load_settings
+
+    assert load_settings(DEFAULT_CONFIG).stt.prompts["it"] == cs.NATURAL_PROMPT

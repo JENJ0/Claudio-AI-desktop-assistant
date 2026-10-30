@@ -32,7 +32,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
 uv sync                                   # without a GPU: uv sync --no-group gpu
-uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper turbo + small
+uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper large-v3 + small (~3 GB)
 uv run claudio --check                    # every line must say OK
 uv run python scripts/check_gpu.py        # checks that Whisper really runs on the RTX
 ```
@@ -249,13 +249,16 @@ if you switch it while CLAUDIO runs (headphones, monitor, speakers), the next se
 plays there. A device plugged in after start-up needs a restart (CLAUDIO says so in the log).
 With `CLAUDIO_AUDIO__OUTPUT_DEVICE=...` it stays on that device instead.
 
-CLAUDIO sets the microphone level itself: after every request it checks how loud the voice
-arrived and corrects the digital gain (up 3 dB at a time, down 6 if the voice clips), aiming at
-peaks around -20 dBFS. The value is saved per microphone in `data/audio_level.json` and reused
-at the next start; `INPUT_GAIN_DB` is only the starting point. Windows' own microphone level is
-not touched. To set it by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and
-`CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. The `voce` and `guad` columns of `benchmark_latency.py --log`
-show the level and gain of every request.
+CLAUDIO sets the microphone level itself: after every request in which Whisper heard words it
+checks how loud the voice arrived and corrects the digital gain, aiming at peaks around
+-20 dBFS. A microphone's first request sets it at once; after that it moves gradually (at most
++3 dB or -6 dB a request, a louder voice counting more than a quieter one), and -6 dB at once
+if the voice clips. Each microphone really in use keeps its own value in
+`data/audio_level.json` (the headset does not start at the webcam's gain), reused at the next
+start; `INPUT_GAIN_DB` is only the starting point. A peak louder than the rest is bent softly
+under full scale instead of clipping. Windows' own microphone level is not touched. To set it
+by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`. The `voce` and
+`guad` columns of `benchmark_latency.py --log` show the level and gain of every request.
 
 Spending (ready for Phase 2, when Claude answers): `[cost]` sets the daily budget (`daily_budget`,
 in dollars, 1.0 by default). Every Claude call will be written to `data/spend.db` (SQLite) with
@@ -270,7 +273,7 @@ Languages: `[stt] languages = ["it", "en"]` are the ones Whisper chooses from. D
 the encoder pass of the transcription, so it costs almost nothing; when Whisper is unsure (below
 `language_confidence`, 0.6; for English `other_confidence`, 0.8, because fast Italian often sounds
 English to Whisper) CLAUDIO keeps the language of the previous request. A request heard as English
-that no command understands is transcribed again in Italian (about 120 ms, only then): "cue the
+that no command understands is transcribed again in Italian (about 0.2 s, only then): "cue the
 calculator" becomes "apri la calcolatrice". `retry_in_first_language = false` turns it off. With one language
 (`CLAUDIO_STT__LANGUAGES=it` in `.env`) there is no detection at all. Whisper's prompt is per language,
 in `[stt.prompts]`. CLAUDIO's own messages (console, log, `--check`) are Italian by default;
@@ -327,9 +330,9 @@ Attempts where the wake word did not fire are logged too, as `near_miss` with th
 reached: `benchmark_latency.py --log` lists them, to see how far to lower the threshold.
 
 A near miss also gets a second chance (`wakeword.second_chance`): Whisper listens to the last
-1.5 s, about 130 ms on the GPU and only at those moments, and if it hears the name CLAUDIO wakes
-anyway. The row says what it heard (`second_chance`, `second_chance_ms`), so the near misses
-that were not the wake word are visible too.
+1.5 s, about 130 ms on the GPU with turbo (more with large-v3) and only at those moments, and if
+it hears the name CLAUDIO wakes anyway. The row says what it heard (`second_chance`,
+`second_chance_ms`), so the near misses that were not the wake word are visible too.
 
 ```powershell
 uv run python scripts/benchmark_latency.py --log                      # live
@@ -343,8 +346,8 @@ uv run python scripts/benchmark_latency.py --replay                    # replay 
 action) and shows, for each one, the text then, the text now and the command recognised, then
 Whisper's median time. `--lead-in 0.4` (seconds) or `--lead-in none` changes how much of the
 audio said before the beep reaches Whisper (by default all of it, wake word included); with
-`--beam 1` Whisper tries one hypothesis instead of 5, and `--model large-v3` uses another model
-(download it first with `download_models.py --whisper large-v3`).
+`--beam 1` Whisper tries one hypothesis instead of 5, and `--model large-v3-turbo` uses the
+faster model CLAUDIO had until 29/10 (`download_models.py --whisper large-v3-turbo` if missing).
 
 `compare_stt.py` compares speech-to-text engines on the same saved requests and counts how many
 each one turns into a known command, with its median and p90 time:
@@ -372,7 +375,26 @@ When Whisper is unsure of a request that goes to Claude (a segment's `avg_logpro
 `stt.alternatives` (2) other transcriptions from Whisper's n-best: `[it | unsure: "Apri la
 cartella Tesi."] Apri la cartella desi.` The system prompt asks Haiku to work out what was
 most likely said. The n-best of the closed list is reused; otherwise one more Whisper pass
-(~120 ms) runs, only on these requests. `alternatives = 0` keeps only the note.
+(~0.2 s) runs, only on these requests. `alternatives = 0` keeps only the note.
+
+To measure how well CLAUDIO understands *you*, record a test set once and score it:
+`stt_testset.py` shows the 40 sentences of `scripts/stt_frasi_it.txt` (what you really say to
+Claudio) one at a time and records each from every microphone at once, without gain, into
+`data/stt_testset/`; `stt_bench.py` then gives, for every microphone, the word error rate (WER),
+the commands understood and the time per sentence of what CLAUDIO does today (`live`: its gain,
+its prompt, Silero's cut) and of its variants (`grezzo` no gain, `frasi`/`vuoto` other prompts,
+`beam1`, `large`/`turbo` other models, `novad`, `parakeet`); with `--details` every wrong
+sentence, and for an empty one why (Silero heard no voice, Whisper took it for silence or a
+known hallucination). Close CLAUDIO first.
+
+```powershell
+uv run python scripts/stt_testset.py          # Enter, read the sentence, Enter (r = again, q = stop)
+uv run python scripts/stt_testset.py --controlla    # recordings mute or cut at the end
+uv run python scripts/stt_testset.py --rifai 10 25  # record those sentences again
+uv run python scripts/stt_bench.py --details
+uv run python scripts/stt_bench.py --variants live live+beam1 parakeet
+uv run python scripts/stt_bench.py --set data/stt_testset_2   # another set
+```
 
 ## Development
 

@@ -83,6 +83,26 @@ def test_unplugged_microphone_comes_back(fake_sd, caplog: pytest.LogCaptureFixtu
     assert any("di nuovo disponibile" in r.getMessage() for r in caplog.records)
 
 
+def test_the_microphone_opened_is_told_by_its_own_name(fake_sd, monkeypatch) -> None:
+    """AutoGain.use: every microphone keeps its own gain, whatever host API opened it."""
+    fake_sd(failures=0)
+    monkeypatch.setattr(
+        capture, "describe_device", lambda index, kind: "Cuffie (Wireless Head) (Windows WASAPI)"
+    )
+    mic = capture.AudioCapture(16000, 4, device="C270")
+    told: list[str] = []
+    mic.on_device = lambda name: (told.append(name), mic.set_gain_db(12.0))
+
+    async def first() -> np.ndarray:
+        async for frame in mic.frames():
+            return frame
+        raise AssertionError("no frame")
+
+    asyncio.run(first())
+    assert told == ["Cuffie (Wireless Head)"]
+    assert mic.gain > 3.9  # the gain it set is the one the frames get
+
+
 def test_working_microphone_logs_no_warning(fake_sd, caplog: pytest.LogCaptureFixture) -> None:
     fake_sd(failures=0)
     with caplog.at_level(logging.INFO, logger=capture.__name__):
