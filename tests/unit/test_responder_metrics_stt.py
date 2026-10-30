@@ -148,21 +148,21 @@ def test_invented_endings_also_repeated_or_after_a_thanks(text: str, expected: b
     assert is_hallucination(text) is expected
 
 
-def test_the_shipped_prompts_do_not_end_in_a_command(matcher) -> None:
+def test_every_end_of_the_shipped_prompts_is_heard_again_without_them() -> None:
     """On unclear audio Whisper repeats the end of its prompt ("Basta, grazie." for "Claudio,
-    chiudi il Blocco note", 29/10): every end of it is caught as an echo, and none is a
-    command, so a repeat runs no action and no frequent command pays the second pass."""
+    chiudi il Blocco note", 29/10), and the prompts end in a command ("poi alza il volume"):
+    every end of 2+ words is caught as an echo, so it is transcribed again, never run."""
     from claudio.config import DEFAULT_CONFIG, load_settings
     from claudio.stt.transcriber import ECHO_END_WORDS, is_prompt_echo
 
     prompts = load_settings(DEFAULT_CONFIG).stt.prompts
     assert prompts
-    for language, prompt in prompts.items():
+    for prompt in prompts.values():
         words = re.split(r"(?<=[.?!])\s+", prompt.strip())[-1].split()
+        assert len(words) > ECHO_END_WORDS
         for start in range(len(words) - ECHO_END_WORDS + 1):
             end = " ".join(words[start:])
             assert is_prompt_echo(end, prompt) and is_hallucination(end, prompt), end
-            assert matcher.match(end) is None, (language, end)
 
 
 def test_a_piece_of_the_prompt_is_transcribed_again_without_it() -> None:

@@ -4,14 +4,12 @@
 
 ### Changed
 - `[stt] model` default `large-v3` instead of `large-v3-turbo` (JenJo 29/10): on the 40 test
-  sentences, with the fixes below, 18.6% of the words wrong instead of 28.7% with the headset
-  and 36.2% instead of 59.6% with the webcam (commands right 9/12 instead of 8/12 and 10/12
-  instead of 6/12), for about 176 ms per sentence instead of 89 on the RTX 5070 Ti and about
+  sentences, with the fixes below, 16.0% of the words wrong instead of 28.7% with the headset
+  and 35.6% instead of 59.6% with the webcam (commands right 9/12 instead of 8/12 and 10/12
+  instead of 6/12), for about 195 ms per sentence instead of 100 on the RTX 5070 Ti and about
   1.5 GB more video memory. The wake word's second chance and confirmation use it too, so they
   are a little slower. `download_models.py` fetches it (about 3 GB); `model = "large-v3-turbo"`
   brings the faster one back.
-- Whisper's prompt ends in a request for Claude ("Claudio, raccontami una storia breve.",
-  "Claudio, tell me a short story."), not a command.
 
 ### Fixed
 - The automatic microphone level learns only from requests in which Whisper heard words: an
@@ -32,8 +30,9 @@
   Whisper repeats the end of its prompt, and on the test set "Basta, grazie." came out for 7
   different requests (it is a command: it would stop Claudio). A transcription equal to a piece
   of the prompt (6+ words, or its last 2+) is now done again without the prompt: Whisper then
-  writes what was really there, so a real "poi alza il volume" is no longer dropped as an echo.
-  A test checks that no ending of a shipped prompt is a command.
+  writes what was really there, so a real "poi alza il volume" is no longer dropped as an echo,
+  and a repeated one is never run. The commands stay at the end of the prompt: moved first, they
+  left 3-7 points more of the words wrong on every microphone and take of the test set (30/10).
 - The invented endings are dropped also when repeated or after a thanks ("Grazie a tutti. Grazie
   a tutti.", "Grazie. Grazie a tutti.", "Bye bye, bye bye."), what Whisper wrote for a third of
   the webcam's requests. "Grazie, grazie." alone stays: it is JenJo's. "... per aver guardato il
