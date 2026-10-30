@@ -51,7 +51,7 @@ from claudio.protocols import (
     WakeWordDetector,
 )
 from claudio.resume import RESUME_PREFIX, DrainedStream, ends_the_reply, remainder
-from claudio.router.normalizer import heard_wake_word, normalize
+from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
 from claudio.system import SystemControl
 from claudio.wakeword.verifier import clipped_name, unclear
 
@@ -491,7 +491,11 @@ class Assistant:
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
             self._on_wake(name, score, second_chance=text, **info)
-            if not self.endpointer.started and self.responder.understands(text, language):
+            if (
+                not self.endpointer.started
+                and not only_wake_words(text)
+                and self.responder.understands(text, language)
+            ):
                 # A command said whole before the wake word fired, too long ago for the
                 # lead-in ("Claudio, accenditi." heard here, then a timeout): what the second
                 # chance heard is the request; it ends with the usual pause.
