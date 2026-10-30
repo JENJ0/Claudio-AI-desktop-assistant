@@ -78,8 +78,8 @@ class Responder(Protocol):
         connections now, while JenJo is still talking."""
         ...
 
-    def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
-        """A local command matches `text`."""
+    def understands(self, text: str, language: str = DEFAULT_LANGUAGE, memory: bool = True) -> bool:
+        """A local command matches `text` (memory=True: or a memory request)."""
         ...
 
     def is_stop(self, text: str) -> bool:

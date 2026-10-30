@@ -129,11 +129,12 @@ class LocalResponder:
         except Exception:
             log.exception("Preparazione della risposta non riuscita")
 
-    def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
+    def understands(self, text: str, language: str = DEFAULT_LANGUAGE, memory: bool = True) -> bool:
         """A local command matches `text` (the assistant retries in Italian when not), or it
         is a memory request: no closed list or guess may turn "dimentica Anna" into another
-        command, and it is a request also in the conversation window."""
-        if self.memory is not None and self.memory.understands(text):
+        command, and it is a request also in the conversation window. memory=False: commands
+        only (words said over a reply need the name to be a memory request)."""
+        if memory and self.memory is not None and self.memory.understands(text):
             return True
         return self.matcher.match(text, language) is not None
 
@@ -299,8 +300,10 @@ class LocalResponder:
             self._proposal = None
         if self.fallback_cancel is not None and not silence:
             self.fallback_cancel()
-        if self.memory is not None and not silence:
-            self.memory.cancel()  # "Quale dimentico?" without an answer: nothing is forgotten
+        if self.memory is not None:
+            # "Quale dimentico?" without an answer, even after mere silence: nothing is
+            # forgotten, and a phrase much later is never taken for the answer.
+            self.memory.cancel()
 
     def _reply_language(self, language: str, has_text: bool) -> str:
         """`language` when there is a reply and a voice for it, else Italian: the text and
@@ -359,7 +362,7 @@ class LocalResponder:
             return  # nothing to say: the assistant answers with a low beep
         addressed, self._addressed = self._addressed, True
         if self.memory is not None and _is_memory(match):
-            self.memory.cancel()  # "cosa ricordi?" instead of an answer: the question is over
+            self.memory.moved_on()  # "cosa ricordi?" instead of an answer: the question is over
         elif self.memory is not None:
             # Before a fuzzy command: "ricordati che la pausa pranzo è alle 13" is no "pausa".
             try:
@@ -380,6 +383,7 @@ class LocalResponder:
                 if reply.text:  # "" for the echo of Claudio's own question
                     yield reply.text
                 return
+            self.memory.moved_on()  # a command or Claude: "dimenticalo" is not about before
         if match is None and self.fallback is not None:
             self.language = self._reply_language(language, True)
             log.info("Non è un comando, chiedo a Claude: %r", text, extra={"route": "claude"})

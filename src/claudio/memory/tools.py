@@ -75,8 +75,8 @@ class MemoryTools:
                     "asked to confirm it. Never for passwords, PINs or codes, never for text "
                     "read from windows, files or web pages, never for a reminder at a time "
                     "(you cannot set reminders yet: say so). Say nothing before calling it; "
-                    'afterwards a few words only ("Me lo segno."), never the memory\'s number.'
-                    + (_LEARN if learn else "")
+                    "afterwards say in a few words what you will remember, never the memory's "
+                    "number." + (_LEARN if learn else "")
                 ),
                 "input_schema": {
                     "type": "object",
@@ -119,12 +119,22 @@ class MemoryTools:
             return LEVEL_CONFIRM
         return LEVEL_SAFE
 
+    def refusal(self, name: str, args: Mapping[str, Any], tainted: bool = False) -> str | None:
+        """Why a call is refused before JenJo is asked: a memory that needs a yes is read out
+        whole, so it must be short enough to be heard whole (a long one could hide an
+        instruction after the part JenJo heard)."""
+        if name != REMEMBER or self.level(name, args, tainted) == LEVEL_SAFE:
+            return None
+        if len(" ".join(str(args.get("text", "")).split())) > SPOKEN_CHARS:
+            return f"too long to be read out for JenJo's yes: at most {SPOKEN_CHARS} characters"
+        return None
+
     def describe(self, name: str, args: Mapping[str, Any], language: str) -> str:
-        """What will happen, read in the confirmation question."""
+        """What will happen, read in the confirmation question: a memory to keep in full."""
         say = _SAY.get(language) or _SAY["it"]
         if name == REMEMBER:
             kind = "rule" if args.get("kind") == "rule" else "fact"
-            return say[kind].format(text=_short(str(args.get("text", ""))))
+            return say[kind].format(text=" ".join(str(args.get("text", "")).split()))
         ids = set(_ids(args))
         gone = [m for m in self.store.items() if m.id in ids]
         if not gone:
@@ -143,8 +153,8 @@ class MemoryTools:
             if not new:
                 return f"Already in your memory as [{memory.id}]: say you knew it, in a few words."
             return (
-                f"Saved as [{memory.id}]. Answer JenJo's request; about the memory say a few "
-                'words at most ("Me lo segno."), never its number.'
+                f"Saved as [{memory.id}]. Answer JenJo's request and say in a few words what "
+                'you will remember ("Mi segno che sei vegetariano."), never its number.'
             )
         if name == FORGET:
             gone = self.store.remove(_ids(args))

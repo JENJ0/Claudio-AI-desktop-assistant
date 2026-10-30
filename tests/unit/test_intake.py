@@ -33,7 +33,7 @@ NOISE = NoiseSettings()  # the shipped values
 class Commands(FakeResponder):
     """Understands only "apri chrome"."""
 
-    def understands(self, text: str, language: str = "it") -> bool:
+    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
         return "chrome" in text.lower()
 
 
