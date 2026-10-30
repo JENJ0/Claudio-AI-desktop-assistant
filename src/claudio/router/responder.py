@@ -200,13 +200,7 @@ class LocalResponder:
         result = (
             Verdict.DROP
             if command is None
-            else verdict(
-                guess,
-                doubt,
-                settings.act_at,
-                settings.ask_at,
-                asks_first=command.action == "system",
-            )
+            else verdict(guess, doubt, settings.act_at, settings.ask_at, command.action)
         )
         info.update(guess=said, guess_p=round(guess.probability, 2), guess_verdict=result.value)
         log.info(
