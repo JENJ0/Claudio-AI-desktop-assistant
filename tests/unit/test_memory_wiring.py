@@ -473,7 +473,7 @@ def test_a_broken_database_leaves_claudio_without_memory(tmp_path: Path) -> None
 def test_the_shipped_settings() -> None:
     memory = Settings().memory
     assert memory.enabled and memory.db_file == Path("data/memory.db")
-    assert memory.block_chars == 2000 and memory.relevant == 3 and not memory.learn
+    assert memory.block_chars == 2000 and memory.relevant == 3 and memory.learn  # JenJo: B1
 
 
 async def test_claude_reads_out_what_it_forgets(pricing: Pricing, store: MemoryStore) -> None:

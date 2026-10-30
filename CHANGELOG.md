@@ -16,7 +16,8 @@
   when a memory changes); the facts beyond `[memory] block_chars` go with a request that shares
   their words, as `[memory: ...]` after the tag.
 - Claude's tools `remember` (a fact: level 1; a rule: level 2) and `forget` (level 2), offered
-  with the PC tools; `[memory] learn = true` lets Claude save lasting preferences unasked.
+  with the PC tools. `[memory] learn = true` (JenJo's choice, the default): Claude also saves
+  lasting preferences JenJo tells it unasked, and says so aloud.
 - Passwords, PINs, cards, IBANs and long digit strings are refused: memories go to the API.
 - `[memory]` in `config/claudio.toml`.
 
