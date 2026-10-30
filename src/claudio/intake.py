@@ -37,10 +37,13 @@ class Segment(NamedTuple):
 
 class Hearing(NamedTuple):
     """How sure Whisper was of a request that goes to Claude: Claude is told when it was
-    unsure, with the other transcriptions it considered, to work out what JenJo said."""
+    unsure, with the other transcriptions it considered, to work out what JenJo said.
+    `addressed`: said with the wake word or the name (or typed), not just heard in the
+    conversation window or as an answer: the memory asks before keeping a rule then."""
 
     unsure: bool = False
     alternatives: tuple[str, ...] = ()
+    addressed: bool = True
 
 
 def unsure(segments: Sequence[Segment], below_logprob: float) -> bool:

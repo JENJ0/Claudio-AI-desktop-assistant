@@ -4,10 +4,15 @@ JenJo's own "ricordati che..." is understood locally (voice.py) for free; these 
 what the local patterns miss ("segnatelo", a misheard "ricordati") and let Claude forget a
 memory it sees in the prompt by its number.
 
-Safety: a fact Claude saves is level 1 and Claude says what it saved, so JenJo hears it and
-can say "dimenticalo". A standing rule changes how Claude behaves from then on, so it needs
-JenJo's yes (level 2): text read from a window or a web page must never become a rule by
-itself. Forgetting asks too (level 2): Claude may have picked the wrong number."""
+Safety (the levels are decided here, never by Claude):
+- a fact is level 1 and Claude says what it saved, so JenJo hears it and can say
+  "dimenticalo"; but once this request has read a window, the screen, files or a command's
+  output (`tainted`), a fact needs JenJo's yes too (level 2): text read there must never
+  become a memory, and so a part of every later prompt, by itself;
+- a standing rule changes how Claude behaves from then on: always level 2;
+- forgetting is level 2 (Claude may have picked the wrong number), level 3 ("confermo") for
+  more than MANY at once, and one forget per reply (PcTools.refusal).
+The question always says what will be kept or forgotten, also with [pc] confirm_brief."""
 
 from __future__ import annotations
 
@@ -15,12 +20,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from claudio.memory.store import Kind, MemoryRefused, MemoryStore
-from claudio.safety.confirmation import LEVEL_CONFIRM, LEVEL_SAFE
+from claudio.safety.confirmation import LEVEL_CONFIRM, LEVEL_EXPLICIT, LEVEL_SAFE
 
 REMEMBER = "remember"
 FORGET = "forget"
 NAMES = frozenset({REMEMBER, FORGET})
 MAX_IDS = 20
+MANY = 3  # forgetting more than this many at once needs an explicit "confermo"
 SPOKEN_CHARS = 80  # a memory as read in the confirmation question
 
 _LEARN = (
@@ -36,11 +42,13 @@ _REFUSED = {
 }
 _SAY = {
     "it": {
+        "fact": 'mi segno "{text}"',
         "rule": 'da ora in poi "{text}"',
         "forget": 'dimentico "{text}"',
         "more": " e altri {n}",
     },
     "en": {
+        "fact": 'I\'ll note "{text}"',
         "rule": 'from now on "{text}"',
         "forget": 'I\'ll forget "{text}"',
         "more": " and {n} more",
@@ -101,17 +109,21 @@ class MemoryTools:
             },
         ]
 
-    def level(self, name: str, args: Mapping[str, Any]) -> int:
-        if name == FORGET or (name == REMEMBER and args.get("kind") == "rule"):
+    def level(self, name: str, args: Mapping[str, Any], tainted: bool = False) -> int:
+        """`tainted`: this request already brought text from outside (a window, the screen,
+        files, a command) to Claude."""
+        if name == FORGET:
+            return LEVEL_EXPLICIT if len(_ids(args)) > MANY else LEVEL_CONFIRM
+        if args.get("kind") == "rule" or tainted:
             return LEVEL_CONFIRM
         return LEVEL_SAFE
 
     def describe(self, name: str, args: Mapping[str, Any], language: str) -> str:
-        """What will happen, for the confirmation question (read when [pc] confirm_brief is
-        off, and always shown in the logs)."""
+        """What will happen, read in the confirmation question."""
         say = _SAY.get(language) or _SAY["it"]
         if name == REMEMBER:
-            return say["rule"].format(text=_short(str(args.get("text", ""))))
+            kind = "rule" if args.get("kind") == "rule" else "fact"
+            return say[kind].format(text=_short(str(args.get("text", ""))))
         ids = set(_ids(args))
         gone = [m for m in self.store.items() if m.id in ids]
         if not gone:

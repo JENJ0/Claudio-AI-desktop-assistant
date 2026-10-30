@@ -59,6 +59,11 @@ class Responder(Protocol):
         ...
 
     @property
+    def needs_voice(self) -> bool:
+        """An action waits for a spoken yes: a message typed in the chat never gives it."""
+        ...
+
+    @property
     def asked_question(self) -> bool:
         """Claude's last reply ended with a question: the next phrase is its answer."""
         ...

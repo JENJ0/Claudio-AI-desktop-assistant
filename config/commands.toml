@@ -191,9 +191,10 @@ params = { do = "close", already = "La chat non è aperta.", already_en = "The c
 reply = "Chiudo la chat."
 reply_en = "Closing the chat."
 
-# Memory (src/claudio/memory/): the fixed phrases. "ricordati che...", "dimentica X" and
-# "cosa ricordi di X" carry free text and are understood in memory/voice.py. exact = true:
-# "dimentica tutto quello di Anna" must not become "dimentica tutto".
+# Memory (src/claudio/memory/): the fixed phrases. "ricordati che...", "dimentica X",
+# "dimenticalo" and "cosa ricordi di X" depend on the text or on what was just said and are
+# understood in memory/voice.py. exact = true: "dimentica tutto quello di Anna" must not
+# become "dimentica tutto".
 [[command]]
 id = "memory_list"
 phrases = ["cosa ricordi", "che cosa ricordi", "cosa ti ricordi", "che cosa ti ricordi", "cosa ricordi di me", "cosa sai di me", "che cosa sai di me", "che sai di me", "elenca i ricordi", "quali ricordi hai", "cosa hai in memoria", "cosa c e nella tua memoria"]
@@ -201,14 +202,6 @@ phrases_en = ["what do you remember", "what do you know about me", "what do you 
 action = "memory"
 exact = true
 params = { do = "list", unavailable = "La memoria è spenta.", unavailable_en = "My memory is switched off." }
-
-[[command]]
-id = "memory_forget_last"
-phrases = ["dimenticalo", "dimenticala", "dimenticatelo", "dimenticatela", "scordatelo", "scordatela", "dimentica l ultimo", "dimentica l ultima cosa", "dimentica l ultimo ricordo", "cancella l ultimo ricordo", "dimentica quello che ti ho detto", "dimentica quello che ti ho appena detto", "dimentica cosa ti ho detto", "non ricordarlo"]
-phrases_en = ["forget the last one", "forget the last thing", "forget what i just said", "forget what i just told you"]
-action = "memory"
-exact = true
-params = { do = "forget_last", unavailable = "La memoria è spenta.", unavailable_en = "My memory is switched off." }
 
 [[command]]
 id = "memory_wipe"
