@@ -131,7 +131,7 @@ def test_a_missing_lexicon_turns_the_accents_off(tmp_path, caplog) -> None:
     with caplog.at_level(logging.WARNING):
         lexicon = StressLexicon.load(tmp_path / "missing.tsv")
     assert lexicon.words == {} and lexicon.hosts == {}
-    assert mark_stress("Socio, accenditi.", lexicon) == "Socio, accenditi."
+    assert mark_stress("Socio, accenditi e dammelo.", lexicon) == "Socio, accenditi e dammelo."
     assert "Accenti di Jack spenti" in caplog.text
 
 
