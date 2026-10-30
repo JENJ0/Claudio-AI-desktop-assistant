@@ -242,6 +242,23 @@ candidates = 4                 # closest commands shown to Claude
 max_tokens = 120
 timeout_s = 3.0                # no answer by then: the phrase is ignored, as before
 
+# A short phrase no command understands may be a command the headset clipped ("Scaniti." for
+# "spegniti", "Chi ce l'ha fatta?" for "chiudi la chat", 30/10). Whisper hears it again with the
+# commands as its prompt, and the command it proposes is judged on the sound alone (no prompt):
+# much likelier than the first hearing: done at once; about as likely: "Hai detto: ...?", answered
+# here, no API. Pausing, switching Claudio off and closing it are always asked, "basta" never.
+# Local and free, ~0.2 s only on those phrases; it runs before the guess above, which then costs
+# less. Every attempt is in logs/metrics.jsonl (recovery_*): tune the values below on those rows.
+# On JenJo's 240 recordings (30/10): 3 commands recovered, none wrong; the right proposals had
+# a mean of -0.8..-1.7 and a gap of -5.7..+6, the wrong ones (before "svegliati" left the
+# prompt) -1.8..-2.4 and -5.3..-13.3.
+[recovery]
+enabled = true                 # false: such phrases go on as before (to Claude, or dropped)
+max_words = 6                  # longer phrases are questions for Claude, not misheard commands
+min_mean = -1.75               # log-probability per word piece: a proposal heard worse is noise
+act_gap = 2.0                  # the proposal this much likelier than the first hearing: done at once
+ask_gap = -6.0                 # from here up to act_gap: "Hai detto: ...?"; below: as before
+
 # Claude acts on the PC with tools (Phase 3). Level 1 runs at once (open, search, read the
 # windows, harmless keys); type, close a window, move a file and other keys ask "Confermi?"
 # first, by voice only. Levels are fixed in code (src/claudio/pc/tools.py), never by Claude.

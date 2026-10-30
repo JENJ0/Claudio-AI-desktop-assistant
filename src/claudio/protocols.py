@@ -85,6 +85,11 @@ class Responder(Protocol):
         """Drop an armed level 2-3 action (nothing was answered)."""
         ...
 
+    def propose(self, text: str, language: str) -> str:
+        """A request worked out from a misheard phrase: the question to ask first ("Hai
+        detto: ...?"); the next phrase is its answer (awaiting)."""
+        ...
+
     def respond(self, text: str, language: str = DEFAULT_LANGUAGE) -> AsyncIterator[str]:
         """Stream the reply to `text`, heard in `language`. Phase 1: one chunk. Phase 2:
         Haiku tokens."""

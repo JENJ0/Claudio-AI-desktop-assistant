@@ -364,6 +364,27 @@ class GuessSettings(BaseModel):
         return self
 
 
+class RecoverySettings(BaseModel):
+    """A short phrase no command understands may be a command the headset clipped ("Scaniti."
+    for "Spegniti.", 30/10): Whisper hears it again with the commands as its prompt and the
+    command it proposes is judged on the sound alone (stt/recovery.py). Local and free, about
+    0.2 s, only on those phrases. Each attempt is in metrics.jsonl (recovery_*), to tune
+    these. The gap is in log-probability: how much likelier the proposal sounds than the
+    first hearing."""
+
+    enabled: bool = True
+    max_words: int = Field(6, ge=1, le=12)  # longer phrases are questions for Claude
+    min_mean: float = Field(-1.75, le=0)  # a proposal Whisper hears worse than this is noise
+    act_gap: float = Field(2.0, ge=-20, le=20)  # this much likelier: done at once
+    ask_gap: float = Field(-6.0, ge=-20, le=20)  # from here up to act_gap: "Hai detto: ...?"
+
+    @model_validator(mode="after")
+    def _ask_below_act(self) -> RecoverySettings:
+        if self.ask_gap > self.act_gap:
+            raise ValueError("ask_gap non può superare act_gap")
+        return self
+
+
 class CostSettings(BaseModel):
     pricing_file: Path = Path("config/pricing.toml")  # prices and cache multipliers
     db_file: Path = Path("data/spend.db")  # the ledger: one row per Claude call
@@ -535,6 +556,7 @@ class Settings(BaseSettings):
     cost: CostSettings = CostSettings()
     claude: ClaudeSettings = ClaudeSettings()
     guess: GuessSettings = GuessSettings()
+    recovery: RecoverySettings = RecoverySettings()
     pc: PcSettings = PcSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")

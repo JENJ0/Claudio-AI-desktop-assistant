@@ -31,7 +31,9 @@ if TYPE_CHECKING:
     from claudio.cost.tracker import CostTracker
     from claudio.pc.tools import PcTools
     from claudio.router.command_tool import CommandTool
+    from claudio.router.matcher import CommandMatcher
     from claudio.router.responder import LocalResponder
+    from claudio.stt.recovery import CommandRecovery, Rescorer
     from claudio.system import SystemControl
     from claudio.tts.jack import JackSynth
     from claudio.tts.speaker import StreamingSpeaker
@@ -380,6 +382,20 @@ def build_vocabulary(settings: Settings) -> Any:
     return vocabulary
 
 
+def build_recovery(
+    settings: Settings, whisper: Rescorer, matcher: CommandMatcher
+) -> CommandRecovery | None:
+    """Whisper's second opinion on a short phrase no command understands (stt/recovery.py);
+    None when [recovery] is off."""
+    from claudio.router.matcher import load_commands
+    from claudio.stt.recovery import CommandRecovery
+
+    if not settings.recovery.enabled:
+        return None
+    commands = load_commands(settings.resolve(settings.router.commands_file))
+    return CommandRecovery(whisper, matcher, commands, settings.recovery)
+
+
 def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
     """The listener used while CLAUDIO speaks: a second Silero VAD (its own state) that
     closes a phrase after a short pause, or every barge_in_max_s of continuous speech."""
@@ -548,6 +564,7 @@ async def run_assistant(
         continue_s=settings.vad.continue_s,
         echo_tail_ms=settings.conversation.echo_tail_ms,
         guess=responder.guess if responder.fallback_guess else None,
+        command_recovery=build_recovery(settings, transcriber, responder.matcher),
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',
