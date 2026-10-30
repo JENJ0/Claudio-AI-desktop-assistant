@@ -59,6 +59,7 @@ from claudio.safety.confirmation import (
 )
 
 if TYPE_CHECKING:
+    from claudio.memory.prompt import MemoryPrompt
     from claudio.pc.tools import PcTools, ToolCall
 
 # Tools that may take a while (pc/tools.py SLOW; repeated here: no import of the PC package).
@@ -96,6 +97,7 @@ class ClaudeBrain:
         pc: PcSettings | None = None,
         on_show: Callable[[], object] | None = None,
         personality: str = "",
+        memory: MemoryPrompt | None = None,
     ) -> None:
         self.client = client
         self.tracker = tracker
@@ -123,6 +125,9 @@ class ClaudeBrain:
         self.on_show = on_show  # opens the chat window, where the exact command is written
         # How sure Whisper was of the next request: set before every reply, read once.
         self._hearing = Hearing()
+        # What JenJo asked Claudio to remember: a block after the system prompt, cached, and
+        # the facts that match a request (None: no long-term memory).
+        self.memory = memory
 
     def reset(self) -> None:
         self._history.clear()
@@ -521,7 +526,11 @@ class ClaudeBrain:
                 messages.append({"role": "user", "content": question})
                 messages.append({"role": "assistant", "content": answer})
         hearing, self._hearing = self._hearing, Hearing()
-        messages.append({"role": "user", "content": f"{self._tag(language, hearing)} {text}"})
+        tag = self._tag(language, hearing)
+        recalled = self.memory.relevant(text) if self.memory is not None else ""
+        if recalled:  # after the cached prefix, like the time: it changes nothing cached
+            tag = f"{tag} {recalled}"
+        messages.append({"role": "user", "content": f"{tag} {text}"})
         return messages
 
     def _tag(self, language: str, hearing: Hearing | None = None) -> str:
@@ -540,10 +549,11 @@ class ClaudeBrain:
     def _common(
         self, model: str, max_tokens: int, messages: list[dict[str, Any]]
     ) -> dict[str, Any]:
+        memory = self.memory.block() if self.memory is not None else ""
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": self.system,
+            "system": f"{self.system.rstrip()}\n\n{memory}" if memory else self.system,
             "messages": messages,
         }
         if self.settings.cache:
@@ -556,6 +566,12 @@ class ClaudeBrain:
             params["system"] = [
                 {"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}
             ]
+            if memory:
+                # A third marker on the memories: they change only when JenJo says
+                # "ricordati" or "dimentica", and then the system prompt is still read back.
+                params["system"].append(
+                    {"type": "text", "text": memory, "cache_control": {"type": "ephemeral"}}
+                )
             params["cache_control"] = {"type": "ephemeral"}
         return params
 

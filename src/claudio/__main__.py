@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from claudio.brain.claude import ClaudeBrain
     from claudio.chat.launcher import ChatLauncher
     from claudio.cost.tracker import CostTracker
+    from claudio.memory.store import MemoryStore
+    from claudio.memory.tools import MemoryTools
     from claudio.pc.tools import PcTools
     from claudio.router.command_tool import CommandTool
     from claudio.router.responder import LocalResponder
@@ -54,6 +56,27 @@ def build_tracker(settings: Settings) -> CostTracker:
     )
 
 
+def build_memory(settings: Settings) -> MemoryStore | None:
+    """The long-term memory; None when it is off or its database cannot be opened (Claudio
+    then works as before, without memories)."""
+    import sqlite3
+
+    from claudio.memory.store import MemoryStore
+
+    memory = settings.memory
+    if not memory.enabled:
+        log.info("Memoria spenta ([memory] enabled = false)")
+        return None
+    path = settings.resolve(memory.db_file)
+    try:
+        store = MemoryStore(path, memory.max_items, memory.max_chars)
+    except (OSError, sqlite3.Error) as exc:
+        log.error("Memoria non disponibile (%s): %s", path, exc)
+        return None
+    log.info("Memoria: %d ricordi in %s", len(store), path)
+    return store
+
+
 def build_responder(
     settings: Settings,
     system: SystemControl | None = None,
@@ -62,6 +85,7 @@ def build_responder(
 ) -> LocalResponder:
     """`tracker`: open it on the thread that runs the requests (its SQLite connection only
     works there) when this runs in a loader thread."""
+    from claudio.memory.voice import MemoryVoice
     from claudio.router.actions import ActionRunner
     from claudio.router.command_tool import CommandTool
     from claudio.router.matcher import CommandMatcher, load_commands
@@ -72,9 +96,11 @@ def build_responder(
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
     if tracker is None:
         tracker = build_tracker(settings)
-    actions = ActionRunner(system=system, tracker=tracker, chat=chat)
+    store = build_memory(settings)
+    memory = MemoryVoice(store) if store is not None else None
+    actions = ActionRunner(system=system, tracker=tracker, chat=chat, memory=memory)
     # Claude runs the commands it recognises in garbled words through the same actions.
-    brain = build_brain(settings, tracker, chat, CommandTool(commands, actions))
+    brain = build_brain(settings, tracker, chat, CommandTool(commands, actions), store)
     guesser = None
     if brain is not None and settings.guess.enabled:
         from claudio.brain.guess import Guesser
@@ -95,12 +121,18 @@ def build_responder(
         fallback_guess=guesser,
         fallback_guess_info=(lambda: guesser.last_call) if guesser else None,
         guess=settings.guess,
+        memory=memory,
     )
 
 
-def build_pc_tools(settings: Settings, commands: CommandTool | None = None) -> PcTools | None:
+def build_pc_tools(
+    settings: Settings,
+    commands: CommandTool | None = None,
+    memory: MemoryTools | None = None,
+) -> PcTools | None:
     """The tools Claude acts on the PC with: Windows only, and only with [pc] enabled.
-    `commands`: Claudio's own commands (volume, chat, pause...) as one more tool."""
+    `commands`: Claudio's own commands (volume, chat, pause...) as one more tool; `memory`:
+    "remember" and "forget"."""
     if not settings.pc.enabled:
         log.info("Azioni sul PC spente ([pc] enabled = false)")
         return None
@@ -110,7 +142,7 @@ def build_pc_tools(settings: Settings, commands: CommandTool | None = None) -> P
     from claudio.pc.tools import PcTools
     from claudio.pc.windows import WindowsDesktop
 
-    tools = PcTools(WindowsDesktop(), settings.pc, commands=commands)
+    tools = PcTools(WindowsDesktop(), settings.pc, commands=commands, memory=memory)
     log.info(
         "Azioni sul PC: %d strumenti, cartelle %s, %d tasti senza conferma",
         len(tools.definitions()),
@@ -125,12 +157,16 @@ def build_brain(
     tracker: CostTracker,
     chat: ChatLauncher | None = None,
     commands: CommandTool | None = None,
+    memory: MemoryStore | None = None,
 ) -> ClaudeBrain | None:
     """Claude for what no command understands; None when it is switched off. A missing key
-    still builds it: Claudio then says where the key goes instead of "I can't do that"."""
+    still builds it: Claudio then says where the key goes instead of "I can't do that".
+    With a `memory`, Claude sees the memories and may save and forget them."""
     from claudio.brain.claude import ClaudeBrain, make_client
     from claudio.brain.personality import load_personality
     from claudio.cost.pricing import PricingError
+    from claudio.memory.prompt import MemoryPrompt
+    from claudio.memory.tools import MemoryTools
 
     claude = settings.claude
     if not claude.enabled:
@@ -148,14 +184,24 @@ def build_brain(
     personality = load_personality(
         settings.resolve(claude.personality_file), claude.personality_max_chars
     )
+    remember = settings.memory
     brain = ClaudeBrain(
         client,
         tracker,
         claude,
-        tools=build_pc_tools(settings, commands),
+        tools=build_pc_tools(
+            settings,
+            commands,
+            MemoryTools(memory, remember.learn) if memory is not None and remember.tools else None,
+        ),
         pc=settings.pc,
         personality=personality,
         on_show=chat.open if chat is not None else None,  # a command is read in the chat
+        memory=(
+            MemoryPrompt(memory, remember.block_chars, remember.relevant)
+            if memory is not None
+            else None
+        ),
     )
     if brain.smart_model is not None:
         try:
