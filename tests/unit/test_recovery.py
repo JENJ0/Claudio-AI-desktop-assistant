@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from claudio.config import RecoverySettings
-from claudio.intake import CONVERSATION, Decision, Guess, Heard, Kind, Verdict
+from claudio.intake import CONVERSATION, Decision, Guess, Heard, Kind, Segment, Verdict
 from claudio.metrics import Interaction
 from claudio.router.actions import MEDIA_KEYS
 from claudio.router.matcher import CommandMatcher, load_commands
@@ -81,7 +81,8 @@ def test_the_prompt_has_the_first_phrase_of_every_command_worth_proposing() -> N
         (Fit(-9.0, -3.0), Fit(-2.0, -0.5), "system", Verdict.ASK),  # spegniti: always asked
         (Fit(-9.0, -3.0), Fit(-10.0, -1.5), "stop", Verdict.ACT),  # basta: never asked
         (Fit(-9.0, -3.0), Fit(-12.0, -1.5), "stop", Verdict.DROP),
-        (NO_FIT, Fit(-6.0, -1.0), "chat", Verdict.ACT),
+        (NO_FIT, Fit(-6.0, -1.0), "chat", Verdict.DROP),  # nothing to compare with
+        (NO_FIT, Fit(-6.0, -1.0), "stop", Verdict.DROP),
         (Fit(-9.0, -3.0), NO_FIT, "chat", Verdict.DROP),
     ],
 )
@@ -191,6 +192,33 @@ def test_not_worth_a_try_costs_nothing(matcher: CommandMatcher) -> None:
     assert whisper.prompts == []
 
 
+def test_the_question_leaves_a_clipped_name_out(matcher: CommandMatcher) -> None:
+    proposal = "L'audio metti in pausa la musica."
+    whisper = FakeWhisper(proposal, {"Lotti in posa la mosca.": -9.0, proposal: -10.0})
+    found = recovery(whisper, matcher)(AUDIO, "Lotti in posa la mosca.", "it")
+    assert found is not None and found.verdict is Verdict.ASK
+    assert found.text == "metti in pausa la musica"  # not "Hai detto: L'audio metti..."
+    assert found.info["recovery"] == proposal and found.info["recovery_command"] == (
+        "media_play_pause"
+    )
+
+
+def test_no_second_opinion_when_whisper_fell_back_to_the_cpu(matcher: CommandMatcher) -> None:
+    from claudio.__main__ import build_recovery
+    from claudio.config import load_settings
+
+    class Whisper(FakeWhisper):
+        def __init__(self, device: str, model_name: str) -> None:
+            super().__init__("")
+            self.device, self.model_name = device, model_name
+
+    settings = load_settings()
+    model = settings.stt.model
+    assert build_recovery(settings, Whisper("cuda", model), matcher) is not None
+    assert build_recovery(settings, Whisper("cpu", settings.stt.fallback_model), matcher) is None
+    assert build_recovery(settings, Whisper("cuda", "tiny"), matcher) is None  # not tuned on it
+
+
 # --- Whisper's side: one more transcription, and forced scores with the end of the text ---
 
 
@@ -268,7 +296,11 @@ def test_forced_scores_count_the_end_of_the_text_over_the_vocabulary_only() -> N
     hf = stt._model.hf_tokenizer
     assert features == "encoded" and prompt[3] == hf.token_to_id("<|notimestamps|>")
     assert prompt[4:] == [hf.token_to_id(w) for w in ("chiudi", "la", "chat")]
-    assert kwargs["max_length"] == 8 and kwargs["return_logits_vocab"] is True
+    assert kwargs["max_length"] == 9 and kwargs["return_logits_vocab"] is True
+    # One piece ("No"): ctranslate2 needs 2 * 1 + 3 to give both steps (measured on the GPU).
+    (lone,) = stt._fit("encoded", "it", ["grazie"])
+    assert lone.total == pytest.approx(2 * each)
+    assert stt._model.model.calls[-1][2]["max_length"] == 5
 
 
 def test_listen_again_shares_one_encoder_pass(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,6 +371,8 @@ async def test_a_recovered_spegniti_is_asked_then_done_on_yes(
     ]
     assert [row["outcome"] for row in assistant.history][:3] == ["ok", "ask", "ok"]
     assert r.actions.system.off and guesser.calls == []
+    row = assistant.history[1]  # told apart from Haiku's guess, in the session log too
+    assert row["recovered_from"] == "Scaniti." and row["recovery_verdict"] == "ask"
 
 
 async def test_a_proposal_that_sounds_worse_goes_on_to_claudes_guess(
@@ -436,6 +470,36 @@ async def test_no_second_opinion_on_the_answer_to_claudes_question(
     await talk(assistant, make_frames, speaker, requests=2)
     assert whisper.prompts == []  # "Pasta." is the answer: no second opinion, no "basta"
     assert [row["outcome"] for row in assistant.history][:2] == ["ok", "ok"]
+
+
+async def test_the_answer_to_claudes_question_is_never_stopped_on_a_guess(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    # The same answer mumbled (Whisper unsure of all of it: a NOISE drop) goes to Haiku's
+    # guess: a 0.6 "basta" there is asked, not done (decision 1 is for phrases said to Claudio).
+    from claudio.config import NoiseSettings
+
+    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+        yield "Che piatto vuoi stasera?"
+
+    whisper = FakeWhisper("Basta.", {"Pasta.": -9.0, "Basta.": -2.0})
+    question = "cosa mi consigli di mangiare stasera a cena"
+    assistant, speaker, _, r, guesser = window(
+        fake_vad, vad_settings, matcher, [question, "Pasta."], whisper
+    )
+    guesser.guess = Guess("basta", 0.6, "stop")
+    r.fallback = claude
+    assistant.claude_min_words = 3
+    assistant.intake.noise = NoiseSettings()
+    stt = assistant.transcriber
+    assistant.stt_segments = lambda: (
+        [Segment(0.6, -1.2)] if len(stt.heard) == 2 else [Segment(0.0, -0.05)]
+    )
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert whisper.prompts == [] and len(guesser.calls) == 1
+    row = assistant.history[1]
+    assert row["outcome"] == "ask" and row["guess_verdict"] == "ask"
+    assert speaker.spoken[-1] == "Hai detto: basta?"
 
 
 async def test_the_helper_for_other_phrases(fake_vad, vad_settings, matcher) -> None:

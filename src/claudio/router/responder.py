@@ -18,7 +18,16 @@ from claudio.config import (
     in_language,
 )
 from claudio.echo import WORD_SHARE, word_share
-from claudio.intake import Doubt, Guess, Hearing, Recovery, Verdict, asks_something, verdict
+from claudio.intake import (
+    NEVER_ASKED,
+    Doubt,
+    Guess,
+    Hearing,
+    Recovery,
+    Verdict,
+    asks_something,
+    verdict,
+)
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import Command, CommandMatcher, Match, Near
 from claudio.router.normalizer import extract_number, normalize, strip_wake_words
@@ -199,7 +208,7 @@ class LocalResponder:
         result = (
             Verdict.DROP
             if command is None
-            else verdict(guess, doubt, settings.act_at, settings.ask_at, command.action)
+            else verdict(guess, doubt, settings.act_at, settings.ask_at, self._action(command))
         )
         info.update(guess=said, guess_p=round(guess.probability, 2), guess_verdict=result.value)
         log.info(
@@ -214,6 +223,14 @@ class LocalResponder:
         if result is Verdict.ASK:
             return Recovery(result, said, info, self.propose(said, doubt.language))
         return Recovery(result, said, info)
+
+    def _action(self, command: Command) -> str:
+        """The command's action as the verdict sees it. Right after Claude asked something a
+        guessed "basta" is asked like any other command: "Pasta." may be the answer to "Che
+        piatto vuoi?", and stopping would throw it away."""
+        if self.answer_expected and command.action in NEVER_ASKED:
+            return ""
+        return command.action
 
     def _guessed_command(self, guess: Guess) -> Command | None:
         """The local command Claude named, or the one its words match ("" said: none)."""

@@ -386,11 +386,16 @@ def build_recovery(
     settings: Settings, whisper: Rescorer, matcher: CommandMatcher
 ) -> CommandRecovery | None:
     """Whisper's second opinion on a short phrase no command understands (stt/recovery.py);
-    None when [recovery] is off."""
+    None when [recovery] is off, and when Whisper fell back to the CPU: there the small model
+    adds 1-3 s to every short request and the thresholds were measured on large-v3."""
     from claudio.router.matcher import load_commands
     from claudio.stt.recovery import CommandRecovery
 
     if not settings.recovery.enabled:
+        return None
+    device, model = getattr(whisper, "device", "cuda"), getattr(whisper, "model_name", "")
+    if device != "cuda" or model != settings.stt.model:
+        log.info("Seconda opinione di Whisper spenta: Whisper %s su %s", model, device)
         return None
     commands = load_commands(settings.resolve(settings.router.commands_file))
     return CommandRecovery(whisper, matcher, commands, settings.recovery)

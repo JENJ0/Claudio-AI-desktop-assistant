@@ -128,13 +128,15 @@ class BargeIn:
 class CutReply:
     """A reply a new request cut short: the stream still reading it, the sentences that had
     started playing, when it was cut, its language, whether it answered a request Whisper was
-    unsure of, and (once read) the part not said."""
+    unsure of, whether it was already a resumed one ("Dicevo: ...") and (once read) the part
+    not said."""
 
     stream: DrainedStream
     played: list[str]
     at: float
     language: str
     unsure: bool = False
+    resumed: bool = False
     rest: str = ""
 
 
@@ -693,7 +695,9 @@ class Assistant:
         """Whisper's second opinion on a short phrase no command understands: the command it
         proposes, done at once (ANSWER) or asked about first ("Hai detto: ...?", ASK), None
         when there is none (stt/recovery.py, ~0.2 s, free). Any phrase can come through here,
-        e.g. one said over Claudio's reply once put back together (IT-1, 2.2)."""
+        e.g. one said over Claudio's reply once put back together (IT-1, 2.2). It takes the
+        Whisper lock itself: never call it holding it. Whether the phrase is worth it (not the
+        echo, not an answer, not while paused or off) is the caller's: see _may_recover()."""
         recovery = self.command_recovery
         if recovery is None or not recovery.wants(text, language):
             return None
@@ -713,6 +717,7 @@ class Assistant:
             return Decision(Kind.ANSWER, found.text, "recovered")
         if found.verdict is Verdict.ASK:
             log.info("Seconda opinione incerta: %r, forse %r", text, found.text)
+            inter.info["recovered_from"] = text  # not Haiku's guess, in the session log too
             return Decision(Kind.ASK, self.responder.propose(found.text, language), "recovered")
         log.info("Seconda opinione: %r, Whisper propone %r: scartata", text, found.text)
         return None
@@ -1236,7 +1241,8 @@ class Assistant:
         await cut.stream.finish(CUT_FINISH_S)
         if self.responder.awaiting:
             return None  # it asked something ("Lo uso?"): not a story to go on with
-        if not worth_resuming(cut.stream.text, self.barge_in.resume_min_chars):
+        if not cut.resumed and not worth_resuming(cut.stream.text, self.barge_in.resume_min_chars):
+            # (a resumed reply was judged whole the first time: "Dicevo: <rest>" may be short)
             log.info("Non riprendo la risposta interrotta: breve o una domanda")
             return None
         rest = remainder(cut.stream.text, cut.played)
@@ -1256,6 +1262,9 @@ class Assistant:
             yield f"{in_language(RESUME_PREFIX, language)} {rest}"
 
         await self._speak_reply(text(), inter, self._on_resume_audio, language, resumed=True)
+        if self._cut is not None:
+            # Cut again: still the answer to the request it was judged on, not to this one.
+            self._cut = replace(self._cut, unsure=cut.unsure, resumed=True)
 
     def _on_resume_audio(self) -> None:
         """The resumed reply can be cut again, like any other."""

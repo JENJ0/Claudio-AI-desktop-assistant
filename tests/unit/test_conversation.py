@@ -600,6 +600,94 @@ async def test_the_answer_to_a_doubtful_hearing_is_not_resumed(
     assert not any(t.startswith("Dicevo") for t in speaker.spoken) and "resumed" not in rows[1]
 
 
+class StartSpeaker(LongSpeaker):
+    """LongSpeaker that also keeps what it started to say, in order."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started: list[str] = []
+
+    async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
+        self._stop = asyncio.Event()
+        text = "".join([c async for c in text_stream])
+        self.started.append(text)
+        if on_first_audio:
+            on_first_audio()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._stop.wait(), timeout=1.0)
+        self.spoken.append(text)
+
+
+@pytest.mark.parametrize("b_unsure", [False, True])
+async def test_a_resumed_story_cut_again_goes_on_again(
+    fake_vad, vad_settings, make_frames, matcher, b_unsure: bool
+) -> None:
+    # The story answers a request heard well: cut, resumed and cut again, it goes on again,
+    # also when the request that cut it the first time was one Whisper doubted.
+    b, c = "come si chiama l'autore", "che giorno è oggi"
+    speaker = StartSpeaker()
+    assistant, _, _, r = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["raccontami una storia", b, c],
+        speaker=speaker,
+        barge_in=barge(vad_settings, [b, c]),
+    )
+    replies = iter([STORY, "Non ha un nome: è una fiaba."])
+
+    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+        yield next(replies)
+
+    r.fallback = claude
+    stt = assistant.transcriber
+    assert isinstance(stt, FakeStt)
+    assistant.on_heard = r.heard
+    assistant.unsure_logprob = -0.2
+    sure, doubtful = [Segment(0.0, -0.05)], [Segment(0.05, -0.65)]
+    assistant.stt_segments = lambda: doubtful if b_unsure and len(stt.heard) == 2 else sure
+    clock = assistant.clock
+    assert isinstance(clock, AudioClock)
+    silence = np.zeros(1280, dtype=np.int16)
+
+    async def until(done: Callable[[], bool], frames: bool = True) -> AsyncIterator[np.ndarray]:
+        for _ in range(400):
+            if done():
+                return
+            if frames:
+                clock.t += 0.08
+                yield silence
+            await asyncio.sleep(0.005)
+        raise AssertionError("never reached")
+
+    async def said(kind: str, ms: int, pause: float = 0.001) -> AsyncIterator[np.ndarray]:
+        for f in make_frames(kind, ms):
+            clock.t += 0.08
+            yield f
+            await asyncio.sleep(pause)
+
+    async def gen() -> AsyncIterator[np.ndarray]:
+        for part in (
+            said("silence", 240, 0),
+            said("speech", 640, 0),  # A: "raccontami una storia"
+            until(lambda: assistant.state is State.SPEAKING),
+            said("speech", 480),  # B over the story
+            said("silence", 800),
+            until(lambda: len(speaker.started) >= 2),  # B's answer
+            until(lambda: len(speaker.started) >= 3 and assistant.state is State.SPEAKING, False),
+            said("speech", 480),  # C over "Dicevo: ..."
+            said("silence", 800),
+            said("silence", 4800, 0.005),
+        ):
+            async for frame in part:
+                yield frame
+
+    await assistant.run(gen())
+    rows = list(assistant.history)
+    assert rows[1].get("stt_unsure", False) is b_unsure
+    assert [t[:7] for t in speaker.started].count("Dicevo:") == 2
+
+
 async def test_noise_over_the_reply_only_lowers_it_for_a_moment(
     fake_vad, vad_settings, make_frames, matcher
 ) -> None:
