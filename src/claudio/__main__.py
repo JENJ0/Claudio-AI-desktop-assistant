@@ -521,7 +521,7 @@ async def run_assistant(
         alternatives=settings.stt.alternatives if settings.stt.closed_list else 0,
         on_heard=responder.heard,
         continue_s=settings.vad.continue_s,
-        echo_tail_ms=settings.conversation.echo_tail_ms if settings.conversation.barge_in else 0,
+        echo_tail_ms=settings.conversation.echo_tail_ms,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

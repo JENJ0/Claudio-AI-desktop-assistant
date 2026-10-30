@@ -137,6 +137,10 @@ class StreamingSpeaker:
     async def beep(self, kind: str = "wake") -> None:
         await asyncio.to_thread(self.player.write, self._earcons[kind])
 
+    def queued_s(self) -> float:
+        """Seconds until what was played has come out of the speakers."""
+        return self.player.queued_s()
+
     async def speak(
         self,
         text_stream: AsyncIterator[str],
