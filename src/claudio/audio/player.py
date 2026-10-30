@@ -21,6 +21,11 @@ from claudio.audio.devices import (
 log = logging.getLogger(__name__)
 
 CHUNK_S = 0.1  # audio is queued in slices this long, so that a sentence can be cut short
+# A change of the reply's volume fades sample by sample, a full swing (0 to 1) taking this
+# long, instead of jumping at a slice edge (heard as the reply stepping down and up). 80 ms
+# sounds like a quick fade, not a click, and the duck to 0.3 (56 ms) is over within the
+# first 100 ms slice after it is asked: the reply goes down as soon as it did before.
+DUCK_RAMP_S = 0.08
 
 
 def resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
@@ -56,6 +61,7 @@ class AudioPlayer:
         # Volume of what is played, read at every slice (lowered while a voice may be
         # interrupting). Only replies sent with `cancel` are sliced, so beeps keep their level.
         self.gain = 1.0
+        self._applied_gain = 1.0  # where the last slice of a reply left it: the fade goes on
         # When the last audio written has left the stream (on `clock`), and the delay the
         # device adds after that: how long CLAUDIO's own sound is still coming out.
         self.clock = clock
@@ -134,16 +140,40 @@ class AudioPlayer:
                 self._follow_default()
             if self._stream is None:
                 self.start()
+            if cancel is not None and self._ends_at <= self.clock():
+                # Nothing is playing (a new reply, or a pause between sentences): there is no
+                # sound to jump in, so the volume asked applies at once. A reply never starts
+                # lowered because the last one ended lowered or halfway through a fade.
+                self._applied_gain = self._target_gain()
             for start in range(0, max(len(data), 1), max(step, 1)):
                 if cancel is not None and cancel.is_set():
                     return False
                 chunk = data[start : start + step]
-                if cancel is not None and self.gain < 1.0:
-                    chunk = (chunk * max(self.gain, 0.0)).astype(np.int16)
+                if cancel is not None:
+                    chunk = self._apply_gain(chunk)
                 # It plays after what is already queued, or now if the stream ran dry.
                 self._ends_at = max(self._ends_at, self.clock()) + len(chunk) / self.sample_rate
                 self._write(chunk)
         return True
+
+    def _target_gain(self) -> float:
+        return min(max(self.gain, 0.0), 1.0)  # never above 1: int16 samples cannot overflow
+
+    def _apply_gain(self, chunk: np.ndarray) -> np.ndarray:
+        """A slice of a reply at its volume: from the gain the last slice ended on toward
+        `gain`, linearly sample by sample, going on in the next slice if not there yet."""
+        target = self._target_gain()
+        if self._applied_gain != target and len(chunk):
+            moves = np.arange(1, len(chunk) + 1) / (DUCK_RAMP_S * self.sample_rate)
+            if target < self._applied_gain:
+                gains = np.maximum(self._applied_gain - moves, target)
+            else:
+                gains = np.minimum(self._applied_gain + moves, target)
+            self._applied_gain = float(gains[-1])
+            return (chunk * gains).astype(np.int16)
+        if target == 1.0:
+            return chunk  # full volume: the samples as they came, untouched
+        return (chunk * target).astype(np.int16)
 
     def queued_s(self) -> float:
         """Seconds until the audio already written has come out of the speakers: write()
