@@ -367,15 +367,16 @@ def test_every_piece_said_goes_to_the_voice_monitor(tmp_path, synths) -> None:
         def __init__(self) -> None:
             self.checked: list[tuple[str, int, int]] = []
 
-        def check(self, text: str, audio: np.ndarray, rate: int) -> None:
-            self.checked.append((text, len(audio), rate))
+        def check(self, text: str, audio: np.ndarray, rate: int, raw=None, spoken=None) -> None:
+            self.checked.append((text, len(audio), rate, spoken))
 
     monitor = Monitor()
     synth, _ = make(tmp_path, "ok", monitor=monitor)
     synths.append(synth)
     synth.start()
-    synth.synthesize("Ciao eroe.")
-    assert monitor.checked == [("Ciao eroe.", 300, 24000)]  # the whole piece, once
+    synth.synthesize("Ciao eroe, sono le 9.")
+    # the whole piece, once, with the words as Jack read them (its pace is judged on those)
+    assert monitor.checked == [("Ciao eroe, sono le 9.", 300, 24000, "Ciao eroe, sono le nove.")]
 
 
 FAKE_APPLIO = textwrap.dedent(
@@ -432,12 +433,12 @@ def test_whole_sentence_rvc_converts_once_at_the_end(tmp_path, monkeypatch) -> N
     rvc.vc.vc.calls.clear()  # the warm-up call
     assert rvc.feed(np.zeros(QWEN_RATE // 2, dtype=np.float32)) == []
     assert rvc.feed(np.zeros(QWEN_RATE // 2, dtype=np.float32)) == []
-    (pcm,) = rvc.flush()
+    (audio,) = rvc.flush()  # float audio: the worker's level guard makes it PCM
     assert len(rvc.vc.vc.calls) == 1
     _length, pitch, method = rvc.vc.vc.calls[0]
     assert pitch == 2 and method == "rmvpe"
     expected = (1 + TAIL_S) / 0.9 * 24_000
-    assert abs(len(pcm) // 2 - expected) < 50
+    assert audio.dtype == np.float32 and abs(len(audio) - expected) < 50
     assert rvc.flush() == []  # nothing left
     # A NaN pitch is unvoiced, never an index outside the 256-entry pitch embedding.
     assert rvc.vc.vc.pitch_seen[-1] == ([1, 1, 1, 1], [0.0, 0.0, 0.0, 0.0])

@@ -244,6 +244,21 @@ class TtsSettings(BaseModel):
     # Words Jack says wrong, written as he should say them (any case): English words read
     # in English, "PC" merged into "pace". Edit in claudio.toml [tts.jack_words].
     jack_words: dict[str, str] = Field(default_factory=dict)
+    # Level guard in the worker: every take is brought to this loudness as it is generated,
+    # its peaks limited instead of clipped (30/10: takes from -28 to -9.5 LUFS, jumps of
+    # +15.7 dB inside a reply). -24 is the median of that day: Windows' volume stays right
+    # (JenJo, 30/10). 0 = off.
+    jack_lufs: float = Field(-24.0, ge=-40, le=0)
+    # Every take is checked before it is played: a high, shouted or babbling one is
+    # generated again with the next seed (8 of the 36 takes of 30/10). Pieces after the first
+    # are checked whole while the one before plays; the first piece of a reply on its first
+    # 0.6 s, and generated again only when bad (+0.3-0.5 s, JenJo 30/10).
+    jack_take_check: bool = True
+    jack_take_retries: int = Field(2, ge=0, le=5)  # the first piece of a reply: 1 at most
+    # Jack's usual register, the reference of "too high": the median of the takes of 30/10
+    # (checkpoint 1.7B-calmo). Another checkpoint may need its own: scripts/jack_takes.py
+    # prints it.
+    jack_usual_hz: float = Field(132.0, gt=50, lt=400)
     # The first piece of a reply may end at a comma once it is this long: the voice starts
     # before the whole first sentence has arrived from Claude (0 = whole sentences only).
     first_clause_chars: int = Field(25, ge=0, le=200)

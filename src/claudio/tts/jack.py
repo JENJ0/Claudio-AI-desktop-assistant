@@ -3,7 +3,13 @@ synthesize()/sample_rate interface as Kokoro and Piper.
 
 The worker has its own venv (torch, Applio), so Claudio never imports them. If it cannot
 start, or dies, or is too slow for a sentence, that sentence is spoken by `fallback` and the
-worker is restarted in the background; Claudio always answers."""
+worker is restarted in the background; Claudio always answers.
+
+With a `judge`, every take is checked before it is played and a bad one is generated again
+with the next seed: a piece that opens a reply on its first FIRST_CHECK_S, the next ones
+whole while the piece before them plays (held back at most until it is about to end). With
+`takes`, a text keeps the seed of its good take, and a fixed reply saved in advance is
+played from its WAV with no TTS at all."""
 
 from __future__ import annotations
 
@@ -12,11 +18,13 @@ import contextlib
 import json
 import logging
 import queue
+import random
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +32,8 @@ import numpy as np
 
 from claudio.i18n import tr
 from claudio.tts.spoken_text import to_spoken_it
+from claudio.tts.takes import TakeStore
+from claudio.tts.voice_check import TakeJudge, TakeVerdict
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +44,38 @@ RESTART_COOLDOWN_S = 30.0
 # they can go through RVC whole (clearer) without a pause.
 REPLY_GAP_S = 1.0
 CREATE_NO_WINDOW = 0x08000000  # Windows: no console window for the worker
+# The take check. A piece with less than OPENING_S still to play before it opens a reply:
+# it is judged on its first FIRST_CHECK_S (one Qwen3 chunk), up to FIRST_CHECK_MAX_S when
+# that has too little voice to tell, and generated again at most once (+0.3-0.5 s, JenJo
+# 30/10). A later piece is held until it is whole, or until what plays before it has
+# RELEASE_MARGIN_S left, and generated again only with RETRY_MIN_S still to play.
+OPENING_S = 0.3
+FIRST_CHECK_S = 0.6
+FIRST_CHECK_MAX_S = 1.3
+RELEASE_MARGIN_S = 0.4
+RETRY_MIN_S = 1.0
+
+
+@dataclass
+class _Take:
+    """One generation of a piece: what was played of it and how it was judged."""
+
+    seed: int | None
+    played: list[np.ndarray] = field(default_factory=list)
+    raw: dict[str, float] = field(default_factory=dict)
+    verdict: TakeVerdict | None = None
+    finished: bool = False  # the worker said "done"
+    cancelled: bool = False  # ...after an interrupt
+    rejected: bool = False  # thrown away before any of it was played
+
+    @property
+    def released(self) -> bool:
+        return bool(self.played)
+
+
+def _raw(event: dict[str, Any]) -> dict[str, float]:
+    """The take's own level as the worker reports it (absent with the level guard off)."""
+    return {k: v for k, v in event.items() if k.startswith("raw_") and v is not None}
 
 
 class WorkerError(RuntimeError):
@@ -64,6 +106,8 @@ def worker_command(models: Path, tts: Any, **overrides: Any) -> list[str]:
         str(get("jack_seed")),
         "--top-p",
         str(get("jack_top_p")),
+        "--lufs",
+        str(get("jack_lufs")),
         *(["--pitch-fix"] if get("jack_pitch_fix") else []),
     ]
 
@@ -82,8 +126,19 @@ class JackSynth:
         words: dict[str, str] | None = None,
         first_wait_s: float = 30.0,
         monitor: Any = None,
+        judge: TakeJudge | None = None,
+        takes: TakeStore | None = None,
+        seed: int = -1,
+        retries: int = 2,
     ) -> None:
         self.monitor = monitor  # VoiceMonitor: every piece said is saved and its pitch logged
+        self.judge = judge  # None: every take is played as it comes
+        self.takes = takes  # None: no seed per text, no saved takes
+        self.seed = seed  # the first seed tried for a new text (-1: a random one)
+        self.retries = retries  # more takes of a piece at most (the opening one: 1)
+        # When the audio handed out so far ends, at the earliest (it plays after it is
+        # handed out): how long a held take may wait without leaving a gap.
+        self._horizon = 0.0
         self.words = dict(words or {})  # respellings: "file" -> "fàil" (see spoken_text)
         self.command = command
         # Told to Qwen3. Always Italian (JenJo, 24/10): "Auto" guessed the language per
@@ -232,12 +287,19 @@ class JackSynth:
 
     def _next_event(self, timeout: float) -> dict[str, Any]:
         """Next event as a dict (audio events carry their bytes under "pcm")."""
-        try:
-            item = self._events.get(timeout=timeout)
-        except queue.Empty:
+        event = self._poll(timeout)
+        if event is None:
             raise WorkerError(
                 tr("worker Jack: nessuna risposta in {seconds} s", seconds=round(timeout))
-            ) from None
+            )
+        return event
+
+    def _poll(self, timeout: float) -> dict[str, Any] | None:
+        """Like _next_event(), but None when nothing came within `timeout`."""
+        try:
+            item = self._events.get(timeout=max(timeout, 0.0))
+        except queue.Empty:
+            return None
         if item is None:
             raise WorkerError(tr("worker Jack terminato"))
         header, payload = item
@@ -264,6 +326,10 @@ class JackSynth:
         """int16 chunks as the worker produces them; the first one arrives in ~0.3 s.
         A worker that fails before any audio leaves the sentence to the fallback voice."""
         spoken = False
+        saved = self._saved(text)
+        if saved is not None:  # no worker needed, not even a loaded one
+            yield from self._play_saved(text, *saved)
+            return
         if self.starting and not self._wait_for_start():
             return  # "basta" while waiting: nothing to say
         if self.alive():
@@ -295,26 +361,118 @@ class JackSynth:
                 break
         return True
 
-    def _speak(self, text: str) -> Iterator[np.ndarray]:
-        self._next_id += 1
-        rid = self._next_id
+    # -- takes ----------------------------------------------------------------------------
+
+    def _spoken(self, text: str) -> str:
         # Digits, symbols, acronyms and English words become Italian spelling: left alone,
         # the model guesses them, sometimes in Spanish or English.
-        self._send(
-            {
-                "op": "speak",
-                "id": rid,
-                "text": to_spoken_it(text, self.words),
-                "language": self.language,
-                "rvc": self._rvc_for_next(),
-            }
-        )
+        return to_spoken_it(text, self.words)
+
+    def _saved(self, text: str) -> tuple[np.ndarray, int] | None:
+        """The take of this fixed reply saved in advance (scripts/jack_takes.py), if any."""
+        if self.takes is None:
+            return None
+        return self.takes.audio(self.takes.key(self._spoken(text), self._rvc_for_next()))
+
+    def _play_saved(self, text: str, pcm: np.ndarray, rate: int) -> Iterator[np.ndarray]:
+        self.sample_rate = rate
+        step = max(1, rate // 2)  # half a second at a time, like the worker's chunks
+        for start in range(0, len(pcm), step):
+            yield self._handed_out(pcm[start : start + step])
+        self._last_done = time.monotonic()
+        if self.monitor is not None:
+            self.monitor.check(text, pcm, rate, spoken=self._spoken(text))
+
+    def _handed_out(self, chunk: np.ndarray) -> np.ndarray:
+        """Every chunk given to the speaker: it plays after what came before it."""
+        now = time.monotonic()
+        self._horizon = max(self._horizon, now) + len(chunk) / self.sample_rate
+        return chunk
+
+    def _seeds(self, key: str | None, count: int) -> list[int | None]:
+        """The seeds to try, in order: the one of this text's good take if there is one, then
+        the configured one and the ones after it (random ones with seed -1)."""
+        if self.judge is None and self.takes is None:
+            return [None]  # the worker's own --seed, as before
+        known = self.takes.seed(key) if self.takes is not None and key is not None else None
+        if self.seed >= 0:
+            fresh = [self.seed + i for i in range(count + 1)]
+        else:
+            fresh = [random.randrange(2**31) for _ in range(count + 1)]
+        seeds = [known] if known is not None else []
+        seeds += [s for s in fresh if s != known]
+        return list(seeds[:count])
+
+    def _speak(self, text: str) -> Iterator[np.ndarray]:
+        spoken = self._spoken(text)
+        rvc = self._rvc_for_next()
+        key = self.takes.key(spoken, rvc) if self.takes is not None else None
+        opening = self._horizon - time.monotonic() < OPENING_S
+        retries = min(self.retries, 1) if opening else self.retries
+        seeds = self._seeds(key, 1 + (retries if self.judge is not None else 0))
+        take = _Take(None)
+        for attempt, seed in enumerate(seeds):
+            last = attempt == len(seeds) - 1
+            take = yield from self._take(spoken, rvc, seed, opening, last)
+            if not take.rejected:
+                break
+            reasons = ", ".join(take.verdict.reasons) if take.verdict else ""
+            log.info("Take di Jack scartata (seme %s): %s - %s", seed, reasons, text[:50])
+        if take.cancelled or not take.played:
+            return
+        verdict = take.verdict
+        if verdict is not None and not verdict.ok:
+            reasons = ", ".join(verdict.reasons)
+            log.info("Take di Jack suonata anche se non buona (%s) - %s", reasons, text[:50])
+        elif verdict is not None and key is not None and take.seed is not None and self.takes:
+            self.takes.remember(key, take.seed, text)
+        if self.monitor is not None:
+            audio = np.concatenate(take.played)
+            self.monitor.check(text, audio, self.sample_rate, raw=take.raw, spoken=spoken)
+
+    def _take(
+        self, spoken: str, rvc: str, seed: int | None, opening: bool, last: bool
+    ) -> Generator[np.ndarray, None, _Take]:
+        """One generation of the piece. Its audio is held while it is judged and handed out
+        once it passes (or there is no time, or no seed, left to do better); a bad take is
+        dropped before anything of it is played (`rejected`)."""
+        self._next_id += 1
+        rid = self._next_id
+        request: dict[str, Any] = {
+            "op": "speak",
+            "id": rid,
+            "text": spoken,
+            "language": self.language,
+            "rvc": rvc,
+        }
+        if seed is not None:
+            request["seed"] = seed
+        self._send(request)
+        take = _Take(seed)
+        held: list[np.ndarray] = []
+        # Held back only while another take could still replace it: with no check, no seed
+        # left or no time left, every chunk goes out as it comes.
+        hold = self.judge is not None and self._may_retry(opening, last)
+        judged = not hold  # the early look at its start is done
         deadline = time.monotonic() + self.sentence_timeout_s
-        finished = False
-        said: list[np.ndarray] = []  # for the monitor
         try:
             while True:
-                event = self._next_event(max(deadline - time.monotonic(), 0.01))
+                release_at = self._horizon - RELEASE_MARGIN_S
+                if held and not opening and time.monotonic() >= release_at:
+                    # what plays before it is about to end: out it goes, judged or not
+                    yield from self._release(held, take)
+                now = time.monotonic()
+                wait = deadline - now
+                if held and not opening:
+                    wait = min(wait, release_at - now)
+                event = self._poll(wait)
+                if event is None:
+                    if time.monotonic() >= deadline:
+                        limit = round(self.sentence_timeout_s)
+                        raise WorkerError(
+                            tr("worker Jack: nessuna risposta in {seconds} s", seconds=limit)
+                        )
+                    continue
                 if event.get("id") != rid:
                     continue  # leftovers of an interrupted sentence
                 kind = event.get("event")
@@ -322,26 +480,88 @@ class JackSynth:
                     # A reply said in one piece can last longer than the timeout: it counts
                     # from the last audio, so only a worker that stops producing fails.
                     deadline = time.monotonic() + self.sentence_timeout_s
+                    take.raw = _raw(event) or take.raw
                     chunk = np.frombuffer(event["pcm"], dtype="<i2").astype(np.int16)
-                    if self.monitor is not None:
-                        said.append(chunk)
-                    yield chunk
+                    if take.released or not hold:
+                        take.played.append(chunk)
+                        yield self._handed_out(chunk)
+                        continue
+                    held.append(chunk)
+                    seconds = sum(len(c) for c in held) / self.sample_rate
+                    if judged or seconds < FIRST_CHECK_S:
+                        continue
+                    verdict = self._judge(held, spoken, take.raw, complete=False)
+                    if not verdict.ok and self._may_retry(opening, last):
+                        take.verdict, take.rejected = verdict, True
+                        return take
+                    if not opening or verdict.stats.known or seconds >= FIRST_CHECK_MAX_S:
+                        judged = True
+                    if opening and judged:
+                        take.verdict = verdict
+                        yield from self._release(held, take)
                 elif kind == "done":
                     self.last_first_ms = event.get("first_ms")
                     self.last_total_ms = int(event.get("total_ms", 0))
-                    finished = True
+                    take.finished = True
                     self._last_done = time.monotonic()
-                    if self.monitor is not None and said and not event.get("cancelled"):
-                        self.monitor.check(text, np.concatenate(said), self.sample_rate)
-                    return
+                    if event.get("cancelled"):  # "basta": nothing more of it is played
+                        take.cancelled = True
+                        return take
+                    take.raw = _raw(event) or take.raw
+                    whole = held if not take.released else take.played
+                    if whole and self.judge is not None:
+                        take.verdict = self._judge(whole, spoken, take.raw, complete=True)
+                        bad = not take.released and not take.verdict.ok
+                        if bad and self._may_retry(opening, last):
+                            take.rejected = True
+                            return take
+                    yield from self._release(held, take)
+                    return take
                 elif kind == "error":
                     raise WorkerError(event.get("message", "errore"))
         finally:
-            if not finished:
-                # Abandoned half way (barge-in, error): stop generating. Only this sentence:
-                # an abandoned stream may be closed late, after the next reply has started
-                # (JenJo 25/10: "che ore sono?" after a takeover was never heard).
+            if not take.finished:
+                # Abandoned half way (barge-in, error, a bad take): stop generating. Only this
+                # sentence: an abandoned stream may be closed late, after the next reply has
+                # started (JenJo 25/10: "che ore sono?" after a takeover was never heard).
                 self.cancel(upto=rid)
+
+    def generate_take(
+        self, text: str, seed: int, rvc: str | None = None
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        """One whole take of `text` with this seed, not judged, and its level before the
+        level guard (scripts/jack_takes.py picks the best of several). Raises WorkerError."""
+        rvc = rvc or ("blocks" if self.rvc == "auto" else self.rvc)
+        self.sample_rate = SAMPLE_RATE
+        take = self._take(self._spoken(text), rvc, seed, opening=True, last=True)
+        chunks: list[np.ndarray] = []
+        while True:
+            try:
+                chunks.append(next(take))
+            except StopIteration as done:
+                raw = done.value.raw
+                break
+        audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)
+        return audio, raw
+
+    def _judge(
+        self, chunks: list[np.ndarray], spoken: str, raw: dict[str, float], complete: bool
+    ) -> TakeVerdict:
+        assert self.judge is not None
+        audio = np.concatenate(chunks)
+        return self.judge.judge(audio, self.sample_rate, spoken, raw, complete)
+
+    def _may_retry(self, opening: bool, last: bool) -> bool:
+        """Another take can still be tried without a pause the listener would hear."""
+        if last:
+            return False
+        return opening or self._horizon - time.monotonic() > RETRY_MIN_S
+
+    def _release(self, held: list[np.ndarray], take: _Take) -> Iterator[np.ndarray]:
+        while held:
+            chunk = held.pop(0)
+            take.played.append(chunk)
+            yield self._handed_out(chunk)
 
     def _rvc_for_next(self) -> str:
         if self.rvc != "auto":

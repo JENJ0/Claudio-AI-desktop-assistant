@@ -2,25 +2,31 @@
 or on the whole sentence.
 
 Run by claudio.tts.jack with the worker venv's interpreter (torch, faster-qwen3-tts and
-Applio live there, not in Claudio's venv), so this file imports nothing from claudio:
+Applio live there, not in Claudio's venv), so this file imports nothing from claudio but
+claudio.tts.loudness, which needs only numpy and scipy:
 
   worker\\env\\Scripts\\python.exe jack_worker.py --checkpoint ... --rvc-model ... --applio ...
 
 Protocol (the real stdout carries it, nothing else; library prints go to stderr).
 Requests, one JSON line each on stdin:
-  {"op": "speak", "id": 7, "text": "...", "language": "Italian", "rvc": "blocks"}
+  {"op": "speak", "id": 7, "text": "...", "language": "Italian", "rvc": "blocks", "seed": 8}
                              rvc "blocks": audio as it is generated (first audio ~0.3 s);
                              "sentence": the whole sentence through RVC at once, clearer
                              (WER 6% instead of 10%) but the audio waits for the sentence;
                              "none": Qwen3 alone, no RVC: right stress and melody (JenJo's
-                             A/B, 28/10); --speed is applied by a pitch-keeping time stretch
+                             A/B, 28/10); --speed is applied by a pitch-keeping time stretch.
+                             "seed" (optional, else --seed): the draw of this take
   {"op": "interrupt", "upto": 7}  stops every speak up to id 7, even one in progress
                              (no "upto": every speak received so far)
   {"op": "quit"}
 Replies, one JSON line each on stdout:
   {"event": "ready", "sample_rate": 24000, "load_s": 14.2, "vram_mb": 2900}
-  {"event": "audio", "id": 7, "bytes": 24000}   followed by that many bytes of int16 PCM
-  {"event": "done", "id": 7, "cancelled": false, "first_ms": 310, "total_ms": 900}
+  {"event": "audio", "id": 7, "bytes": 24000, "raw_lufs": -21.3, ...}   followed by that
+                             many bytes of int16 PCM; with --lufs, the take so far as it
+                             came out of the model (raw_lufs, raw_peak_dbfs, raw_clipped) and
+                             the level guard's gain_db
+  {"event": "done", "id": 7, "cancelled": false, "first_ms": 310, "total_ms": 900, "seed": 8,
+   "raw_lufs": ...}
   {"event": "error", "id": 7, "message": "..."}
 Personal use only: the model is trained on Handsome Jack's Italian dub."""
 
@@ -42,6 +48,13 @@ from typing import Any
 
 PROTOCOL_OUT = sys.stdout.buffer
 sys.stdout = sys.stderr  # whatever a library prints must not corrupt the protocol
+
+# Run as a script, this folder is first on sys.path, not src/: claudio.tts.loudness (numpy and
+# scipy only, no Claudio dependency) is reached through src/.
+_SRC = str(Path(__file__).resolve().parents[2])
+if _SRC not in sys.path:
+    sys.path.append(_SRC)
+from claudio.tts.loudness import LevelGuard  # noqa: E402
 
 QWEN_RATE = 24_000
 RVC_RATE = 48_000  # Applio's realtime rate
@@ -78,6 +91,15 @@ def emit(header: dict[str, Any], payload: bytes = b"") -> None:
     with _write_lock:
         PROTOCOL_OUT.write(json.dumps(header).encode() + b"\n" + payload)
         PROTOCOL_OUT.flush()
+
+
+def to_pcm(audio: Any) -> bytes:
+    """-1..1 floats to int16 PCM; anything past full scale is cut (the level guard's limiter
+    keeps the voice under it, this only catches what is left when it is off)."""
+    import numpy as np
+
+    pcm = np.clip(np.asarray(audio, dtype=np.float32).reshape(-1), -1.0, 1.0)
+    return (pcm * 32767).astype("<i2").tobytes()
 
 
 def speed_plan(speed: float, rate_ratio: float = RVC_RATE / QWEN_RATE) -> tuple[int, int, int]:
@@ -230,7 +252,8 @@ class TimeStretch:
 
 
 class RvcNone:
-    """Qwen3's voice as it comes out, no RVC; slower or faster with a pitch-keeping stretch."""
+    """Qwen3's voice as it comes out, no RVC; slower or faster with a pitch-keeping stretch.
+    Like the converters below: float audio at OUT_RATE in, float audio out (not clipped)."""
 
     def __init__(self, speed: float = 1.0) -> None:
         self.stretch = TimeStretch(speed) if abs(speed - 1.0) > 1e-3 else None
@@ -240,21 +263,21 @@ class RvcNone:
             self.stretch.begin()
 
     @staticmethod
-    def _pcm(audio: Any) -> list[bytes]:
+    def _audio(audio: Any) -> list[Any]:
         import numpy as np
 
-        pcm = np.clip(np.asarray(audio, dtype=np.float32).reshape(-1), -1.0, 1.0)
-        return [(pcm * 32767).astype("<i2").tobytes()] if len(pcm) else []
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+        return [audio] if len(audio) else []
 
-    def feed(self, chunk: Any) -> list[bytes]:
-        return self._pcm(self.stretch.feed(chunk) if self.stretch else chunk)
+    def feed(self, chunk: Any) -> list[Any]:
+        return self._audio(self.stretch.feed(chunk) if self.stretch else chunk)
 
-    def flush(self) -> list[bytes]:
-        return self._pcm(self.stretch.flush()) if self.stretch else []
+    def flush(self) -> list[Any]:
+        return self._audio(self.stretch.flush()) if self.stretch else []
 
 
 class RvcStream:
-    """Applio's realtime VoiceChanger fed with Qwen3 chunks; yields converted int16 PCM."""
+    """Applio's realtime VoiceChanger fed with Qwen3 chunks; yields the converted audio."""
 
     def __init__(
         self, model_path: Path, applio: Path, speed: float = 1.0, pitch_fix: bool = False
@@ -300,8 +323,8 @@ class RvcStream:
         self.fed = 0  # 48 kHz samples received
         self.emitted = 0
 
-    def _convert(self, audio: Any, limit: int | None = None) -> bytes:
-        """One 48 kHz block through RVC; int16 PCM at 24 kHz. `limit` cuts the block short."""
+    def _convert(self, audio: Any, limit: int | None = None) -> Any:
+        """One 48 kHz block through RVC; audio at 24 kHz. `limit` cuts the block short."""
         import torch
         from scipy.signal import sosfilt
 
@@ -312,10 +335,9 @@ class RvcStream:
         smooth, self.zi = sosfilt(self.sos, out, zi=self.zi)
         first = -self.emitted % 2  # keep the even samples of the whole stream
         self.emitted += len(out)
-        pcm = np.clip(smooth[first::2], -1.0, 1.0)
-        return (pcm * 32767).astype("<i2").tobytes()
+        return np.asarray(smooth[first::2], dtype=np.float32)
 
-    def feed(self, chunk: Any) -> list[bytes]:
+    def feed(self, chunk: Any) -> list[Any]:
         """One Qwen3 chunk (float32, 24 kHz) in; zero or more converted blocks out."""
         from scipy.signal import resample_poly
 
@@ -333,7 +355,7 @@ class RvcStream:
             self.pending = self.pending[self.block :]
         return blocks
 
-    def flush(self) -> list[bytes]:
+    def flush(self) -> list[Any]:
         """Convert what is left (zero-padded), then zeros until the speech has ended."""
         np = self.np
         end = self.fed + int(TAIL_S * RVC_RATE)
@@ -398,17 +420,17 @@ class RvcSentence:
     def begin(self) -> None:
         self.parts: list[Any] = []
 
-    def feed(self, chunk: Any) -> list[bytes]:
+    def feed(self, chunk: Any) -> list[Any]:
         self.parts.append(self.np.asarray(chunk, dtype=self.np.float32).reshape(-1))
         return []
 
-    def flush(self) -> list[bytes]:
+    def flush(self) -> list[Any]:
         if not self.parts:
             return []
         audio, self.parts = self.np.concatenate(self.parts), []
         return [self._convert(audio)]
 
-    def _convert(self, audio: Any) -> bytes:
+    def _convert(self, audio: Any) -> Any:
         from math import gcd
 
         from scipy.signal import resample_poly
@@ -436,8 +458,8 @@ class RvcSentence:
         )
         rate = int(self.vc.tgt_sr)
         g = gcd(OUT_RATE, rate)
-        pcm = resample_poly(np.asarray(out, dtype=np.float32), OUT_RATE // g, rate // g)
-        return (np.clip(pcm, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+        out = resample_poly(np.asarray(out, dtype=np.float32), OUT_RATE // g, rate // g)
+        return np.asarray(out, dtype=np.float32)
 
 
 class Worker:
@@ -451,6 +473,9 @@ class Worker:
         self.temperature = args.temperature
         self.seed = args.seed
         self.top_p = args.top_p
+        # Every take at one loudness, peaks limited instead of clipped (0 = off): 30/10 the
+        # takes went from -28 to -9.5 LUFS, jumps of up to +15.7 dB within a reply.
+        self.guard = LevelGuard(OUT_RATE, target=args.lufs) if args.lufs else None
         # Both converters stay loaded (~0.3 GB more): each sentence says which one it wants.
         self.rvc: dict[str, RvcStream | RvcSentence | RvcNone] = {
             "blocks": RvcStream(args.rvc_model, args.applio, args.speed, args.pitch_fix),
@@ -464,9 +489,13 @@ class Worker:
         self.cancelled_upto = -1
         self.latest_id = -1
 
-    def generate(self, text: str, language: str, max_tokens: int = SPEAK_TOKENS) -> Any:
-        if self.seed >= 0:  # same draws for every piece: one timbre across replies
-            self.torch.manual_seed(self.seed)
+    def generate(
+        self, text: str, language: str, max_tokens: int = SPEAK_TOKENS, seed: int | None = None
+    ) -> Any:
+        """`seed`: the draw of this take (Claudio picks it per text); None = --seed."""
+        seed = self.seed if seed is None else seed
+        if seed >= 0:  # the same seed and text give the same take, bit for bit
+            self.torch.manual_seed(seed)
         return self.tts.generate_custom_voice_streaming(
             text=text,
             speaker="jack",
@@ -500,24 +529,42 @@ class Worker:
         self.requests.put(None)  # parent gone or told us to stop
 
     def speak(self, request: dict[str, Any]) -> None:
+        import numpy as np
+
         rid = int(request["id"])
         t0 = time.perf_counter()
         first_ms: int | None = None
+        guard = self.guard
+        report: dict[str, Any] = {}
 
-        def send(blocks: list[bytes]) -> None:
+        def send(blocks: list[Any]) -> None:
             nonlocal first_ms
-            data = b"".join(blocks)
-            if data:
-                if first_ms is None:
-                    first_ms = round(1000 * (time.perf_counter() - t0))
-                emit({"event": "audio", "id": rid, "bytes": len(data)}, data)
+            if not blocks:
+                return
+            audio = np.concatenate(blocks)
+            if not len(audio):
+                return
+            if guard is not None:
+                audio = guard.process(audio)
+                report.update(guard.report())
+            data = to_pcm(audio)
+            if first_ms is None:
+                first_ms = round(1000 * (time.perf_counter() - t0))
+            emit({"event": "audio", "id": rid, "bytes": len(data), **report}, data)
 
         cancelled = rid <= self.cancelled_upto
         rvc = self.rvc.get(request.get("rvc", "blocks"), self.rvc["blocks"])
         rvc.begin()
+        if guard is not None:
+            guard.begin()
+        seed = request.get("seed")
+        seed = None if seed is None else int(seed)
         if not cancelled:
             for chunk, _rate, _timing in self.generate(
-                request["text"], request.get("language", "Auto"), frame_budget(request["text"])
+                request["text"],
+                request.get("language", "Auto"),
+                frame_budget(request["text"]),
+                seed,
             ):
                 send(rvc.feed(chunk))
                 if rid <= self.cancelled_upto:
@@ -532,6 +579,8 @@ class Worker:
                 "cancelled": cancelled,
                 "first_ms": first_ms,
                 "total_ms": round(1000 * (time.perf_counter() - t0)),
+                "seed": self.seed if seed is None else seed,
+                **report,
             }
         )
 
@@ -573,6 +622,12 @@ def main() -> None:
         "--pitch-fix",
         action="store_true",
         help="RVC pitch as in training (blocks) and cleaned of octave errors (sentence)",
+    )
+    parser.add_argument(
+        "--lufs",
+        type=float,
+        default=0.0,
+        help="level guard: every take brought to this loudness, peaks limited (0 = off)",
     )
     args = parser.parse_args()
     for path in (args.checkpoint, args.rvc_model, args.applio):
