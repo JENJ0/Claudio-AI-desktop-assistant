@@ -125,7 +125,14 @@ def format_row(row: dict[str, Any]) -> str:
             f"{row.get('model')} {row.get('input_tokens')} in / {row.get('output_tokens')} out"
             f" = {row['cost']:.5f} $"
         )
-    for key in ("claude_error", "barge_in", "wake_check", "closed_list_from", "retried_from"):
+    for key in (
+        "claude_error",
+        "barge_in",
+        "wake_check",
+        "closed_list_from",
+        "retried_from",
+        "recovered_from",
+    ):
         if row.get(key):
             details.append(f"{key}: {row[key]}")
     if row.get("audio_file"):

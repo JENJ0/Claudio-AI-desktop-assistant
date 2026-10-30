@@ -239,7 +239,7 @@ class LocalResponder:
         """Claude guessed `text` without being sure: Claudio asks first. The next phrase is
         the answer (awaiting): a yes answers `text` with no second "Confermi?" for a level 2
         command; "no, abbassa il volume" is a new request."""
-        question = in_language(DID_YOU_SAY, language).format(text=text.strip().rstrip(".?!"))
+        question = in_language(DID_YOU_SAY, language).format(text=quoted(text))
         self._proposal = Proposal(text, language, question)
         self.language = language
         self.last_route = {"route": "guess", "guess": text, "language": language}
@@ -448,6 +448,13 @@ class LocalResponder:
             return
         if reply:
             yield reply
+
+
+def quoted(text: str) -> str:
+    """A request repeated inside Claudio's question: no final stop, first letter in lower
+    case ("Spegniti." -> "spegniti") unless the word is an acronym ("PC")."""
+    text = text.strip().rstrip(".?!")
+    return text[:1].lower() + text[1:] if text[1:2].islower() else text
 
 
 def _is_system(match: Match | None) -> bool:
