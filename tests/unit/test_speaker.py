@@ -223,3 +223,21 @@ async def test_grouped_reply_is_said_in_pieces_up_to_the_limit() -> None:
     await speaker.speak(stream("Uno. Due", ". Tre lunghissimo davvero. Quattro."))
     assert [t for t, _ in synth.calls] == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]
     assert speaker.played == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]
+
+
+async def test_only_a_change_of_volume_is_logged(caplog) -> None:
+    """Nobody could tell when ducking fired. Back to full volume is logged when the reply
+    was lowered, not at every duck(None): every reply starts with one."""
+    player = FakePlayer()
+    speaker = StreamingSpeaker(FakeSynth(), player)
+    with caplog.at_level("INFO", logger="claudio.tts.speaker"):
+        await speaker.speak(stream("Uno."))  # already at full volume: nothing to say
+        speaker.duck(0.3)
+        speaker.duck(0.3)  # a second voice while it is lowered
+        assert player.gain == 0.3
+        speaker.duck(None)  # "not for me"
+        speaker.duck(None)
+        speaker.duck(0.3)  # the reply ends while a voice is being checked...
+        await speaker.speak(stream("Due."))  # ...and the next one starts at full volume
+    back = [r for r in caplog.records if r.getMessage() == "Risposta di nuovo a volume pieno"]
+    assert len(back) == 2 and player.gain == 1.0

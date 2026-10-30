@@ -256,6 +256,8 @@ EN: dict[str, str] = {
     "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
         "Voice too quiet while speaking (%.0f dBFS): ignored"
     ),
+    "Abbasso la risposta: voce a %.0f dBFS": "Lowering the reply: voice at %.0f dBFS",
+    "Risposta di nuovo a volume pieno": "Reply back to full volume",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"
