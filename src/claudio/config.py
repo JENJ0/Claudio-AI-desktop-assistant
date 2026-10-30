@@ -218,8 +218,19 @@ class TtsSettings(BaseModel):
     # its timbre past that (JenJo 29/10), so a longer reply goes out in several pieces.
     # 0 = sentence by sentence.
     jack_group_chars: int = Field(220, ge=0, le=2000)
+    # A piece takes only the text already written by Claude: the first one leaves once it
+    # has this many characters (or the reply is over), the rest of the reply follows in one
+    # piece while it plays (JenJo 29/10: M1 up to 3.4 s waiting for 220 characters).
+    jack_group_first_chars: int = Field(40, ge=0, le=2000)
     # Qwen3 sampling: lower is steadier (fewer odd stresses), higher is livelier.
     jack_temperature: float = Field(0.7, ge=0.1, le=1.5)  # JenJo's pick by ear, 24/10
+    # Every generation draws its own take of Jack, so the timbre changed from one reply to
+    # the next (JenJo 29/10). The same seed before each piece gives the same draws: the
+    # voice stays one. -1 = a new draw each time (the old behaviour).
+    jack_seed: int = Field(7, ge=-1)
+    # Nucleus sampling on Qwen3's codes: the rare codes cut off are where the odd, robotic
+    # or too high takes come from. 1.0 = off.
+    jack_top_p: float = Field(0.9, gt=0, le=1.0)
     # How RVC turns Qwen3's voice into Jack's: "blocks" of 250 ms as it is generated (first
     # audio ~0.3 s, more mangled words), "sentence" whole (clearer, the audio waits for the
     # sentence), "auto" blocks for a reply's first sentence and whole for the next ones,
@@ -486,6 +497,9 @@ class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
     keep_audio: int = Field(50, ge=1)
+    # Every piece Jack says, as a WAV in the session folder (jack/), with its pitch in the
+    # log: the robotic or too high takes are flagged there (local only).
+    save_voice: bool = True
     keep_sessions: int = Field(30, ge=1)  # logs/sessions/<date_time>/: console + conversation
     # Privacy: the chat (data/claudio.db), logs/sessions/ and logs/audio/ forget what is older
     # than this many days (at startup).

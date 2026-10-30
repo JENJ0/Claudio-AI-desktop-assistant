@@ -449,6 +449,8 @@ class Worker:
         t0 = time.perf_counter()
         self.tts = FasterQwen3TTS.from_pretrained(str(args.checkpoint))
         self.temperature = args.temperature
+        self.seed = args.seed
+        self.top_p = args.top_p
         # Both converters stay loaded (~0.3 GB more): each sentence says which one it wants.
         self.rvc: dict[str, RvcStream | RvcSentence | RvcNone] = {
             "blocks": RvcStream(args.rvc_model, args.applio, args.speed, args.pitch_fix),
@@ -463,6 +465,8 @@ class Worker:
         self.latest_id = -1
 
     def generate(self, text: str, language: str, max_tokens: int = SPEAK_TOKENS) -> Any:
+        if self.seed >= 0:  # same draws for every piece: one timbre across replies
+            self.torch.manual_seed(self.seed)
         return self.tts.generate_custom_voice_streaming(
             text=text,
             speaker="jack",
@@ -470,6 +474,7 @@ class Worker:
             chunk_size=8,
             max_new_tokens=max_tokens,
             temperature=self.temperature,
+            top_p=self.top_p,
         )
 
     def vram_mb(self) -> int:
@@ -557,6 +562,12 @@ def main() -> None:
     parser.add_argument("--speed", type=float, default=1.0, help="pace: < 1 slower")
     parser.add_argument(
         "--temperature", type=float, default=0.9, help="Qwen3 sampling: lower = steadier"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=-1, help="seed set before every piece (-1 = random)"
+    )
+    parser.add_argument(
+        "--top-p", type=float, default=1.0, help="Qwen3 nucleus sampling (1.0 = off)"
     )
     parser.add_argument(
         "--pitch-fix",

@@ -5,6 +5,8 @@ split into sentences as Claudio does, then Whisper writes down what it hears (WE
   uv run python scripts/jack_variants.py --only A C      # some of them
   uv run python scripts/jack_variants.py --words         # spellings of hard words (~1 min)
   uv run python scripts/jack_variants.py --from-log latest   # Claudio's real replies, C/F/T/Q
+  uv run python scripts/jack_variants.py --only R K      # timbre: new draw each time vs fixed seed
+  uv run python scripts/jack_variants.py --seeds 1 7 42 99   # which seed is the best Jack (~3 min)
 
 Against the "robotic at times" tone: F (RVC pitch cleanup), T (F + livelier Qwen3) and Q
 (Qwen3 alone, no RVC: if Q is robotic where C is, the cause is Qwen3, not RVC). The report
@@ -35,6 +37,7 @@ from claudio.tts.jack import JackSynth  # noqa: E402
 from claudio.tts.number_words import digits_to_words_it  # noqa: E402
 from claudio.tts.sentence_splitter import SentenceSplitter  # noqa: E402
 from claudio.tts.spoken_text import to_spoken_it  # noqa: E402
+from claudio.tts.voice_check import pitch_stats, suspicious  # noqa: E402
 
 # Replies like Haiku's with the Jack personality: commas, a question, numbers, an acronym.
 REPLIES = [
@@ -98,6 +101,16 @@ VARIANTS: dict[str, tuple[str, dict[str, Any], int | None]] = {
         {"jack_temperature": 0.7, "jack_rvc": "none"},
         None,
     ),
+    "R": (
+        "fino al 29/10: Qwen3 da solo, estrazione nuova a ogni frase (timbro che cambia)",
+        {"jack_rvc": "none", "jack_seed": -1, "jack_top_p": 1.0},
+        None,
+    ),
+    "K": (
+        "Qwen3 da solo, seme fisso 7 e top_p 0.9 (timbro unico, IT-0)",
+        {"jack_rvc": "none", "jack_seed": 7, "jack_top_p": 0.9},
+        None,
+    ),
     "E": (
         "C senza taglio alla prima virgola",
         {"jack_temperature": 0.7, "jack_rvc": "auto"},
@@ -133,71 +146,6 @@ def wer(reference: str, heard: str) -> float:
         for j, h in enumerate(hyp, 1):
             prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (r != h))
     return row[-1] / max(len(ref), 1)
-
-
-PITCH_RATE = 16_000
-PITCH_FRAME = 640  # 40 ms
-PITCH_HOP = 160  # 10 ms
-PITCH_MIN_HZ, PITCH_MAX_HZ = 60.0, 400.0
-YIN_THRESHOLD = 0.15
-
-
-def pitch_track(audio: np.ndarray, rate: int) -> np.ndarray:
-    """f0 in Hz every 10 ms (0 = unvoiced), a plain YIN: enough to spot octave jumps and
-    flicker, not a studio pitch tracker."""
-    from scipy.signal import resample_poly
-
-    x = audio.astype(np.float64) / 32768
-    if rate != PITCH_RATE:
-        x = resample_poly(x, PITCH_RATE, rate)
-    lag_min = int(PITCH_RATE / PITCH_MAX_HZ)
-    lag_max = int(PITCH_RATE / PITCH_MIN_HZ)
-    loud = 10 ** (-40 / 20)  # quieter frames are pauses
-    f0 = []
-    for start in range(0, len(x) - PITCH_FRAME - lag_max, PITCH_HOP):
-        frame = x[start : start + PITCH_FRAME + lag_max]
-        if np.sqrt(np.mean(frame[:PITCH_FRAME] ** 2)) < loud:
-            f0.append(0.0)
-            continue
-        ref = frame[:PITCH_FRAME]
-        shifted = np.lib.stride_tricks.sliding_window_view(frame, PITCH_FRAME)[: lag_max + 1]
-        diff = np.sum((shifted - ref) ** 2, axis=1)
-        cum = np.cumsum(diff[1:])
-        cmnd = np.ones_like(diff)
-        cmnd[1:] = diff[1:] * np.arange(1, len(diff)) / np.maximum(cum, 1e-12)
-        below = np.flatnonzero(cmnd[lag_min:] < YIN_THRESHOLD)
-        if not len(below):
-            f0.append(0.0)
-            continue
-        lag = lag_min + below[0]
-        while lag + 1 < len(cmnd) and cmnd[lag + 1] < cmnd[lag]:
-            lag += 1  # bottom of that dip
-        f0.append(PITCH_RATE / lag)
-    return np.array(f0)
-
-
-def pitch_stats(audio: np.ndarray, rate: int) -> dict[str, float]:
-    """`jumps`: octave-sized leaps between neighbouring voiced frames (robotic warble);
-    `flicker`: voiced runs under 30 ms (buzz); `range_st`: spread of the melody in semitones
-    (low = flat, monotone)."""
-    f0 = pitch_track(audio, rate)
-    voiced = f0 > 0
-    if voiced.sum() < 5:
-        return {"jumps": 0, "flicker": 0, "range_st": 0.0}
-    semis = 12 * np.log2(np.where(voiced, f0, 1.0) / 100)
-    both = voiced[1:] & voiced[:-1]
-    jumps = int(np.sum(both & (np.abs(np.diff(semis)) > 9)))
-    edges = np.diff(np.concatenate([[0], voiced.astype(int), [0]]))
-    runs = np.flatnonzero(edges == -1) - np.flatnonzero(edges == 1)
-    return {
-        "jumps": jumps,
-        "flicker": int(np.sum(runs < 3)),
-        "range_st": float(np.std(semis[voiced])),
-    }
-
-
-def suspicious(row: dict) -> bool:
-    return row["jumps"] >= 2 or row["flicker"] >= 4 or 0 < row["range_st"] < 1.5
 
 
 def speak_reply(synth: JackSynth, reply: str, first_clause: int) -> tuple[np.ndarray, dict]:
@@ -440,6 +388,12 @@ def main() -> None:
         type=Path,
         help='speak Claudio\'s replies of a session (folder, conversazione.md or "latest")',
     )
+    parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        help="variant K with each of these seeds: pick the best Jack, put it in jack_seed",
+    )
     args = parser.parse_args()
     settings = load_settings()
     out = ROOT / "logs" / "jack-variants"
@@ -450,6 +404,16 @@ def main() -> None:
         return
     replies = log_replies(args.from_log) if args.from_log else None
     names = args.only if (args.only != sorted(VARIANTS) or not replies) else ["C", "F", "T", "Q"]
+    if args.seeds:
+        names = []
+        for seed in args.seeds:
+            name = f"seme{seed}"
+            VARIANTS[name] = (
+                f"K con il seme {seed}",
+                {"jack_rvc": "none", "jack_seed": seed, "jack_top_p": 0.9},
+                None,
+            )
+            names.append(name)
     results = {name: run_variant(settings, name, out, replies) for name in names}
     if Silent.used:
         print(f"ATTENZIONE: {Silent.used} frasi non dette da Jack (worker caduto)")
