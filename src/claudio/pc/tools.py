@@ -384,9 +384,11 @@ class PcTools:
     def definitions(self) -> list[dict[str, Any]]:
         return self._definitions
 
-    def begin_request(self) -> None:
-        """A new request from JenJo (not the answer to "Confermi?"): nothing read yet."""
-        self._outside_text = False
+    def begin_request(self, outside_text: bool = False) -> None:
+        """A new request from JenJo (not the answer to "Confermi?"). `outside_text`: the
+        conversation it continues already read a window, the screen, files or a command
+        (Claude's earlier words may repeat that text)."""
+        self._outside_text = outside_text
 
     def refusal(self, call: ToolCall, calls: Sequence[ToolCall]) -> str | None:
         """Why `call` is refused before JenJo is even asked; None when it may go on. A command
@@ -397,6 +399,8 @@ class PcTools:
             if first.id != call.id:
                 return "only one forget per confirmation: put all the numbers in it"
             return None
+        if call.name == memory_tools.REMEMBER and self.memory is not None:
+            return self.memory.refusal(call.name, call.args, self._outside_text)
         if call.name != "run_command":
             return None
         if not self.settings.commands:

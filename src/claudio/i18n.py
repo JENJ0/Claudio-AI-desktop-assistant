@@ -463,6 +463,12 @@ EN: dict[str, str] = {
     "Ricordo salvato (%s, %s): %s": "Memory saved (%s, %s): %s",
     "Ricordi dimenticati: %s": "Memories forgotten: %s",
     "Memoria non disponibile": "Memory unavailable",
+    "Il file della memoria non c'è più: riparto senza ricordi": (
+        "The memory file is gone: starting again with no memories"
+    ),
+    "Ricordo dimenticato dopo la proposta di Sonnet: proposta annullata": (
+        "A memory was forgotten after the Sonnet offer: offer dropped"
+    ),
     "Memoria svuotata: %d ricordi dimenticati": "Memory wiped: %d memories forgotten",
 }
 

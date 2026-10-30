@@ -753,11 +753,11 @@ class Assistant:
         """Before the reply: how sure Whisper was. Only a request for Claude that Whisper
         doubted gets the note and the alternatives ("apri la cartella desi" -> also heard
         "apri la cartella Tesi"); a local command or a yes/no never pays the extra pass.
-        Also whether it was said to Claudio: in the conversation window or as an answer,
-        without the name, it may be the TV (the memory then asks before keeping a rule)."""
+        Also whether it was said to Claudio: in the conversation window, as an answer or over
+        the reply, without the name, it may be the TV (the memory then asks first)."""
         if self.on_heard is None:
             return
-        addressed = inter.info.get("wake_word") not in (CONVERSATION, FOLLOW_UP) or (
+        addressed = inter.info.get("wake_word") not in (CONVERSATION, FOLLOW_UP, BARGE_IN) or (
             heard_wake_word(text)
         )
         hearing = Hearing(addressed=addressed)
@@ -955,7 +955,9 @@ class Assistant:
             log.info("La mia voce nel microfono, la ignoro: %r", text)
             return False
         named = heard_wake_word(text)
-        command = self.responder.understands(text)
+        # A memory request over the reply needs the name: the TV's "da ora in poi..." is no
+        # command.
+        command = self.responder.understands(text, memory=False)
         if not (content_words(text) >= 2 or named or command):
             return False
         if self.barge_in is not None and self.barge_in.needs_name and not (named or command):

@@ -65,6 +65,8 @@ if TYPE_CHECKING:
 
 # Tools that may take a while (pc/tools.py SLOW; repeated here: no import of the PC package).
 SLOW_TOOLS = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
+# Tools that bring outside text in (pc/tools.py OUTSIDE_TEXT, repeated for the same reason).
+OUTSIDE_TEXT_TOOLS = frozenset({*SLOW_TOOLS, "list_windows"})
 
 log = logging.getLogger(__name__)
 
@@ -226,6 +228,11 @@ class ClaudeBrain:
                 yield chunk
             return
         offer = self._take_offer()
+        if offer is not None and self.memory is not None and self.memory.forget_pending:
+            # A memory was forgotten after "Lo uso?": the question kept the old memories
+            # (and a history that may quote them), so it is not sent again.
+            log.info("Ricordo dimenticato dopo la proposta di Sonnet: proposta annullata")
+            offer = None
         if offer is not None:
             answer = parse_answer(text)
             if answer is not Answer.UNCLEAR:
@@ -241,9 +248,11 @@ class ClaudeBrain:
                     async for chunk in self._haiku(messages, language, start, tools=False):
                         yield chunk
                 return
-        if self.tools is not None:
-            self.tools.begin_request()  # nothing read from windows or files in this one yet
         messages = self._messages(text, language)
+        if self.tools is not None:
+            # Text read from a window or a file earlier in this conversation may still be in
+            # Claude's own words: a memory it saves then needs JenJo's yes too.
+            self.tools.begin_request(self._read_outside())
         if self.wants_smart(text, language):  # JenJo asked for it: that is the approval
             log.info("Richiesta di ragionare: chiedo direttamente a Sonnet")
             self.last_call["escalated"] = "asked"
@@ -501,6 +510,13 @@ class ClaudeBrain:
             raise
         self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
 
+    def _read_outside(self) -> bool:
+        """The conversation sent with the next request ran a tool that read outside text."""
+        if not self.settings.history_turns:
+            return False
+        notes = (a.split(ACTIONS_NOTE, 1)[1] for _, a in self._history if ACTIONS_NOTE in a)
+        return any(f"{name} " in note for note in notes for name in OUTSIDE_TEXT_TOOLS)
+
     def _remember(self, turn: _Turn) -> None:
         """Only the words go into the history: tool calls and window text stay out of it
         (they cost tokens at every later turn, and the history is plain text). A short note of
@@ -540,7 +556,9 @@ class ClaudeBrain:
             # One snapshot for every round of this request: a memory Claude saves with its
             # tool shows from the next request, so the rounds read each other's cache.
             self._memory_block = self.memory.block()
-            recalled = self.memory.relevant(text, (q for q, _ in self._history))
+            # Facts already in the history are not sent again, if the history is sent.
+            sent = (q for q, _ in self._history) if self.settings.history_turns else ()
+            recalled = self.memory.relevant(text, sent)
             if recalled:  # after the cached prefix, like the time: it changes nothing cached
                 tag = f"{tag} {recalled}"
         messages.append({"role": "user", "content": f"{tag} {text}"})

@@ -6,7 +6,7 @@ from tests.unit.test_app import FakeResponder, FakeStt, build, run_frames
 
 
 class Understanding(FakeResponder):
-    def understands(self, text: str, language: str = "it") -> bool:
+    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
         return "chrome" in text
 
 

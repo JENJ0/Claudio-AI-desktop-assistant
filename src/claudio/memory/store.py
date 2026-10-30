@@ -33,7 +33,9 @@ Kind = Literal["fact", "rule"]
 Source = Literal["jenjo", "claude"]  # who decided: JenJo (by voice or in the chat) or Claude
 Refusal = Literal["empty", "too_long", "sensitive", "full"]
 
-BUSY_S = 1.0  # a locked database (another program, a second Claudio): give up after this
+# A locked database (another program, a second Claudio): give up after this. SQLite's busy
+# handler sleeps longer than asked on Windows (about twice), and the voice waits meanwhile.
+BUSY_S = 0.25
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -53,16 +55,30 @@ _ALWAYS = re.compile(
     r"|di sicurezza|di accesso|pin|dell allarme|dell antifurto|del bancomat)"
     r"|security codes?|access codes?|pin codes?"
     r"|chiav[ei] (del |della |di )?(wifi|wi fi|rete)|(wifi|wi fi|network) (keys?|passwords?)"
-    r"|passwords? (del |della |di )?(wifi|wi fi|rete))\b"
+    r"|passwords? (del |della |di )?(wifi|wi fi|rete)"
+    r"|chiav[ei] (privat[ae]|segret[ae]|di accesso|d accesso|di sicurezza)|private keys?"
+    r"|secret keys?|credenziali|credentials|passaporto|passport|carta d identita"
+    r"|frase di recupero|parole di recupero|recovery phrase|seed words)\b"
 )
-# A word that names a secret, then within six words a value: digits, a word mixing letters
-# and digits, or "è" / "is" (the value follows). "Pago con la carta di credito" and "uso
-# Bitwarden per le password" say no value: kept.
+# A password, then within six words its value: digits, a word mixing letters and digits, or
+# "è" / "is" (the value follows). "Uso Bitwarden per le password" says no value: kept.
+_PASSWORD = re.compile(r"\b(passwords?|passcodes?)\b(?P<after>(?: \w+){1,6})")
+_PASSWORD_VALUE = re.compile(
+    r"\b(\d{3,}|(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{4,}|e|sono|is|are|era|was)\b"
+)
+# A code, a combination, a key or a card, then within six words a value in digits (or
+# letters mixed with digits). "Il codice di Claudio è su GitHub", "la mia carta di credito è
+# una Visa" have none: kept.
 _SECRET = re.compile(
-    r"\b(passwords?|codic[ei]|codes?|combinazion[ei]|carta di credito|carte di credito"
+    r"\b(codic[ei]|codes?|combinazion[ei]|chiav[ei]|carta di credito|carte di credito"
     r"|numero della carta|card numbers?|credit cards?)\b(?P<after>(?: \w+){1,6})"
 )
-_VALUE = re.compile(r"\b(\d{3,}|(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{4,}|e|sono|is|are|era|was)\b")
+_VALUE = re.compile(r"\b(\d{3,}|(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{4,})\b")
+# On the text as said: "la password di Netflix: gattonero" (the colon is the "è").
+_COLON = re.compile(
+    r"\b(password|passcode|pin|codice|codici|code|chiave|key|combinazione)\w*\b[^.:\n]{0,30}:\s*\S",
+    re.IGNORECASE,
+)
 _NOT_SECRET = re.compile(
     r"\b(codice postale|codice di avviamento postale|postal code|zip code|area code"
     r"|dress code|codice della strada|codice civile|codice penale)\b"
@@ -98,7 +114,9 @@ class MemoryRefused(ValueError):
 def sensitive(text: str) -> bool:
     """A password, a PIN, a code, a card, an IBAN...: never kept, never sent."""
     norm = _DIGIT_GAP.sub("", normalize(text, drop_fillers=False))
-    if _ALWAYS.search(norm) or _LONG_NUMBER.search(norm):
+    if _ALWAYS.search(norm) or _LONG_NUMBER.search(norm) or _COLON.search(text):
+        return True
+    if any(_PASSWORD_VALUE.search(m.group("after")) for m in _PASSWORD.finditer(norm)):
         return True
     plain = _NOT_SECRET.sub(" ", norm)
     return any(_VALUE.search(m.group("after")) for m in _SECRET.finditer(plain))
@@ -132,10 +150,22 @@ class MemoryStore:
         self.version = 0  # bumped by every change: the prompt is rebuilt only then
         self.removals = 0  # bumped by every forget: Claude's conversation starts over then
 
+    def refresh(self) -> None:
+        """The file was deleted while Claudio runs (JenJo emptying the memory by hand): the
+        memories are gone here too, so they are no longer sent to Claude and a new one never
+        takes the number of an old one. A stat per call: cheap enough for every request."""
+        if self._items and not self.path.exists():
+            log.warning("Il file della memoria non c'è più: riparto senza ricordi")
+            self._items, self._added = [], []
+            self.version += 1
+            self.removals += 1
+
     @contextlib.contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """The schema each time: a file deleted while Claudio runs comes back empty and
         working, instead of failing every save until a restart."""
+        if hasattr(self, "_items"):
+            self.refresh()
         db = sqlite3.connect(self.path, timeout=BUSY_S)
         try:
             db.execute("PRAGMA secure_delete = ON")  # a forgotten text is zeroed in the file
@@ -166,6 +196,7 @@ class MemoryStore:
             raise MemoryRefused("sensitive")
         key = normalize(text, drop_fillers=False)
         with self._lock:
+            self.refresh()
             for known in self._items:
                 if known.kind == kind and normalize(known.text, drop_fillers=False) == key:
                     return known, False

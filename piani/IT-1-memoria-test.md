@@ -41,10 +41,10 @@ Nel log: `route=memory`, nessuna riga `Claude haiku...` per queste frasi.
 | "Claudio, cosa ricordi?" | "Ricordo 3 cose. Le ultime: ..." (le regole lette con "da ora in poi") |
 | "Claudio, cosa ricordi di mia sorella?" | "Mi hai detto: mia sorella si chiama Anna." |
 | "Claudio, ricordati che mia sorella abita a Torino", poi "Claudio, dimentica mia sorella" | "Ne ricordo 2: ... Quale dimentico?" e resta in ascolto senza wake word |
-| "nessuna delle due" (entro 45 s) | "Va bene, non dimentico niente." (nessun ricordo perso) |
+| "nessuna delle due" (subito, senza il nome: Claudio è in ascolto) | "Va bene, non dimentico niente." (nessun ricordo perso) |
 | di nuovo "Claudio, dimentica mia sorella", poi "la prima" | "Dimenticato: ..." quella letta per prima |
-| "Claudio, ricordati che il treno parte alle 8", poi subito "Claudio, dimenticalo" | "Dimenticato: il treno parte alle 8." ("dimenticalo" vale solo per il ricordo di cui avete appena parlato, entro un minuto) |
-| "Claudio, dimentica l'ultimo ricordo" | dimentica l'ultimo salvato in questa sessione, anche dopo molto |
+| "Claudio, ricordati che il treno parte alle 8", poi subito "Claudio, dimenticalo" | "Dimenticato: il treno parte alle 8." ("dimenticalo" vale solo per il ricordo di cui avete appena parlato, entro un minuto, senza altre richieste in mezzo) |
+| "Claudio, dimentica l'ultimo ricordo" (dopo un po') | "Dimentico questo: ...?" sull'ultimo salvato in questa sessione; "sì" lo dimentica |
 | "Claudio, dimentica Anna" con salvato solo "mio padre ha 60 anni" | "Dimentico questo: mio padre ha 60 anni?" (chiede, perché "Anna" e "anni" non sono la stessa parola); rispondi "no" |
 | "Claudio, dimentica tutto" | "Cancello tutti i ricordi, per sempre. Per procedere dì: confermo." |
 | "sì" | "Non ho capito: non lo faccio." (serve proprio "confermo") |

@@ -66,32 +66,43 @@ class MemoryPrompt:
 
     def block(self) -> str:
         """The text after the system prompt; "" when there is nothing to remember."""
+        self.store.refresh()  # the file deleted by hand: nothing is sent any more
         if self._built != self.store.version:
             self._build()
         return self._block
 
+    @property
+    def forget_pending(self) -> bool:
+        """A memory was forgotten since the conversation last took note (forgotten())."""
+        self.store.refresh()
+        return self._removals != self.store.removals
+
     def forgotten(self) -> bool:
         """True once after a memory was forgotten: the conversation that may quote it starts
         over (its cache was to be written again anyway, the block changed)."""
-        seen, self._removals = self._removals, self.store.removals
-        return seen != self._removals
+        seen, self._removals = self.forget_pending, self.store.removals
+        return seen
 
     def relevant(self, request: str, conversation: Iterable[str] = ()) -> str:
         """The facts outside the block that share a word (not only a number) with `request`,
         closest first and at least half as close as the closest, as "[memory, data: ...]";
         "" when none, when they all fit in the block or when they are already in the
         `conversation` (the requests so far)."""
+        self.store.refresh()
         if self._built != self.store.version:
             self._build()
         if not self._outside or self.relevant_max <= 0:
             return ""
+        ranked = [s for s in rank(request, self._outside) if s.named]
+        if not ranked:
+            return ""
+        # Only the close ones, measured against the closest of all (also when that one is
+        # already in the conversation): a fact sharing one word ("chiama") with a request that
+        # another fact matches by three is noise that the history would carry.
         sent = recalled_ids(conversation)
-        found = [s for s in rank(request, self._outside) if s.named and s.memory.id not in sent]
+        found = [s for s in ranked if 2 * s.hits >= ranked[0].hits and s.memory.id not in sent]
         if not found:
             return ""
-        # Only the close ones: a fact sharing one word ("chiama") with a request that another
-        # fact matches by three is noise that the history would carry.
-        found = [s for s in found if 2 * s.hits >= found[0].hits]
         return TAG + "; ".join(line(s.memory) for s in found[: self.relevant_max]) + "]"
 
     def _build(self) -> None:
