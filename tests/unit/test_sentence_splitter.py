@@ -166,12 +166,12 @@ async def test_group_stream_first_piece_leaves_when_claude_pauses_for_a_tool() -
 
     # 30/10 14:07: "Ci guardo, socio." then three tool calls; the next text 2.1 s later.
     pieces = group_stream(
-        _timed((0, "Ci guardo, socio."), (0.5, "Trovata sul desktop, la apro.")),
+        _timed((0, "Ci guardo, socio."), (1.0, "Trovata sul desktop, la apro.")),
         220,
         first_chars=40,
-        pause_s=0.05,
+        pause_s=0.1,
     )
-    first = await asyncio.wait_for(pieces.__anext__(), 0.2)  # not after the tools
+    first = await asyncio.wait_for(pieces.__anext__(), 0.6)  # not after the tools
     assert first == "Ci guardo, socio."
     assert [p async for p in pieces] == ["Trovata sul desktop, la apro."]
 
@@ -179,10 +179,15 @@ async def test_group_stream_first_piece_leaves_when_claude_pauses_for_a_tool() -
 async def test_group_stream_a_sentence_still_being_written_is_no_pause() -> None:
     from claudio.tts.sentence_splitter import group_stream
 
-    # A long second sentence streams in for longer than the pause: one piece, as before.
-    rest = "Accomodati, socio, che il narratore più bravo comincia."
-    words = [(0.03, f" {word}") for word in rest.split()]  # 8 x 30 ms > the 100 ms pause
-    got = await _collect(group_stream(_timed((0, "Ah."), *words), 220, 40, pause_s=0.1))
+    # A long second sentence streams in for longer than the pause (16 words x 30 ms = 0.48 s
+    # against 0.25 s), but every word is new text: one piece, as before.
+    rest = (
+        "Accomodati, socio, che il narratore più bravo dell'universo sta per cominciare "
+        "la sua storia di oggi."
+    )
+    words = [(0.03, f" {word}") for word in rest.split()]
+    assert len(words) * 0.03 > 0.25
+    got = await _collect(group_stream(_timed((0, "Ah."), *words), 220, 40, pause_s=0.25))
     assert got == [f"Ah. {rest}"]
 
 
@@ -192,15 +197,15 @@ async def test_group_stream_whitespace_is_no_new_text() -> None:
     # The brain ends the sentence with a space once the tools are called (the text stopped
     # 0.2 s earlier): the piece leaves at once, the pause has already passed.
     pieces = group_stream(
-        _timed((0, "Ci guardo"), (0, ", socio"), (0, "!"), (0.2, " "), (0.6, "Fatto.")),
+        _timed((0, "Ci guardo"), (0, ", socio"), (0, "!"), (0.4, " "), (0.6, "Fatto.")),
         220,
         first_chars=40,
-        pause_s=0.1,
+        pause_s=0.4,
     )
     loop = asyncio.get_running_loop()
     start = loop.time()
     assert await pieces.__anext__() == "Ci guardo, socio!"
-    assert loop.time() - start < 0.27  # ~0.2 s, not 0.2 + 0.1
+    assert loop.time() - start < 0.7  # ~0.4 s, not 0.4 + 0.4
     assert [p async for p in pieces] == ["Fatto."]
 
 
@@ -211,7 +216,7 @@ async def test_group_stream_a_pause_also_releases_the_sentence_the_splitter_held
     # be "3." before "5") until the brain's space, ~0.35 s later when the tool's arguments
     # are long. Both sentences go in one piece, before that space.
     pieces = group_stream(
-        _raw((0, "Certo, socio."), (0, " Ci guardo subito."), (0.35, " "), (0.4, "Fatto.")),
+        _raw((0, "Certo, socio."), (0, " Ci guardo subito."), (0.8, " "), (0.4, "Fatto.")),
         220,
         first_chars=40,
         pause_s=0.1,
@@ -219,7 +224,7 @@ async def test_group_stream_a_pause_also_releases_the_sentence_the_splitter_held
     loop = asyncio.get_running_loop()
     start = loop.time()
     assert await pieces.__anext__() == "Certo, socio. Ci guardo subito."
-    assert loop.time() - start < 0.3  # the pause, not the space at 0.35 s
+    assert loop.time() - start < 0.6  # the pause, not the space at 0.8 s
     assert [p async for p in pieces] == ["Fatto."]
 
 
@@ -232,13 +237,13 @@ async def test_group_stream_text_after_a_pause_is_grouped_again() -> None:
         group_stream(
             _raw(
                 (0, "Ci guardo, socio. "),
-                (0.3, "Trovata. "),
+                (1.0, "Trovata. "),
                 (0.02, "La apro adesso, socio. "),
                 (0.02, "Altro?"),
             ),
             220,
             first_chars=40,
-            pause_s=0.1,
+            pause_s=0.4,
         )
     )
     assert got == ["Ci guardo, socio.", "Trovata. La apro adesso, socio. Altro?"]
