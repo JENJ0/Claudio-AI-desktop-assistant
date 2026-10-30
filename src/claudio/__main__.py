@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from claudio.chat.launcher import ChatLauncher
     from claudio.cost.tracker import CostTracker
     from claudio.pc.tools import PcTools
+    from claudio.router.command_tool import CommandTool
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
     from claudio.tts.jack import JackSynth
@@ -62,6 +63,7 @@ def build_responder(
     """`tracker`: open it on the thread that runs the requests (its SQLite connection only
     works there) when this runs in a loader thread."""
     from claudio.router.actions import ActionRunner
+    from claudio.router.command_tool import CommandTool
     from claudio.router.matcher import CommandMatcher, load_commands
     from claudio.router.responder import LocalResponder
 
@@ -70,10 +72,18 @@ def build_responder(
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
     if tracker is None:
         tracker = build_tracker(settings)
-    brain = build_brain(settings, tracker, chat)
+    actions = ActionRunner(system=system, tracker=tracker, chat=chat)
+    # Claude runs the commands it recognises in garbled words through the same actions.
+    brain = build_brain(settings, tracker, chat, CommandTool(commands, actions))
+    guesser = None
+    if brain is not None and settings.guess.enabled:
+        from claudio.brain.guess import Guesser
+
+        # Same client and model as the replies: a misheard command costs ~0.0001 $.
+        guesser = Guesser(brain.client, tracker, settings.claude, settings.guess, commands)
     return LocalResponder(
         matcher,
-        ActionRunner(system=system, tracker=tracker, chat=chat),
+        actions,
         settings.router.unknown_reply,
         settings.router.error_reply,
         fallback=brain.ask if brain else None,
@@ -82,11 +92,15 @@ def build_responder(
         fallback_awaiting=(lambda: brain.awaiting) if brain else None,
         fallback_cancel=brain.cancel_pending if brain else None,
         fallback_heard=brain.heard if brain else None,
+        fallback_guess=guesser,
+        fallback_guess_info=(lambda: guesser.last_call) if guesser else None,
+        guess=settings.guess,
     )
 
 
-def build_pc_tools(settings: Settings) -> PcTools | None:
-    """The tools Claude acts on the PC with: Windows only, and only with [pc] enabled."""
+def build_pc_tools(settings: Settings, commands: CommandTool | None = None) -> PcTools | None:
+    """The tools Claude acts on the PC with: Windows only, and only with [pc] enabled.
+    `commands`: Claudio's own commands (volume, chat, pause...) as one more tool."""
     if not settings.pc.enabled:
         log.info("Azioni sul PC spente ([pc] enabled = false)")
         return None
@@ -96,7 +110,7 @@ def build_pc_tools(settings: Settings) -> PcTools | None:
     from claudio.pc.tools import PcTools
     from claudio.pc.windows import WindowsDesktop
 
-    tools = PcTools(WindowsDesktop(), settings.pc)
+    tools = PcTools(WindowsDesktop(), settings.pc, commands=commands)
     log.info(
         "Azioni sul PC: %d strumenti, cartelle %s, %d tasti senza conferma",
         len(tools.definitions()),
@@ -107,7 +121,10 @@ def build_pc_tools(settings: Settings) -> PcTools | None:
 
 
 def build_brain(
-    settings: Settings, tracker: CostTracker, chat: ChatLauncher | None = None
+    settings: Settings,
+    tracker: CostTracker,
+    chat: ChatLauncher | None = None,
+    commands: CommandTool | None = None,
 ) -> ClaudeBrain | None:
     """Claude for what no command understands; None when it is switched off. A missing key
     still builds it: Claudio then says where the key goes instead of "I can't do that"."""
@@ -135,7 +152,7 @@ def build_brain(
         client,
         tracker,
         claude,
-        tools=build_pc_tools(settings),
+        tools=build_pc_tools(settings, commands),
         pc=settings.pc,
         personality=personality,
         on_show=chat.open if chat is not None else None,  # a command is read in the chat
@@ -522,6 +539,7 @@ async def run_assistant(
         on_heard=responder.heard,
         continue_s=settings.vad.continue_s,
         echo_tail_ms=settings.conversation.echo_tail_ms,
+        guess=responder.guess if responder.fallback_guess else None,
     )
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',

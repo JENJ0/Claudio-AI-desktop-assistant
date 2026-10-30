@@ -331,6 +331,26 @@ class NoiseSettings(BaseModel):
     answer_min_dbfs: float = Field(-35.0, le=0)
 
 
+class GuessSettings(BaseModel):
+    """A phrase about to be dropped (false wake, not addressed to Claudio, noise) that sounds
+    like a command: Haiku guesses what JenJo said and how likely it is (brain/guess.py).
+    Only those phrases cost a call (1-1.5 s, ~0.0001 $); the others are dropped for free."""
+
+    enabled: bool = True  # needs [claude] enabled
+    near_floor: float = Field(65.0, ge=0, le=100)  # closeness (letters or sound) to a command
+    act_at: float = Field(0.8, gt=0, le=1)  # Claude this sure: the request is answered at once
+    ask_at: float = Field(0.5, gt=0, le=1)  # from here up to act_at: "Hai detto: ...?"
+    candidates: int = Field(4, ge=1, le=10)  # closest commands told to Claude
+    max_tokens: int = Field(120, ge=32, le=512)
+    timeout_s: float = Field(3.0, gt=0, le=30)  # then the phrase is dropped as before
+
+    @model_validator(mode="after")
+    def _ask_below_act(self) -> GuessSettings:
+        if self.ask_at > self.act_at:
+            raise ValueError("ask_at non può superare act_at")
+        return self
+
+
 class CostSettings(BaseModel):
     pricing_file: Path = Path("config/pricing.toml")  # prices and cache multipliers
     db_file: Path = Path("data/spend.db")  # the ledger: one row per Claude call
@@ -498,6 +518,7 @@ class Settings(BaseSettings):
     noise: NoiseSettings = NoiseSettings()
     cost: CostSettings = CostSettings()
     claude: ClaudeSettings = ClaudeSettings()
+    guess: GuessSettings = GuessSettings()
     pc: PcSettings = PcSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")

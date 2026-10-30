@@ -77,6 +77,10 @@ is not a file, folder or app on the PC) call web_search at once, with the browse
 if any: it needs no yes. A website or web address: open_website. Prefer a tool that does the \
 whole thing (web_search, open_website, open_path, open_app) to driving a window with typing \
 and keys: type and press keys only when no tool does it.
+- Claudio's own commands (the volume, the music and video keys, Claudio's chat window, \
+today's spending, pausing or switching Claudio off) run with claudio_command. A request that \
+sounds like one of them, however garbled ("alsa il volu", "la chata"), is that command: run \
+it, never say you cannot.
 - When a search finds one clear match for what JenJo asked to open, open it at once; when \
 nothing is found, try once more with a shorter or different word before giving up.
 - Speech recognition mishears names ("desi" for "Tesi"): when a search offers one similar \
@@ -159,3 +163,45 @@ REFUSED = {
     "it": "Su questo non posso aiutarti.",
     "en": "I can't help with that.",
 }
+
+
+# The guess (brain/guess.py): a phrase Claudio was about to drop sounds like a command. Frozen
+# text plus the list of commands (read once at start); the phrase goes in the user message.
+GUESS_PROMPT = """\
+You help Claudio, a voice assistant on JenJo's Windows PC, catch commands that speech \
+recognition misheard. Claudio was about to ignore a phrase because it did not look like a \
+request to it: the wake word fired but the name was not in the phrase, or it came after a \
+reply without the name and did not look addressed to Claudio, or recognition was unsure of \
+it. The phrase sounds like one of Claudio's commands. Work out what JenJo most likely said \
+to Claudio, and how likely it is that JenJo really asked it.
+
+How recognition fails here (Italian, a weak microphone):
+- Short words come out as sound-alike, split or merged words: "alsa" for "alza", "pure sono" \
+for "che ore sono", "spegni ti" for "spegniti", "pasta" for "basta".
+- A word it did not catch may be written as capitals read as Italian letter names: "QDT" is \
+cu-di-ti, "chiuditi"; "QD" is "chiudi".
+- The name Claudio comes out as "Audio", "L'audio", "Laudio", "Claudia", "Chiaro", or is \
+missing.
+- It invents short phrases from noise: "Grazie.", "Grazie a tutti.", "Sottotitoli...", \
+"Thank you."
+
+Most of these phrases are not for Claudio: the TV, people in the room and Claudio's own \
+voice reach the microphone too. Be strict. Evidence that JenJo was talking to Claudio: the \
+wake word fired with a good score, the name (even misheard) at the start, a loud voice \
+close to the microphone, a phrase right after Claudio's reply that fits the conversation, \
+other hearings that agree. A quiet voice, ordinary conversation, or a phrase that only \
+shares a word with a command points to the TV or a person.
+
+Claudio's commands (id: what JenJo says):
+{commands}
+
+Answer with:
+- why: at most 4 words, in English.
+- command: the id of the command JenJo most likely asked Claudio for; "" when it was not \
+for Claudio or not one of these commands.
+- said: that command as JenJo would say it, one of its phrases as listed, with the number \
+if one was said ("alza il volume di 10"); "" when command is "".
+- probability: from 0 to 1, how likely it is that JenJo really asked exactly that. 0.9 or \
+more only when the sounds match closely and the evidence says JenJo was talking to Claudio; \
+under 0.5 when it may well be the TV, a person or noise.
+"""

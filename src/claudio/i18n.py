@@ -428,6 +428,26 @@ EN: dict[str, str] = {
     "Indice di Windows non disponibile (%s): cerco nelle cartelle": (
         "Windows Search index unavailable (%s): walking the folders"
     ),
+    # IT-0: a misheard command, guessed by Claude (brain/guess.py)
+    "Ipotesi sulla frase incerta non riuscita": "Guess on the unclear phrase failed",
+    "Ipotesi di Claude illeggibile: %r": "Claude's guess unreadable: %r",
+    "Budget di oggi finito: non chiedo a Claude cosa hai detto": (
+        "Today's budget is spent: not asking Claude what you said"
+    ),
+    "Claude non ha risposto in %.1f s: frase scartata": (
+        "Claude did not answer in %.1f s: phrase dropped"
+    ),
+    "Ipotesi di Claude non riuscita: %s": "Claude's guess failed: %s",
+    "Ipotesi di Claude: spesa non registrata": "Claude's guess: spending not recorded",
+    "Frase incerta %r: forse %r (%d%%, %s) -> %s": "Unclear phrase %r: maybe %r (%d%%, %s) -> %s",
+    "Chiedo conferma della richiesta dedotta: %r": "Asking to confirm the guessed request: %r",
+    "Richiesta dedotta rifiutata: %r": "Guessed request refused: %r",
+    "Nessuna risposta: %r non eseguito": "No answer: %r not done",
+    "La mia domanda nel microfono, non è una risposta: %r": (
+        "My own question in the microphone, not an answer: %r"
+    ),
+    "Sì: rispondo a %r": "Yes: answering %r",
+    "Non era %r: nuova richiesta %r": "It was not %r: new request %r",
 }
 
 

@@ -137,6 +137,17 @@ asks "Lo uso?" ("sì" / "no"), or start the request with "pensaci bene" / "think
 (10 % of the price). Claude also knows the current date and time. `smart_model = ""` keeps
 Haiku only.
 
+**Misheard commands.** A phrase Claudio was about to ignore (a false wake, a phrase in the
+conversation window that did not look addressed to it, noise) that sounds like a command
+("Spenditi.", "Audio Bust.") goes to Haiku, which says which command you most likely asked and
+how sure it is: from 80 % Claudio does it, from 50 % it asks "Hai detto: ...?" first ("sì" does
+it, "no" drops it, "no, alza il volume" does that instead), below it ignores the phrase as
+before. Pausing and "spegniti" are always asked. Only phrases close to a command cost a call
+(about 0.0001 USD); settings in `[guess]`. Claude can also run Claudio's own commands (volume,
+music keys, chat window, spending, pause, "spegniti") when a request reaches it garbled
+("Claudio, ok, la chata"). `uv run python scripts/replay_guess.py --dry` shows how close the
+phrases dropped in `logs/metrics.jsonl` were to a command; without `--dry` it asks Haiku too.
+
 ## Personality (CLAUDIO.md)
 
 Claudio's character is in `data/CLAUDIO.md`, made at the first start from `config/CLAUDIO.md`

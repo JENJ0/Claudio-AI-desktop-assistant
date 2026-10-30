@@ -46,9 +46,21 @@ CLIPPED_LEAD = frozenset({"l", "e"})  # "l'audio", "e l'audio" (a fast "hey")
 def clipped_name(text: str) -> bool:
     """True when the transcript starts with something close to the name ("L'audio?", "Fraudio.",
     "l'audio apri..."): a cut-off name can only be at the start of the audio Whisper gets."""
+    return _after_clipped_name(text) is not None
+
+
+def after_clipped_name(text: str) -> str:
+    """The words after a clipped name at the start, normalized ("Audio, alsa il volu" -> "alsa
+    il volu"): what to compare with the commands. "" when there is no clipped name."""
+    return " ".join(_after_clipped_name(text) or [])
+
+
+def _after_clipped_name(text: str) -> list[str] | None:
     from rapidfuzz.distance import Levenshtein
 
     words = normalize(text, drop_fillers=False).split()
     while words and (words[0] in GREETINGS or words[0] in CLIPPED_LEAD):
         words = words[1:]
-    return bool(words) and Levenshtein.distance(words[0], "claudio") <= CLIPPED_MAX_EDITS
+    if words and Levenshtein.distance(words[0], "claudio") <= CLIPPED_MAX_EDITS:
+        return words[1:]
+    return None
