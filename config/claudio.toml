@@ -249,9 +249,10 @@ timeout_s = 3.0                # no answer by then: the phrase is ignored, as be
 # here, no API. Pausing, switching Claudio off and closing it are always asked, "basta" never.
 # Local and free, ~0.2 s only on those phrases; it runs before the guess above, which then costs
 # less. Every attempt is in logs/metrics.jsonl (recovery_*): tune the values below on those rows.
-# On JenJo's 240 recordings (30/10): 3 commands recovered, none wrong; the right proposals had
+# On JenJo's 240 recordings (30/10): 3 commands recovered, none wrong, all 3 asked (no
+# proposal was ever clearly likelier, so "done at once" is not measured yet); the right ones had
 # a mean of -0.8..-1.7 and a gap of -5.7..+6, the wrong ones (before "svegliati" left the
-# prompt) -1.8..-2.4 and -5.3..-13.3.
+# prompt) -1.8..-2.4 and -5.3..-13.3: a thin margin on min_mean, to tune on the logs.
 [recovery]
 enabled = true                 # false: such phrases go on as before (to Claude, or dropped)
 max_words = 6                  # longer phrases are questions for Claude, not misheard commands

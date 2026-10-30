@@ -246,6 +246,9 @@ EN: dict[str, str] = {
         "Not resuming the interrupted reply: short, or a question"
     ),
     "Seconda opinione di Whisper non riuscita": "Whisper's second opinion failed",
+    "Seconda opinione di Whisper spenta: Whisper %s su %s": (
+        "Whisper's second opinion off: Whisper %s on %s"
+    ),
     "Seconda opinione: %r era %r": "Second opinion: %r was %r",
     "Seconda opinione incerta: %r, forse %r": "Unsure second opinion: %r, maybe %r",
     "Seconda opinione: %r, Whisper propone %r: scartata": (

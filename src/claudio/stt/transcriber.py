@@ -409,7 +409,9 @@ class WhisperTranscriber:
             encoded,
             [start + tokens],
             beam_size=1,
-            max_length=2 * (len(tokens) + 1),  # ctranslate2 4.8.3 counts the forced ones twice
+            # ctranslate2 4.8.3 counts a forced piece about twice: 2L + 3 gives the L + 1 steps
+            # needed for any L (measured; 2L + 2 is one short for a single piece, "No")
+            max_length=2 * len(tokens) + 3,
             return_logits_vocab=True,
             suppress_blank=False,  # the raw probabilities: nothing masked
             suppress_tokens=[],

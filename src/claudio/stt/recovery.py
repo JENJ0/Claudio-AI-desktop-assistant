@@ -10,6 +10,7 @@ recovery: Assistant._recover_command()."""
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from claudio.intake import Verdict, asked_or_done, words
 from claudio.router.matcher import Command, CommandMatcher
 from claudio.router.normalizer import only_wake_words
 from claudio.system import ON, RESUME
+from claudio.wakeword.verifier import after_clipped_name
 
 NAME = "Claudio"  # the command prompt starts the way JenJo does
 # What the system commands do that changes nothing while Claudio is on and awake, the only
@@ -96,6 +98,8 @@ def judge(first: Fit, proposal: Fit, action: str, settings: RecoverySettings) ->
     """ACT when the proposal sounds clearly likelier than the first hearing, ASK when about as
     likely, DROP when less likely or heard badly in itself. Pausing, switching Claudio off and
     closing it are always asked, "basta" never (intake.asked_or_done)."""
+    if not (math.isfinite(first.total) and math.isfinite(proposal.total)):
+        return Verdict.DROP  # one of the two could not be scored: nothing to compare
     gap = proposal.total - first.total
     if proposal.mean < settings.min_mean or gap < settings.ask_gap:
         return Verdict.DROP
@@ -130,8 +134,9 @@ class CommandRecovery:
         )
 
     def __call__(self, audio: np.ndarray, text: str, language: str) -> Recovered | None:
-        """None when the phrase is not worth a try. Whisper runs twice (a transcription and a
-        scoring pass): call it from a worker thread, holding the lock of every Whisper use."""
+        """None when the phrase is not worth a try. Whisper encodes the audio once, transcribes
+        it with the commands' prompt and, when that is a command, scores both texts: call it
+        from a worker thread, holding the lock of every Whisper use."""
         if not self.wants(text, language):
             return None
         heard = self.whisper.listen_again(audio, self._prompts[language], language)
@@ -149,4 +154,12 @@ class CommandRecovery:
             "recovery_mean": round(fit.mean, 2),
             "recovery_verdict": verdict.value,
         }
-        return Recovered(without_name(proposal), verdict, info)
+        return Recovered(self._said(proposal, match.command, language), verdict, info)
+
+    def _said(self, proposal: str, command: Command, language: str) -> str:
+        """The proposal as "Hai detto: ...?" repeats it: without the name in front, a clipped
+        one too ("L'audio metti in pausa la musica." -> "metti in pausa la musica")."""
+        said = without_name(proposal)
+        rest = after_clipped_name(said)
+        match = self.matcher.match(rest, language) if rest else None
+        return rest if match is not None and match.command.id == command.id else said
