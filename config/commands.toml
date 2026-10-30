@@ -234,10 +234,33 @@ params = { do = "resume", already = "Sono già sveglio.", already_en = "I'm alre
 reply = "Eccomi."
 reply_en = "I'm here."
 
+# Off: no beeps and no replies until "accenditi" (only the wake word listens, a bit stricter).
+# exact = true: "spegni la luce" / "accendi la luce" must never switch CLAUDIO off or on.
+[[command]]
+id = "off"
+phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegnerti", "smetti di ascoltare"]
+phrases_en = ["turn yourself off", "switch yourself off", "stop listening", "go silent", "go deaf"]
+action = "system"
+exact = true
+params = { do = "off", already = "Sono già spento.", already_en = "I'm already off." }
+reply = "Mi spengo. Per riaccendermi di' Claudio, accenditi."
+reply_en = "Turning off. To turn me back on, say Claudio, turn on."
+
+[[command]]
+id = "on"
+phrases = ["accenditi", "riaccenditi", "accenditi pure", "ora accenditi", "puoi accenderti", "torna ad ascoltare"]
+phrases_en = ["turn yourself on", "switch yourself on", "start listening", "start listening again", "turn yourself back on"]
+action = "system"
+exact = true
+params = { do = "on", already = "Sono già acceso.", already_en = "I'm already on." }
+reply = "Eccomi, sono acceso."
+reply_en = "I'm on."
+
+# Shutdown closes the program ("chiuditi"); "spegniti" is the off command above.
 [[command]]
 id = "shutdown"
-phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegnerti", "chiuditi", "chiuditi pure"]
-phrases_en = ["shut down", "shut yourself down", "turn yourself off", "switch yourself off"]
+phrases = ["chiuditi", "chiuditi pure", "ora chiuditi", "puoi chiuderti", "esci dal programma"]
+phrases_en = ["shut down", "shut yourself down", "quit", "exit the program", "close yourself"]
 action = "system"
 exact = true  # no fuzzy match: "spegni la luce" or "shut down the PC" must not close CLAUDIO
 params = { do = "shutdown" }

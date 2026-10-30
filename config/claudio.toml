@@ -29,6 +29,7 @@ near_miss_floor = 0.15     # a score between this and the threshold is a missed 
 confirm_below = 0.45       # a wake scoring below this beeps only if Whisper hears the name (~130 ms more)
 second_chance = true       # after one, Whisper listens to the last 2.5 s (~130 ms) and wakes CLAUDIO if it hears the name
 unclear_min = 0.6          # a "claudio" this strong heard by Whisper as nothing or "Grazie." wakes, then the request needs the name or a command
+off_threshold_boost = 0.1  # while off ("spegniti") every wake threshold is this much higher; only "accenditi" is heard
 verify = true              # drop a wake when Whisper did not hear the name at the start and no command matches ("Hey, ciao, come stai?")
 
 [[wakeword.models]]

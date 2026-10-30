@@ -125,7 +125,11 @@ def test_system_commands_change_state_once(matcher, rec) -> None:
     assert say("vai in pausa") == "Sono già in pausa."
     assert say("svegliati") == "Eccomi." and not system.paused
     assert say("svegliati") == "Sono già sveglio."
-    assert say("spegniti") == "A presto." and system.stopping
+    assert say("spegniti").startswith("Mi spengo") and system.off and not system.stopping
+    assert say("spegniti") == "Sono già spento."
+    assert say("accenditi") == "Eccomi, sono acceso." and not system.off
+    assert say("accenditi") == "Sono già acceso."
+    assert say("chiuditi") == "A presto." and system.stopping
     assert rec.ran == [] and rec.keys == []  # nothing touches the PC
 
 
