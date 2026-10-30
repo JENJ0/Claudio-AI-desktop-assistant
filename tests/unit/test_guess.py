@@ -104,19 +104,25 @@ DOUBT = Doubt("Spenditi.", "it", "not_a_request", close=True)
 
 
 @pytest.mark.parametrize(
-    ("guess", "doubt", "asks_first", "expected"),
+    ("guess", "doubt", "action", "expected"),
     [
-        (None, DOUBT, False, Verdict.DROP),
-        (Guess("", 0.95), DOUBT, False, Verdict.DROP),  # Claude: not for Claudio
-        (Guess("basta", 0.4), DOUBT, False, Verdict.DROP),
-        (Guess("basta", 0.6), DOUBT, False, Verdict.ASK),
-        (Guess("basta", 0.8), DOUBT, False, Verdict.ACT),
-        (Guess("basta", 0.95), Doubt("x", "it", "unsure", close=False), False, Verdict.DROP),
-        (Guess("spegniti", 0.99), DOUBT, True, Verdict.ASK),  # never off on a guess alone
+        (None, DOUBT, "", Verdict.DROP),
+        (Guess("", 0.95), DOUBT, "", Verdict.DROP),  # Claude: not for Claudio
+        (Guess("alza", 0.4), DOUBT, "media_key", Verdict.DROP),
+        (Guess("alza", 0.6), DOUBT, "media_key", Verdict.ASK),
+        (Guess("alza", 0.8), DOUBT, "media_key", Verdict.ACT),
+        (Guess("alza", 0.95), Doubt("x", "it", "unsure", close=False), "media_key", Verdict.DROP),
+        # JenJo 30/10: "basta" from 50 % stops at once, never "Hai detto: basta?"...
+        (Guess("basta", 0.4), DOUBT, "stop", Verdict.DROP),
+        (Guess("basta", 0.6), DOUBT, "stop", Verdict.ACT),
+        (Guess("basta", 0.95), Doubt("x", "it", "unsure", close=False), "stop", Verdict.DROP),
+        # ...and "spegniti" is always asked, however sure: never off on a guess alone.
+        (Guess("spegniti", 0.99), DOUBT, "system", Verdict.ASK),
+        (Guess("chiuditi", 0.99), DOUBT, "system", Verdict.ASK),
     ],
 )
-def test_verdict(guess: Guess | None, doubt: Doubt, asks_first: bool, expected: Verdict) -> None:
-    assert verdict(guess, doubt, 0.8, 0.5, asks_first) is expected
+def test_verdict(guess: Guess | None, doubt: Doubt, action: str, expected: Verdict) -> None:
+    assert verdict(guess, doubt, 0.8, 0.5, action) is expected
 
 
 def test_ask_cannot_be_above_act() -> None:
@@ -363,6 +369,24 @@ async def test_switching_off_is_always_asked(matcher: CommandMatcher) -> None:
     assert r.actions.system.off and not r.awaiting
 
 
+@pytest.mark.parametrize(("said", "command"), [("spegniti", "off"), ("chiuditi", "shutdown")])
+async def test_switching_off_or_closing_is_asked_however_sure(
+    matcher: CommandMatcher, said: str, command: str
+) -> None:
+    r, _, _ = responder(matcher, Guess(said, 0.99, command))
+    recovery = await r.guess(Doubt("Spenditi.", "it", "not_a_request", close=True))
+    assert recovery is not None and recovery.verdict is Verdict.ASK
+    assert recovery.question == f"Hai detto: {said}?" and r.awaiting
+
+
+async def test_a_guessed_basta_stops_without_asking(matcher: CommandMatcher) -> None:
+    # JenJo 30/10: between ask_at and act_at a "basta" is done, never "Hai detto: basta?".
+    r, _, _ = responder(matcher, Guess("basta", 0.6, "stop"))
+    recovery = await r.guess(Doubt("Pasta.", "it", "not_a_request", close=True))
+    assert recovery is not None and recovery.verdict is Verdict.ACT
+    assert recovery.said == "basta" and not r.awaiting
+
+
 async def test_no_drops_the_guess(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
     await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
@@ -517,6 +541,20 @@ async def test_an_unsure_guess_is_asked_then_done_on_yes(
     ]
     assert [row["outcome"] for row in assistant.history][:3] == ["ok", "ask", "ok"]
     assert r.actions.system.off
+
+
+async def test_a_guessed_basta_ends_the_conversation_at_once(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["che ore sono", "Pasta."]
+    )
+    guessing(r, assistant, Guess("basta", 0.6, "stop"))
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert speaker.spoken[1:] == [""]  # "basta" says nothing: no "Hai detto: basta?"
+    assert [row["outcome"] for row in assistant.history] == ["ok", "stopped"]
+    assert assistant.history[1]["guess_verdict"] == "act"
+    assert speaker.beeps[-1] == "cancel"
 
 
 async def test_a_wrong_guess_is_dropped_as_before(
