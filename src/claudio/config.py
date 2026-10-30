@@ -294,6 +294,8 @@ class StartupSettings(BaseModel):
     parallel: bool = True
     # Say a short "ready" once everything, Jack's voice included, has loaded.
     announce_ready: bool = True
+    # The icon in the system tray (tray.py): the state by its color and a menu.
+    tray: bool = True
 
 
 class ConversationSettings(BaseModel):

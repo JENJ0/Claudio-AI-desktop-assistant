@@ -207,6 +207,7 @@ EN: dict[str, str] = {
     # system
     "Sistema: %s": "System: %s",
     "Comando di sistema sconosciuto '{command}'": "Unknown system command '{command}'",
+    "Avviso del cambio di stato non riuscito": "State change notification failed",
     "Riprovato in %s: %r -> %r": "Retried in %s: %r -> %r",
     "Riprovato in %s, non capito neanche così: %r": "Retried in %s, still not understood: %r",
     # safety
@@ -477,6 +478,24 @@ EN: dict[str, str] = {
     "CLAUDIO si è chiuso per errore (codice %d dopo %.0f s): lo riavvio tra %.0f s": (
         "CLAUDIO crashed (code %d after %.0f s): restarting it in %.0f s"
     ),
+    "si avvia...": "starting...",
+    "acceso": "on",
+    'in pausa: di\' "Claudio, svegliati"': 'paused: say "Claudio, wake up"',
+    'spento: di\' "Claudio, accenditi"': 'off: say "Claudio, turn yourself on"',
+    "si chiude...": "closing...",
+    "Accendi": "Turn on",
+    "Spegni": "Turn off",
+    "Pausa": "Pause",
+    "Apri la chat": "Open the chat",
+    "Chiudi CLAUDIO": "Close CLAUDIO",
+    "Icona nella system tray non disponibile (%s): CLAUDIO va avanti senza": (
+        "System tray icon not available (%s): CLAUDIO goes on without it"
+    ),
+    "Icona nella system tray: %s": "System tray icon: %s",
+    "Icona nella system tray chiusa per errore": "System tray icon closed by an error",
+    "Icona nella system tray non aggiornata": "System tray icon not updated",
+    "Icona nella system tray non chiusa": "System tray icon not closed",
+    "Chiusura chiesta dall'icona nella system tray": "Close requested from the system tray icon",
 }
 
 
