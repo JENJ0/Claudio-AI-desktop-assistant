@@ -472,12 +472,12 @@ class Assistant:
         event = self.endpointer.process(frame)
         if event is EndpointEvent.START:
             self._interaction.mark("speech_start")
-            if self._interaction.info.get("wake_word") == "conversation":
+            if self._interaction.info.get("wake_word") == CONVERSATION:
                 self.responder.prepare()  # no wake word in the conversation window
                 sr = self.endpointer.sample_rate
                 self._interaction.info["listened_ms"] = round(self._listened * 1000 / sr)
         elif event is EndpointEvent.TIMEOUT:
-            if self._interaction.info.get("wake_word") == "conversation":
+            if self._interaction.info.get("wake_word") == CONVERSATION:
                 log.info("Fine della conversazione: torno in attesa della wake word")
             else:
                 log.info("Nessuna richiesta dopo la wake word: torno in attesa")
@@ -1183,12 +1183,8 @@ class Assistant:
         while self.state is not State.IDLE:
             await asyncio.sleep(0.05)
         self._set_state(State.RESPONDING)  # the wake word waits until this is said
-
-        async def once() -> AsyncIterator[str]:
-            yield text
-
         try:
-            await self._sound(self.speaker.speak(once()))
+            await self._sound(self.speaker.speak(_fixed_reply(text)))
         except Exception:
             log.exception("Avviso a voce non riuscito")
         finally:
@@ -1324,7 +1320,6 @@ class Assistant:
             await asyncio.gather(*self._beeps, return_exceptions=True)
 
 
-# A level 2-3 action written in the chat window: it is confirmed by voice only.
 def _distinct(text: str, candidates: Sequence[str], limit: int) -> tuple[str, ...]:
     """Up to `limit` of `candidates` that differ from `text` and from each other."""
     seen = {normalize(text, drop_fillers=False)}
@@ -1342,6 +1337,7 @@ async def _fixed_reply(text: str) -> AsyncIterator[str]:
     yield text
 
 
+# A level 2-3 action written in the chat window: it is confirmed by voice only.
 TYPED_NEEDS_VOICE = {
     "it": "Questa azione va confermata a voce: chiedimela parlando.",
     "en": "This action needs a spoken confirmation: ask me out loud.",
