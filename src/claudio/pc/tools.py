@@ -26,6 +26,7 @@ from urllib.parse import quote_plus, urlsplit
 from rapidfuzz import fuzz, process
 
 from claudio.config import DEFAULT_LANGUAGE, PcSettings
+from claudio.memory import tools as memory_tools
 from claudio.pc import files, keys, screen, terminal
 from claudio.pc.files import Found, PathPolicy, PathRefused
 from claudio.pc.terminal import CommandRefused, CommandResult
@@ -339,10 +340,12 @@ class PcTools:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         commands: command_tool.CommandTool | None = None,
+        memory: memory_tools.MemoryTools | None = None,
     ) -> None:
         self.desktop = desktop
         self.settings = settings
         self.commands = commands  # Claudio's own commands (volume, chat, pause...), as a tool
+        self.memory = memory  # "remember" and "forget": Claudio's long-term memory
         self.policy = PathPolicy(settings.roots, home)
         self.safe_keys = frozenset(_canonical_or_none(k) for k in settings.safe_keys) - {None}
         self.clock = clock
@@ -364,6 +367,8 @@ class PcTools:
         ]
         if commands is not None:
             self._definitions.append(commands.definition)
+        if memory is not None:
+            self._definitions.extend(memory.definitions)
         try:
             self._admin = bool(desktop.is_admin())
         except Exception:
@@ -408,6 +413,8 @@ class PcTools:
         """Fixed per tool; press_keys is level 1 only when every combination is harmless."""
         if call.name == command_tool.NAME and self.commands is not None:
             return self.commands.level(call.args)
+        if call.name in memory_tools.NAMES and self.memory is not None:
+            return self.memory.level(call.name, call.args)
         base = LEVELS.get(call.name, LEVEL_SAFE)  # unknown tools fail without doing anything
         if call.name == "type_text" and call.id in self._free:
             return LEVEL_SAFE
@@ -485,6 +492,8 @@ class PcTools:
             return say["run_command"].format(purpose=purpose)
         if call.name == command_tool.NAME and self.commands is not None:
             return say["claudio_command"].format(phrase=self.commands.phrase(a, language))
+        if call.name in memory_tools.NAMES and self.memory is not None:
+            return self.memory.describe(call.name, a, language)
         return call.name
 
     async def _window_title(self, query: str, say: dict[str, str]) -> str:
@@ -503,6 +512,8 @@ class PcTools:
                 # Claudio's own commands run here, like the router's: the spending ledger
                 # (SQLite) only works on the thread that opened it.
                 done: str | ToolOutcome = self._own_command(call)
+            elif call.name in memory_tools.NAMES:
+                done = self._memory_call(call)  # quick, and the same thread as the router's
             else:
                 done = await self._call(self._dispatch, call)
             outcome = done if isinstance(done, ToolOutcome) else ToolOutcome(done)
@@ -536,6 +547,14 @@ class PcTools:
         try:
             return self.commands.run(call.args)
         except command_tool.UnknownCommand as exc:
+            raise ToolFailed(str(exc)) from exc
+
+    def _memory_call(self, call: ToolCall) -> str:
+        if self.memory is None:
+            raise ToolFailed(f"unknown tool: {call.name}")
+        try:
+            return self.memory.run(call.name, call.args)
+        except memory_tools.MemoryToolError as exc:
             raise ToolFailed(str(exc)) from exc
 
     async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
