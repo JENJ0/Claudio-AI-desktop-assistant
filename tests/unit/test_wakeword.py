@@ -1,9 +1,17 @@
+from collections import deque
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from claudio.config import WakeWordModel, WakeWordSettings
-from claudio.wakeword.detector import NearMissTracker, best_detection, find_wakeword_model
+from claudio.wakeword.detector import (
+    FEATURE_MODELS,
+    NearMissTracker,
+    OpenWakeWordDetector,
+    best_detection,
+    find_wakeword_model,
+)
 
 THRESHOLDS = {"hey_claudio": 0.5, "claudio": 0.7}
 
@@ -75,3 +83,35 @@ def test_near_miss_reset_drops_a_pending_burst() -> None:
     feed_scores(tracker, [0.3])
     tracker.reset()
     assert feed_scores(tracker, [0.0]) == []
+
+
+class NoisyResetModel:
+    """openWakeWord's Model as its reset() behaves: what the models read is filled with the
+    features of random noise, which scores high until 16 new frames have pushed it out."""
+
+    WINDOW = 16
+
+    def __init__(self, **_kwargs: object) -> None:
+        self.window: deque[str] = deque(maxlen=self.WINDOW)
+
+    def reset(self) -> None:
+        self.window.extend(["noise"] * self.WINDOW)
+
+    def predict(self, frame: np.ndarray) -> dict[str, float]:
+        self.window.append("audio")
+        return {"claudio": 0.9 if "noise" in self.window else 0.0}
+
+
+def test_reset_leaves_no_noise_for_the_microphone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """30/10: a wake ~0.5 s after every beep, on silence: the noise of the model's own reset
+    was still in what it read when the microphone's frames arrived."""
+    for name in ("claudio.onnx", *FEATURE_MODELS):
+        (tmp_path / name).write_bytes(b"x")
+    monkeypatch.setattr("openwakeword.model.Model", NoisyResetModel)
+    settings = WakeWordSettings(models=[WakeWordModel(name="claudio", threshold=0.25)])
+    detector = OpenWakeWordDetector(settings, tmp_path)
+    detector.reset()
+    quiet = np.zeros(1280, dtype=np.int16)
+    assert all(detector.process(quiet) is None for _ in range(NoisyResetModel.WINDOW + 4))

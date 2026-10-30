@@ -17,6 +17,9 @@ log = logging.getLogger(__name__)
 
 FEATURE_MODELS = ("melspectrogram.onnx", "embedding_model.onnx")
 NEAR_MISS_FLOOR = 0.15  # default for WakeWordSettings.near_miss_floor
+# The models read the features of the last 16 frames, each made from ~0.76 s of audio: 25
+# frames of silence (2 s) leave nothing of what came before in what they read.
+FLUSH_FRAMES = 25
 
 
 def find_wakeword_model(model: str, wakeword_dir: Path) -> Path:
@@ -92,10 +95,14 @@ class OpenWakeWordDetector:
         return miss
 
     def reset(self) -> None:
-        """Forget the last ~2 s of audio so the same wake word cannot fire twice."""
-        for _ in range(25):
-            self._model.predict(self._silence)
+        """Forget the last ~2 s of audio so the same wake word cannot fire twice. The model's
+        own reset() fills what it reads with the features of 4 s of random noise (openWakeWord
+        0.6.0, AudioFeatures.reset): ~0.5 s later that noise woke CLAUDIO on silence (30/10:
+        4 false wakes with prewake_ms 480, 19 of 100 quiet stretches). The silence goes in
+        after it, so the models read only silence when the microphone takes over."""
         self._model.reset()
+        for _ in range(FLUSH_FRAMES):
+            self._model.predict(self._silence)
         self._near_miss.reset()
 
 
