@@ -2,7 +2,10 @@
 
 ## [Unreleased] - IT-1
 
-### Long-term memory (Phase 4)
+Iteration 1: seven threads merged locally on the `it-1` branch (31/10): memory, misheard
+commands, listening, Jack's voice, Jack's pronunciation, latency, always on.
+
+### Long-term memory (Phase 4, IT-1 handoff 6.4)
 
 JenJo's choices (30/10): A1 hybrid prompt, B1 Claude learns by itself, C1 rules in the
 database, D1 conversation summaries later.
@@ -39,7 +42,7 @@ answered locally in 0-13 ms; first Claude call ~6600 tokens written to the cache
 then ~6600 read and ~100 written (0.0001 $); after a forget ~6300 read and ~290 written;
 first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
 
-### Misheard short commands, no stale "Dicevo:"
+### Misheard short commands, no stale "Dicevo:" (IT-1 handoff 2.1, 5.4)
 
 #### Added
 - Whisper's second opinion (`stt/recovery.py`, `[recovery]`): a phrase of up to 6 words no
@@ -64,7 +67,100 @@ first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
   a request Whisper was unsure of: of the 14 resumes in the logs, the 9 wrong ones (questions,
   short answers, banter) all stop.
 
-### Latency (thread "latenza": IT-1 handoff 5.1-5.3)
+### Listening (IT-1 handoff 1.1-1.4, 2.2-2.4)
+
+#### Fixed
+- The wake word no longer fires by itself ~0.5 s after every beep: openWakeWord 0.6.0's
+  `reset()` fills the model's window with 4 s of random-noise features, so the detector now
+  feeds it silence after the reset, not before (100 quiet stretches after a reset: false
+  wakes 19 -> 0).
+- "Claudio" said alone: the second chance transcribes with the shipped `[stt.prompts]`
+  sentences (never the PC's folder names) and only once Silero heard a voice
+  (`[wakeword] min_voice_ms = 96`): the name heard 12 times out of 12 when there was a voice
+  (7 without the prompt), no false name in 92 windows without one. Never a wake on silence;
+  `[wakeword] unclear_min = 1.0` (off).
+- Name and request in one breath: the phrase starts from the lead-in even when it had
+  already ended, and closes 0.9 s after the last word (30/10 14:06:40 "Claudio, spegniti."
+  was lost in a timeout; replayed, it turns CLAUDIO off). A command the second chance heard
+  whole is the request when the lead-in lost it.
+- Off, "accenditi" works the first time: every detection and near miss goes through the
+  second chance, which wakes only on the name or "accenditi" (with a light tick, 40 % of the
+  beeps); the router then understands "accenditi" only, so the language retry and the closed
+  list look for it too ("Grazie a te." -> "Dai, accenditi.").
+- Said over the reply: the barge-in slices count the voice only (250 ms before it instead of
+  800), each slice is checked for "basta" only, and the whole phrase is judged when it ends,
+  with the prompt (18 real phrases: 13 right and whole against 6). A phrase still going on
+  when the reply ends goes on as the request.
+- The conversation window keeps the start of a phrase begun while it was deaf (the beep, the
+  end of the reply), never in the answer to "Confermi?" (`deaf_speech_ms`, `deaf_joined_ms`
+  in metrics).
+
+#### Changed
+- `[conversation] barge_in_min_dbfs` is compared with the level before the microphone's
+  gain: -42 (the old -30 at +12 dB; AutoGain moved between 4.8 and 12.5 dB in 8 minutes).
+  The echo level learnt over a reply is before the gain too.
+
+#### Added
+- What CLAUDIO heard and left alone is kept in `logs/audio/rejected/` (`no_voice`,
+  `no_name`, `barge_ignored` in the name; `[logging] keep_rejected = 200`, purged after
+  `retention_days`): the negatives to retrain "claudio" on.
+- The wake word thresholds in use while off are logged when they change.
+
+Review (3 reviewers + a verifier): 15 findings, 14 confirmed, all fixed with a test.
+
+### Jack's voice (IT-1 handoff 3.1-3.7)
+
+#### Added
+- Level guard (`tts/loudness.py`, ITU BS.1770 loudness, numpy and scipy only): every take at
+  `[tts] jack_lufs` (-24 LUFS) measured on the last 2 s of voice, gain -15..+6 dB with ramps,
+  a look-ahead limiter at -1 dBFS instead of clipping. The 44 takes of 30/10: spread
+  4.1 -> 0.9 dB, biggest jump 15.7 -> 2.6 dB, clipped samples 204 -> 0.
+- Every take is checked before it plays (`TakeJudge`, `jack_take_check`): too high (median
+  more than 5 semitones over `jack_usual_hz` = 132 Hz, or any 1.5 s more than 9), shouted
+  (raw take more than 6 dB over the target, or clipped) or babbling (under 12 or over 24
+  characters a second) is generated again with the next seed (`jack_take_retries` = 2). The
+  opening piece is judged on its first chunk (`jack_first_retries` = 1): +30 ms when good,
+  +0.5-0.8 s when generated again (JenJo 30/10: 1a).
+- Seeds per text (`tts/takes.py`, `data/jack_takes.json`): a text said well once starts from
+  the same seed again, a bad seed is never tried first again; the key includes the voice
+  profile (checkpoint, sampling, speed, `jack_lufs`, `TAKES_VERSION`).
+- `scripts/jack_takes.py`: the fixed replies (commands.toml replies and confirmations,
+  "Sono pronto.", with `--from-logs N` the replies said N times) made in advance, 8 seeds
+  each judged by register, level, pace and Whisper's WER; the best one plays from
+  `data/jack_cache/` with no TTS, also while the worker loads.
+
+#### Changed
+- `jack_group_chars` 220 -> 170 (A/B, JenJo 31/10): 220 made pieces of 13-13.5 s, longer than
+  the 12 s training clips.
+- Pitch by FFT YIN over all frames (the same values, 11 times faster), voicing threshold 0.3,
+  "f0 n/d" under 20 voiced frames; the log has LUFS, peak and the take's raw level.
+- Ducking fades the reply sample by sample (80 ms for a full step) instead of jumping, and is
+  logged ("Abbasso la risposta...", "Risposta di nuovo a volume pieno").
+
+#### Fixed
+- A reply cut at `max_tokens` no longer ends with a piece of a word ("Attra", 30/10): the
+  brain marks the cut (`CUT_SHORT`), the voice drops the unfinished sentence and says "Mi
+  fermo qui: se vuoi, continuo."; "ripeti" and "Dicevo: ..." drop it too. The system prompt
+  keeps a long reply under about 150 words.
+
+### Jack's pronunciation (IT-1 handoff 4.1-4.2)
+
+#### Added
+- Jack writes the stress on sdrucciole (accènditi, riaccèndermi, dìmmelo) from a lexicon built
+  once from Wiktionary (data/stress_it.tsv, CC BY-SA 4.0); regular words stay as written.
+  "Per riaccendermi di' Claudio, accenditi.": "accenditi" heard right 1/3 -> 3/3.
+- English words outside [tts.jack_words] are logged once as candidates, with a proposal from
+  Wiktionary's Italian IPA (data/respell_en.tsv, never applied).
+- scripts/build_lexicon_it.py, scripts/stress_ab.py, jack_variants.py --words WORD...
+
+#### Changed
+- `[tts.jack_words]`: on, off, offline, link, app, chat, software, weekend, meeting, team,
+  backup, server, update, cloud (JenJo 31/10, all 14 proposals).
+- At the end of a sentence a respelling of the table ending in a vowel and d, t, p, k, b or g
+  doubles that consonant ("Apro clòdd.", "Apri la ciàtt."): alone it became "clado" 2 times
+  out of 5.
+
+### Latency (IT-1 handoff 5.1-5.3)
 
 #### Changed
 - With PC tools the first words no longer wait for every call: the brain ends Claude's
@@ -96,9 +192,9 @@ first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
   that timed out on a full card is tried again once the card has room. Read with
   `nvidia-smi` (`src/claudio/gpu.py`, first card only), no new dependency.
 
-## [Unreleased] - IT-1: always on
+### Always on (IT-1 handoff 6.1-6.3, 6.6, 6.7)
 
-### Added
+#### Added
 - One CLAUDIO at a time: a named Windows mutex (`single_instance.py`, `Local\CLAUDIO-voice-assistant`).
   A second `claudio` logs "CLAUDIO è già acceso" and exits with code 3 before loading anything or
   opening a session folder. Windows frees the name even after a crash.
@@ -114,10 +210,10 @@ first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
   gets a warning.
 - `SystemControl.subscribe()`: listeners told of every pause/off/on/close change.
 
-### Changed
+#### Changed
 - The task at login runs `pythonw.exe -m claudio.supervisor` instead of `-m claudio`.
 
-### Fixed
+#### Fixed
 - Restart after a crash: Task Scheduler's RestartOnFailure never fires when the program exits
   with an error (a probe task exiting with 1, 3 restarts a minute apart, was not run again in
   3 minutes on the PC, 30/10). The `.venv` works from Task Scheduler, outside the Claude app.
@@ -135,6 +231,18 @@ first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
   - `--check`: `device = "cuda"` without a GPU is an ERR (Whisper would not start); a broken
     faster_whisper no longer cuts the report short;
   - the tray logs when its thread does not stop; the tests check the thread really ended.
+
+### The IT-1 merge
+
+#### Fixed
+- Whisper's second opinion skips a memory request ("dimenticalo", "cosa ricordi di Anna?"):
+  it only knows the commands, and the memory phrases are the router's.
+- While off a memory request is not understood either: only "accenditi" counts.
+- Jack's grouped pieces drop the fragment of a reply cut at `max_tokens` too (`group_stream`
+  reads Claude's chunks itself since the latency work); a worker that timed out on a full
+  graphics card is a `WorkerTimeout`, so Jack starts again once the card has room.
+- The ducking log also gives the voice's level before the gain, the one
+  `barge_in_min_dbfs` is compared with.
 
 ## [0.4.0] - 2026-10-30 - IT-0: reliability
 

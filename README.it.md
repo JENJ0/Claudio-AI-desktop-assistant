@@ -13,9 +13,11 @@ Microfono ─► openWakeWord ("Hey Claudio", "Claudio") ─► bip
 
 Stato: **v0.4.0** (30/10/2026): fasi 1-3 (comandi locali, Claude, controllo del PC) e i comandi
 vocali per la pausa, lo spegnimento ("spegniti"), la riaccensione ("accenditi") e la chiusura
-("chiuditi"); l'iterazione di affidabilità IT-0 è chiusa. Da allora (IT-1): un solo CLAUDIO alla
-volta, riavviato dopo un crash, e l'icona nella system tray. Mancano ancora la memoria persistente
-(fase 4) e gli aggiornamenti automatici (fase 5). Le wake word sono le
+("chiuditi"); l'iterazione di affidabilità IT-0 è chiusa. Da allora (IT-1, ramo `it-1`, in prova):
+la memoria a lungo termine (fase 4), un solo CLAUDIO alla volta, riavviato dopo un crash, l'icona
+nella system tray, i comandi storpiati riascoltati, un ascolto più affidabile e la voce di Jack
+più uniforme. Mancano ancora i riassunti delle conversazioni (fase 4) e gli aggiornamenti
+automatici (fase 5). Le wake word sono le
 nostre, addestrate sulla voce del proprietario (vedi
 [scripts/wakeword/README.md](scripts/wakeword/README.md), in inglese; i file dei modelli non sono su
 Git): "Hey Claudio" e "Claudio" da solo, più debole, quindi Whisper conferma ogni sua rilevazione.
@@ -107,7 +109,8 @@ Dopo una risposta Claudio resta in ascolto per 6 secondi senza wake word (lo dic
 altro comando non richiede "Hey Claudio". La finestra si chiude con il silenzio, con "basta" o
 con qualcosa che non è un comando (la TV, qualcun altro che parla), con un bip basso e nessuna
 risposta. Mentre parla, Claudio continua ad
-ascoltare. Una voce vicina al microfono (`barge_in_min_dbfs`, almeno 0,3 s) abbassa subito la
+ascoltare. Una voce vicina al microfono (`barge_in_min_dbfs`, misurata prima del
+guadagno del microfono, almeno 0,3 s) abbassa subito la
 risposta; quando Whisper sente parole la risposta si ferma e quello che hai detto diventa la
 richiesta successiva, senza "Hey Claudio" ("basta" / "stop" ferma e basta); dopo averle risposto
 riprende la risposta interrotta ("Dicevo: ...", `resume_s`) se era lunga (una storia,
