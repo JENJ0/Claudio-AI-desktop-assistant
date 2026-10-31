@@ -146,6 +146,25 @@ rotto e come l'ho sistemato:
 
 Dopo lo spostamento: `claudio --check` tutto OK, `pytest` 2452 passati, 3 saltati (dalla cartella principale, con la `.venv` vera).
 
+## Prova di JenJo (31/10 12:38) e correzioni
+
+Log: `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\logs\sessions\2026-10-31_12-38\console.log`.
+JenJo: meno cambi di tonalità, pronuncia migliore, cadenza stabile; due attivazioni da sole;
+nessun avvio con Windows (il task non è registrato: punto 4 di `piani\IT-1-sempreattivo-consegne.md`).
+
+- **Attivazioni da sole (scelta 1 di JenJo, corrette)**: tutte e due "hey_claudio" forte (0,64 nel
+  primo secondo dopo "Pronto", 0,77 dopo Pausa/Accendi dalla tray) sul gate della cuffia
+  (-87 dBFS), con 0 e 32 ms di voce prima. Ora anche una wake forte deve avere almeno
+  `[wakeword] min_voice_ms` (96 ms) di voce secondo Silero (~6 ms), come già quelle deboli; una
+  sola riga e un WAV `no_voice` per raffica. Sulle 21 wake con l'audio ancora nei log: le 14 vere
+  avevano almeno 224 ms di voce, 6 delle 7 a vuoto 0-32 ms. In più il rilevatore nuovo viene
+  ripulito con il silenzio come dopo un reset (openWakeWord parte dallo stesso rumore casuale);
+  sull'audio del gate non cambiava i punteggi, quindi non era la causa: è solo coerenza.
+- **Voce di Jack (non toccata qui)**: su 45 pezzi 11 take cattive rifatte, 4 suonate cattive per
+  mancanza di tempo (acute o urlate: i cambi di tonalità), 5 molto basse (78-87 Hz) che il
+  controllo non guarda (scarta solo le take troppo acute). Proposta a JenJo: un thread per la
+  voce (controllo delle take troppo basse).
+
 ## Rischi e cose aperte
 
 1. **Wake debole + frase di memoria senza nome** (c'era già prima dell'unione, da memoria con il
