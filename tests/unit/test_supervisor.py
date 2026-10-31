@@ -112,6 +112,59 @@ def test_real_processes_crash_then_close(tmp_path: Path) -> None:
     assert marker.read_text() == "2"
 
 
+class FakeProcess:
+    """Popen whose wait() plays back `steps`: an exception to raise or an exit code."""
+
+    def __init__(self, steps: list[object]) -> None:
+        self.steps = steps
+        self.timeouts: list[float | None] = []
+        self.killed = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.timeouts.append(timeout)
+        step = self.steps.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        assert isinstance(step, int)
+        return step
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def fake_popen(monkeypatch: pytest.MonkeyPatch, process: FakeProcess) -> None:
+    monkeypatch.setattr(supervisor.subprocess, "Popen", lambda command: process)
+
+
+def test_the_wait_lets_ctrl_c_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Windows a wait without a timeout ignores Ctrl+C: it waits in slices."""
+    slice_over = supervisor.subprocess.TimeoutExpired("claudio", supervisor.WAIT_SLICE_S)
+    process = FakeProcess([slice_over, slice_over, 1])
+    fake_popen(monkeypatch, process)
+    assert run_child(["claudio"]) == 1
+    assert process.timeouts == [supervisor.WAIT_SLICE_S] * 3
+
+
+def test_ctrl_c_stops_the_supervisor_whatever_claudio_says(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Ctrl+C before CLAUDIO handles it ends CLAUDIO with STATUS_CONTROL_C_EXIT: still a
+    stop, never a crash to restart."""
+    process = FakeProcess([KeyboardInterrupt(), 0xC000013A])
+    fake_popen(monkeypatch, process)
+    assert run_child(["claudio"]) == 0
+    assert process.timeouts[-1] == supervisor.CTRL_C_GRACE_S
+    assert not process.killed
+
+
+def test_ctrl_c_and_claudio_hangs_it_is_killed(monkeypatch: pytest.MonkeyPatch) -> None:
+    expired = supervisor.subprocess.TimeoutExpired("claudio", supervisor.CTRL_C_GRACE_S)
+    process = FakeProcess([KeyboardInterrupt(), expired])
+    fake_popen(monkeypatch, process)
+    assert run_child(["claudio"]) == 0
+    assert process.killed
+
+
 @pytest.fixture
 def restore_logging() -> Iterator[None]:
     root = logging.getLogger()
@@ -148,3 +201,16 @@ def test_main_with_a_broken_configuration_still_runs_claudio(
     monkeypatch.setattr(supervisor, "supervise", lambda command: 2)
     assert supervisor.main(["--config", str(config)]) == 2
     assert (tmp_path / "logs" / supervisor.LOG_FILE).exists()
+
+
+def test_ctrl_c_while_waiting_to_restart_ends_quietly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_logging: None
+) -> None:
+    config = tmp_path / "c.toml"
+    config.write_text(f'logs_dir = "{(tmp_path / "logs").as_posix()}"\n', encoding="utf-8")
+
+    def interrupted(command: Sequence[str]) -> int:
+        raise KeyboardInterrupt  # Ctrl+C during the 5 s before a restart
+
+    monkeypatch.setattr(supervisor, "supervise", interrupted)
+    assert supervisor.main(["--config", str(config)]) == 0

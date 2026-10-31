@@ -17,8 +17,25 @@ partito da `main` = `ba3872f` (tag `v0.4.0`), non pushato. Sezioni 6.1, 6.2, 6.3
 | `requirements.txt` rigenerato: mancavano pillow, pywin32, pywinauto, six | `requirements.txt` |
 | Test: 66 nuovi (mutex anche tra processi e dopo un crash, supervisore con processi veri, menu e stati della tray, icona vera di pystray, modello Whisper) | `tests/unit/test_single_instance.py`, `test_supervisor.py`, `test_tray.py`, `test_checks.py`, `test_autostart.py` |
 
-Risultati: `pytest` 1819 passed, 4 skipped (prima 1753); test lenti nuovi passati (icona vera);
-ruff e mypy puliti. Anche i commit intermedi del ramo passano ruff e i loro test.
+Risultati: `pytest` 1833 passed, 4 skipped (prima 1753), anche dopo le correzioni della
+revisione; test lenti nuovi passati (icona vera); ruff e mypy puliti. Anche i commit intermedi
+del ramo passano ruff e i loro test.
+
+## Revisione multi-agente (31/10)
+
+3 revisori indipendenti (fili e processi, check e integrazione, test e documenti), ognuno con
+esperimenti propri: 11 segnalazioni, 8 distinte, tutte verificate da me e corrette nel commit
+`fix: review findings` (lo scettico finale è stato fermato per chiudere in tempo).
+
+| Problema | Correzione |
+|---|---|
+| Un errore imprevisto sotto pythonw si perdeva (nessuna console): il supervisore diceva "il motivo è nel log" ma non c'era | `main()` lo scrive nel log con il traceback, codice 1 |
+| "Chiudi CLAUDIO" e "chiuditi" non chiudevano se il microfono non manda audio (staccato) | `close_when_idle`: 1 s dopo che CLAUDIO è fermo, la corsa viene annullata |
+| Con un CLAUDIO avviato come amministratore, la seconda copia andava in crash (codice 1) e veniva riavviata | `ERROR_ACCESS_DENIED` = già acceso, codice 3 |
+| Ctrl+C non interrompeva l'attesa del supervisore su Windows; un Ctrl+C all'avvio faceva ripartire CLAUDIO | attesa a fette di 0,5 s; dopo Ctrl+C il supervisore si ferma sempre |
+| `--check` con `device = "cuda"` senza GPU diceva OK (Whisper non partirebbe) | ora è ERR |
+| `--check` si interrompeva con un traceback se faster_whisper non si importa | la riga è ERR e il resto del rapporto continua |
+| Il test dell'icona vera non poteva fallire (controllava una variabile azzerata sempre) | controlla che il thread di pystray sia davvero finito; avviso nel log se non si ferma |
 
 ## Verificato sul PC (30/10)
 

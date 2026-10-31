@@ -161,6 +161,9 @@ EN: dict[str, str] = {
     "senza GPU": "without a GPU",
     "con la GPU": "with the GPU",
     "WARN %s: serve solo %s (%s)": "WARN %s: only needed %s (%s)",
+    '[stt] device = "cuda" senza GPU CUDA: Whisper non partirà': (
+        '[stt] device = "cuda" without a CUDA GPU: Whisper will not start'
+    ),
     # config
     "File di configurazione non trovato: {path}": "Configuration file not found: {path}",
     "{path}: TOML non valido ({error})": "{path}: invalid TOML ({error})",
@@ -466,6 +469,10 @@ EN: dict[str, str] = {
     "Non era %r: nuova richiesta %r": "It was not %r: new request %r",
     # IT-1: always on (single_instance.py, supervisor.py, tray.py)
     "CLAUDIO è già acceso: questa copia si chiude": "CLAUDIO is already running: this copy closes",
+    "CLAUDIO si è fermato per un errore": "CLAUDIO stopped because of an error",
+    "Nessun audio dal microfono: chiudo senza aspettarlo": (
+        "No audio from the microphone: closing without waiting for it"
+    ),
     "Supervisore: avvio %s": "Supervisor: starting %s",
     "CLAUDIO chiuso (codice %d): il supervisore si ferma": (
         "CLAUDIO closed (code %d): the supervisor stops"
@@ -495,6 +502,9 @@ EN: dict[str, str] = {
     "Icona nella system tray chiusa per errore": "System tray icon closed by an error",
     "Icona nella system tray non aggiornata": "System tray icon not updated",
     "Icona nella system tray non chiusa": "System tray icon not closed",
+    "Icona nella system tray: il suo thread non si è fermato": (
+        "System tray icon: its thread did not stop"
+    ),
     "Chiusura chiesta dall'icona nella system tray": "Close requested from the system tray icon",
 }
 

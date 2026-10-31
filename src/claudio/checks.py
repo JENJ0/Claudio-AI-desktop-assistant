@@ -85,18 +85,22 @@ def check_whisper(settings: Settings, gpus: int, report: Callable[[bool, str], N
     """The model Whisper will load must be on disk (an error otherwise: CLAUDIO would try to
     download ~3 GB at startup); the fallback one only gets a warning."""
     root = settings.resolve(settings.models_dir) / "whisper"
+    if settings.stt.device == "cuda" and not gpus:  # "cuda" never falls back to the CPU
+        report(False, tr('[stt] device = "cuda" senza GPU CUDA: Whisper non partirà'))
     needed, other = whisper_models(settings.stt, gpus)
     try:
         folder = find_whisper_model(needed, root)
         size = (folder / "model.bin").stat().st_size / 1e9
         report(True, tr("modello Whisper {name} ({size} GB)", name=needed, size=f"{size:.1f}"))
-    except (OSError, ValueError) as exc:  # OSError: missing, or a cache it cannot read
+    # OSError: missing, or a cache it cannot read; ImportError: faster_whisper is broken (its
+    # own ERR line is above), and the rest of the report must still be printed.
+    except (OSError, ValueError, ImportError) as exc:
         report(False, f"{exc}. {tr('Scaricalo con')}: {download_hint(needed)}")
     if other is None:
         return
     try:
         find_whisper_model(other, root)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, ImportError) as exc:
         when = tr("senza GPU") if other == settings.stt.fallback_model else tr("con la GPU")
         log.warning("WARN %s: serve solo %s (%s)", exc, when, download_hint(other))
 

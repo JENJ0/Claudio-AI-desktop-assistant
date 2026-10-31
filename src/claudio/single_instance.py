@@ -15,6 +15,7 @@ from types import TracebackType
 from typing import Any
 
 MUTEX_NAME = "Local\\CLAUDIO-voice-assistant"
+ERROR_ACCESS_DENIED = 5
 ERROR_ALREADY_EXISTS = 183
 # The exit code of a CLAUDIO that found another one running: not a crash, never restarted.
 EXIT_ALREADY_RUNNING = 3
@@ -31,6 +32,15 @@ def _kernel32() -> Any:
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     return kernel32
+
+
+def _create_mutex(name: str) -> tuple[int, int]:
+    """(handle or 0, GetLastError) of CreateMutexW: the existing mutex or a new one.
+    Not owned (bInitialOwner False): the name existing is the lock. The handle is not
+    inherited (no security attributes), so Jack's worker and the chat window never keep it
+    alive after CLAUDIO ends."""
+    handle = _kernel32().CreateMutexW(None, False, name)
+    return handle or 0, ctypes.get_last_error()
 
 
 class SingleInstance:
@@ -51,16 +61,15 @@ class SingleInstance:
             return True
         if sys.platform != "win32":
             return True
-        kernel32 = _kernel32()
-        # Not owned (bInitialOwner False): the name existing is the lock. The handle is not
-        # inherited (no security attributes), so Jack's worker and the chat window never
-        # keep it alive after CLAUDIO ends.
-        handle = kernel32.CreateMutexW(None, False, self.name)
-        error = ctypes.get_last_error()
+        handle, error = _create_mutex(self.name)
         if not handle:
+            # A CLAUDIO started as administrator holds the name and its mutex cannot be
+            # opened by this one (CreateMutexW documents ERROR_ACCESS_DENIED): it is taken.
+            if error == ERROR_ACCESS_DENIED:
+                return False
             raise ctypes.WinError(error)
         if error == ERROR_ALREADY_EXISTS:
-            kernel32.CloseHandle(handle)
+            _kernel32().CloseHandle(handle)
             return False
         self._handle = handle
         return True
