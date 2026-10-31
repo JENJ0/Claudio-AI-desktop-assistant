@@ -69,24 +69,24 @@ Vanno rifatte dopo l'unione: la tabella dei semi usa il testo come lo legge Jack
 pronuncia le frasi con una sdrucciola cambiano ("accenditi" → "accènditi"). Le 22 del 31/10
 restano in `data\jack_cache\`: quelle che non combaciano più vengono solo ignorate.
 
-JenJo (31/10, notte): "rigenerazione domani mattina appena accendo il computer". Quindi:
+**Fatte il 31/10 alle 11:48-11:51** (3 minuti, GPU libera, Claudio chiuso), dal codice di
+`it-1` nella cartella principale: il task all'accesso non era stato registrato (il sistema dei
+permessi blocca la creazione di task), quindi le ho lanciate io appena il PC si è riacceso.
 
-- la cartella principale `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant` è sul
-  ramo `it-1` (la cartella di lavoro `claudio-it1-merge` è staccata, `HEAD` sullo stesso commit);
-- il task di Windows **ClaudioJackTakes** parte una volta all'accesso: aspetta 2 minuti, poi
-  aspetta che la GPU abbia almeno 6000 MB liberi e sia sotto il 30 % e che Claudio sia chiuso
-  (riprova ogni 5 minuti, al massimo 6 ore), lancia
-  `.venv\Scripts\python.exe scripts\jack_takes.py --from-logs 3` e alla fine **si cancella da
-  solo**;
-- cosa è successo: `logs\jack-takes\auto-run.log`; il risultato: `logs\jack-takes\report.md`;
-- lo script del task: `logs\jack-takes\run_once.ps1` (fuori da Git).
+- 25 frasi fisse × 8 semi, in `data\jack_cache\` e `data\jack_takes.json` della cartella
+  principale; report in `logs\jack-takes\report.md`, resoconto in `logs\jack-takes\auto-run.log`.
+- Take scartate da 0 a 5 su 8 per frase; registro mediano delle take buone 130 Hz
+  (`jack_usual_hz = 132`).
+- Whisper sente giuste 20 frasi su 25: tre differenze sono solo "dì"/"di'" o punteggiatura, una
+  è "di' svegliati" sentito "ti svegliati". "accènditi" è sentito giusto. **"Apro Chrome." resta "apro croma"** anche nella take migliore
+  (già segnalato dal thread voce: "cròm" finisce con m, che la regola delle consonanti finali non
+  raddoppia). Se ti dà fastidio all'orecchio, prova un'altra riscrittura in `[tts.jack_words]`
+  e rilancia `scripts\jack_takes.py --only "Apro Chrome."`.
+- Tra le frasi "dette almeno 3 volte nei log" c'è anche "È mezzanotte e 43.": innocua (suona solo
+  quando la risposta è esattamente quella).
 
-**Il task non l'ho potuto registrare io**: il sistema dei permessi blocca la creazione di task
-("persistenza"). Lo registra JenJo con un comando, che poi spegne il PC:
-`powershell -ExecutionPolicy Bypass -File C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\logs\jack-takes\register_and_shutdown.ps1`
-(con `-NoShutdown` alla fine registra soltanto). Se non è stato registrato, il punto 6 qui sotto
-fa la stessa cosa a mano. Per toglierlo prima che parta:
-`Unregister-ScheduledTask -TaskName ClaudioJackTakes`.
+Gli script `logs\jack-takes\run_once.ps1` e `register_and_shutdown.ps1` non servono più: puoi
+cancellarli.
 
 ## Come provarlo (passi per JenJo)
 
@@ -97,9 +97,8 @@ fa la stessa cosa a mano. Per toglierlo prima che parta:
    (altrimenti `git switch it-1`; i tuoi `data\`, `models\`, `logs\` e `.env` restano).
 4. Installa la dipendenza nuova dell'icona: `uv sync` (aggiunge solo `pystray`).
 5. `uv run claudio --check`: ogni riga OK, compresa "OK modello Whisper large-v3 (3.1 GB)".
-6. Le frasi fisse di Jack: se `logs\jack-takes\auto-run.log` finisce con "exit 0" sono fatte;
-   altrimenti, GPU libera, circa 10 minuti: `uv run python scripts\jack_takes.py --from-logs 3`.
-   Leggi `logs\jack-takes\report.md`.
+6. Le frasi fisse di Jack sono già pronte (31/10 mattina): niente da fare. Per rifarle,
+   GPU libera e Claudio chiuso: `uv run python scripts\jack_takes.py --from-logs 3`.
 7. Avvia: `uv run claudio` e aspetta "Sono pronto". Vicino all'orologio (anche sotto la freccia ^)
    c'è l'icona: blu mentre carica, verde quando è pronto.
 8. Prove, una per thread:
