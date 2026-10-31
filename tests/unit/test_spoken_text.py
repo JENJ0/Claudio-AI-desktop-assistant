@@ -78,6 +78,7 @@ def test_jack_writes_the_accent_on_the_sdrucciole() -> None:
     )
     assert to_spoken_it("Il socio è qui.") == "Il socio è qui."  # "sòcio" was heard "soccio"
     assert to_spoken_it("Sono le 13.") == "Sono le tredici."  # number words are left alone
+    assert to_spoken_it("Sono le tredici.") == "Sono le tredici."  # also typed in letters
 
 
 def test_jenjos_table_wins_over_the_accents() -> None:
@@ -86,7 +87,7 @@ def test_jenjos_table_wins_over_the_accents() -> None:
 
 
 def test_words_jack_may_misread_are_logged(monkeypatch, caplog) -> None:
-    monkeypatch.setattr(spoken_text, "UNKNOWN", UnknownWords({"online": "onlàin"}))
+    monkeypatch.setattr(spoken_text, "UNKNOWN", UnknownWords({"chat": "ciàt"}))
     with caplog.at_level(logging.INFO, logger="claudio.tts.loanwords"):
-        to_spoken_it("Il PDF del subprime è online sul desktop.", {"desktop": "dèsk-top"})
-    assert spoken_text.UNKNOWN.seen == {"subprime", "online"}
+        to_spoken_it("Il PDF del subprime è in chat sul desktop.", {"desktop": "dèsk-top"})
+    assert spoken_text.UNKNOWN.seen == {"subprime", "chat"}

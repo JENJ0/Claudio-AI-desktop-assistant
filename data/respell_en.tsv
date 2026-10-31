@@ -1,12 +1,12 @@
 # English loanwords respelled for Jack from Wiktionary's Italian IPA: proposals to hear
 # (scripts/jack_variants.py --words WORD), never applied. Built by
-# scripts/build_lexicon_it.py on 2026-10-30 from kaikki.org-dictionary-Italian.jsonl.gz.
+# scripts/build_lexicon_it.py on 2026-10-31 from kaikki.org-dictionary-Italian.jsonl.gz.
 # Data: Wiktionary contributors (via kaikki.org); CC BY-SA 4.0.
 # word<TAB>proposal
 account	accàunt
 ace	éis
-agnosticismo	agngnosticìsmo
-agnostico	agngnòstico
+agnosticismo	agnosticìsmo
+agnostico	agnòstico
 aids	aidièsse
 airbag	erbèg
 aiscrìma	aiscrìma
@@ -17,7 +17,7 @@ antismog	antismòg
 antistress	antistrès
 app	èpp
 appeal	appìl
-ascii	àshsci
+ascii	àsci
 asset	àsset
 assist	àssist
 atollo	atòllo
@@ -27,7 +27,6 @@ autofocus	autofòcus
 babla	bàbla
 baby	bèbi
 background	beggràund
-backstage	becstéig
 backup	becàp
 bacon	bècon
 bandana	bandàna
@@ -40,7 +39,7 @@ bike	bàik
 biker	bàicher
 bingo	bìngo
 bioregione	bioregióne
-birdwatching	berduòtcing
+birdwatching	berduòccing
 bistecca	bistécca
 bit	bìt
 bite	bàit
@@ -63,11 +62,10 @@ box	bòcs
 boxer	bòcser
 boyscout	boiscàut
 break	brèk
-bridge	brìg
 briefing	brìfing
 broker	bròcher
 browser	bràuser
-budget	bàdget
+budget	bàgget
 bungalow	bùngalov
 business	bìsnes
 busy	bìsi
@@ -82,7 +80,6 @@ cameraman	càmeramen
 camper	càmper
 camperare	camperàre
 capoc	capòk
-cappare	cappàre
 card	càrd
 cashmere	càshmir
 cast	càst
@@ -108,7 +105,6 @@ clone	clóne
 cloud	clàud
 clown	clàun
 club	clàb
-coach	cóc
 cobego	cobègo
 cocktail	còctel
 combine	combìn
@@ -126,11 +122,9 @@ coyote	coiòte
 cracker	crècher
 crick	crìk
 cricket	crìchet
-cringe	crìng
 criogenico	criogènico
 cross	cròs
 cruciale	cruciàle
-crunch	crùnc
 curry	chèrri
 dalek	dàlek
 dark	dàrk
@@ -161,9 +155,9 @@ drone	dròne
 dugongo	dugòngo
 dumping	dàmping
 elettrone	elettróne
-equalizzare	ecualidzàre
-equalizzazione	ecualidzatzióne
-escalation	escalèshscion
+equalizzare	ecualizzàre
+equalizzazione	ecualizzazzióne
+escalation	escalèscion
 eugenico	eugènico
 euro	èuro
 falla	fàlla
@@ -190,14 +184,14 @@ fricativo	fricatìvo
 fricchettone	fricchettóne
 friendzonare	frendsonàre
 friendzone	frèndson
-frizzarsi	fridzàrsi
-gadget	gàdget
+frizzarsi	frizzàrsi
+gadget	gàgget
 gag	ghèg
 gallone	gallóne
 gang	ghèng
 gangster	ghènster
 gay	ghèi
-gazebo	gadzèbo
+gazebo	gazzèbo
 geco	gèco
 gei	gèi
 genetica	genètica
@@ -228,7 +222,6 @@ humour	iùmor
 iban	ìban
 iceberg	àisberg
 identikit	identichìt
-impeachment	impìcment
 implementare	implementàre
 importare	importàre
 incantèsimo	incantèsimo
@@ -256,14 +249,13 @@ ketchup	chèciap
 killer	chìller
 killerare	chilleràre
 kirkificare	chirchificàre
-kirkificazione	chirchificatzióne
+kirkificazione	chirchificazzióne
 koala	coàla
 lacrosse	lacròs
 lady	lèdi
 ladyboy	ledibòi
 laggare	laggàre
 laser	làser
-lasso	làsso
 leader	lìder
 leadership	lìderscip
 led	lèd
@@ -287,7 +279,6 @@ lovvare	lovvàre
 luddismo	luddìsmo
 magazine	màgasin
 malto	màlto
-management	mànagment
 manager	mànager
 manciù	manciù
 mandatorio	mandatòrio
@@ -301,7 +292,6 @@ marketing	màrcheting
 mascara	mascàra
 massmediologia	masmediologìa
 massmediologo	masmediòlogo
-match	mèc
 meeting	mìting
 megavolt	mègavolt
 megawatt	mègavat
@@ -342,7 +332,7 @@ on	òn
 optional	òpscional
 orangutan	orangutàn
 outfit	àutfit
-outsider	autzàider
+outsider	auzzàider
 overdose	overdòse
 pamphlet	pamflè
 paria	pària
@@ -373,7 +363,7 @@ pos	pòs
 post	pòst
 poster	pòster
 premier	prèmier
-pressurizzare	pressuridzàre
+pressurizzare	pressurizzàre
 princisbecco	princisbécco
 privacy	pràivasi
 pro	prò
@@ -385,8 +375,8 @@ pub	pàb
 puk	pùk
 pullover	pullòver
 pulsimetro	pulsìmetro
-pusher	pùshscer
-puzzle	pàdzol
+pusher	pùscer
+puzzle	pàzzol
 quacchero	cuàcchero
 quark	cuàrk
 quittare	cuittàre
@@ -405,11 +395,11 @@ remake	riméik
 replay	replèi
 reporter	repòrter
 resettare	resettàre
-retroammiraglio	retroammiràgliglio
+retroammiraglio	retroammiràglio
 revival	revàival
 revolver	revòlver
 riff	rìf
-risciò	rishsciò
+risciò	risciò
 rock	ròk
 romantico	romàntico
 rotore	rotóre
@@ -418,7 +408,6 @@ router	ràuter
 rugby	règbi
 rum	rùm
 sagù	sagù
-sandwich	sènduic
 sapodilla	sapodìlla
 scalpo	scàlpo
 scellino	scellìno
@@ -426,10 +415,9 @@ sceriffo	scerìffo
 schwa	shvà
 sciamano	sciamàno
 scioccare	scioccàre
-sciuscià	sciushscià
+sciuscià	sciuscià
 scoop	scùp
 scooter	scùter
-scotch	scòc
 scèra	scèra
 selfie	sèlfi
 sequoia	secuòia
@@ -448,7 +436,6 @@ shopping	sciòpping
 shot	sciòt
 simplesso	simplèsso
 single	sìngol
-sketch	schèc
 skipper	schìpper
 slogan	slògan
 smartphone	smàrtfon
@@ -478,7 +465,6 @@ sprint	sprìnt
 sprue	sprùe
 squirtare	scuirtàre
 staff	stàf
-stage	stéig
 stallo	stàllo
 stand	stènd
 standard	stàndard
@@ -531,7 +517,6 @@ toner	tòner
 top	tòp
 tornado	tornàdo
 totem	tòtem
-touch	tàc
 tracklist	tràclist
 tram	tràm
 trance	tràns

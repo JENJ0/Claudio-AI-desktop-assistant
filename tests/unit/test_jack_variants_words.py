@@ -23,3 +23,13 @@ def test_wer_counts_the_words_said_not_the_accents_written_for_the_voice() -> No
         "fermati",
     ]
     assert jack_variants.wer("Fermati, socio: accenditi.", "fermati socio accenditi") == 0.0
+
+
+def test_spellings_reach_the_worker_as_written() -> None:
+    import claudio.tts.jack as jack_module
+
+    with jack_variants.sent_as_written():
+        assert jack_module.to_spoken_it("Socio, accenditi.", {"socio": "sòcio"}) == (
+            "Socio, accenditi."
+        )
+    assert jack_module.to_spoken_it("Socio, accenditi.") == "Socio, accènditi."
