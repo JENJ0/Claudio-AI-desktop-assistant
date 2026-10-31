@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sqlite3
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from claudio.config import (
     DEFAULT_LANGUAGE,
@@ -37,6 +38,9 @@ from claudio.safety.confirmation import (
 from claudio.system import ON
 from claudio.wakeword.verifier import after_clipped_name
 
+if TYPE_CHECKING:
+    from claudio.memory.voice import MemoryVoice
+
 log = logging.getLogger(__name__)
 
 QUESTION_TAIL_CHARS = 60  # a "?" this close to the end of a reply asks something
@@ -50,6 +54,10 @@ GuessCall = Callable[[Doubt, Sequence[Near]], Awaitable[Guess | None]]
 # Claude guessed the request without being sure: Claudio asks before answering it.
 DID_YOU_SAY = {"it": "Hai detto: {text}?", "en": "Did you say: {text}?"}
 NOT_THAT = {"it": "Va bene, lascio stare.", "en": "Okay, never mind."}
+MEMORY_ERROR = {
+    "it": "Non riesco a usare la memoria in questo momento.",
+    "en": "I can't use my memory right now.",
+}
 
 
 @dataclass(frozen=True)
@@ -79,6 +87,7 @@ class LocalResponder:
         fallback_guess_info: Callable[[], dict[str, Any]] | None = None,
         guess: GuessSettings | None = None,
         clock: Callable[[], float] = time.monotonic,
+        memory: MemoryVoice | None = None,
     ) -> None:
         self.matcher = matcher
         self.actions = actions
@@ -104,6 +113,10 @@ class LocalResponder:
         self._last_reply: tuple[str, str] | None = None  # (text, language) for "ripeti"
         self.clock = clock
         self._last_reply_at = -float("inf")
+        # "ricordati che...", "dimentica...", "cosa ricordi di...": free text, understood
+        # before any command (None: no long-term memory).
+        self.memory = memory
+        self._addressed = True  # the next request was said with the wake word (or typed)
 
     def prepare(self) -> None:
         """JenJo started speaking to Claudio: whatever the request needs can get ready now.
@@ -116,8 +129,13 @@ class LocalResponder:
         except Exception:
             log.exception("Preparazione della risposta non riuscita")
 
-    def understands(self, text: str, language: str = DEFAULT_LANGUAGE) -> bool:
-        """A local command matches `text` (the assistant retries in Italian when not)."""
+    def understands(self, text: str, language: str = DEFAULT_LANGUAGE, memory: bool = True) -> bool:
+        """A local command matches `text` (the assistant retries in Italian when not), or it
+        is a memory request: no closed list or guess may turn "dimentica Anna" into another
+        command, and it is a request also in the conversation window. memory=False: commands
+        only (words said over a reply need the name to be a memory request)."""
+        if memory and self.memory is not None and self.memory.understands(text):
+            return True
         return self.matcher.match(text, language) is not None
 
     def is_stop(self, text: str) -> bool:
@@ -135,6 +153,17 @@ class LocalResponder:
     @property
     def awaiting(self) -> bool:
         """True after a confirmation question: the assistant listens again, no wake word."""
+        return (
+            self._pending is not None
+            or self._proposal is not None
+            or self._fallback_waits()
+            or (self.memory is not None and self.memory.awaiting)
+        )
+
+    @property
+    def needs_voice(self) -> bool:
+        """An action waits for a spoken yes (never given in the chat window). The memory's
+        question ("Quale dimentico?") is not one: it can be answered by typing too."""
         return self._pending is not None or self._proposal is not None or self._fallback_waits()
 
     def _fallback_waits(self) -> bool:
@@ -161,7 +190,9 @@ class LocalResponder:
         return self.asked_question and self.clock() - self._last_reply_at <= ANSWER_WINDOW_S
 
     def heard(self, hearing: Hearing) -> None:
-        """How sure Whisper was of the request about to be answered (Claude is told)."""
+        """How sure Whisper was of the request about to be answered (Claude is told), and
+        whether it was said to Claudio (the memory asks first when it was not)."""
+        self._addressed = hearing.addressed
         if self.fallback_heard is not None:
             self.fallback_heard(hearing)
 
@@ -269,6 +300,10 @@ class LocalResponder:
             self._proposal = None
         if self.fallback_cancel is not None and not silence:
             self.fallback_cancel()
+        if self.memory is not None:
+            # "Quale dimentico?" without an answer, even after mere silence: nothing is
+            # forgotten, and a phrase much later is never taken for the answer.
+            self.memory.cancel()
 
     def _reply_language(self, language: str, has_text: bool) -> str:
         """`language` when there is a reply and a voice for it, else Italian: the text and
@@ -325,6 +360,30 @@ class LocalResponder:
             self.last_route = {"route": "paused"}
             log.info("In pausa, ignoro: %r", text, extra={"route": "paused"})
             return  # nothing to say: the assistant answers with a low beep
+        addressed, self._addressed = self._addressed, True
+        if self.memory is not None and _is_memory(match):
+            self.memory.moved_on()  # "cosa ricordi?" instead of an answer: the question is over
+        elif self.memory is not None:
+            # Before a fuzzy command: "ricordati che la pausa pranzo è alle 13" is no "pausa".
+            try:
+                reply = self.memory.handle(text, addressed)
+            except (sqlite3.Error, OSError):  # locked by another program, disk full...
+                log.exception("Memoria non disponibile")
+                self.last_route = {"route": "memory", "memory": "error", "error": True}
+                yield in_language(MEMORY_ERROR, self.language)
+                return
+            if reply is not None:
+                self.language = self._reply_language(reply.language, True)
+                self.last_route = {
+                    "route": "memory",
+                    "memory": reply.outcome,
+                    "language": self.language,
+                }
+                log.info("Memoria: %s", reply.outcome, extra={"route": "memory"})
+                if reply.text:  # "" for the echo of Claudio's own question
+                    yield reply.text
+                return
+            self.memory.moved_on()  # a command or Claude: "dimenticalo" is not about before
         if match is None and self.fallback is not None:
             self.language = self._reply_language(language, True)
             log.info("Non è un comando, chiedo a Claude: %r", text, extra={"route": "claude"})
@@ -459,6 +518,11 @@ class LocalResponder:
 
 def _is_system(match: Match | None) -> bool:
     return match is not None and match.command.action == "system"
+
+
+def _is_memory(match: Match | None) -> bool:
+    """A memory command of commands.toml ("dimentica tutto"): the router runs it."""
+    return match is not None and match.command.action == "memory"
 
 
 def _turns_on(match: Match | None) -> bool:

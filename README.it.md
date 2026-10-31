@@ -149,6 +149,29 @@ aggiornamenti non lo toccano e i `<!-- commenti -->` non vengono inviati. Viene 
 e va dopo il prompt di sistema, quindi in cache: tienilo corto (`personality_max_chars = 3000`).
 Claudio risponde in italiano, in inglese solo se la frase è chiaramente inglese o glielo chiedi.
 
+## Memoria
+
+Claudio ricorda quello che gli dici da una sessione all'altra, in `data/memory.db` (SQLite, sul
+PC). Queste frasi le capisce in locale, gratis, anche senza internet o a budget finito:
+
+| Dici | Claudio |
+|---|---|
+| "Claudio, ricordati che mia sorella si chiama Anna" | salva il fatto e te lo ripete |
+| "Da ora in poi chiamami capo" (o "ricordati sempre di...") | salva una regola fissa |
+| "Cosa ricordi di mia sorella?" | legge quello che corrisponde (se niente, risponde Claude) |
+| "Cosa ricordi?" | quanti ricordi ha e gli ultimi tre |
+| "Dimentica che mia sorella abita a Torino" | lo dimentica se tutte le parole corrispondono; altrimenti chiede ("Dimentico questo: ...?", "Quale dimentico?") |
+| "Dimenticalo" | dimentica il ricordo di cui avete appena parlato (entro un minuto) |
+| "Dimentica tutto" | chiede "confermo", poi dimentica tutto |
+
+Claude vede tutte le regole e i fatti più recenti dopo il prompt di sistema (in cache: circa
+0,00001 $ a richiesta); i fatti che non stanno in `[memory] block_chars` vanno con una richiesta
+solo se ne condividono le parole. Claude può anche salvare ("segnatelo", un "ricordati" capito
+male) e dimenticare con i suoi strumenti: una regola o una cancellazione proposta da lui vuole il
+tuo sì. Salva anche da solo una preferenza duratura che gli dici, e lo dice ("Me lo segno"):
+`[memory] learn = false` lo spegne. Password, PIN, carte e IBAN non vengono mai salvati. "Ricordami di... alle 5" è un
+promemoria, non un ricordo: non c'è ancora.
+
 ## Azioni sul PC
 
 Con Claude acceso, Claudio agisce anche su Windows (`[pc]` in `config/claudio.toml`): apre app

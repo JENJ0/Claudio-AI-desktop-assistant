@@ -270,6 +270,19 @@ speak_typed = false            # true: say the reply aloud too
 poll_s = 0.3
 max_age_s = 120                # messages written while Claudio was off are dropped
 
+# Long-term memory: "ricordati che...", "da ora in poi...", "dimentica...", "cosa ricordi?"
+# (understood locally, free). Kept in db_file, sent to Claude after the system prompt (cached:
+# ~0.00001 $ a request). Passwords, PINs, cards and IBANs are never kept.
+[memory]
+enabled = true
+db_file = "data/memory.db"
+block_chars = 2000             # facts always sent to Claude (~600 tokens); 0 = only the ones that match the request
+relevant = 3                   # facts beyond the block sent with a request that shares their words
+max_items = 500
+max_chars = 300                # one memory: one spoken sentence
+tools = true                   # Claude can save and forget too ("segnatelo"); needs [pc] enabled
+learn = true                   # Claude saves lasting preferences you tell it, without "ricordati", and says so (false: only when asked)
+
 [logging]
 level = "INFO"
 save_audio = true          # keep a WAV of what CLAUDIO heard after each wake word (logs/audio/)

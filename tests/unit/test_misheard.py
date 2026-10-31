@@ -123,7 +123,7 @@ class Claude(FakeResponder):
         super().__init__()
         self.hearings: list[Hearing] = []
 
-    def understands(self, text: str, language: str = "it") -> bool:
+    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
         return "chrome" in text
 
 

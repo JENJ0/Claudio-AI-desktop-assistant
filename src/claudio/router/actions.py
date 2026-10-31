@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from claudio.chat.launcher import ChatLauncher
 from claudio.config import DEFAULT_LANGUAGE
@@ -19,6 +20,9 @@ from claudio.cost.tracker import CostTracker
 from claudio.i18n import tr
 from claudio.router.matcher import Match
 from claudio.system import SystemControl
+
+if TYPE_CHECKING:
+    from claudio.memory.voice import MemoryVoice
 
 log = logging.getLogger(__name__)
 
@@ -199,11 +203,13 @@ class ActionRunner:
         system: SystemControl | None = None,
         tracker: CostTracker | None = None,
         chat: ChatLauncher | None = None,
+        memory: MemoryVoice | None = None,
     ) -> None:
         self.ctx = ctx or ActionContext()
         self.system = system or SystemControl()
         self.tracker = tracker  # the spending counter ("quanto ho speso oggi")
         self.chat = chat  # the chat window ("apri la chat")
+        self.memory = memory  # long-term memory ("cosa ricordi?", "dimentica tutto")
         self._handlers: dict[str, Handler] = {
             "open_app": self._open_app,
             "open_folder": self._open_folder,
@@ -214,6 +220,7 @@ class ActionRunner:
             "tell_spend": self._tell_spend,
             "close_window": self._close_window,
             "chat": self._chat,
+            "memory": self._memory,
         }
 
     def execute(self, match: Match, language: str = DEFAULT_LANGUAGE) -> str:
@@ -274,6 +281,12 @@ class ActionRunner:
             raise ValueError(tr("Comando chat sconosciuto '{command}'", command=what))
         changed = self.chat.open() if what == "open" else self.chat.close()
         return None if changed else str(match.command.param_in("already", language) or "")
+
+    def _memory(self, match: Match, language: str) -> str:
+        """params["do"]: list, forget_last or wipe (level 3: "confermo" was heard)."""
+        if self.memory is None:
+            return str(match.command.param_in("unavailable", language) or "")
+        return self.memory.run(str(match.command.params["do"]), language)
 
     def _tell_spend(self, match: Match, language: str) -> str:
         if self.tracker is None:

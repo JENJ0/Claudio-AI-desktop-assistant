@@ -7,7 +7,7 @@
 # voice). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
 # Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system,
-# chat, repeat, stop.
+# chat, memory, repeat, stop.
 
 [[command]]
 id = "open_chrome"
@@ -190,6 +190,29 @@ action = "chat"
 params = { do = "close", already = "La chat non è aperta.", already_en = "The chat isn't open.", unavailable = "Qui la chat non si può aprire.", unavailable_en = "I can't open the chat here." }
 reply = "Chiudo la chat."
 reply_en = "Closing the chat."
+
+# Memory (src/claudio/memory/): the fixed phrases. "ricordati che...", "dimentica X",
+# "dimenticalo" and "cosa ricordi di X" depend on the text or on what was just said and are
+# understood in memory/voice.py. exact = true: "dimentica tutto quello di Anna" must not
+# become "dimentica tutto".
+[[command]]
+id = "memory_list"
+phrases = ["cosa ricordi", "che cosa ricordi", "cosa ti ricordi", "che cosa ti ricordi", "cosa ricordi di me", "cosa sai di me", "che cosa sai di me", "che sai di me", "elenca i ricordi", "quali ricordi hai", "cosa hai in memoria", "cosa c e nella tua memoria"]
+phrases_en = ["what do you remember", "what do you know about me", "what do you remember about me", "list your memories"]
+action = "memory"
+exact = true
+params = { do = "list", unavailable = "La memoria è spenta.", unavailable_en = "My memory is switched off." }
+
+[[command]]
+id = "memory_wipe"
+phrases = ["dimentica tutto", "dimenticati tutto", "scordati tutto", "dimentica tutto quello che sai", "dimentica tutti i ricordi", "cancella tutti i ricordi", "cancella la memoria", "cancella tutta la memoria", "svuota la memoria"]
+phrases_en = ["forget everything", "erase your memory", "delete all memories", "wipe your memory"]
+action = "memory"
+exact = true
+level = 3
+confirm = "Cancello tutti i ricordi, per sempre. Per procedere dì: confermo."
+confirm_en = "I'll erase every memory, for good. To go ahead, say: I confirm."
+params = { do = "wipe", unavailable = "La memoria è spenta.", unavailable_en = "My memory is switched off." }
 
 # Conversation: "ripeti" says the last reply again; "basta" ends the conversation (CLAUDIO
 # stops listening without the wake word) and, said while CLAUDIO speaks, interrupts it.
