@@ -13,7 +13,8 @@ Microphone ─► openWakeWord ("Hey Claudio", "Claudio") ─► beep
 
 Status: **v0.4.0** (30/10/2026): Phases 1-3 (local commands, Claude, PC control) and the voice
 commands to pause, turn off ("spegniti"), turn on ("accenditi") and close ("chiuditi"); the
-reliability iteration IT-0 is closed. Not there yet: persistent memory (Phase 4), tray icon and
+reliability iteration IT-0 is closed. Since then (IT-1): one CLAUDIO at a time, restarted
+after a crash, and an icon in the system tray. Not there yet: persistent memory (Phase 4) and
 automatic updates (Phase 5). The wake words are our own, trained on the owner's voice (see
 [scripts/wakeword/README.md](scripts/wakeword/README.md); the model files are not in Git):
 "Hey Claudio" and "Claudio" alone, which is weaker, so Whisper confirms each of its detections.
@@ -36,7 +37,7 @@ git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
 uv sync                                   # without a GPU: uv sync --no-group gpu
 uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper large-v3 + small (~3 GB)
-uv run claudio --check                    # every line must say OK
+uv run claudio --check                    # every line must say OK (the Whisper model it will load too)
 uv run python scripts/check_gpu.py        # checks that Whisper really runs on the RTX
 ```
 
@@ -347,6 +348,26 @@ powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1          
 powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
 uv run python -m claudio.autostart install|uninstall|status [--dry-run]       # the same in Python
 ```
+
+The task runs `python -m claudio.supervisor`, which starts CLAUDIO and starts it again after a
+crash: 5 s, 30 s and 60 s later, then it gives up if CLAUDIO crashed 4 times in 10 minutes (the
+reason is in `logs/claudio.log.jsonl`, the supervisor's own lines in
+`logs/supervisor.log.jsonl`). "Chiuditi", the tray menu and a configuration error end it too.
+Task Scheduler's own "restart on failure" is not enough: it only retries a program that cannot
+start, never one that ends with an error (tried on the PC, 30/10/2026).
+
+Only one CLAUDIO runs at a time (a named Windows mutex): a second `uv run claudio`, typed while
+the one started at login is running, writes "CLAUDIO è già acceso" in the log and closes with
+exit code 3 before loading anything, so two of them never share the microphone.
+
+## System tray
+
+While CLAUDIO runs, its icon sits next to the clock (`[startup] tray`, on by default; it needs
+`pystray`, installed by `uv sync`). The color is the state: blue while the models load, green
+when on, amber when paused, gray when off ("spegniti"), and it follows the voice commands too.
+A left click opens the chat window; the right-click menu turns CLAUDIO off or on, pauses it,
+opens the chat and closes CLAUDIO. Without `pystray` CLAUDIO runs as before, with a warning in
+the log.
 
 ## Startup time
 

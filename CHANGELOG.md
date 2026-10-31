@@ -96,6 +96,46 @@ first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
   that timed out on a full card is tried again once the card has room. Read with
   `nvidia-smi` (`src/claudio/gpu.py`, first card only), no new dependency.
 
+## [Unreleased] - IT-1: always on
+
+### Added
+- One CLAUDIO at a time: a named Windows mutex (`single_instance.py`, `Local\CLAUDIO-voice-assistant`).
+  A second `claudio` logs "CLAUDIO è già acceso" and exits with code 3 before loading anything or
+  opening a session folder. Windows frees the name even after a crash.
+- `python -m claudio.supervisor`: starts CLAUDIO and starts it again after a crash (5 s, 30 s,
+  60 s; it gives up after 4 crashes in 10 minutes). Exit codes 0 (closed on purpose), 2
+  (configuration error) and 3 (already running) end it. Its log: `logs/supervisor.log.jsonl`.
+- System tray icon (`tray.py`, `pystray==0.19.5`, `[startup] tray = true`): blue while loading,
+  green on, amber paused, gray off, also after a voice command. Left click opens the chat; the
+  menu turns CLAUDIO off/on, pauses it, opens the chat, closes it. Without pystray: a warning.
+- `claudio --check` checks that the Whisper model CLAUDIO will load is downloaded and complete
+  (`model.bin`, `config.json`, `tokenizer.json`, vocabulary) without going online: large-v3
+  with a GPU, the fallback (small) without one or with `device = "cpu"`; the other one only
+  gets a warning.
+- `SystemControl.subscribe()`: listeners told of every pause/off/on/close change.
+
+### Changed
+- The task at login runs `pythonw.exe -m claudio.supervisor` instead of `-m claudio`.
+
+### Fixed
+- Restart after a crash: Task Scheduler's RestartOnFailure never fires when the program exits
+  with an error (a probe task exiting with 1, 3 restarts a minute apart, was not run again in
+  3 minutes on the PC, 30/10). The `.venv` works from Task Scheduler, outside the Claude app.
+- `requirements.txt` was missing pillow, pywin32, pywinauto and six: regenerated with the
+  command in its header.
+- From the review of the branch (3 reviewers, 11 findings, 8 distinct, all fixed):
+  - an unexpected error is now logged with its traceback in `logs/claudio.log.jsonl` (exit
+    code 1): under pythonw there is no console and the reason of a crash was lost;
+  - "chiuditi" and the tray menu close CLAUDIO even when the microphone sends nothing
+    (unplugged): the run is cancelled 1 s after CLAUDIO is idle (`close_when_idle`);
+  - a CLAUDIO started as administrator makes the second copy exit with 3 (its mutex gives
+    ERROR_ACCESS_DENIED), not crash with 1 and be restarted;
+  - the supervisor waits in 0.5 s slices, so Ctrl+C works on Windows, and a Ctrl+C always
+    stops it (even when CLAUDIO ends with STATUS_CONTROL_C_EXIT or during the restart wait);
+  - `--check`: `device = "cuda"` without a GPU is an ERR (Whisper would not start); a broken
+    faster_whisper no longer cuts the report short;
+  - the tray logs when its thread does not stop; the tests check the thread really ended.
+
 ## [0.4.0] - 2026-10-30 - IT-0: reliability
 
 Iteration 0: five threads merged locally on the `it-0` branch (30/10).

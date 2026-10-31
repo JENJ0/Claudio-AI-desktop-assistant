@@ -10,6 +10,7 @@ after it is matched against "accenditi" alone. "Chiuditi" still closes the progr
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from claudio.i18n import tr
 
@@ -23,6 +24,12 @@ class SystemControl:
         self.paused = False
         self.off = False  # set by "spegniti": silent until "accenditi"
         self.stopping = False  # set by "chiuditi": the assistant exits after its reply
+        self._listeners: list[Callable[[str], None]] = []
+
+    def subscribe(self, listener: Callable[[str], None]) -> None:
+        """Call `listener(what)` after every change, by voice or from the tray menu (the tray
+        icon turns gray on "spegniti")."""
+        self._listeners.append(listener)
 
     def apply(self, what: str) -> bool:
         """Do `what` (pause, resume, off, on, shutdown); False when there was nothing to
@@ -43,4 +50,9 @@ class SystemControl:
             raise ValueError(tr("Comando di sistema sconosciuto '{command}'", command=what))
         if changed:
             log.info("Sistema: %s", what, extra={"system": what})
+            for listener in self._listeners:
+                try:
+                    listener(what)
+                except Exception:  # a listener never undoes or blocks the command
+                    log.exception("Avviso del cambio di stato non riuscito")
         return changed

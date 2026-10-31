@@ -155,6 +155,20 @@ EN: dict[str, str] = {
         "WARN no CUDA GPU: STT will use the CPU (%s)"
     ),
     "WARN controllo GPU fallito: %s": "WARN GPU check failed: %s",
+    "modello Whisper {name} ({size} GB)": "Whisper model {name} ({size} GB)",
+    "modello Whisper {name} non scaricato in {folder}": (
+        "Whisper model {name} not downloaded in {folder}"
+    ),
+    "modello Whisper {name} incompleto in {folder}: mancano {files}": (
+        "Whisper model {name} incomplete in {folder}: missing {files}"
+    ),
+    "Scaricalo con": "Download it with",
+    "senza GPU": "without a GPU",
+    "con la GPU": "with the GPU",
+    "WARN %s: serve solo %s (%s)": "WARN %s: only needed %s (%s)",
+    '[stt] device = "cuda" senza GPU CUDA: Whisper non partirà': (
+        '[stt] device = "cuda" without a CUDA GPU: Whisper will not start'
+    ),
     # config
     "File di configurazione non trovato: {path}": "Configuration file not found: {path}",
     "{path}: TOML non valido ({error})": "{path}: invalid TOML ({error})",
@@ -201,6 +215,7 @@ EN: dict[str, str] = {
     # system
     "Sistema: %s": "System: %s",
     "Comando di sistema sconosciuto '{command}'": "Unknown system command '{command}'",
+    "Avviso del cambio di stato non riuscito": "State change notification failed",
     "Riprovato in %s: %r -> %r": "Retried in %s: %r -> %r",
     "Riprovato in %s, non capito neanche così: %r": "Retried in %s, still not understood: %r",
     # safety
@@ -541,6 +556,45 @@ EN: dict[str, str] = {
         "A memory was forgotten after the Sonnet offer: offer dropped"
     ),
     "Memoria svuotata: %d ricordi dimenticati": "Memory wiped: %d memories forgotten",
+    # IT-1: always on (single_instance.py, supervisor.py, tray.py)
+    "CLAUDIO è già acceso: questa copia si chiude": "CLAUDIO is already running: this copy closes",
+    "CLAUDIO si è fermato per un errore": "CLAUDIO stopped because of an error",
+    "Nessun audio dal microfono: chiudo senza aspettarlo": (
+        "No audio from the microphone: closing without waiting for it"
+    ),
+    "Supervisore: avvio %s": "Supervisor: starting %s",
+    "CLAUDIO chiuso (codice %d): il supervisore si ferma": (
+        "CLAUDIO closed (code %d): the supervisor stops"
+    ),
+    "CLAUDIO si è chiuso per errore %d volte in %.0f minuti: non lo riavvio più. "
+    "Il motivo è in logs/claudio.log.jsonl": (
+        "CLAUDIO crashed %d times in %.0f minutes: not restarting it again. "
+        "The reason is in logs/claudio.log.jsonl"
+    ),
+    "CLAUDIO si è chiuso per errore (codice %d dopo %.0f s): lo riavvio tra %.0f s": (
+        "CLAUDIO crashed (code %d after %.0f s): restarting it in %.0f s"
+    ),
+    "si avvia...": "starting...",
+    "acceso": "on",
+    'in pausa: di\' "Claudio, svegliati"': 'paused: say "Claudio, wake up"',
+    'spento: di\' "Claudio, accenditi"': 'off: say "Claudio, turn yourself on"',
+    "si chiude...": "closing...",
+    "Accendi": "Turn on",
+    "Spegni": "Turn off",
+    "Pausa": "Pause",
+    "Apri la chat": "Open the chat",
+    "Chiudi CLAUDIO": "Close CLAUDIO",
+    "Icona nella system tray non disponibile (%s): CLAUDIO va avanti senza": (
+        "System tray icon not available (%s): CLAUDIO goes on without it"
+    ),
+    "Icona nella system tray: %s": "System tray icon: %s",
+    "Icona nella system tray chiusa per errore": "System tray icon closed by an error",
+    "Icona nella system tray non aggiornata": "System tray icon not updated",
+    "Icona nella system tray non chiusa": "System tray icon not closed",
+    "Icona nella system tray: il suo thread non si è fermato": (
+        "System tray icon: its thread did not stop"
+    ),
+    "Chiusura chiesta dall'icona nella system tray": "Close requested from the system tray icon",
 }
 
 

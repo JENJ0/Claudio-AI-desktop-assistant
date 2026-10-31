@@ -45,6 +45,8 @@ log = logging.getLogger("claudio")
 
 CHAT_DB = "claudio.db"  # in data_dir: every conversation, shown by `claudio --ui`
 BARGE_LEAD_MS = 250  # kept before a voice heard over the reply: its soft first sound
+CLOSE_POLL_S = 0.5  # how often close_when_idle looks for "chiuditi"
+CLOSE_GRACE_S = 1.0  # a microphone sends a frame every 80 ms: this long means none is coming
 
 
 def build_tracker(settings: Settings) -> CostTracker:
@@ -532,6 +534,7 @@ async def run_assistant(
     from claudio.session_log import ConversationLog, purge_old_logs
     from claudio.stt.transcriber import WhisperTranscriber
     from claudio.system import SystemControl
+    from claudio.tray import start_tray
     from claudio.wakeword.detector import OpenWakeWordDetector
 
     models = settings.resolve(settings.models_dir)
@@ -550,6 +553,7 @@ async def run_assistant(
             jack.can_start = lambda: has_room(need)
         jack.start_in_background(jack_error.append, wait_s)
     system = SystemControl()
+    tray = start_tray(settings.startup.tray, system, chat_window)  # blue while loading
     tracker = build_tracker(settings)  # SQLite: opened on the thread that uses it
     loaded = load_all(
         {
@@ -679,6 +683,8 @@ async def run_assistant(
         rejected_sink=rejected,
         input_gain_db=settings.audio.input_gain_db,
     )
+    if tray is not None:
+        tray.set_ready()
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',
         time.perf_counter() - t0,
@@ -690,15 +696,36 @@ async def run_assistant(
     ready = asyncio.create_task(
         announce_ready(assistant, settings, jack, jack_error, transcriber.device, t0, gpu_busy)
     )
+    run = asyncio.create_task(assistant.run(capture.frames()))
+    closer = asyncio.create_task(close_when_idle(assistant, system, run))
     try:
-        await assistant.run(capture.frames())
+        await run
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():  # Ctrl+C: not close_when_idle's doing
+            raise
     finally:
+        closer.cancel()
         ready.cancel()
         if inbox is not None:
             inbox.cancel()
         speaker.player.close()
         if chat_window is not None:
-            chat_window.close()  # "spegniti" or Ctrl+C: the window goes with Claudio
+            chat_window.close()  # "chiuditi" or Ctrl+C: the window goes with Claudio
+
+
+async def close_when_idle(assistant: Any, system: SystemControl, run: asyncio.Task[None]) -> None:
+    """ "Chiuditi" or the tray menu end the run at the next microphone frame. With no
+    microphone (unplugged, switched off) no frame comes: the run is cancelled instead, once
+    CLAUDIO is idle and a frame had CLOSE_GRACE_S to end it."""
+    from claudio.app import State
+
+    while not (system.stopping and assistant.state is State.IDLE):
+        await asyncio.sleep(CLOSE_POLL_S)
+    await asyncio.sleep(CLOSE_GRACE_S)
+    if not run.done():
+        log.info("Nessun audio dal microfono: chiudo senza aspettarlo")
+        run.cancel()
 
 
 async def announce_ready(
@@ -773,9 +800,15 @@ def main(argv: list[str] | None = None) -> int:
         open_window(settings.resolve(settings.data_dir) / CHAT_DB)
         return 0
     session = None
+    instance = None
     if not args.check and not args.text:
         from claudio.session_log import start_session
+        from claudio.single_instance import EXIT_ALREADY_RUNNING, SingleInstance
 
+        instance = SingleInstance()  # one CLAUDIO per microphone: login task, a terminal...
+        if not instance.acquire():
+            log.warning("CLAUDIO è già acceso: questa copia si chiude")
+            return EXIT_ALREADY_RUNNING
         session = start_session(settings.resolve(settings.logs_dir), settings.logging.keep_sessions)
     log.info("CLAUDIO %s", __version__)
     if session is not None:
@@ -799,6 +832,12 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ValueError) as exc:
         log.error("%s", exc)
         return 1
+    except Exception:  # pythonw has no console: without this the reason would be lost
+        log.exception("CLAUDIO si è fermato per un errore")
+        return 1
+    finally:
+        if instance is not None:
+            instance.release()
     return 0
 
 
