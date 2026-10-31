@@ -207,3 +207,23 @@ def test_extend_ends_after_the_wait_when_nothing_more_is_said(
     assert feed(ep, make_frames("silence", 880)) == []
     assert feed(ep, make_frames("silence", 240)) == [EndpointEvent.END]
     assert not ep.spoke_again
+
+
+def test_what_follows_the_last_window_is_kept_for_the_next_phrase(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    """80 ms frames are not whole 32 ms windows: the 256 samples after the last window of a
+    phrase are the start of what follows (review 31/10: a hole at every cut)."""
+    ep = Endpointer(fake_vad, vad_settings)
+    ep.process(make_frames("speech", 80)[0])
+    assert len(ep.leftover()) == 1280 % 512
+    ep.reset()
+    assert len(ep.leftover()) == 0
+
+
+def test_the_quiet_before_a_phrase_counts_silence_only(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    feed(ep, make_frames("silence", 400))
+    assert abs(ep.quiet_s - 0.4) <= 0.04
+    ep.process(make_frames("speech", 80)[0][:512])  # a click: too short to start a phrase,
+    assert not ep.started and ep.quiet_s == 0  # but the silence is over

@@ -105,6 +105,7 @@ class Endpointer:
         self._lead_only = False  # the phrase is all from the lead-in: nothing said since
         self._tell_start = False
         self._cut = False  # ended at max_utterance_s while the voice went on
+        self._quiet_run = 0  # before the phrase starts: samples of silence in a row
         if lead_in is not None:
             self._begin_with(lead_in)
 
@@ -120,6 +121,16 @@ class Endpointer:
     def cut(self) -> bool:
         """The phrase ended at max_utterance_s, not on a pause: the voice may go on."""
         return self._cut
+
+    @property
+    def quiet_s(self) -> float:
+        """Before the phrase starts: how long the audio has been silence, without a break."""
+        return self._quiet_run / self.sample_rate
+
+    def leftover(self) -> np.ndarray:
+        """The samples after the last full VAD window (float32): a phrase that ended mid-frame
+        leaves them, and they belong to what comes next."""
+        return self._pending.copy()
 
     def prepend(self, audio: np.ndarray) -> None:
         """`audio` (float32) came just before the phrase began but was not heard: the window
@@ -161,6 +172,7 @@ class Endpointer:
         if not self._started:
             self._preroll.append(window)
             self._speech_run = self._speech_run + self._win if prob >= s.threshold else 0
+            self._quiet_run = self._quiet_run + self._win if prob < self._neg_threshold else 0
             if self._speech_run * 1000 >= s.min_speech_ms * self.sample_rate:
                 self._started = True
                 self._chunks = [self._preroll.get()]

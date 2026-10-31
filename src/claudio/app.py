@@ -83,6 +83,8 @@ OTHER_HEARINGS = 3  # of Whisper's other guesses, given to Claude with a phrase 
 # A phrase said over the reply is judged whole: its slices are only checked for "basta" while
 # the voice goes on, up to this long (then it is judged anyway: the TV never pauses).
 BARGE_PHRASE_MAX_S = 8.0
+# After a slice, no clear voice and no pause for this long: the phrase is judged as it is.
+BARGE_RESTART_S = 1.5
 # What a window heard while it was deaf (the reply's tail, the beep) is kept this long, and
 # put before a phrase whose voice was already there when the window began to listen.
 DEAF_FRAMES = 12  # ~1 s of 80 ms frames
@@ -241,7 +243,6 @@ class Assistant:
         self._barge_pending: tuple[np.ndarray, float] | None = None
         # The slices of a phrase still being said over the reply (audio, loudest dBFS).
         self._barge_slices: list[tuple[np.ndarray, float]] = []
-        self._barge_quiet = 0  # samples of silence since the last slice was cut
         # What the window heard while deaf, and what it was for this window (metrics).
         self._deaf: deque[np.ndarray] = deque(maxlen=DEAF_FRAMES)
         self._deaf_heard = np.zeros(0, dtype=np.float32)
@@ -413,6 +414,8 @@ class Assistant:
         # The wake word may fire late, while the request has already begun ("hey claudio che
         # ore sono" in one breath): the endpointer can prepend the speech heard just before.
         self.endpointer.reset(lead_in=self._lead_in())
+        if self.endpointer.started:  # begun before the wake word: its END may come first
+            self._interaction.mark("speech_start")
         self._set_state(State.LISTENING)
         self.responder.prepare()
 
@@ -457,6 +460,14 @@ class Assistant:
         task.add_done_callback(self._checks.discard)
 
     async def _second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
+        """One second chance at a time: the next waits until this one has decided (the
+        closed list while off included)."""
+        try:
+            await self._hear_second_chance(name, score, heard)
+        finally:
+            self._checking = False
+
+    async def _hear_second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
         assert self.second_chance is not None
         text, start, voice = "", self.clock(), None
         try:
@@ -467,26 +478,29 @@ class Assistant:
                     text = await asyncio.to_thread(self.second_chance, heard)
         except Exception:
             log.exception("Seconda possibilità non riuscita")
-        finally:
-            self._checking = False
         info: dict[str, Any] = {"second_chance_ms": round((self.clock() - start) * 1000)}
         if voice is not None:
             info["wake_voice_ms"] = voice
-            if voice < self.wake_min_voice_ms:
-                log.info("Seconda possibilità: nessuna voce (%d ms), niente da fare", voice)
-                self._log_near_miss(name, score, heard, rejected="no_voice", **info)
-                return
         # A weak detection said fast often loses the name ("apri cancolatrice"): a command
         # counts. Off, the only command understood is "accenditi".
         language = self.transcriber.language
         weak = self._weak(name, score) and bool(text) and self.responder.understands(text, language)
-        if self.state is State.IDLE and not (heard_wake_word(text) or weak):
+        if self.state is State.IDLE and text and not (heard_wake_word(text) or weak):
             found = await self._turns_on(heard, text, language)
             if found is not None:
                 log.info("Da spento, lista chiusa: %r -> %r", text, found)
                 info["second_chance_from"] = text
                 text, weak = found, True
-        if self.state is State.IDLE and (heard_wake_word(text) or weak):
+        if self.state is not State.IDLE:
+            # The model itself woke CLAUDIO meanwhile: a row for the record, no WAV (it was
+            # not rejected, and it is no negative to retrain the wake word on).
+            self._log_near_miss(name, score, heard, second_chance=text, superseded=True, **info)
+            return
+        if voice is not None and voice < self.wake_min_voice_ms:
+            log.info("Seconda possibilità: nessuna voce (%d ms), niente da fare", voice)
+            self._log_near_miss(name, score, heard, rejected="no_voice", **info)
+            return
+        if heard_wake_word(text) or weak:
             log.info(
                 "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
             )
@@ -503,7 +517,7 @@ class Assistant:
                 if self._interaction is not None:
                     self._interaction.mark("speech_start")
             return
-        if self.state is State.IDLE and self._unsure_wake(name, score, text, voice is not None):
+        if self._unsure_wake(name, score, text, voiced=bool(voice)):
             # Not a second chance: the request must have the name or be a command (verify).
             log.info("Whisper non ha capito %r (punteggio %.2f): ascolto e verifico", text, score)
             self._on_wake(name, score, wake_unclear=text, **info)
@@ -532,7 +546,9 @@ class Assistant:
         leaves only the audio: a row for each of its misfires would fill the session log."""
         noisy = name in self.always_confirm
         sink, kind = self.audio_sink, "near_miss"
-        if self.rejected_sink is not None:  # named after why: no_voice, no_name
+        if info.get("superseded"):
+            sink = None  # the wake's own WAV has this audio: no copy, and no negative
+        elif self.rejected_sink is not None:  # named after why: no_voice, no_name
             sink, kind = self.rejected_sink, str(info.get("rejected", kind))
         elif noisy:
             sink = None
@@ -726,6 +742,7 @@ class Assistant:
             if cut is not None:  # the request was dropped: the cut reply is not resumed
                 cut.stream.cancel()
             if outcome not in (Kind.RELISTEN.value, Kind.CONTINUE.value):
+                await self._judge_stranded()
                 route = self.responder.last_route
                 if route:
                     inter.info.update(route)
@@ -981,39 +998,95 @@ class Assistant:
         self._since_check.append(frame)
         event = barge.endpointer.process(frame)
         if event is EndpointEvent.START:
-            self._barge_quiet = 0
             if not self._barge_loud(barge):
                 return
             if self._sounds_like_echo(barge):
                 return  # no louder than CLAUDIO's own echo: wait for Whisper
             if barge.mode == "stop":
-                # Everything heard so far is in the phrase: nothing more to add.
-                self._take_over(barge.endpointer.partial(), "", rest=[])
+                # Everything heard so far is in the phrase (its slices too): nothing to add.
+                self._take_over(self._barge_audio(barge.endpointer.partial()), "", rest=[])
             elif barge.mode == "duck":
                 self.speaker.duck(barge.duck_volume)
         elif event is EndpointEvent.TIMEOUT:
-            barge.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
+            self._restart_barge(barge.endpointer)
         elif event is EndpointEvent.END:
             ep = barge.endpointer
             audio, dbfs, cut = ep.audio(), ep.stats()["speech_dbfs"], ep.cut
-            ep.reset(timeout_s=WHILE_SPEAKING_S)
+            self._restart_barge(ep)
             self._barge_slices.append((audio, dbfs))
             heard = sum(len(a) for a, _ in self._barge_slices)
             if cut and heard < BARGE_PHRASE_MAX_S * ep.sample_rate:
                 # The voice goes on: this slice is only checked for "basta", the phrase is
                 # judged whole when it ends (30/10: transcribed slice by slice, without the
                 # prompt, "Apri la chat." came out "apri la ciotola" and "Grazie a te").
-                self._barge_quiet = 0
                 if not self._barge_checking and self._before_gain(dbfs) >= barge.min_dbfs:
                     self._start_barge_check(audio, barge, dbfs, slice_only=True)
                 return
             self._judge_barge_phrase(barge)
         elif self._barge_slices and not barge.endpointer.started:
-            # A slice was cut just as the voice stopped: the usual pause ends the phrase.
-            self._barge_quiet += len(frame)
             ep = barge.endpointer
-            if self._barge_quiet * 1000 >= ep.settings.end_silence_ms * ep.sample_rate:
+            since_cut = len(ep.listened())
+            if (
+                ep.quiet_s * 1000 >= ep.settings.end_silence_ms
+                or since_cut >= BARGE_RESTART_S * ep.sample_rate
+            ):
+                # After a slice the voice stopped (a pause, not a dip of the VAD), or never came
+                # back clearly: the phrase is over, with what was said since the cut.
+                self._barge_slices.append((self._since_cut(ep), ep.stats()["speech_dbfs"]))
+                self._restart_barge(ep)
                 self._judge_barge_phrase(barge)
+
+    def _barge_audio(self, more: np.ndarray) -> np.ndarray:
+        """The phrase said over the reply so far: its slices, then `more` (float32)."""
+        return np.concatenate([*(a for a, _ in self._barge_slices), more])
+
+    @staticmethod
+    def _since_cut(ep: Endpointer) -> np.ndarray:
+        """What the barge-in listener heard since its last phrase, trailing silence trimmed
+        to ~100 ms, as audio() does."""
+        heard = ep.listened()
+        keep = len(heard) - round(ep.quiet_s * ep.sample_rate) + ep.sample_rate // 10
+        return heard[: max(min(keep, len(heard)), 0)]
+
+    @staticmethod
+    def _restart_barge(ep: Endpointer) -> None:
+        """A new phrase for the barge-in listener: the samples after the last full window of
+        the one that ended go into it, so a cut never leaves a hole in the phrase."""
+        rest = ep.leftover()
+        ep.reset(timeout_s=WHILE_SPEAKING_S)
+        if rest.size:
+            ep.process(rest)
+
+    async def _judge_stranded(self) -> None:
+        """The reply ended while a phrase over it was still being said: what was heard of it
+        (slices only checked for "basta", a phrase not closed yet) is judged now, as at its
+        end. Said to CLAUDIO, it starts the next request without a beep (the person is still
+        talking); anything else is left alone, as a phrase over the reply always was."""
+        barge = self.barge_in
+        if barge is None:
+            return
+        ep = barge.endpointer
+        if self._takeover is not None or not (self._barge_slices or ep.started):
+            self._barge_slices = []
+            return
+        audio = self._barge_audio(ep.partial() if ep.started else self._since_cut(ep))
+        dbfs = max([d for _, d in self._barge_slices] + [ep.stats()["speech_dbfs"]])
+        self._barge_slices = []
+        self._restart_barge(ep)
+        if not audio.size or self._before_gain(dbfs) < barge.min_dbfs:
+            return
+        try:
+            async with self._stt_lock:
+                text = await asyncio.to_thread(barge.transcribe, audio)
+            if self._takeover is None and self._is_talking_to_me(text):
+                # What the listener heard meanwhile is the same phrase going on.
+                now = self._barge_audio(ep.partial() if ep.started else ep.listened())
+                self._take_over(np.concatenate((audio, now)), text, rest=[])
+                self._restart_barge(ep)
+            else:
+                log.info("Sentito mentre parlo, non è per me: %r", text)
+        except Exception:
+            log.exception("Ascolto durante la risposta non riuscito")
 
     def _judge_barge_phrase(self, barge: BargeIn) -> None:
         """The phrase said over the reply is over: its slices, whole, go to Whisper."""
@@ -1093,7 +1166,9 @@ class Assistant:
         try:
             if not slice_only:
                 self._judge_barge_in(text, audio, dbfs)
-            elif text and (self.responder.is_stop(text) or self._says_stop(text)):
+            elif text and self.responder.is_stop(text):
+                # Only a slice that is just "basta": a stop word inside a longer phrase ("e
+                # basta") waits for the whole phrase, which may be a request.
                 self._stop_reply(text)
         finally:
             self._next_barge_check(barge)

@@ -32,23 +32,42 @@ from tests.unit.test_own_sound import (
 SR = 16000
 
 
+class DipVad(FakeVad):
+    """FakeVad with a middle level: a softer sound is neither speech nor silence (0.4, between
+    the fixture's 0.5 threshold and its 0.35 silence level), as Silero is on a weak syllable."""
+
+    def __call__(self, window: np.ndarray) -> float:
+        peak = float(np.abs(window).max())
+        return 0.9 if peak > 0.1 else 0.4 if peak > 0.02 else 0.0
+
+
 def slicing_barge(
-    vad_settings: VadSettings, transcribe: Callable[[np.ndarray], str], **kwargs
+    vad_settings: VadSettings,
+    transcribe: Callable[[np.ndarray], str],
+    vad: FakeVad | None = None,
+    **kwargs,
 ) -> BargeIn:
     """A barge-in listener whose slices hold 0.6 s: a 1.6 s phrase comes in three pieces."""
     return BargeIn(
-        Endpointer(FakeVad(), vad_settings.model_copy(update={"max_utterance_s": 0.6})),
+        Endpointer(vad or FakeVad(), vad_settings.model_copy(update={"max_utterance_s": 0.6})),
         transcribe,
         **kwargs,
     )
 
 
 async def say_over_the_reply(
-    assistant: Assistant, make_frames, speaker: LongSpeaker, speech_ms: int
+    assistant: Assistant,
+    make_frames,
+    speaker: LongSpeaker,
+    speech_ms: int = 0,
+    over: list[np.ndarray] | None = None,
+    on_frame: Callable[[int], None] | None = None,
 ) -> None:
-    """A request, then `speech_ms` of speech while CLAUDIO answers it, then silence."""
+    """A request, then `speech_ms` of speech (or the frames `over`) while CLAUDIO answers it,
+    then silence. `on_frame(n)` is called before the n-th frame said over the reply."""
     clock = assistant.clock
     assert isinstance(clock, AudioClock)
+    said = over if over is not None else make_frames("speech", speech_ms)
 
     async def gen() -> AsyncIterator[np.ndarray]:
         for f in make_frames("silence", 240) + make_frames("speech", 640):
@@ -61,7 +80,9 @@ async def say_over_the_reply(
             clock.t += 0.08
             yield SILENCE
             await asyncio.sleep(0.001)
-        for f in make_frames("speech", speech_ms) + make_frames("silence", 800):
+        for n, f in enumerate(said + make_frames("silence", 800)):
+            if on_frame is not None:
+                on_frame(n)
             clock.t += 0.08
             yield f
             await asyncio.sleep(0.002)
@@ -148,6 +169,115 @@ async def test_what_is_not_for_claudio_is_kept_apart(
     await say_over_the_reply(assistant, make_frames, speaker, speech_ms=480)
     assert not speaker.cut
     assert [kind for kind, _ in saved] == ["barge_ignored"] and saved[0][1] > 0.4
+
+
+async def test_a_dip_of_the_voice_after_a_slice_does_not_split_the_phrase(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    """Review of 31/10: after a slice was cut, the next frames had to show clear speech at
+    once, so a weak syllable ended the phrase there and split it again. Only silence ends it
+    now."""
+    heard: list[float] = []
+
+    def transcribe(audio: np.ndarray) -> str:
+        heard.append(len(audio) / SR)
+        return "Claudio, apri Chrome." if len(audio) > 1.2 * SR else "apri la"
+
+    soft = [tone(1500, 220.0)] * 15  # ~0.05 peak, 1.2 s: weak syllables over any cut
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "Claudio, apri Chrome."],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=slicing_barge(vad_settings, transcribe, vad=DipVad()),
+    )
+    over = make_frames("speech", 800) + soft + make_frames("speech", 640)
+    await say_over_the_reply(assistant, make_frames, speaker, over=over)
+    whole = [h for h in heard if h > 1.2]
+    assert len(whole) == 1 and whole[0] > 1.6, heard  # one phrase, the soft part inside
+    assert speaker.cut and assistant.history[0]["barge_in"] == "Claudio, apri Chrome."
+
+
+async def test_a_stop_word_inside_a_request_does_not_stop_the_reply_alone(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    """A slice is checked for "basta" alone: "apri Chrome e basta" is not a stop, the whole
+    phrase decides (and it was a request)."""
+
+    def transcribe(audio: np.ndarray) -> str:
+        if len(audio) > 1.2 * SR:
+            return "Claudio, apri Chrome e basta."
+        return "apri Chrome e basta"
+
+    speaker = LongSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "Claudio, apri Chrome e basta."],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=slicing_barge(vad_settings, transcribe),
+    )
+    await say_over_the_reply(assistant, make_frames, speaker, speech_ms=1600)
+    assert assistant.history[0]["barge_in"] == "Claudio, apri Chrome e basta."
+    assert assistant.history[1]["wake_word"] == "barge_in"  # taken over by the request
+
+
+class CueSpeaker(LongSpeaker):
+    """A first reply that ends when the test says so (`done`), whatever was said over it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = asyncio.Event()
+
+    async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
+        text = "".join([c async for c in text_stream])
+        if on_first_audio:
+            on_first_audio()
+        if not self.spoken:
+            stop = asyncio.ensure_future(self._stop.wait())
+            cue = asyncio.ensure_future(self.done.wait())
+            await asyncio.wait({stop, cue}, timeout=3.0, return_when=asyncio.FIRST_COMPLETED)
+            stop.cancel()
+            cue.cancel()
+        self.spoken.append(text)
+
+
+async def test_a_phrase_still_going_when_the_reply_ends_is_not_lost(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    """Review of 31/10: the reply ended 1 s into "Claudio, apri Chrome": its first slice had
+    only been checked for "basta" and was never judged. Now it is, at the reply's end, and
+    the request goes on without a beep."""
+
+    def transcribe(audio: np.ndarray) -> str:
+        return "Claudio, apri Chrome." if len(audio) > 0.9 * SR else "Claudio, apri"
+
+    speaker = CueSpeaker()
+    assistant, _, _, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", "Claudio, apri Chrome."],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=slicing_barge(vad_settings, transcribe),
+    )
+
+    def end_the_reply(n: int) -> None:
+        if n == 13:  # ~1 s into the 1.6 s phrase: one slice cut, the next one going on
+            speaker.done.set()
+
+    await say_over_the_reply(
+        assistant, make_frames, speaker, speech_ms=1600, on_frame=end_the_reply
+    )
+    assert speaker.spoken[1] == "Apro Chrome."
+    assert assistant.history[1]["wake_word"] == "barge_in"
+    assert speaker.beeps == ["wake"]  # no beep for the request that went on
 
 
 # --- 2.3: the barge-in threshold, before the gain -------------------------------------------
