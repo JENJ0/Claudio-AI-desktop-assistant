@@ -409,6 +409,22 @@ async def test_several_tools_in_one_reply(
     assert [r["tool_use_id"] for r in results] == ["tu_list_windows", "tu_read_window"]
 
 
+async def test_what_haiku_said_ends_its_sentence_before_the_tools_run(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """IT-1 5.1: the space after "Ci guardo, socio." lets the voice say it while the tools
+    run (30/10 14:07: it waited 2.1 s for the next round's text)."""
+    said = "Ci guardo, socio."
+    client = ScriptedClient(
+        ([said], "tool_use", [text(said), use("open_app", name="spotify")]),
+        (["Aperto."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    seen = [(c, ("launch", "Spotify") in desk.done) async for c in b.ask("apri spotify", "it")]
+    assert seen == [(said, False), (" ", False), ("Aperto.", True)]
+    assert client.calls[1]["messages"][-2]["content"][0] == {"type": "text", "text": said}
+
+
 async def test_errors_go_back_to_haiku(pricing: Pricing, tools: PcTools) -> None:
     client = ScriptedClient(
         ([], "tool_use", [use("open_path", path="C:/Windows/System32")]),

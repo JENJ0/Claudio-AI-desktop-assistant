@@ -80,6 +80,7 @@ ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
 ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: open_app ok]"
 NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
+RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
 # What the history keeps of a reply cut short (read by Claude, never said aloud).
 CUT_NOTE = "[cut off: JenJo interrupted here]"
 CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
@@ -118,6 +119,9 @@ class ClaudeBrain:
         self._last_turn = -float("inf")
         self._last_contact = -float("inf")  # last time the connection to the API was used
         self._warming: set[asyncio.Task[None]] = set()
+        # The warm-up's round trip for the next request: (ms, new connection, started at).
+        self._rtt: tuple[int, bool, float] | None = None
+        self._asked_at = -float("inf")  # when the last request went out
         # Haiku proposed Sonnet and Claudio asked "Vuoi che usi Sonnet?": (messages, language,
         # when). The next request is the answer.
         self._offer: tuple[list[dict[str, Any]], str, float] | None = None
@@ -164,17 +168,28 @@ class ClaudeBrain:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+        # Idle past the keep-alive, the connection is a new one: then the round trip also
+        # pays the handshakes, which the request after it no longer does.
+        new = self.clock() - self._last_contact > self.settings.keepalive_s
         self._last_contact = self.clock()
-        task = loop.create_task(self._warm())
+        self._rtt = None  # an older, unused figure is not the next request's
+        task = loop.create_task(self._warm(new))
         self._warming.add(task)
         task.add_done_callback(self._warming.discard)
 
-    async def _warm(self) -> None:
+    async def _warm(self, new: bool = False) -> None:
+        start = self.clock()
         try:
             client: Any = self.client
             await client.models.retrieve(self.settings.model)
         except Exception as exc:  # only a head start: the request itself reports problems
             log.debug("Claude: connessione anticipata non riuscita: %s", exc)
+            return
+        # No model runs for it: the network part of the next request's wait (~220 ms on
+        # 30/10, against a first token at ~470-610 ms). Not when the request has already
+        # gone out meanwhile: it would be reported with the one after.
+        if self._asked_at < start:
+            self._rtt = (_ms_since(start, self.clock()), new, start)
 
     def wants_smart(self, text: str, language: str) -> bool:
         """JenJo asked for Sonnet in words ("pensaci bene...")."""
@@ -197,6 +212,12 @@ class ClaudeBrain:
         """Claude's reply to `text`, in `language`, as it arrives. Problems become one short
         spoken sentence: Claudio never goes silent and never crashes because of the API."""
         self.last_call = {}
+        self._asked_at = self.clock()
+        rtt, self._rtt = self._rtt, None
+        if rtt is not None and self._asked_at - rtt[2] <= RTT_FRESH_S:
+            self.last_call["api_rtt_ms"] = rtt[0]
+            if rtt[1]:
+                self.last_call["api_rtt_new_connection"] = True
         if self.client is None:
             log.warning("Claude: chiave API mancante (ANTHROPIC_API_KEY nel file .env)")
             self.last_call = {"claude_error": "no_key"}
@@ -348,6 +369,7 @@ class ClaudeBrain:
                     ask = await self.tools.question(confirm, language)
                     self._action = _Action(messages, leg.calls, turn, language, level, round_no)
                     self._action.refused = refused
+                    self._action.handoff = leg.handoff
                     self._action.asked = self.clock()
                     self._show(confirm)
                     self._note_tools(confirm, "ask")
@@ -369,7 +391,18 @@ class ClaudeBrain:
                     turn.parts.append(said)
                     said_here = True
                     yield said
-                results = await self._run_calls(leg.calls, refused, turn)
+                if said_here and (end := _space(turn)):
+                    # The space ends the sentence: it is said while the tools run. Without it
+                    # the splitter held "Ci guardo, socio." for the next round's text (30/10
+                    # 14:07: the first word came 2.1 s later, after three calls).
+                    turn.parts.append(end)
+                    yield end
+                alone = not turn.done and not leg.handoff  # nothing else in this request
+                results, own = await self._run_calls(leg.calls, language, refused, turn)
+                if own is not None and alone:
+                    if said := self._end_with(turn, own):
+                        yield said
+                    return
                 messages = [*messages, {"role": "user", "content": results}]
                 round_no += 1
         except (GeneratorExit, asyncio.CancelledError):
@@ -400,7 +433,14 @@ class ClaudeBrain:
             said = in_language(BRIDGE_RUN, action.language) + " "  # a new reply: no lead space
             action.turn.parts.append(_space(action.turn) + said)
             yield said
-        results = await self._run_calls(action.calls, action.refused, action.turn)
+        alone = not action.turn.done and not action.handoff
+        results, own = await self._run_calls(
+            action.calls, action.language, action.refused, action.turn
+        )
+        if own is not None and alone:  # "spegniti" confirmed: its reply, no call to Claude
+            if said := self._end_with(action.turn, own, new_reply=True):
+                yield said
+            return
         messages = [*action.messages, {"role": "user", "content": results}]
         async with contextlib.aclosing(
             self._loop(messages, action.language, start, action.turn, action.round_no + 1)
@@ -411,15 +451,20 @@ class ClaudeBrain:
     async def _run_calls(
         self,
         calls: list[ToolCall],
+        language: str,
         refused: dict[str, str] | None = None,
         turn: _Turn | None = None,
-    ) -> list[dict[str, Any]]:
-        """One tool_result per call, in order; a refused call is answered without running."""
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """One tool_result per call, in order; a refused call is answered without running.
+        Also Claudio's own words for the round when every call ran and has them (only
+        claudio_command): None when Claude must read the results."""
         assert self.tools is not None
         refused = refused or {}
         results = []
+        own: list[str] | None = []
         for call in calls:
             if call.id in refused:
+                own = None
                 self._note_tools([call], "refused")
                 results.append(
                     {
@@ -430,7 +475,11 @@ class ClaudeBrain:
                     }
                 )
                 continue
-            outcome = await self.tools.run(call)
+            outcome = await self.tools.run(call, language)
+            if outcome.error or outcome.spoken is None:
+                own = None
+            elif own is not None:
+                own.append(outcome.spoken)
             self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
             if turn is not None:
                 turn.done.append(f"{call.name} {'failed' if outcome.error else 'ok'}")
@@ -442,7 +491,23 @@ class ClaudeBrain:
             if outcome.error:
                 block["is_error"] = True
             results.append(block)
-        return results
+        return results, (" ".join(w for w in own if w) if own is not None else None)
+
+    def _end_with(self, turn: _Turn, words: str, new_reply: bool = False) -> str:
+        """Only Claudio's own commands ran, marked `last` by Claude, and nothing else in this
+        request (no earlier round, no Sonnet): their reply ends it, without a second call
+        whose only job was "Fatto, socio" (IT-1 5.3: +0.6-1 s and one more call).
+        Returns what to say ("" = nothing: the media keys are silent, as with the router);
+        a `new_reply` (after "sì") starts without the space that joins it to the turn."""
+        if not words:
+            said = ""
+        else:
+            gap = _space(turn)
+            turn.parts.append(gap + words)
+            said = words if new_reply else gap + words
+        turn.complete = True
+        self._remember(turn)
+        return said
 
     def _note_tools(self, calls: list[ToolCall], outcome: str, ms: int | None = None) -> None:
         """For metrics.jsonl and conversazione.md: what was done, how it went, how long."""
@@ -652,11 +717,19 @@ class ClaudeBrain:
         model = params["model"]
         stream: Any = None
         final: Any = None
+        sent = self.clock()
+        # Per call (IT-1 5.2): request -> first token (the API sends its HTTP headers with
+        # it: measured equal on 30/10, so this counts tool-only calls too), -> first word
+        # to say, -> end. The network alone is the warm-up's round trip (api_rtt_ms).
+        timing: dict[str, int] = {}
         try:
             client: Any = self.client  # not None: ask() answered already without a key
             async with client.messages.stream(**params) as stream:
+                timing["ttft_ms"] = _ms_since(sent, self.clock())
                 async for chunk in stream.text_stream:
                     clean = _MARKDOWN.sub("", chunk)
+                    if clean.strip() and "word_ms" not in timing:
+                        timing["word_ms"] = _ms_since(sent, self.clock())
                     if first_key not in self.last_call and clean.strip():
                         self.last_call[first_key] = round((self.clock() - start) * 1000)
                     leg.parts.append(clean)
@@ -682,7 +755,8 @@ class ClaudeBrain:
             self._last_contact = self.clock()
             # Also on "basta" (the speaker cancels this generator): count what was generated.
             if stream is not None:
-                self._record(model, final, stream, leg.parts)
+                timing["total_ms"] = _ms_since(sent, self.clock())
+                self._record(model, final, stream, leg.parts, timing)
         if final is not None and final.stop_reason == "refusal":
             log.info("Claude ha rifiutato la richiesta")
             if not "".join(leg.parts).strip():
@@ -701,7 +775,15 @@ class ClaudeBrain:
         leg.read(final)
         leg.complete = True
 
-    def _record(self, model: str, final: Any, stream: Any, parts: list[str]) -> None:
+    def _record(
+        self,
+        model: str,
+        final: Any,
+        stream: Any,
+        parts: list[str],
+        timing: dict[str, int] | None = None,
+    ) -> None:
+        timing = timing or {}
         try:
             if final is not None:
                 usage = Usage.from_api(final.usage, CACHE_TTL)
@@ -722,14 +804,19 @@ class ClaudeBrain:
                 return  # nothing reached the API
             cost = self.tracker.record(model, usage, CACHE_TTL)
             log.info(
-                "Claude %s: %d in, %d out, cache %d letti / %d scritti (TTL %s)%s",
+                "Claude %s: %d in, %d out, cache %d letti / %d scritti (TTL %s), "
+                "primo token %s ms, prima parola %s ms, fine %s ms%s",
                 model,
                 usage.input_tokens,
                 usage.output_tokens,
                 usage.cache_read_input_tokens,
                 usage.cache_creation_input_tokens,
                 CACHE_TTL,
+                timing.get("ttft_ms", "-"),
+                timing.get("word_ms", "-"),  # "-": the call only asked for tools
+                timing.get("total_ms", "-"),
                 tr(", interrotta (stima)") if cut else "",
+                extra={"claude_call": {"model": model, **timing}},
             )
             # Haiku then Sonnet: the metrics show the last model and the sum of both calls.
             prev = self.last_call
@@ -740,6 +827,8 @@ class ClaudeBrain:
                 cache_read=prev.get("cache_read", 0) + usage.cache_read_input_tokens,
                 cache_write=prev.get("cache_write", 0) + usage.cache_creation_input_tokens,
                 cost=round(prev.get("cost", 0.0) + cost, 6),
+                # Every call of the request, in order: a tool round adds one.
+                claude_calls=[*prev.get("claude_calls", []), {"model": model, **timing}],
             )
         except Exception:
             log.exception("Claude: spesa non registrata")
@@ -811,6 +900,7 @@ class _Action:
         self.round_no = round_no
         self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
+        self.handoff = False  # Haiku also asked for Sonnet: Claude goes on after the calls
 
 
 def _new_request(text: str, level: int) -> bool:
@@ -818,6 +908,10 @@ def _new_request(text: str, level: int) -> bool:
     if parse_answer(text, level) is not Answer.UNCLEAR:
         return False
     return len(strip_wake_words(normalize(text, drop_fillers=False).split())) > NEW_REQUEST_WORDS
+
+
+def _ms_since(start: float, now: float) -> int:
+    return round((now - start) * 1000)
 
 
 def _quoted(text: str) -> str:

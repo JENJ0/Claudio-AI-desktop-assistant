@@ -87,6 +87,10 @@ class WorkerError(RuntimeError):
     pass
 
 
+class WorkerTimeout(WorkerError):
+    """The worker said nothing in time: a busy graphics card (30/10), not a broken install."""
+
+
 def worker_command(models: Path, tts: Any, **overrides: Any) -> list[str]:
     """The worker's command line from the [tts] settings (paths relative to `models`);
     `overrides` replace single settings, e.g. jack_checkpoint=... for a comparison."""
@@ -177,6 +181,12 @@ class JackSynth:
         self._restarting = False
         self._started = threading.Event()  # set = no first start in progress
         self._started.set()
+        self._wait_until = 0.0  # replies wait for a loading worker until then (monotonic)
+        # The graphics card has room for the worker (set by the app from nvidia-smi): a
+        # worker that timed out on a full card is tried again only then. None: no check.
+        self.can_start: Callable[[], bool] | None = None
+        # This reply began in the fallback voice while Jack was loading: it ends in it.
+        self._loading_reply = False
         self._abort_wait = threading.Event()  # "basta" while waiting for the first start
         atexit.register(self.close)
 
@@ -215,11 +225,18 @@ class JackSynth:
         log.info("Worker Jack pronto in %.1f s (VRAM GPU %d MB)", self.load_s, self.vram_mb)
 
     def start_in_background(
-        self, on_done: Callable[[WorkerError | None], None] | None = None
+        self,
+        on_done: Callable[[WorkerError | None], None] | None = None,
+        wait_s: float | None = None,
     ) -> None:
         """Start the worker without waiting for it: its models load (8-30 s) while Claudio
         loads the rest and listens. `on_done` gets None once it is ready, or the error. A
-        worker that fails here is not retried: its fallback speaks, as with start()."""
+        worker that fails here is not retried (its fallback speaks, as with start()), unless
+        it timed out and `can_start` is set: then it is tried again once the card has room.
+        Replies wait for it up to `wait_s` (default first_wait_s) from now, all together:
+        later pieces of a reply do not wait again, and 0 lets the fallback speak at once
+        (the graphics card is full: Jack may load late, or never)."""
+        self._wait_until = time.monotonic() + (self.first_wait_s if wait_s is None else wait_s)
         self._restarting = True  # a sentence meanwhile must not start a second worker
         self._started.clear()
 
@@ -229,7 +246,8 @@ class JackSynth:
                 self.start()
             except WorkerError as exc:
                 error = exc
-                self._restart_at = float("inf")
+                retry = isinstance(exc, WorkerTimeout) and self.can_start is not None
+                self._restart_at = time.monotonic() + RESTART_COOLDOWN_S if retry else float("inf")
             finally:
                 self._restarting = False
                 self._started.set()
@@ -298,7 +316,7 @@ class JackSynth:
         """Next event as a dict (audio events carry their bytes under "pcm")."""
         event = self._poll(timeout)
         if event is None:
-            raise WorkerError(
+            raise WorkerTimeout(
                 tr("worker Jack: nessuna risposta in {seconds} s", seconds=round(timeout))
             )
         return event
@@ -341,7 +359,9 @@ class JackSynth:
             return
         if self.starting and not self._wait_for_start():
             return  # "basta" while waiting: nothing to say
-        if self.alive():
+        if self.starting:  # still loading: this reply is the fallback's to the end, or Jack
+            self._loading_reply = True  # ready halfway would change the voice mid-reply
+        if self.alive() and not self._loading_reply:
             try:
                 self.sample_rate = SAMPLE_RATE
                 for chunk in self._speak(text):
@@ -351,21 +371,27 @@ class JackSynth:
             except WorkerError as exc:
                 log.warning("Jack non ha risposto (%s): uso la voce di ripiego", exc)
                 self.close()
-        self._schedule_restart()
+        if not self.alive():
+            self._schedule_restart()
         if spoken:  # cut in the middle: a second voice would repeat what was already said
             return
         audio = self.fallback.synthesize(text)
         self.sample_rate = int(self.fallback.sample_rate)
         yield audio
 
+    def begin_reply(self) -> None:
+        """A new reply (the speaker calls this): Jack speaks it if he is ready."""
+        self._loading_reply = False
+
     def _wait_for_start(self) -> bool:
-        """Wait up to first_wait_s for the worker still loading. False if cancelled."""
+        """Wait for the worker still loading, until the deadline of its start: each piece
+        waited first_wait_s anew before, so a reply in three pieces could wait 90 s when
+        the worker hung (IT-1 5.3). False if cancelled."""
         self._abort_wait.clear()
-        deadline = time.monotonic() + self.first_wait_s
         while not self._started.wait(0.05):
             if self._abort_wait.is_set():
                 return False
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= self._wait_until:
                 log.info("Jack si sta ancora caricando: questa frase la dice la voce di riserva")
                 break
         return True
@@ -591,8 +617,12 @@ class JackSynth:
         return "blocks" if time.monotonic() - self._last_done > REPLY_GAP_S else "sentence"
 
     def _schedule_restart(self) -> None:
-        """After a failure, try the worker again in the background, at most every 30 s."""
+        """After a failure, try the worker again in the background, at most every 30 s, and
+        not while the graphics card is full (it would only time out again)."""
         if self._restarting or time.monotonic() < self._restart_at:
+            return
+        if self.can_start is not None and not self.can_start():
+            self._restart_at = time.monotonic() + RESTART_COOLDOWN_S
             return
         self._restarting = True
 
