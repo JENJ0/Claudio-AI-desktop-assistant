@@ -444,14 +444,32 @@ async def test_never_a_second_opinion(
     assistant.intake.noise = NoiseSettings()
     if state:
         setattr(r.actions.system, state, True)
-    assert not assistant._may_recover(decision, heard)
-    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x")) is not bool(state)
+    assert not assistant._may_recover(decision, heard, "it")
+    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"), "it") is not bool(
+        state
+    )
+
+
+async def test_no_second_opinion_on_a_memory_request(
+    fake_vad, vad_settings, matcher, tmp_path
+) -> None:
+    """IT-1 merge: a memory request is understood by the router (memory/voice.py), not by
+    the command matcher: "dimenticalo" goes to the memory, never heard again as a command."""
+    from claudio.memory.store import MemoryStore
+    from claudio.memory.voice import MemoryVoice
+
+    whisper = FakeWhisper("Chiuditi.")
+    assistant, _, _, r, _ = window(fake_vad, vad_settings, matcher, [], whisper)
+    r.memory = MemoryVoice(MemoryStore(tmp_path / "memory.db"))
+    for said in ("Dimenticalo.", "Cosa ricordi di Anna?"):
+        assert not assistant._may_recover(Decision(Kind.ANSWER, said), Heard("x"), "it")
+    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"), "it")
 
 
 async def test_no_second_opinion_while_a_question_waits(fake_vad, vad_settings, matcher) -> None:
     assistant, _, _, r, _ = window(fake_vad, vad_settings, matcher, [], FakeWhisper(""))
     r.propose("spegniti", "it")  # "Hai detto: spegniti?"
-    assert not assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"))
+    assert not assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"), "it")
 
 
 async def test_no_second_opinion_on_the_answer_to_claudes_question(

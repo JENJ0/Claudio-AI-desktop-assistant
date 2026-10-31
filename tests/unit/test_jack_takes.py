@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from claudio.tts.jack import JackSynth
+from claudio.tts.spoken_text import to_spoken_it
 from claudio.tts.takes import TakeStore
 from claudio.tts.voice_check import TakeJudge
 
@@ -161,7 +162,9 @@ def test_a_text_whose_take_was_bad_starts_from_another_seed(tmp_path, jacks) -> 
     jack = make(jacks, tmp_path, bad="7,8", takes=takes)
     jack.synth.synthesize(TEXT)  # the opening piece: seeds 7 and 8, both bad, 8 is played
     assert jack.seeds() == [7, 8]
-    assert takes.bad_seeds(takes.key(TEXT, jack.synth.rvc)) == {7, 8}
+    # Keyed by the text as Jack reads it: "un attimo" is "un àttimo" (stress_it.py).
+    spoken = to_spoken_it(TEXT, jack.synth.words)
+    assert takes.bad_seeds(takes.key(spoken, jack.synth.rvc)) == {7, 8}
     audio = jack.synth.synthesize(TEXT)
     assert jack.seeds()[2:] == [9] and abs(pitch(audio) - 120) < 5
 

@@ -20,10 +20,13 @@ async def test_lowering_the_reply_is_logged_with_the_voice_level(
         speaker=speaker,
         barge_in=barge(vad_settings, ["eh"]),
     )
+    assistant.input_gain_db = 6.0  # IT-1 merge: barge_in_min_dbfs is measured before the gain
     with caplog.at_level(logging.INFO, logger="claudio.app"):
         await speak_over(assistant, make_frames, speaker)
     assert speaker.ducks == [0.3, None]
-    lowered = [r for r in caplog.records if r.msg == "Abbasso la risposta: voce a %.0f dBFS"]
+    message = "Abbasso la risposta: voce a %.0f dBFS (%.0f prima del guadagno)"
+    lowered = [r for r in caplog.records if r.msg == message]
     assert len(lowered) == 1
-    (level,) = lowered[0].args
-    assert assistant.barge_in is not None and level >= assistant.barge_in.min_dbfs
+    level, before = lowered[0].args
+    assert before == level - 6.0
+    assert assistant.barge_in is not None and before >= assistant.barge_in.min_dbfs

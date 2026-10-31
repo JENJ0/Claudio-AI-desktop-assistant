@@ -807,7 +807,7 @@ class Assistant:
         if decision.reason and not decision.dropped and decision.kind is not Kind.CONTINUE:
             info["intake"] = decision.reason  # e.g. quiet_answer: the "sì" was not counted
             log.info("Risposta troppo lontana dal microfono, non la conto: %r", text)
-        if not echo and self._may_recover(decision, heard):
+        if not echo and self._may_recover(decision, heard, language):
             recovered = await self._recover_command(audio, decision.text, language, inter)
             if recovered is not None:
                 return recovered
@@ -829,7 +829,7 @@ class Assistant:
             and self._is_echo(text, self._said)
         )
 
-    def _may_recover(self, decision: Decision, heard: Heard) -> bool:
+    def _may_recover(self, decision: Decision, heard: Heard, language: str) -> bool:
         """Worth Whisper's second opinion: a phrase about to go to Claude or to be dropped as
         no request, said close to the microphone, with Claudio on and awake and no question
         waiting for its answer. Never a voice far away (the TV), nor silence."""
@@ -840,6 +840,9 @@ class Assistant:
             or self.responder.awaiting  # a yes or a no: no command to look for
             # Claude just asked something: "Pasta." is the answer, not a misheard "basta".
             or self.responder.answer_expected
+            # A memory request ("dimenticalo", "cosa ricordi di Anna?") is the router's, not
+            # a misheard command: the recovery only knows the commands.
+            or self.responder.understands(decision.text, language)
         ):
             return False
         if decision.kind is not Kind.ANSWER and (
@@ -1097,8 +1100,13 @@ class Assistant:
                 self._take_over(self._barge_audio(barge.endpointer.partial()), "", rest=[])
             elif barge.mode == "duck":
                 self.speaker.duck(barge.duck_volume)
+                # Before the gain too: the level [conversation] barge_in_min_dbfs is tuned on.
                 level = barge.endpointer.stats()["speech_dbfs"]
-                log.info("Abbasso la risposta: voce a %.0f dBFS", level)
+                log.info(
+                    "Abbasso la risposta: voce a %.0f dBFS (%.0f prima del guadagno)",
+                    level,
+                    self._before_gain(level),
+                )
         elif event is EndpointEvent.TIMEOUT:
             self._restart_barge(barge.endpointer)
         elif event is EndpointEvent.END:

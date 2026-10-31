@@ -313,7 +313,9 @@ EN: dict[str, str] = {
     "Misura della voce sorda non riuscita": "Measuring the voice heard while deaf failed",
     "Impossibile salvare l'audio scartato": "Could not save the dropped audio",
     "Salvato in %s (%.0f dBFS)": "Saved in %s (%.0f dBFS)",
-    "Abbasso la risposta: voce a %.0f dBFS": "Lowering the reply: voice at %.0f dBFS",
+    "Abbasso la risposta: voce a %.0f dBFS (%.0f prima del guadagno)": (
+        "Lowering the reply: voice at %.0f dBFS (%.0f before the gain)"
+    ),
     "Risposta di nuovo a volume pieno": "Reply back to full volume",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
