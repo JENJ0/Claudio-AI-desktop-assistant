@@ -493,6 +493,22 @@ class ChatSettings(BaseModel):
     max_age_s: float = Field(120.0, gt=0)  # older ones (written while Claudio was off) are dropped
 
 
+class MemorySettings(BaseModel):
+    """Long-term memory (Phase 4): what JenJo asks Claudio to remember, in SQLite. Every
+    standing rule and the newest facts go after the system prompt (cached); the facts that do
+    not fit go with a request only when they share its words."""
+
+    enabled: bool = True
+    db_file: Path = Path("data/memory.db")
+    block_chars: int = Field(2000, ge=0, le=20000)  # facts always sent; 0 = only matching ones
+    relevant: int = Field(3, ge=0, le=10)  # facts outside the block sent with a request
+    max_items: int = Field(500, ge=1, le=5000)
+    max_chars: int = Field(300, ge=20, le=2000)  # one memory: a spoken sentence
+    tools: bool = True  # Claude may save and forget too (needs [pc] enabled)
+    # Claude saves lasting preferences without being asked, and says so (JenJo 30/10: B1)
+    learn: bool = True
+
+
 class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
@@ -537,6 +553,7 @@ class Settings(BaseSettings):
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")
     chat: ChatSettings = ChatSettings()
+    memory: MemorySettings = MemorySettings()
     logging: LoggingSettings = LoggingSettings()
 
     @classmethod

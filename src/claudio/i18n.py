@@ -452,6 +452,24 @@ EN: dict[str, str] = {
     ),
     "Sì: rispondo a %r": "Yes: answering %r",
     "Non era %r: nuova richiesta %r": "It was not %r: new request %r",
+    # Phase 4: long-term memory (memory/)
+    "Memoria spenta ([memory] enabled = false)": "Memory off ([memory] enabled = false)",
+    "Memoria non disponibile (%s): %s": "Memory unavailable (%s): %s",
+    "Memoria: %d ricordi in %s": "Memory: %d memories in %s",
+    "Memoria: %s": "Memory: %s",
+    "Ricordo rifiutato: sembra una password o un codice": (
+        "Memory refused: it looks like a password or a code"
+    ),
+    "Ricordo salvato (%s, %s): %s": "Memory saved (%s, %s): %s",
+    "Ricordi dimenticati: %s": "Memories forgotten: %s",
+    "Memoria non disponibile": "Memory unavailable",
+    "Il file della memoria non c'è più: riparto senza ricordi": (
+        "The memory file is gone: starting again with no memories"
+    ),
+    "Ricordo dimenticato dopo la proposta di Sonnet: proposta annullata": (
+        "A memory was forgotten after the Sonnet offer: offer dropped"
+    ),
+    "Memoria svuotata: %d ricordi dimenticati": "Memory wiped: %d memories forgotten",
 }
 
 

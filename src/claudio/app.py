@@ -752,10 +752,15 @@ class Assistant:
     ) -> None:
         """Before the reply: how sure Whisper was. Only a request for Claude that Whisper
         doubted gets the note and the alternatives ("apri la cartella desi" -> also heard
-        "apri la cartella Tesi"); a local command or a yes/no never pays the extra pass."""
+        "apri la cartella Tesi"); a local command or a yes/no never pays the extra pass.
+        Also whether it was said to Claudio: in the conversation window, as an answer or over
+        the reply, without the name, it may be the TV (the memory then asks first)."""
         if self.on_heard is None:
             return
-        hearing = Hearing()
+        addressed = inter.info.get("wake_word") not in (CONVERSATION, FOLLOW_UP, BARGE_IN) or (
+            heard_wake_word(text)
+        )
+        hearing = Hearing(addressed=addressed)
         if (
             self.unsure_logprob is not None
             and text
@@ -763,7 +768,8 @@ class Assistant:
             and not self.responder.awaiting
             and not self.responder.understands(text, heard)
         ):
-            hearing = Hearing(True, await self._alternatives(audio, text, heard, inter))
+            alternatives = await self._alternatives(audio, text, heard, inter)
+            hearing = Hearing(True, alternatives, addressed)
             inter.info["stt_unsure"] = True
             if hearing.alternatives:
                 inter.info["stt_alternatives"] = list(hearing.alternatives)
@@ -949,7 +955,9 @@ class Assistant:
             log.info("La mia voce nel microfono, la ignoro: %r", text)
             return False
         named = heard_wake_word(text)
-        command = self.responder.understands(text)
+        # A memory request over the reply needs the name: the TV's "da ora in poi..." is no
+        # command.
+        command = self.responder.understands(text, memory=False)
         if not (content_words(text) >= 2 or named or command):
             return False
         if self.barge_in is not None and self.barge_in.needs_name and not (named or command):
@@ -1100,7 +1108,7 @@ class Assistant:
             outcome = "error"
             log.exception("Errore rispondendo al messaggio scritto")
         finally:
-            if self.responder.awaiting:  # level 2-3: confirmed by voice only, never armed here
+            if self.responder.needs_voice:  # level 2-3: confirmed by voice only, never armed here
                 self._cancel_pending()
                 note = in_language(TYPED_NEEDS_VOICE, self.responder.language)
                 inter.info["reply"] = note

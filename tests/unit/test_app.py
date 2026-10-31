@@ -70,10 +70,14 @@ class FakeResponder:
         self.answer_expected = False
         self.prepared = 0
 
+    @property
+    def needs_voice(self) -> bool:
+        return self.awaiting  # the fake's questions are all "Confermi?"
+
     def prepare(self) -> None:
         self.prepared += 1
 
-    def understands(self, text: str, language: str = "it") -> bool:
+    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
         return True
 
     def is_stop(self, text: str) -> bool:
@@ -837,7 +841,7 @@ async def test_announce_waits_for_the_request_in_progress(fake_vad, vad_settings
 class LiteralResponder(FakeResponder):
     """No local command understands the phrase: it is for Claude."""
 
-    def understands(self, text: str, language: str = "it") -> bool:
+    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
         return False
 
 

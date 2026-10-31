@@ -49,6 +49,7 @@ from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.i18n import tr
 from claudio.intake import Hearing
+from claudio.memory.prompt import without_recalled
 from claudio.router.normalizer import normalize, strip_wake_words
 from claudio.safety.confirmation import (
     CANCELLED,
@@ -59,10 +60,13 @@ from claudio.safety.confirmation import (
 )
 
 if TYPE_CHECKING:
+    from claudio.memory.prompt import MemoryPrompt
     from claudio.pc.tools import PcTools, ToolCall
 
 # Tools that may take a while (pc/tools.py SLOW; repeated here: no import of the PC package).
 SLOW_TOOLS = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
+# Tools that bring outside text in (pc/tools.py OUTSIDE_TEXT, repeated for the same reason).
+OUTSIDE_TEXT_TOOLS = frozenset({*SLOW_TOOLS, "list_windows"})
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +100,7 @@ class ClaudeBrain:
         pc: PcSettings | None = None,
         on_show: Callable[[], object] | None = None,
         personality: str = "",
+        memory: MemoryPrompt | None = None,
     ) -> None:
         self.client = client
         self.tracker = tracker
@@ -123,6 +128,10 @@ class ClaudeBrain:
         self.on_show = on_show  # opens the chat window, where the exact command is written
         # How sure Whisper was of the next request: set before every reply, read once.
         self._hearing = Hearing()
+        # What JenJo asked Claudio to remember: a block after the system prompt, cached, and
+        # the facts that match a request (None: no long-term memory).
+        self.memory = memory
+        self._memory_block = ""  # the memories as this request's rounds see them
 
     def reset(self) -> None:
         self._history.clear()
@@ -219,6 +228,11 @@ class ClaudeBrain:
                 yield chunk
             return
         offer = self._take_offer()
+        if offer is not None and self.memory is not None and self.memory.forget_pending:
+            # A memory was forgotten after "Lo uso?": the question kept the old memories
+            # (and a history that may quote them), so it is not sent again.
+            log.info("Ricordo dimenticato dopo la proposta di Sonnet: proposta annullata")
+            offer = None
         if offer is not None:
             answer = parse_answer(text)
             if answer is not Answer.UNCLEAR:
@@ -235,6 +249,10 @@ class ClaudeBrain:
                         yield chunk
                 return
         messages = self._messages(text, language)
+        if self.tools is not None:
+            # Text read from a window or a file earlier in this conversation may still be in
+            # Claude's own words: a memory it saves then needs JenJo's yes too.
+            self.tools.begin_request(self._read_outside())
         if self.wants_smart(text, language):  # JenJo asked for it: that is the approval
             log.info("Richiesta di ragionare: chiedo direttamente a Sonnet")
             self.last_call["escalated"] = "asked"
@@ -292,7 +310,8 @@ class ClaudeBrain:
                     leg.handoff
                     and not leg.calls
                     and offer_from is not None
-                    and self.never_offer(offer_from[-1]["content"], language)
+                    # JenJo's words only: a "storia" in a recalled memory is not a story asked for
+                    and self.never_offer(without_recalled(offer_from[-1]["content"]), language)
                 ):
                     # Haiku asked for Sonnet for a story: it tells it itself, no question.
                     log.info("Sonnet chiesto per una storia: risponde Haiku")
@@ -491,6 +510,13 @@ class ClaudeBrain:
             raise
         self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
 
+    def _read_outside(self) -> bool:
+        """The conversation sent with the next request ran a tool that read outside text."""
+        if not self.settings.history_turns:
+            return False
+        notes = (a.split(ACTIONS_NOTE, 1)[1] for _, a in self._history if ACTIONS_NOTE in a)
+        return any(f"{name} " in note for note in notes for name in OUTSIDE_TEXT_TOOLS)
+
     def _remember(self, turn: _Turn) -> None:
         """Only the words go into the history: tool calls and window text stay out of it
         (they cost tokens at every later turn, and the history is plain text). A short note of
@@ -515,13 +541,27 @@ class ClaudeBrain:
     def _messages(self, text: str, language: str) -> list[dict[str, Any]]:
         if self.clock() - self._last_turn > self.settings.history_reset_s:
             self._history.clear()  # a new conversation: old context costs and confuses
+        if self.memory is not None and self.memory.forgotten():
+            # JenJo had something forgotten: the conversation may still quote it. Its cache
+            # was to be written again anyway (the memory block changed).
+            self._history.clear()
         messages: list[dict[str, Any]] = []
         if self.settings.history_turns:
             for question, answer in self._history:
                 messages.append({"role": "user", "content": question})
                 messages.append({"role": "assistant", "content": answer})
         hearing, self._hearing = self._hearing, Hearing()
-        messages.append({"role": "user", "content": f"{self._tag(language, hearing)} {text}"})
+        tag = self._tag(language, hearing)
+        if self.memory is not None:
+            # One snapshot for every round of this request: a memory Claude saves with its
+            # tool shows from the next request, so the rounds read each other's cache.
+            self._memory_block = self.memory.block()
+            # Facts already in the history are not sent again, if the history is sent.
+            sent = (q for q, _ in self._history) if self.settings.history_turns else ()
+            recalled = self.memory.relevant(text, sent)
+            if recalled:  # after the cached prefix, like the time: it changes nothing cached
+                tag = f"{tag} {recalled}"
+        messages.append({"role": "user", "content": f"{tag} {text}"})
         return messages
 
     def _tag(self, language: str, hearing: Hearing | None = None) -> str:
@@ -540,10 +580,11 @@ class ClaudeBrain:
     def _common(
         self, model: str, max_tokens: int, messages: list[dict[str, Any]]
     ) -> dict[str, Any]:
+        memory = self._memory_block
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": self.system,
+            "system": f"{self.system.rstrip()}\n\n{memory}" if memory else self.system,
             "messages": messages,
         }
         if self.settings.cache:
@@ -556,6 +597,12 @@ class ClaudeBrain:
             params["system"] = [
                 {"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}
             ]
+            if memory:
+                # A third marker on the memories: they change only when JenJo says
+                # "ricordati" or "dimentica", and then the system prompt is still read back.
+                params["system"].append(
+                    {"type": "text", "text": memory, "cache_control": {"type": "ephemeral"}}
+                )
             params["cache_control"] = {"type": "ephemeral"}
         return params
 
