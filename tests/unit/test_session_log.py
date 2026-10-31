@@ -131,3 +131,17 @@ def test_metrics_file_rotates_and_keeps_the_newest(tmp_path: Path) -> None:
     assert path.exists() and path.with_name("metrics.jsonl.1").exists()
     assert path.with_name("metrics.jsonl.2").exists()
     assert not path.with_name("metrics.jsonl.3").exists()  # only `backups` copies stay
+
+
+def test_each_claude_call_shows_its_first_word_and_headers() -> None:
+    """IT-1 5.2: a request with a tool round shows the first token of both calls, then the
+    network alone."""
+    calls = [
+        {"model": "claude-haiku-5-5", "ttft_ms": 610, "total_ms": 700},
+        {"model": "claude-haiku-5-5", "ttft_ms": 560, "word_ms": 560, "total_ms": 800},
+    ]
+    row = {"ts": NOW.timestamp(), "outcome": "ok", "route": "claude", "claude_calls": calls}
+    assert "TTFT 610 · 560 ms" in format_row(row)
+    assert "TTFT 610 · 560 ms (rete 220 ms)" in format_row({**row, "api_rtt_ms": 220})
+    new = {**row, "api_rtt_ms": 305, "api_rtt_new_connection": True}
+    assert "(rete 305 ms, connessione nuova)" in format_row(new)

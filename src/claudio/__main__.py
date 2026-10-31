@@ -21,6 +21,7 @@ from claudio.config import (
     configured_language,
     load_settings,
 )
+from claudio.gpu import GpuMemory, has_room, read_gpu
 from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
@@ -344,6 +345,7 @@ def build_speaker(
         first_clause_chars=settings.tts.first_clause_chars,
         group_chars=settings.tts.jack_group_chars if settings.tts.engine == "jack" else 0,
         group_first_chars=settings.tts.jack_group_first_chars,
+        group_pause_s=settings.tts.jack_group_pause_ms / 1000,
     )
     speaker.warm_up()
     others = "".join(f", {lang}: {label}" for lang, (_, label) in voices.items())
@@ -357,12 +359,33 @@ def build_speaker(
     return speaker
 
 
-def startup_notices(settings: Settings, jack_running: bool, stt_device: str) -> list[str]:
+def jack_wait_s(settings: Settings, gpu: GpuMemory | None) -> float | None:
+    """How long replies may wait for Jack's worker while it loads: not at all when the
+    graphics card is already full (a game): it loaded in 21 s, or never (30/10), and every
+    reply meanwhile waited up to jack_first_wait_s. None = the configured wait."""
+    need = settings.tts.jack_min_free_vram_mb
+    if gpu is None or not need or gpu.free_mb >= need:
+        return None
+    log.warning(
+        "Scheda video occupata (libera %d MB su %d%s): finché Jack non è pronto risponde la "
+        "voce di riserva",
+        gpu.free_mb,
+        gpu.total_mb,
+        tr(", calcolo al {pct}%", pct=gpu.busy_pct) if gpu.busy_pct is not None else "",
+    )
+    return 0.0
+
+
+def startup_notices(
+    settings: Settings, jack_running: bool, stt_device: str, gpu_busy: bool = False
+) -> list[str]:
     """What Claudio says out loud at startup when it runs degraded: a warning in the console
     alone went unnoticed (on 23/10 Jack's worker failed and Kokoro answered all evening)."""
     notices = []
     if settings.tts.engine == "jack" and not jack_running:
         notices.append(tr("La voce di Jack non è partita: uso quella di riserva."))
+        if gpu_busy:  # a fact, maybe not the cause: the cause is in the log
+            notices.append(tr("All'avvio la scheda video era quasi piena."))
     if settings.stt.device == "auto" and stt_device == "cpu":
         notices.append(tr("La scheda video non è disponibile: ti capisco più lentamente."))
     if notices:
@@ -514,11 +537,18 @@ async def run_assistant(
     models = settings.resolve(settings.models_dir)
     t0 = time.perf_counter()
     # Jack's worker is a process of its own: it loads (8-30 s) while everything else does,
-    # and Claudio listens without waiting for it (a reply meanwhile waits jack_first_wait_s).
+    # and Claudio listens without waiting for it (a reply meanwhile waits jack_first_wait_s,
+    # or not at all when a game fills the graphics card).
     jack = make_jack(settings, session) if settings.tts.engine == "jack" else None
     jack_error: list[Exception | None] = []
+    gpu_busy = False
     if jack is not None:
-        jack.start_in_background(jack_error.append)
+        need = settings.tts.jack_min_free_vram_mb
+        wait_s = jack_wait_s(settings, read_gpu() if need else None)
+        gpu_busy = wait_s is not None
+        if need:  # a worker that timed out on a full card is tried again once it has room
+            jack.can_start = lambda: has_room(need)
+        jack.start_in_background(jack_error.append, wait_s)
     system = SystemControl()
     tracker = build_tracker(settings)  # SQLite: opened on the thread that uses it
     loaded = load_all(
@@ -658,7 +688,7 @@ async def run_assistant(
         asyncio.create_task(serve_inbox(assistant, chat, settings)) if settings.chat.typed else None
     )
     ready = asyncio.create_task(
-        announce_ready(assistant, settings, jack, jack_error, transcriber.device, t0)
+        announce_ready(assistant, settings, jack, jack_error, transcriber.device, t0, gpu_busy)
     )
     try:
         await assistant.run(capture.frames())
@@ -678,6 +708,7 @@ async def announce_ready(
     jack_error: list[Exception | None],
     stt_device: str,
     t0: float,
+    gpu_busy: bool = False,
 ) -> None:
     """Once Jack's worker has loaded too (or failed), say so: the notices of a degraded start
     and a short "ready", in Jack's voice when it is there. Claudio already listens by then."""
@@ -689,7 +720,7 @@ async def announce_ready(
             "Jack non disponibile (%s): uso %s", jack_error[0], type(jack.fallback).__name__
         )
     log.info("Avvio completo in %.1f s", time.perf_counter() - t0)
-    notices = startup_notices(settings, jack_running, stt_device)
+    notices = startup_notices(settings, jack_running, stt_device, gpu_busy)
     for notice in notices:
         log.warning("Avviso a voce: %s", notice)
     if settings.startup.announce_ready:

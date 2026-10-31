@@ -96,6 +96,17 @@ class SentenceSplitter:
         self._buf = ""
         return done
 
+    def ended(self) -> list[str]:
+        """Claude stopped writing (a tool is running): the sentence held back for what might
+        follow it ("3." before "5") is complete after all. An unfinished one, or one ending
+        in an abbreviation ("il dott."), stays."""
+        rest = self._buf.strip()
+        core = rest.rstrip("\"'»)")
+        if not core or core[-1] not in _END_CHARS or self._is_abbreviation(core):
+            return []
+        self._buf, self._first = "", False
+        return [rest]
+
     def _find_cut(self) -> int | None:
         buf = self._buf
         for i, ch in enumerate(buf):
@@ -160,10 +171,14 @@ async def split_stream(
         yield sentence
 
 
+_PAUSED = ""  # the text stopped: the splitter never gives an empty sentence
+
+
 async def group_stream(
-    sentences: AsyncIterator[str], max_chars: int, first_chars: int = 0
+    text: AsyncIterator[str], max_chars: int, first_chars: int = 0, pause_s: float = 0.0
 ) -> AsyncIterator[str]:
-    """Sentences joined into pieces of up to max_chars, each one said in a single breath.
+    """The sentences of streamed `text` joined into pieces of up to max_chars, each one
+    said in a single breath.
 
     Jack's voice drifts between sentences generated one by one (each draws its own take
     of Jack from the training lines); a reply in few generations keeps one voice (JenJo
@@ -173,31 +188,69 @@ async def group_stream(
     has `first_chars` (or the reply is over), and the rest of the reply, which Claude
     writes while the first piece is generated and played, goes out together in the next
     one. A sentence longer than max_chars stays whole.
+
+    `pause_s` > 0: the first piece also leaves, shorter, once no new text has come for
+    that long: Claude is running a tool (30/10 14:07, "Ci guardo, socio." waited 2.1 s for
+    three calls). It is timed on the text, not on whole sentences, so a long sentence still
+    being written is not a pause; whitespace alone does not count as new text. The text
+    written after such a pause starts a first piece again: nothing of it arrives while the
+    piece before plays, Claude is busy.
     """
+    loop = asyncio.get_running_loop()
+    moved = loop.time()  # when the last text arrived
     ready: asyncio.Queue[str | None] = asyncio.Queue()
+    splitter = SentenceSplitter()
 
     async def read() -> None:
+        nonlocal moved
         try:
-            async for sentence in sentences:
+            async for chunk in text:
+                if chunk is CUT_SHORT:  # cut at max_tokens: never the fragment ("Attra")
+                    for sentence in splitter.drop_unfinished():
+                        await ready.put(sentence)
+                    continue
+                if chunk.strip():
+                    moved = loop.time()
+                for sentence in splitter.feed(chunk):
+                    await ready.put(sentence)
+            for sentence in splitter.flush():
                 await ready.put(sentence)
         finally:
             await ready.put(None)
 
+    async def more() -> str | None:
+        """The next sentence for a first piece; _PAUSED once the text has stopped for
+        pause_s and nothing complete is left, the sentence the splitter held included."""
+        while pause_s > 0:
+            left = pause_s - (loop.time() - moved)
+            if left > 0:
+                with contextlib.suppress(TimeoutError):
+                    return await asyncio.wait_for(ready.get(), left)
+                continue
+            if ready.empty():
+                for sentence in splitter.ended():
+                    ready.put_nowait(sentence)
+            return _PAUSED if ready.empty() else ready.get_nowait()
+        return await ready.get()
+
     reader = asyncio.create_task(read())
     held: str | None = None  # a sentence that did not fit the previous piece
-    first = True
+    first = True  # the piece waits for first_chars (or a pause, or the end)
     try:
         while True:
             piece = held or await ready.get()
             held = None
             if piece is None:
                 break
-            ended = False
-            # Wait for more text only while the first piece is too short to start with;
-            # afterwards take what is there and never wait.
+            ended = paused = False
+            # Wait for more text only while a first piece is too short to start with;
+            # otherwise take what is there and never wait.
             while True:
                 if first and len(piece) < first_chars:
-                    nxt = await ready.get()
+                    nxt = await more()
+                    if nxt == _PAUSED:
+                        paused = True  # say what is there while Claude is busy
+                        break
                 elif ready.empty():
                     break
                 else:
@@ -209,7 +262,7 @@ async def group_stream(
                     held = nxt
                     break
                 piece = f"{piece} {nxt}"
-            first = False
+            first = paused
             yield piece
             if ended:
                 break

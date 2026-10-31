@@ -134,6 +134,91 @@ async def test_streams_the_reply_and_records_the_cost(pricing: Pricing) -> None:
     assert b.last_call["model"] == "claude-haiku-5-5" and b.last_call["output_tokens"] == 30
 
 
+class TimedStream(FakeStream):
+    """The API's timeline on a fake clock: headers after `open_s`, first word `first_s`
+    later, the end `rest_s` after that."""
+
+    def __init__(self, clock: Monotonic, open_s: float, first_s: float, rest_s: float):
+        super().__init__(["Roma.", " Capitale."], USAGE, "end_turn", None)
+        self.clock, self.open_s, self.first_s, self.rest_s = clock, open_s, first_s, rest_s
+
+    async def __aenter__(self) -> TimedStream:
+        self.clock.t += self.open_s
+        return self
+
+    @property
+    def text_stream(self) -> AsyncIterator[str]:
+        async def gen() -> AsyncIterator[str]:
+            self.clock.t += self.first_s
+            for chunk in self.chunks:
+                yield chunk
+            self.clock.t += self.rest_s
+
+        return gen()
+
+
+async def test_each_call_logs_headers_first_word_and_end(
+    pricing: Pricing, caplog: pytest.LogCaptureFixture
+) -> None:
+    """IT-1 5.2: first token, first word and end of every call, and the network alone (the
+    warm-up's round trip, no model) for the request after it."""
+    client = ScriptedClient()
+    b = brain(pricing, client)
+    clock = b.clock
+    assert isinstance(clock, Monotonic)
+
+    async def retrieve(model: str) -> Any:
+        clock.t += 0.22
+        return SimpleNamespace(id=model)
+
+    client.models = SimpleNamespace(retrieve=retrieve)
+    client.stream = lambda **params: TimedStream(clock, 0.5, 0.07, 0.2)  # type: ignore[method-assign]
+    b.warm_up()
+    await asyncio.gather(*b._warming)
+    with caplog.at_level("INFO", logger="claudio.brain.claude"):
+        assert await ask(b, "capitale d'Italia") == "Roma. Capitale."
+    assert b.last_call["claude_calls"] == [
+        {"model": "claude-haiku-5-5", "ttft_ms": 500, "word_ms": 570, "total_ms": 770}
+    ]
+    assert b.last_call["api_rtt_ms"] == 220 and b.last_call["claude_first_ms"] == 570
+    assert b.last_call["api_rtt_new_connection"]  # the first one opens the connection
+    assert "primo token 500 ms, prima parola 570 ms, fine 770 ms" in caplog.text
+    await ask(b, "e della Francia?")  # no new warm-up: no network figure
+    assert "api_rtt_ms" not in b.last_call
+
+
+async def test_a_round_trip_is_only_given_to_its_own_request(pricing: Pricing) -> None:
+    """Review of 5.2: a warm-up still running when the request goes out is not reported
+    with the next request, and one from a wake word long ago (a local command) is not
+    reported with a later Claude request."""
+    client = ScriptedClient(*[(["Ok."], "end_turn", [])] * 3)
+    b = brain(pricing, client)
+    clock = b.clock
+    assert isinstance(clock, Monotonic)
+    gate = asyncio.Event()
+
+    async def retrieve(model: str) -> Any:
+        await gate.wait()
+        clock.t += 0.9
+        return SimpleNamespace(id=model)
+
+    client.models = SimpleNamespace(retrieve=retrieve)
+    b.warm_up()
+    await asyncio.sleep(0)
+    clock.t += 0.5
+    await ask(b, "ciao")  # asked while the warm-up is still on its way
+    gate.set()
+    await asyncio.gather(*b._warming)
+    await ask(b, "e poi?")
+    assert "api_rtt_ms" not in b.last_call
+    clock.t += 100  # a wake word answered by the router: warm-up, no Claude request
+    b.warm_up()
+    await asyncio.gather(*b._warming)
+    clock.t += 60
+    await ask(b, "che tempo fa?")
+    assert "api_rtt_ms" not in b.last_call
+
+
 async def test_markdown_never_reaches_the_voice(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(["**Roma**", " è `bella`"]))
     assert await ask(b, "dimmi una città") == "Roma è bella"

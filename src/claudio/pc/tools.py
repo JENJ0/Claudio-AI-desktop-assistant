@@ -18,7 +18,7 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote_plus, urlsplit
@@ -141,6 +141,9 @@ class ToolOutcome:
     error: bool = False
     image: bytes | None = None  # a JPEG (look_at_screen), sent after the text
     ms: int = 0  # how long the call took
+    # Claudio's own reply (claudio_command marked "last", "" = silent): when every call of
+    # a round has one, it is said and Claude is not called again just to say "Fatto".
+    spoken: str | None = None
 
     def content(self) -> str | list[dict[str, Any]]:
         """The tool_result content: plain text, or text and picture."""
@@ -524,14 +527,15 @@ class PcTools:
             return query or say["active"]
         return window.title
 
-    async def run(self, call: ToolCall) -> ToolOutcome:
-        """Run one call. Never raises: an error becomes a tool_result with is_error."""
+    async def run(self, call: ToolCall, language: str = DEFAULT_LANGUAGE) -> ToolOutcome:
+        """Run one call. Never raises: an error becomes a tool_result with is_error.
+        `language`: the request's, for a reply Claudio says itself."""
         start = self.clock()
         try:
             if call.name == command_tool.NAME:
                 # Claudio's own commands run here, like the router's: the spending ledger
                 # (SQLite) only works on the thread that opened it.
-                done: str | ToolOutcome = self._own_command(call)
+                done: str | ToolOutcome = self._own_command(call, language)
             elif call.name in memory_tools.NAMES:
                 done = self._memory_call(call)  # quick, and the same thread as the router's
             else:
@@ -544,7 +548,7 @@ class PcTools:
             log.exception("Azione PC fallita: %s", call.brief())
             outcome = ToolOutcome(f"failed: {type(exc).__name__}: {exc}"[:300], error=True)
         ms = round((self.clock() - start) * 1000)
-        outcome = ToolOutcome(outcome.text, outcome.error, outcome.image, ms)
+        outcome = replace(outcome, ms=ms)
         log.info(
             "Azione PC %s livello %d: %s (%d ms)",
             call.brief(),
@@ -562,13 +566,15 @@ class PcTools:
             )
         return outcome
 
-    def _own_command(self, call: ToolCall) -> str:
+    def _own_command(self, call: ToolCall, language: str) -> ToolOutcome:
         if self.commands is None:
             raise ToolFailed(f"unknown tool: {call.name}")
         try:
-            return self.commands.run(call.args)
+            reply = self.commands.run(call.args, language)
         except command_tool.UnknownCommand as exc:
             raise ToolFailed(str(exc)) from exc
+        last = call.args.get("last") is True  # Claude has nothing to add (IT-1 5.3)
+        return ToolOutcome(reply or "Done.", spoken=reply if last else None)
 
     def _memory_call(self, call: ToolCall) -> str:
         if self.memory is None:

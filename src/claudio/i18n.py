@@ -372,6 +372,18 @@ EN: dict[str, str] = {
     "La voce di Jack non è partita: uso quella di riserva.": (
         "Jack's voice did not start: using the backup voice."
     ),
+    "All'avvio la scheda video era quasi piena.": "At startup the graphics card was almost full.",
+    "Scheda video occupata (libera %d MB su %d%s): finché Jack non è pronto risponde la "
+    "voce di riserva": (
+        "Graphics card busy (%d MB free of %d%s): the backup voice answers until Jack is ready"
+    ),
+    ", calcolo al {pct}%": ", compute at {pct}%",
+    # gpu
+    "nvidia-smi non disponibile: %s": "nvidia-smi not available: %s",
+    "nvidia-smi non disponibile: nessuna risposta in %.0f s": (
+        "nvidia-smi not available: no answer in %.0f s"
+    ),
+    "nvidia-smi: risposta non letta: %r": "nvidia-smi: answer not understood: %r",
     "La scheda video non è disponibile: ti capisco più lentamente.": (
         "The graphics card is not available: I understand you more slowly."
     ),
@@ -425,8 +437,10 @@ EN: dict[str, str] = {
     ),
     "Claude ha rifiutato la richiesta": "Claude refused the request",
     "Claude: risposta tagliata al limite di %d token": "Claude: reply cut at the %d token limit",
-    "Claude %s: %d in, %d out, cache %d letti / %d scritti (TTL %s)%s": (
-        "Claude %s: %d in, %d out, cache %d read / %d written (TTL %s)%s"
+    "Claude %s: %d in, %d out, cache %d letti / %d scritti (TTL %s), "
+    "primo token %s ms, prima parola %s ms, fine %s ms%s": (
+        "Claude %s: %d in, %d out, cache %d read / %d written (TTL %s), "
+        "first token %s ms, first word %s ms, end %s ms%s"
     ),
     ", interrotta (stima)": ", cut short (estimate)",
     "Claude: chiave API non valida (401)": "Claude: invalid API key (401)",

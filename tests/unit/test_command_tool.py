@@ -4,6 +4,7 @@ Claude, which could guess the chat window but had no tool to open it."""
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,7 +19,7 @@ from tests.conftest import COMMANDS_FILE
 from tests.unit.test_actions import Recorder
 from tests.unit.test_claude_brain import ScriptedClient
 from tests.unit.test_cost import PRICES, tracker
-from tests.unit.test_pc_tools import FakeDesktop, acting_brain, ask, call, use
+from tests.unit.test_pc_tools import FakeDesktop, acting_brain, ask, call, text, use
 
 
 @pytest.fixture(scope="module")
@@ -69,9 +70,9 @@ def test_switching_off_and_pausing_are_confirmed(tool: CommandTool) -> None:
 def test_runs_through_the_routers_actions(
     tool: CommandTool, rec: Recorder, system: SystemControl
 ) -> None:
-    assert tool.run({"command": "volume_up", "number": 3}) == "Volume up."
+    assert tool.run({"command": "volume_up", "number": 3}) == "Volume alzato."
     assert rec.keys == [MEDIA_KEYS["volume_up"]] * 3
-    assert tool.run({"command": "shutdown"}) == "See you soon."
+    assert tool.run({"command": "shutdown"}, "en") == "See you soon."  # the request's language
     assert system.stopping
 
 
@@ -97,7 +98,7 @@ async def test_runs_on_the_thread_of_the_spending_ledger(
     )
     t = PcTools(FakeDesktop(), PcSettings(), home=tmp_path, commands=tool)
     try:
-        out = await t.run(call(NAME, command="tell_spend"))
+        out = await t.run(call(NAME, command="tell_spend"), "en")
     finally:
         t.close()
     assert not out.error and "spent" in out.text
@@ -112,28 +113,84 @@ async def test_the_question_names_the_command(tool: CommandTool, tmp_path: Path)
     assert q == "Chiuditi. Confermi?"  # "spegniti" is off now, "chiuditi" closes
 
 
-async def test_garbled_request_runs_the_command(
+async def test_garbled_request_runs_the_command_and_says_its_reply(
     pricing: Pricing, tools: PcTools, rec: Recorder
 ) -> None:
+    """IT-1 5.3: the command's own reply, at once: no second call just to say "Fatto"."""
+    client = ScriptedClient(([], "tool_use", [use(NAME, command="volume_up", last=True)]))
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "Audio alsa il volu") == "Volume alzato."
+    assert rec.keys and set(rec.keys) == {MEDIA_KEYS["volume_up"]}
+    assert len(client.calls) == 1
+    assert b.last_call["tools"] == ["claudio_command(command=volume_up, last=True) ok"]
+    # The history keeps the words and what ran, as after a reply of Claude's.
+    later = ScriptedClient((["Ok."], "end_turn", []))
+    b.client = later
+    await ask(b, "grazie")
+    assert later.calls[0]["messages"][1] == {
+        "role": "assistant",
+        "content": "Volume alzato. [Claudio ran: claudio_command ok]",
+    }
+
+
+async def test_what_haiku_said_comes_first_and_a_media_key_stays_silent(
+    pricing: Pricing, tools: PcTools, rec: Recorder
+) -> None:
+    said = "Metto in pausa, socio."
     client = ScriptedClient(
-        ([], "tool_use", [use(NAME, command="volume_up")]),
-        (["Alzato."], "end_turn", []),
+        ([said], "tool_use", [text(said), use(NAME, command="media_play_pause", last=True)]),
+        ([], "tool_use", [use(NAME, command="mute", last=True)]),
     )
     b = acting_brain(pricing, client, tools)
-    assert await ask(b, "Audio alsa il volu") == "Alzato."
-    assert rec.keys and set(rec.keys) == {MEDIA_KEYS["volume_up"]}
-    assert client.calls[1]["messages"][-1]["content"][0]["content"] == "Volume up."
+    assert await ask(b, "ferma la musica") == f"{said} "  # play/pause has no reply
+    assert await ask(b, "togli l'audio") == ""  # nothing said: silent, as with the router
+    assert len(client.calls) == 2 and len(rec.keys) == 2
+
+
+async def test_claude_still_reads_mixed_or_failed_rounds(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use(NAME, command="volume_up"), use("open_app", name="spotify")]),
+        (["Spotify aperto, volume su."], "end_turn", []),
+        ([], "tool_use", [use(NAME, command="format_disk", last=True)]),
+        (["Non posso."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "apri spotify e alza") == "Spotify aperto, volume su."
+    assert client.calls[1]["messages"][-1]["content"][0]["content"] == "Volume alzato."
+    assert await ask(b, "formatta il disco") == "Non posso."
+    assert len(client.calls) == 4
+
+
+async def test_nothing_claude_meant_to_add_is_dropped(pricing: Pricing, tools: PcTools) -> None:
+    """Review of 5.3: the shortcut ends a request only when Claude marked the command
+    `last` and nothing else ran or was asked for in it."""
+    sonnet = SimpleNamespace(type="tool_use", id="tu_s", name="ask_sonnet", input={})
+    client = ScriptedClient(
+        # "abbassa il volume e dimmi che ore sono": not marked, the time comes next.
+        ([], "tool_use", [use(NAME, command="volume_down")]),
+        (["Fatto, e sono le 21:30."], "end_turn", []),
+        # "apri spotify e poi alza il volume": the command comes in the second round.
+        ([], "tool_use", [use("open_app", name="spotify")]),
+        ([], "tool_use", [use(NAME, command="volume_up", last=True)]),
+        (["Spotify aperto e volume alzato."], "end_turn", []),
+        # "abbassa il volume e parlami della relatività": Haiku also asks for Sonnet.
+        ([], "tool_use", [use(NAME, command="volume_down", last=True), sonnet]),
+        (["La relatività dice che..."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "abbassa il volume e dimmi che ore sono") == "Fatto, e sono le 21:30."
+    assert await ask(b, "apri spotify e poi alza il volume") == "Spotify aperto e volume alzato."
+    assert await ask(b, "abbassa e parlami della relatività") == "La relatività dice che..."
+    assert len(client.calls) == 7
 
 
 async def test_switching_off_waits_for_the_yes(
     pricing: Pricing, tools: PcTools, system: SystemControl
 ) -> None:
-    client = ScriptedClient(
-        ([], "tool_use", [use(NAME, command="shutdown")]),
-        (["A presto."], "end_turn", []),
-    )
+    client = ScriptedClient(([], "tool_use", [use(NAME, command="shutdown", last=True)]))
     b = acting_brain(pricing, client, tools)
     assert (await ask(b, "Claudio, spegni ti")).endswith("Confermi?")
     assert not system.stopping and b.awaiting
-    assert await ask(b, "sì") == "A presto."
+    assert await ask(b, "sì") == "A presto."  # the command's own reply
     assert system.stopping
+    assert len(client.calls) == 1  # no call after the yes
