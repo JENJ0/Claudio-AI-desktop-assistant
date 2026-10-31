@@ -473,6 +473,27 @@ async def test_an_unclear_name_wakes_only_on_a_voice(
     assert (assistant.state is State.LISTENING) is wakes
 
 
+async def test_a_zero_voice_floor_still_never_wakes_on_silence(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """min_voice_ms = 0 lets Whisper hear everything, but an empty text on 0 ms of voice is
+    still silence, never an unclear name (review 31/10)."""
+    assistant, speaker = second_chance_with(
+        fake_vad,
+        vad_settings,
+        SecondChance(""),
+        tmp_path,
+        responder=NoCommands(),
+        voice_meter=lambda audio: 0,
+        wake_min_voice_ms=0,
+        verify_wake=True,
+        always_confirm=frozenset({"hey_claudio"}),
+        unclear_min=0.2,
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == [] and assistant.state is State.IDLE
+
+
 async def test_a_noisy_models_misfires_leave_only_their_audio(
     fake_vad, vad_settings, make_frames, tmp_path
 ) -> None:
@@ -525,6 +546,8 @@ async def test_second_chance_never_wakes_a_busy_assistant(
     assert speaker.beeps == ["wake"] and assistant.state is State.LISTENING
     row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
     assert row["outcome"] == "near_miss" and row["second_chance"] == "Hey Claudio"
+    # Not a rejection: no WAV kept apart as a negative to retrain the wake word on.
+    assert row["superseded"] is True and "audio_file" not in row and "rejected" not in row
 
 
 async def test_quiet_microphone_is_reported_once(fake_vad, vad_settings, make_frames, caplog):
