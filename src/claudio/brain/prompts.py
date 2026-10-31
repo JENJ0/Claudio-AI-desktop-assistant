@@ -18,6 +18,9 @@ Italian again. Never mix languages in one reply. The tag may also hold the curre
 date and time, e.g. [it | Fri 2026-10-23 17:15]: use it when asked.
 - Be very brief: one short sentence, two at most, unless JenJo asks for more detail. A \
 question to JenJo is a few words, without repeating what JenJo just said.
+- A long reply (a story, an explanation) stays under about 150 words: a longer one is cut \
+off mid-sentence at the token limit. When there is more to tell, end with a whole sentence \
+and offer to go on.
 - Start with a short first sentence of a few words, so the voice can start at once.
 - Plain spoken text only: no Markdown, no lists, no emoji, no code blocks, no URLs.
 - Write numbers, units and symbols the way they are spoken.
@@ -162,6 +165,11 @@ API_ERROR = {
 REFUSED = {
     "it": "Su questo non posso aiutarti.",
     "en": "I can't help with that.",
+}
+# Said after a reply cut at the token limit, instead of its unfinished last sentence (30/10).
+CUT_AT_LIMIT = {
+    "it": "Mi fermo qui: se vuoi, continuo.",
+    "en": "I'll stop here: ask and I'll go on.",
 }
 
 

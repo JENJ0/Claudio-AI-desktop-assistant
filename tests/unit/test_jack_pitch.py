@@ -71,9 +71,72 @@ def test_realtime_pitch_scale_leaves_other_pipelines_alone() -> None:
 def test_no_rvc_passes_qwen_audio_through() -> None:
     rvc = w.RvcNone()
     rvc.begin()
-    (pcm,) = rvc.feed(np.array([0.0, 0.5, -2.0], dtype=np.float32))
-    assert np.frombuffer(pcm, "<i2").tolist() == [0, 16383, -32767]
+    (audio,) = rvc.feed(np.array([0.0, 0.5, -2.0], dtype=np.float32))
+    assert audio.tolist() == [0.0, 0.5, -2.0]  # as it came: the level guard comes after
     assert rvc.flush() == []
+
+
+def test_pcm_cuts_what_is_left_past_full_scale() -> None:
+    pcm = w.to_pcm(np.array([0.0, 0.5, -2.0], dtype=np.float32))
+    assert np.frombuffer(pcm, "<i2").tolist() == [0, 16383, -32767]
+
+
+def _worker(monkeypatch, chunk: np.ndarray) -> tuple[w.Worker, list, list]:
+    """A Worker with Qwen3 replaced by three copies of `chunk` (no GPU)."""
+    events: list[tuple[dict, bytes]] = []
+    seeds: list[int] = []
+    monkeypatch.setattr(w, "emit", lambda header, payload=b"": events.append((header, payload)))
+
+    class FakeTTS:
+        def generate_custom_voice_streaming(self, **kwargs):
+            for _ in range(3):
+                yield chunk, 24_000, {}
+
+    worker = object.__new__(w.Worker)
+    worker.tts = FakeTTS()
+    worker.torch = SimpleNamespace(manual_seed=seeds.append)
+    worker.seed, worker.temperature, worker.top_p = 7, 0.7, 0.9
+    worker.guard = w.LevelGuard(w.OUT_RATE, target=-24.0)
+    worker.rvc = {"blocks": w.RvcNone(), "none": w.RvcNone()}
+    worker.cancelled_upto, worker.latest_id = -1, -1
+    return worker, events, seeds
+
+
+def test_a_take_is_drawn_with_its_own_seed_and_leveled(monkeypatch) -> None:
+    from claudio.tts.loudness import integrated_lufs
+
+    # -14 LUFS: a shouted take like 039 of 30/10 (the guard turns down by 15 dB at most)
+    shout = (0.3 * np.sin(2 * np.pi * 140 * np.arange(16_000) / 24_000)).astype(np.float32)
+    worker, events, seeds = _worker(monkeypatch, shout)
+    worker.speak({"op": "speak", "id": 1, "text": "Ciao, socio.", "rvc": "none", "seed": 9})
+    assert seeds == [9]
+    *audio, (done, _) = events
+    assert all(h["event"] == "audio" and h["raw_lufs"] > -16 for h, _ in audio)
+    assert done["event"] == "done" and done["seed"] == 9 and done["raw_clipped"] == 0
+    pcm = np.frombuffer(b"".join(p for _, p in audio), "<i2")
+    assert integrated_lufs(pcm, 24_000) == pytest.approx(-24, abs=1)  # the shout, leveled
+
+
+def test_without_a_seed_in_the_request_the_default_one_is_used(monkeypatch) -> None:
+    quiet = (0.05 * np.sin(np.arange(16_000) / 9)).astype(np.float32)
+    worker, events, seeds = _worker(monkeypatch, quiet)
+    worker.guard = None  # --lufs 0: the audio as it comes, no level fields
+    worker.speak({"op": "speak", "id": 1, "text": "Ciao.", "rvc": "none"})
+    assert seeds == [7]
+    done = events[-1][0]
+    assert done["seed"] == 7 and "raw_lufs" not in done
+    pcm = np.frombuffer(events[0][1], "<i2")
+    assert np.array_equal(pcm, (quiet * 32767).astype("<i2"))  # untouched
+
+
+def test_worker_command_carries_the_level_target(tmp_path) -> None:
+    from claudio.config import TtsSettings
+    from claudio.tts.jack import worker_command
+
+    command = worker_command(tmp_path, TtsSettings())
+    assert command[command.index("--lufs") + 1] == "-24.0"
+    off = worker_command(tmp_path, TtsSettings(jack_lufs=0))
+    assert off[off.index("--lufs") + 1] == "0.0"
 
 
 def test_worker_command_adds_pitch_fix_only_when_on(tmp_path) -> None:
@@ -133,8 +196,8 @@ def test_no_rvc_applies_the_speed_without_rvc() -> None:
     rvc = w.RvcNone(0.9)
     rvc.begin()
     tone = (0.3 * np.sin(np.arange(24_000) / 8)).astype(np.float32)
-    pcm = b"".join(rvc.feed(tone) + rvc.flush())
-    assert len(pcm) // 2 == round(24_000 / 0.9)
+    audio = np.concatenate(rvc.feed(tone) + rvc.flush())
+    assert len(audio) == round(24_000 / 0.9)
 
 
 def test_the_frame_budget_follows_the_text() -> None:

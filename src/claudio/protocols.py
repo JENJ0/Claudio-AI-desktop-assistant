@@ -109,6 +109,20 @@ class LevelControl(Protocol):
         ...
 
 
+class _Marker(str):
+    """A chunk of a reply stream that is not text: equal to "", so whatever joins the chunks
+    (chat, history, metrics) ignores it; the speaker finds it by identity."""
+
+    def __repr__(self) -> str:
+        return "CUT_SHORT"
+
+
+# In a reply stream: the reply was cut at the token limit (30/10: a story stopped inside
+# "Attraverso" and the voice said "Attra"). The speaker drops the unfinished sentence before
+# it; what follows (a closing sentence) is said. Test it with `chunk is CUT_SHORT`.
+CUT_SHORT = _Marker()
+
+
 class Speaker(Protocol):
     # The sentences of the last reply that started playing (the last one may be cut short).
     played: list[str]
