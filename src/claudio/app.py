@@ -1097,6 +1097,8 @@ class Assistant:
                 self._take_over(self._barge_audio(barge.endpointer.partial()), "", rest=[])
             elif barge.mode == "duck":
                 self.speaker.duck(barge.duck_volume)
+                level = barge.endpointer.stats()["speech_dbfs"]
+                log.info("Abbasso la risposta: voce a %.0f dBFS", level)
         elif event is EndpointEvent.TIMEOUT:
             self._restart_barge(barge.endpointer)
         elif event is EndpointEvent.END:

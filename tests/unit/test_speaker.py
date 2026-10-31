@@ -7,6 +7,7 @@ import pytest
 
 from claudio.audio.earcons import make_earcons
 from claudio.audio.player import resample
+from claudio.protocols import CUT_SHORT
 from claudio.tts.speaker import StreamingSpeaker
 
 
@@ -196,9 +197,49 @@ async def test_played_stops_where_the_reply_was_cut() -> None:
     assert speaker.played == ["Uno."]
 
 
+@pytest.mark.parametrize(
+    ("group_chars", "expected"),
+    [
+        (0, ["C'era una volta un re.", "Mi fermo qui: se vuoi, continuo."]),
+        (220, ["C'era una volta un re. Mi fermo qui: se vuoi, continuo."]),
+    ],
+)
+async def test_the_fragment_of_a_reply_cut_at_the_token_limit_is_never_said(
+    group_chars: int, expected: list[str]
+) -> None:
+    """30/10: a story stopped at the token limit inside "Attraverso" and Jack said "Attra"."""
+    synth = FakeSynth()
+    speaker = StreamingSpeaker(  # the [tts] defaults: a first clause, or Jack's grouping
+        synth, FakePlayer(), first_clause_chars=25, group_chars=group_chars, group_first_chars=60
+    )
+    await speaker.speak(
+        stream("C'era una volta un re. Attra", CUT_SHORT, " Mi fermo qui: se vuoi, continuo.")
+    )
+    assert [t for t, _ in synth.calls] == expected
+    assert speaker.played == expected
+
+
 async def test_grouped_reply_is_said_in_pieces_up_to_the_limit() -> None:
     synth, player = FakeSynth(), FakePlayer()
     speaker = StreamingSpeaker(synth, player, group_chars=20, group_first_chars=8)
     await speaker.speak(stream("Uno. Due", ". Tre lunghissimo davvero. Quattro."))
     assert [t for t, _ in synth.calls] == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]
     assert speaker.played == ["Uno. Due.", "Tre lunghissimo davvero.", "Quattro."]
+
+
+async def test_only_a_change_of_volume_is_logged(caplog) -> None:
+    """Nobody could tell when ducking fired. Back to full volume is logged when the reply
+    was lowered, not at every duck(None): every reply starts with one."""
+    player = FakePlayer()
+    speaker = StreamingSpeaker(FakeSynth(), player)
+    with caplog.at_level("INFO", logger="claudio.tts.speaker"):
+        await speaker.speak(stream("Uno."))  # already at full volume: nothing to say
+        speaker.duck(0.3)
+        speaker.duck(0.3)  # a second voice while it is lowered
+        assert player.gain == 0.3
+        speaker.duck(None)  # "not for me"
+        speaker.duck(None)
+        speaker.duck(0.3)  # the reply ends while a voice is being checked...
+        await speaker.speak(stream("Due."))  # ...and the next one starts at full volume
+    back = [r for r in caplog.records if r.getMessage() == "Risposta di nuovo a volume pieno"]
+    assert len(back) == 2 and player.gain == 1.0

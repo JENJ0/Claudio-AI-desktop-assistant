@@ -82,6 +82,7 @@ class StreamingSpeaker:
         self.effect = effect
         self._earcons = make_earcons(player.sample_rate, beep_volume)
         self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
+        self._ducked = False  # lowered by duck(): logged when it goes back to full volume
         # The sentences of the current reply that started playing; the last one may have been
         # cut short. Where an interrupted reply resumes.
         self.played: list[str] = []
@@ -95,7 +96,11 @@ class StreamingSpeaker:
 
     def duck(self, volume: float | None) -> None:
         """Lower the reply being spoken to `volume` (a voice may be interrupting); None
-        brings it back to full volume."""
+        brings it back to full volume. The player fades between the two (DUCK_RAMP_S)."""
+        full = volume is None or volume >= 1.0
+        if full and self._ducked:  # only the change: every reply starts with duck(None)
+            log.info("Risposta di nuovo a volume pieno")
+        self._ducked = not full
         self.player.gain = 1.0 if volume is None else volume
 
     def voice(self, language: str) -> Any:
@@ -152,7 +157,9 @@ class StreamingSpeaker:
         """`language` may be a callable, read at every sentence: the responder only knows the
         language of its reply once it has matched the request."""
         self._cancel.clear()
-        self.duck(None)  # every reply starts at full volume
+        # Every reply starts at full volume, at once: after a silence the player has nothing to
+        # fade (a fade-in would only swallow the first syllable).
+        self.duck(None)
         self.played = []
         # Rendering runs ahead of playback: the next sentences are ready before they are due
         # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued. The first

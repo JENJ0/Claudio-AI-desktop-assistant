@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Sequence
 
 from claudio.intake import asks_something
 from claudio.router.normalizer import normalize
+from claudio.tts.sentence_splitter import joined_reply
 
 # The new request ends the old reply instead of pausing it ("ok, va bene, grazie").
 CLOSERS = frozenset(
@@ -54,7 +55,8 @@ class DrainedStream:
 
     @property
     def text(self) -> str:
-        return "".join(self.parts)
+        """What the voice would say: a reply cut at the token limit loses its fragment."""
+        return joined_reply(self.parts)
 
     async def finish(self, timeout_s: float) -> None:
         """Wait for the rest of the reply; after `timeout_s` keep what arrived."""
