@@ -108,7 +108,9 @@ con qualcosa che non è un comando (la TV, qualcun altro che parla), con un bip 
 risposta. Mentre parla, Claudio continua ad
 ascoltare. Una voce vicina al microfono (`barge_in_min_dbfs`, almeno 0,3 s) abbassa subito la
 risposta; quando Whisper sente parole la risposta si ferma e quello che hai detto diventa la
-richiesta successiva, senza "Hey Claudio" ("basta" / "stop" ferma e basta). Se era rumore il
+richiesta successiva, senza "Hey Claudio" ("basta" / "stop" ferma e basta); dopo averle risposto
+riprende la risposta interrotta ("Dicevo: ...", `resume_s`) se era lunga (una storia,
+`resume_min_chars`), non una domanda né la risposta a una frase capita male. Se era rumore il
 volume torna normale. La sua voce che rientra dalle casse viene riconosciuta e ignorata, ma con
 le cuffie va meglio. Tutto sta in `[conversation]` (`window_s = 0` spegne la finestra,
 `barge_in = false` l'ascolto mentre parla, `barge_in_mode` come reagisce).
@@ -129,13 +131,20 @@ conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a l
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
 (`enabled = false` per solo comandi locali). Una domanda a Haiku costa circa 0,0002 USD.
 
-**Comandi capiti male.** Una frase che Claudio stava per ignorare (wake word non confermata,
+**Comandi capiti male.** Una frase breve che nessun comando capisce (fino a 6 parole, anche una
+domanda: "Scaniti.", "Chi ce l'ha fatta?" detto per "chiudi la chat") riceve prima la seconda
+opinione di Whisper, in locale e gratis: Whisper la riascolta con i comandi come prompt e il
+comando che propone viene giudicato solo sul suono. Molto più probabile della prima lettura: lo
+esegue; circa uguale: "Hai detto: ...?" (si risponde qui, niente API); altrimenti la frase va
+avanti come prima (circa +0,2 s, solo su quelle frasi; `[recovery]`, ogni tentativo in
+`logs/metrics.jsonl`). Poi una frase che Claudio stava per ignorare (wake word non confermata,
 frase nella finestra di conversazione che non sembrava rivolta a lui, rumore) ma che somiglia a
 un comando ("Spenditi.", "Audio Bust.") va a Haiku, che dice quale comando hai chiesto più
 probabilmente e quanto ne è sicuro: dall'80 % Claudio lo esegue, dal 50 % chiede prima "Hai
 detto: ...?" ("sì" lo esegue, "no" lascia stare, "no, alza il volume" fa quello), sotto ignora
-la frase come prima. Pausa e "spegniti" vengono sempre chiesti. Costa una chiamata (circa 0,0001
-USD) solo una frase vicina a un comando; impostazioni in `[guess]`. Claude può anche eseguire i
+la frase come prima. Pausa, "spegniti" e "chiuditi" vengono sempre chiesti, "basta" mai (si
+ferma subito). Costa una chiamata (circa 0,0001 USD) solo una frase vicina a un comando;
+impostazioni in `[guess]`. Claude può anche eseguire i
 comandi di Claudio (volume, tasti multimediali, chat, spesa, pausa, "spegniti") quando una
 richiesta gli arriva storpiata ("Claudio, ok, la chata"). `uv run python scripts/replay_guess.py
 --dry` mostra quanto erano vicine a un comando le frasi scartate in `logs/metrics.jsonl`; senza
