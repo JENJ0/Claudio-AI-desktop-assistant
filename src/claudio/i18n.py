@@ -66,6 +66,9 @@ EN: dict[str, str] = {
     "Seconda possibilità: nessuna voce (%d ms), niente da fare": (
         "Second chance: no voice (%d ms), nothing to do"
     ),
+    "Wake word su silenzio (%.2f, %d ms di voce): la ignoro": (
+        "Wake word on silence (%.2f, %d ms of voice): ignored"
+    ),
     "Da spento, lista chiusa: %r -> %r": "Off, closed list: %r -> %r",
     "Lista chiusa da spento non riuscita": "The closed list while off failed",
     "Spegnimento richiesto a voce: chiudo": "Shutdown asked by voice: closing",

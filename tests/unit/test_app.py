@@ -438,6 +438,58 @@ async def test_no_voice_no_whisper(fake_vad, vad_settings, make_frames, tmp_path
     assert row["wake_voice_ms"] == 32 and row["audio_file"] == "rejected/no_voice.wav"
 
 
+def strong_wake_with(fake_vad, vad_settings, tmp_path, **options):
+    """A clear "hey_claudio" (0.9) at frame 20, no second chance needed."""
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        FakeWake({20}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        FakeResponder(),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        **options,
+    )
+    return assistant, speaker
+
+
+async def test_a_clear_wake_on_silence_is_no_wake(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """31/10 12:45:36: "hey_claudio" at 0.77 on the headset's gate (-87 dBFS), then "Nessuna
+    richiesta": a clear score needs a voice too, as a weak one does. Fired for several frames
+    in a row, it is logged and saved once."""
+    saved: list[str] = []
+    assistant, speaker = strong_wake_with(
+        fake_vad,
+        vad_settings,
+        tmp_path,
+        voice_meter=lambda audio: 0,
+        wake_min_voice_ms=96,
+        rejected_sink=lambda audio, kind: saved.append(kind) or f"rejected/{kind}.wav",
+    )
+    assistant.wake.fire_on = {20, 21, 22}
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == [] and assistant.state is State.IDLE
+    assert saved == ["no_voice"]
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["outcome"] == "near_miss" and row["rejected"] == "no_voice"
+    assert row["wake_score"] == 0.9 and row["wake_voice_ms"] == 0
+
+
+async def test_a_clear_wake_with_a_voice_wakes_at_once(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    assistant, speaker = strong_wake_with(
+        fake_vad, vad_settings, tmp_path, voice_meter=lambda audio: 480, wake_min_voice_ms=96
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert speaker.beeps == ["wake"]
+    assert assistant._interaction is not None
+    assert assistant._interaction.info["wake_voice_ms"] == 480
+
+
 async def test_a_voice_goes_on_to_whisper(fake_vad, vad_settings, make_frames, tmp_path) -> None:
     check = SecondChance("Claudio.")
     assistant, speaker = second_chance_with(
