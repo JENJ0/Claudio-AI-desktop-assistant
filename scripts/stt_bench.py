@@ -12,6 +12,8 @@ A variant is a "+"-joined list of changes from how CLAUDIO transcribes today ("l
               [stt.prompts] as Whisper's prompt, Silero's cut of the sentence ([vad] settings).
               What comes after the transcription live (the closed list, waiting for the rest
               of a phrase left halfway) is not in it: compare_stt.py measures the closed list
+    recupero  then, as live, a phrase no command understands goes through the closed list and
+              Whisper's second opinion ([recovery]): the command proposed counts, asked or done
     grezzo    the recording as the microphone gives it, no gain
     frasi     prompt: only the sentences of [stt.prompts], no names
     vuoto     no prompt at all
@@ -21,9 +23,11 @@ A variant is a "+"-joined list of changes from how CLAUDIO transcribes today ("l
     novad     the whole recording instead of Silero's cut
     parakeet  NVIDIA Parakeet TDT 0.6B v3 instead of Whisper (uv pip install onnx-asr)
 
-"tagli": sentences Silero ended before the voice did (a pause mid-sentence). With --details
-an empty transcription says why (Silero heard no voice, Whisper took it for silence or for a
-known hallucination). Every transcription goes to data/stt_testset/risultati.json.
+"falsi": sentences that are no command, heard as one (the closed list and the second opinion
+must keep them at 0). "tagli": sentences Silero ended before the voice did (a pause
+mid-sentence). With --details an empty transcription says why (Silero heard no voice, Whisper
+took it for silence or for a known hallucination). Every transcription goes to
+data/stt_testset/risultati.json.
 """
 
 from __future__ import annotations
@@ -40,9 +44,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
+from claudio import intake
 from claudio.audio.capture import apply_gain
 from claudio.audio.level import TARGET_DBFS
 from claudio.audio.vad import Endpointer, EndpointEvent
@@ -53,7 +59,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from stt_testset import BLOCK, MUTE_DBFS, OUT, SAMPLE_RATE, peak_dbfs, read_sentences
 
-PARTS = ("live", "grezzo", "frasi", "vuoto", "beam1", "large", "turbo", "novad", "parakeet")
+PARTS = (
+    "live",
+    "recupero",
+    "grezzo",
+    "frasi",
+    "vuoto",
+    "beam1",
+    "large",
+    "turbo",
+    "novad",
+    "parakeet",
+)
 DEFAULT_VARIANTS = ("live", "live+grezzo", "live+frasi", "live+vuoto", "live+novad", "live+beam1")
 MAX_GAIN_DB = 30.0  # [audio] auto_gain's ceiling
 SAME_WORD = {"hey": "ehi", "ei": "ehi", "eh": "ehi"}  # ways of writing the same word
@@ -68,6 +85,7 @@ class Variant:
     model: str = ""  # "": [stt] model
     vad: bool = True
     engine: str = "whisper"  # whisper | parakeet
+    recover: bool = False  # the closed list and Whisper's second opinion, as live
 
 
 def parse_variant(text: str) -> Variant:
@@ -84,6 +102,7 @@ def parse_variant(text: str) -> Variant:
         model="large-v3" if "large" in parts else "large-v3-turbo" if "turbo" in parts else "",
         vad="novad" not in parts,
         engine="parakeet" if "parakeet" in parts else "whisper",
+        recover="recupero" in parts,
     )
 
 
@@ -214,6 +233,15 @@ def whisper_engine(
         vocabulary.read_now()
         cache["names"] = vocabulary.text
     base = settings.stt
+    matcher = CommandMatcher(
+        load_commands(settings.resolve(settings.router.commands_file)),
+        settings.router.fuzzy_threshold,
+    )
+    from claudio.__main__ import build_recovery
+
+    recovery = build_recovery(settings, stt, matcher)
+    if recovery is None:  # off, on the CPU or another model: "recupero" is then the closed list
+        print("  Seconda opinione spenta per questo modello: recupero = solo lista chiusa")
 
     def transcribe(audio: np.ndarray, variant: Variant) -> str:
         stt.settings = base.model_copy(update={"beam_size": variant.beam or base.beam_size})
@@ -222,9 +250,36 @@ def whisper_engine(
             stt.prompt = lambda language: ""  # type: ignore[method-assign]
         else:
             stt.__dict__.pop("prompt", None)
-        return stt.transcribe(audio)
+        text = stt.transcribe(audio)
+        if not variant.recover:
+            return text
+        return as_live(audio, text, stt, matcher, recovery, base.closed_list_max_words)
 
     return transcribe
+
+
+def as_live(
+    audio: np.ndarray,
+    text: str,
+    stt: Any,
+    matcher: CommandMatcher,
+    recovery: Callable[[np.ndarray, str, str], Any] | None,
+    closed_list_max_words: int,
+) -> str:
+    """What CLAUDIO goes on with after the transcription: a command understood at once, else
+    the first command of the closed list (short phrases, no "?"), else the command Whisper's
+    second opinion proposes, asked or done (a yes would run it)."""
+    if not text or matcher.match(text) is not None:
+        return text
+    if intake.words(text) <= closed_list_max_words and not text.rstrip().endswith("?"):
+        listed = stt.candidates(audio)
+        found = next((c for c in listed if c != text and matcher.match(c) is not None), None)
+        if found:
+            return str(found)
+    second = recovery(audio, text, stt.language) if recovery is not None else None
+    if second is None or second.verdict is intake.Verdict.DROP:
+        return text
+    return str(second.text)
 
 
 def parakeet(cache: dict[str, object]) -> Callable[[np.ndarray, Variant], str]:
@@ -300,14 +355,15 @@ def report(
     print(f"\n== {microphone.name}: {len(references)} frasi, guadagno +{microphone.gain_db:.0f} dB")
     expected = [command_of(matcher, r) for r in references]
     commands = sum(1 for c in expected if c)
-    print(f"  {'variante':<22} {'WER':>6}  {'comandi':>8}  {'ms/frase':>8}  {'tagli':>5}")
+    head = f"  {'variante':<22} {'WER':>6}  {'comandi':>8}  {'falsi':>5}  {'ms/frase':>8}"
+    print(f"{head}  {'tagli':>5}")
     for s in scores:
-        right = sum(
-            1 for c, t in zip(expected, s.texts, strict=True) if c and command_of(matcher, t) == c
-        )
+        heard = [command_of(matcher, t) for t in s.texts]
+        right = sum(1 for c, h in zip(expected, heard, strict=True) if c and h == c)
+        false = sum(1 for c, h in zip(expected, heard, strict=True) if h and not c)
         print(
             f"  {s.variant:<22} {wer(references, s.texts):>6.1%}  {right:>3}/{commands:<4}"
-            f"  {statistics.mean(s.ms) if s.ms else 0:>8.0f}  {s.cuts:>5}"
+            f"  {false:>5}  {statistics.mean(s.ms) if s.ms else 0:>8.0f}  {s.cuts:>5}"
         )
     if details:
         for i, reference in enumerate(references):

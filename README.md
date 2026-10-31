@@ -108,7 +108,8 @@ While it speaks, CLAUDIO keeps listening. A voice close to the microphone (`barg
 at least 0.3 s) lowers the reply at once; when Whisper hears words the reply stops and what you
 said becomes the next request if it starts with the name ("Claudio, che ore sono") or is a
 command ("basta" / "stop" only stops; `barge_in_needs_name = false` takes any phrase); once it
-is answered, the cut reply goes on ("Dicevo: ...", `resume_s`). Noise brings
+is answered, the cut reply goes on ("Dicevo: ...", `resume_s`) if it was a long one (a story,
+`resume_min_chars`), not a question nor the answer to a phrase Whisper doubted. Noise brings
 the volume back. Its own voice coming back through speakers is ignored, also when Whisper
 mishears it ("Sono le 19 e 42" -> "Se non le diciamo"): the phrase is compared letter by letter
 with what was just said (`echo_similarity`). After every sound of its own (a reply, a beep,
@@ -140,13 +141,19 @@ asks "Lo uso?" ("sì" / "no"), or start the request with "pensaci bene" / "think
 (10 % of the price). Claude also knows the current date and time. `smart_model = ""` keeps
 Haiku only.
 
-**Misheard commands.** A phrase Claudio was about to ignore (a false wake, a phrase in the
+**Misheard commands.** A short phrase no command understands (up to 6 words, a question too:
+"Scaniti.", "Chi ce l'ha fatta?" said for "chiudi la chat") first gets Whisper's second opinion,
+local and free: Whisper hears it again with the commands as its prompt, and the command it
+proposes is judged on the sound alone. Much likelier than the first hearing: done; about as
+likely: "Hai detto: ...?" (answered here, no API); otherwise the phrase goes on as before
+(about +0.2 s, only on those phrases; `[recovery]`, every attempt in `logs/metrics.jsonl`).
+Then a phrase Claudio was about to ignore (a false wake, a phrase in the
 conversation window that did not look addressed to it, noise) that sounds like a command
 ("Spenditi.", "Audio Bust.") goes to Haiku, which says which command you most likely asked and
 how sure it is: from 80 % Claudio does it, from 50 % it asks "Hai detto: ...?" first ("sì" does
 it, "no" drops it, "no, alza il volume" does that instead), below it ignores the phrase as
-before. Pausing and "spegniti" are always asked. Only phrases close to a command cost a call
-(about 0.0001 USD); settings in `[guess]`. Claude can also run Claudio's own commands (volume,
+before. Pausing, "spegniti" and "chiuditi" are always asked, "basta" never (it stops at once).
+Only phrases close to a command cost a call (about 0.0001 USD); settings in `[guess]`. Claude can also run Claudio's own commands (volume,
 music keys, chat window, spending, pause, "spegniti") when a request reaches it garbled
 ("Claudio, ok, la chata"). `uv run python scripts/replay_guess.py --dry` shows how close the
 phrases dropped in `logs/metrics.jsonl` were to a command; without `--dry` it asks Haiku too.

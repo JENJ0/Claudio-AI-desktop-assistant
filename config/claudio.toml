@@ -176,6 +176,7 @@ barge_in_min_dbfs = -30.0  # the voice must be this loud (JenJo at the microphon
 barge_in_vad = 0.6         # speech probability needed while speaking (stricter than [vad] threshold)
 barge_in_min_speech_ms = 300  # voice this long before anything happens (a cough is shorter)
 resume_s = 60.0            # a reply cut by a question goes on after the answer ("Dicevo: ..."); 0 = never
+resume_min_chars = 200     # ...only a long one (a story): never a short answer, a question or one to a phrase Whisper doubted
 duck_volume = 0.3          # the reply's volume while Whisper checks what was said
 barge_in_needs_name = true # over the reply a new request needs the name ("Claudio, ...") or a command; "basta" always works
 echo_similarity = 70.0     # 0-100: heard this close to what was just said = CLAUDIO's own echo (0 = word check only)
@@ -229,16 +230,35 @@ no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "
 
 # A phrase Claudio was about to ignore (a false wake, not addressed to it, noise) that sounds
 # like a command ("Spenditi.", "Audio Bust."): Haiku guesses which command JenJo asked and
-# how likely it is. Sure enough: done at once; less sure: "Hai detto: ...?" first; pausing
-# and switching Claudio off are always asked. Only those phrases cost a call (~0.0001 $).
+# how likely it is. Sure enough: done at once; less sure: "Hai detto: ...?" first. Pausing,
+# switching Claudio off and closing it are always asked, "basta" never (JenJo 30/10). Only those
+# phrases cost a call (~0.0001 $).
 [guess]
 enabled = true                 # false: such phrases are dropped, as before (zero cost)
 near_floor = 65                # 0-100: how close (letters or sound) to a command to ask Claude
 act_at = 0.8                   # Claude this sure: the command runs at once
-ask_at = 0.5                   # from here up to act_at: "Hai detto: ...?"; below: ignored
+ask_at = 0.5                   # from here up to act_at: "Hai detto: ...?" ("basta": stops at once); below: ignored
 candidates = 4                 # closest commands shown to Claude
 max_tokens = 120
 timeout_s = 3.0                # no answer by then: the phrase is ignored, as before
+
+# A short phrase no command understands may be a command the headset clipped ("Scaniti." for
+# "spegniti", "Chi ce l'ha fatta?" for "chiudi la chat", 30/10). Whisper hears it again with the
+# commands as its prompt, and the command it proposes is judged on the sound alone (no prompt):
+# much likelier than the first hearing: done at once; about as likely: "Hai detto: ...?", answered
+# here, no API. Pausing, switching Claudio off and closing it are always asked, "basta" never.
+# Local and free, ~0.2 s only on those phrases; it runs before the guess above, which then costs
+# less. Every attempt is in logs/metrics.jsonl (recovery_*): tune the values below on those rows.
+# On JenJo's 240 recordings (30/10): 3 commands recovered, none wrong, all 3 asked (no
+# proposal was ever clearly likelier, so "done at once" is not measured yet); the right ones had
+# a mean of -0.8..-1.7 and a gap of -5.7..+6, the wrong ones (before "svegliati" left the
+# prompt) -1.8..-2.4 and -5.3..-13.3: a thin margin on min_mean, to tune on the logs.
+[recovery]
+enabled = true                 # false: such phrases go on as before (to Claude, or dropped)
+max_words = 6                  # longer phrases are questions for Claude, not misheard commands
+min_mean = -1.75               # log-probability per word piece: a proposal heard worse is noise
+act_gap = 2.0                  # the proposal this much likelier than the first hearing: done at once
+ask_gap = -6.0                 # from here up to act_gap: "Hai detto: ...?"; below: as before
 
 # Claude acts on the PC with tools (Phase 3). Level 1 runs at once (open, search, read the
 # windows, harmless keys); type, close a window, move a file and other keys ask "Confermi?"

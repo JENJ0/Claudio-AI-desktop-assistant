@@ -320,8 +320,10 @@ class ConversationSettings(BaseModel):
     # the room still echoes it. 0 = deaf only while the sound plays.
     echo_tail_ms: int = Field(400, ge=0, le=2000)
     # A reply cut by a new request ("che ore sono?") goes on after it is answered ("Dicevo:
-    # ..."), if that took less than this many seconds (0 = never; JenJo 25/10).
+    # ..."), if that took less than this many seconds (0 = never; JenJo 25/10) and the reply
+    # had at least resume_min_chars: a story or an explanation, never an answer or a question.
     resume_s: float = Field(60.0, ge=0, le=600)
+    resume_min_chars: int = Field(200, ge=0, le=5000)
     # true: in the window only questions, "dimmi..." or the name reach Claude (the TV costs
     # nothing). false: everything is answered until "basta" or silence.
     only_addressed: bool = False
@@ -359,6 +361,27 @@ class GuessSettings(BaseModel):
     def _ask_below_act(self) -> GuessSettings:
         if self.ask_at > self.act_at:
             raise ValueError("ask_at non può superare act_at")
+        return self
+
+
+class RecoverySettings(BaseModel):
+    """A short phrase no command understands may be a command the headset clipped ("Scaniti."
+    for "Spegniti.", 30/10): Whisper hears it again with the commands as its prompt and the
+    command it proposes is judged on the sound alone (stt/recovery.py). Local and free, about
+    0.2 s, only on those phrases. Each attempt is in metrics.jsonl (recovery_*), to tune
+    these. The gap is in log-probability: how much likelier the proposal sounds than the
+    first hearing."""
+
+    enabled: bool = True
+    max_words: int = Field(6, ge=1, le=12)  # longer phrases are questions for Claude
+    min_mean: float = Field(-1.75, le=0)  # a proposal Whisper hears worse than this is noise
+    act_gap: float = Field(2.0, ge=-20, le=20)  # this much likelier: done at once
+    ask_gap: float = Field(-6.0, ge=-20, le=20)  # from here up to act_gap: "Hai detto: ...?"
+
+    @model_validator(mode="after")
+    def _ask_below_act(self) -> RecoverySettings:
+        if self.ask_gap > self.act_gap:
+            raise ValueError("ask_gap non può superare act_gap")
         return self
 
 
@@ -549,6 +572,7 @@ class Settings(BaseSettings):
     cost: CostSettings = CostSettings()
     claude: ClaudeSettings = ClaudeSettings()
     guess: GuessSettings = GuessSettings()
+    recovery: RecoverySettings = RecoverySettings()
     pc: PcSettings = PcSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")

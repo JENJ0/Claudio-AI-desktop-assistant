@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from claudio.resume import DrainedStream, ends_the_reply, remainder
+from claudio.resume import DrainedStream, ends_the_reply, remainder, worth_resuming
 
 STORY = "C'era una volta un robot. Viveva in una fabbrica. Un giorno scappò. Fine."
 
@@ -37,6 +37,23 @@ def test_remainder_skips_a_sentence_it_cannot_find() -> None:
 )
 def test_ends_the_reply(request_text: str, ends: bool) -> None:
     assert ends_the_reply(request_text) is ends
+
+
+LONG = STORY * 3  # 222 characters: a story worth going on with
+
+
+@pytest.mark.parametrize(
+    ("reply", "worth"),
+    [
+        (LONG, True),
+        (STORY, False),  # 74 characters: an answer, banter, a joke
+        (f"{LONG} Ti è piaciuta?", False),  # it ends asking something
+        (f"{LONG} Ne vuoi un'altra? Dimmelo e la racconto.", False),  # a short line after it
+        (f"Una storia? Eccola. {LONG}", True),  # a "?" at the start is no question to JenJo
+    ],
+)
+def test_worth_resuming(reply: str, worth: bool) -> None:
+    assert worth_resuming(reply, 200) is worth
 
 
 async def slow(chunks: list[str], fail: bool = False) -> AsyncIterator[str]:

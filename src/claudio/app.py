@@ -49,8 +49,15 @@ from claudio.protocols import (
     Transcriber,
     WakeWordDetector,
 )
-from claudio.resume import RESUME_PREFIX, DrainedStream, ends_the_reply, remainder
+from claudio.resume import (
+    RESUME_PREFIX,
+    DrainedStream,
+    ends_the_reply,
+    remainder,
+    worth_resuming,
+)
 from claudio.router.normalizer import heard_wake_word, normalize
+from claudio.stt.recovery import CommandRecovery
 from claudio.system import SystemControl
 from claudio.wakeword.verifier import clipped_name, unclear
 
@@ -112,19 +119,24 @@ class BargeIn:
     needs_name: bool = False
     echo_similarity: float = 70.0
     # A reply cut by a new request goes on ("Dicevo: ...") after that request is answered,
-    # if it took less than this (0: never).
+    # if it took less than this (0: never) and the reply was long enough to be worth it.
     resume_s: float = 60.0
+    resume_min_chars: int = 200
 
 
 @dataclass(frozen=True)
 class CutReply:
     """A reply a new request cut short: the stream still reading it, the sentences that had
-    started playing, when it was cut, its language, and (once read) the part not said."""
+    started playing, when it was cut, its language, whether it answered a request Whisper was
+    unsure of, whether it was already a resumed one ("Dicevo: ...") and (once read) the part
+    not said."""
 
     stream: DrainedStream
     played: list[str]
     at: float
     language: str
+    unsure: bool = False
+    resumed: bool = False
     rest: str = ""
 
 
@@ -161,6 +173,7 @@ class Assistant:
         continue_s: float = 0.0,
         echo_tail_ms: int = 0,
         guess: Callable[[Doubt], Awaitable[Recovery | None]] | None = None,
+        command_recovery: CommandRecovery | None = None,
     ) -> None:
         self.wake = wake
         self.endpointer = endpointer
@@ -212,6 +225,9 @@ class Assistant:
         # A phrase about to be dropped that may be a misheard command: Claude's guess
         # (LocalResponder.guess) answers it, asks "Hai detto: ...?" or lets it drop.
         self.guess = guess
+        # A short phrase no command understands, about to go to Claude or to be dropped:
+        # Whisper's second opinion, local and free, before Claude's guess (stt/recovery.py).
+        self.command_recovery = command_recovery
         self._candidates: list[str] | None = None  # the closed list's n-best, when it ran
         self._barge_checking = False
         # A phrase heard over the reply while Whisper was busy (audio, loudest dBFS).
@@ -530,7 +546,7 @@ class Assistant:
             log.info("Trascritto (%s): %r", heard, text)
             if "retried_from" in inter.info or "closed_list_from" in inter.info:
                 segments = []  # a known command now: the first pass's doubts no longer apply
-            decision = await self._decide(text, heard, inter, segments)
+            decision = await self._decide(audio, text, heard, inter, segments)
             outcome = decision.kind.value
             if decision.kind is Kind.RELISTEN:
                 self._cut, cut = cut, None  # still the same request
@@ -597,10 +613,16 @@ class Assistant:
                     self._listen_for_answer(conversation=True)
 
     async def _decide(
-        self, text: str, language: str, inter: Interaction, segments: Sequence[Segment]
+        self,
+        audio: np.ndarray,
+        text: str,
+        language: str,
+        inter: Interaction,
+        segments: Sequence[Segment],
     ) -> Decision:
         """The request filter's decision. A false wake gets one more chance: the request may
-        have been said after a pause, with the name only in the wake word audio."""
+        have been said after a pause, with the name only in the wake word audio. A short
+        phrase no command understands gets Whisper's second opinion, then Claude's guess."""
         info = inter.info
         speech_dbfs = self.endpointer.stats()["speech_dbfs"] if self.endpointer.started else None
         heard = Heard(
@@ -618,25 +640,87 @@ class Assistant:
         if decision.kind is Kind.FALSE_WAKE and await self._name_before(inter):
             heard = replace(heard, name_heard=True)
             decision = self.intake.decide(text, language, heard, self.responder)
-        if (
-            heard.wake_word == CONVERSATION
-            and not decision.dropped
-            and decision.kind is not Kind.CONTINUE
-            and not self.responder.awaiting  # "sì" to "Confermi?" may be in the question
-            and info.get("listened_ms", 0) <= ECHO_GRACE_MS
-            and self.endpointer.stats()["voice_ms"] <= ECHO_VOICE_MS
-            and self._is_echo(text, self._said)
-        ):
-            # The end of the reply, still in the room when the window opened (a speaker
-            # slower than measured): only a short phrase heard at once.
+        echo = self._window_echo(text, decision, heard, info)
+        if echo and not decision.dropped:
             log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", text)
             return Decision(Kind.NOT_REQUEST, text, "echo")
         if decision.reason and not decision.dropped and decision.kind is not Kind.CONTINUE:
             info["intake"] = decision.reason  # e.g. quiet_answer: the "sì" was not counted
             log.info("Risposta troppo lontana dal microfono, non la conto: %r", text)
+        if not echo and self._may_recover(decision, heard):
+            recovered = await self._recover_command(audio, decision.text, language, inter)
+            if recovered is not None:
+                return recovered
         if decision.dropped:
             return await self._recover(decision, language, heard, inter) or decision
         return decision
+
+    def _window_echo(
+        self, text: str, decision: Decision, heard: Heard, info: dict[str, Any]
+    ) -> bool:
+        """The end of the reply, still in the room when the conversation window opened (a
+        speaker slower than measured): only a short phrase heard at once."""
+        return (
+            heard.wake_word == CONVERSATION
+            and decision.kind is not Kind.CONTINUE
+            and not self.responder.awaiting  # "sì" to "Confermi?" may be in the question
+            and info.get("listened_ms", 0) <= ECHO_GRACE_MS
+            and self.endpointer.stats()["voice_ms"] <= ECHO_VOICE_MS
+            and self._is_echo(text, self._said)
+        )
+
+    def _may_recover(self, decision: Decision, heard: Heard) -> bool:
+        """Worth Whisper's second opinion: a phrase about to go to Claude or to be dropped as
+        no request, said close to the microphone, with Claudio on and awake and no question
+        waiting for its answer. Never a voice far away (the TV), nor silence."""
+        if (
+            self.command_recovery is None
+            or self.system.off  # off: one Whisper pass, for "accenditi" only
+            or self.system.paused  # paused: only the system commands, as they were heard
+            or self.responder.awaiting  # a yes or a no: no command to look for
+            # Claude just asked something: "Pasta." is the answer, not a misheard "basta".
+            or self.responder.answer_expected
+        ):
+            return False
+        if decision.kind is not Kind.ANSWER and (
+            decision.kind not in GUESSED_DROPS or decision.reason in NEVER_GUESSED
+        ):
+            return False
+        noise, dbfs = self.intake.noise, heard.speech_dbfs
+        return dbfs is None or noise is None or dbfs >= noise.answer_min_dbfs
+
+    async def _recover_command(
+        self, audio: np.ndarray, text: str, language: str, inter: Interaction
+    ) -> Decision | None:
+        """Whisper's second opinion on a short phrase no command understands: the command it
+        proposes, done at once (ANSWER) or asked about first ("Hai detto: ...?", ASK), None
+        when there is none (stt/recovery.py, ~0.2 s, free). Any phrase can come through here,
+        e.g. one said over Claudio's reply once put back together (IT-1, 2.2). It takes the
+        Whisper lock itself: never call it holding it. Whether the phrase is worth it (not the
+        echo, not an answer, not while paused or off) is the caller's: see _may_recover()."""
+        recovery = self.command_recovery
+        if recovery is None or not recovery.wants(text, language):
+            return None
+        start = self.clock()
+        try:
+            async with self._stt_lock:
+                found = await asyncio.to_thread(recovery, audio, text, language)
+        except Exception:
+            log.exception("Seconda opinione di Whisper non riuscita")
+            return None
+        if found is None:
+            return None
+        inter.info.update(found.info, recovery_ms=round((self.clock() - start) * 1000))
+        if found.verdict is Verdict.ACT:
+            log.info("Seconda opinione: %r era %r", text, found.text)
+            inter.info.update(recovered_from=text, text=found.text)
+            return Decision(Kind.ANSWER, found.text, "recovered")
+        if found.verdict is Verdict.ASK:
+            log.info("Seconda opinione incerta: %r, forse %r", text, found.text)
+            inter.info["recovered_from"] = text  # not Haiku's guess, in the session log too
+            return Decision(Kind.ASK, self.responder.propose(found.text, language), "recovered")
+        log.info("Seconda opinione: %r, Whisper propone %r: scartata", text, found.text)
+        return None
 
     async def _recover(
         self, decision: Decision, language: str, heard: Heard, inter: Interaction
@@ -1143,18 +1227,32 @@ class Assistant:
         finally:
             if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
                 language_now = lang() if callable(lang) else lang
-                self._cut = CutReply(drained, list(self.speaker.played), self.clock(), language_now)
+                played, now = list(self.speaker.played), self.clock()
+                unsure = bool(inter.info.get("stt_unsure"))
+                self._cut = CutReply(drained, played, now, language_now, unsure)
             else:
                 drained.cancel()
 
     async def _unsaid(self, cut: CutReply | None) -> CutReply | None:
         """The reply this request cut, with its last words (Claude is usually done by now):
-        `cut` with only the part that was not said, None when nothing is left."""
+        `cut` with only the part that was not said, None when nothing is left or it is not
+        worth going on with: the answer to a phrase Whisper was unsure of, a short reply or a
+        question (30/10: "Dicevo: Non è chiaro cosa intendi, socio: chi ha fatto cosa?" after
+        "Chi ce l'ha fatta?", misheard for "chiudi la chat", which had replaced it)."""
         if cut is None:
+            return None
+        assert self.barge_in is not None
+        if cut.unsure:
+            cut.stream.cancel()
+            log.info("Non riprendo la risposta interrotta: rispondeva a una frase incerta")
             return None
         await cut.stream.finish(CUT_FINISH_S)
         if self.responder.awaiting:
             return None  # it asked something ("Lo uso?"): not a story to go on with
+        if not cut.resumed and not worth_resuming(cut.stream.text, self.barge_in.resume_min_chars):
+            # (a resumed reply was judged whole the first time: "Dicevo: <rest>" may be short)
+            log.info("Non riprendo la risposta interrotta: breve o una domanda")
+            return None
         rest = remainder(cut.stream.text, cut.played)
         return replace(cut, rest=rest) if rest else None
 
@@ -1172,6 +1270,9 @@ class Assistant:
             yield f"{in_language(RESUME_PREFIX, language)} {rest}"
 
         await self._speak_reply(text(), inter, self._on_resume_audio, language, resumed=True)
+        if self._cut is not None:
+            # Cut again: still the answer to the request it was judged on, not to this one.
+            self._cut = replace(self._cut, unsure=cut.unsure, resumed=True)
 
     def _on_resume_audio(self) -> None:
         """The resumed reply can be cut again, like any other."""

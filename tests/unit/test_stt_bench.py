@@ -229,6 +229,45 @@ def test_run_never_transcribes_what_claudio_would_not(fake_vad, vad_settings) ->
     assert calls == [] and score.ms == []
 
 
+def test_recupero_goes_on_as_live(matcher) -> None:
+    from claudio.intake import Verdict
+    from claudio.stt.recovery import Recovered
+
+    assert bench.parse_variant("live+recupero").recover and not bench.parse_variant("live").recover
+
+    class Stt:
+        language = "it"
+
+        def __init__(self, *listed: str) -> None:
+            self.listed = list(listed)
+
+        def candidates(self, audio: np.ndarray) -> list[str]:
+            return self.listed
+
+    def second(audio: np.ndarray, text: str, language: str) -> Recovered:
+        return Recovered("Chiudi la chat.", Verdict.DROP if text == "Pasta." else Verdict.ASK)
+
+    def live(text: str, stt: Stt | None = None) -> str:
+        return bench.as_live(silence(0.1), text, stt or Stt(), matcher, second, 5)
+
+    assert live("Apri Chrome.") == "Apri Chrome."  # understood at once
+    closed = Stt("Chi lascia atto?", "apri la calcolatrice")
+    assert live("Pasta e fagioli", closed) == "apri la calcolatrice"  # the closed list
+    assert live("Chi lascia atto?", closed) == "Chiudi la chat."  # a "?": the second opinion
+    assert live("Pasta e fagioli") == "Chiudi la chat."  # nothing in the closed list
+    assert live("Pasta.") == "Pasta."  # the second opinion drops its proposal: as before
+    assert bench.as_live(silence(0.1), "Pasta?", Stt(), matcher, None, 5) == "Pasta?"
+
+
+def test_report_counts_the_false_commands(matcher, capsys) -> None:
+    mic = bench.Microphone("C270", testset.OUT, [1, 2], [], gain_db=0.0)
+    references = ["Claudio, apri Chrome.", "Pasta al forno."]
+    wrong = bench.Score("live+recupero", ["Claudio, apri Chrome.", "Basta."], [300, 320])
+    bench.report(mic, references, [wrong], matcher, details=False)
+    row = next(line.split() for line in capsys.readouterr().out.splitlines() if "recupero" in line)
+    assert row[2:4] == ["1/1", "1"]  # the command right, and one sentence heard as "basta"
+
+
 def test_report_scores_words_and_commands(matcher, capsys) -> None:
     mic = bench.Microphone("C270", testset.OUT, [1, 2], [], gain_db=12.0)
     references = ["Claudio, apri Chrome.", "Che tempo fa domani?"]
