@@ -162,8 +162,9 @@ nessun avvio con Windows (il task non è registrato: punto 4 di `piani\IT-1-semp
   sull'audio del gate non cambiava i punteggi, quindi non era la causa: è solo coerenza.
 - **Voce di Jack (non toccata qui)**: su 45 pezzi 11 take cattive rifatte, 4 suonate cattive per
   mancanza di tempo (acute o urlate: i cambi di tonalità), 5 molto basse (78-87 Hz) che il
-  controllo non guarda (scarta solo le take troppo acute). Proposta a JenJo: un thread per la
-  voce (controllo delle take troppo basse).
+  controllo non guarda (scarta solo le take troppo acute). **JenJo (31/10): si sistema nelle
+  prossime iterazioni (IT-2)**: controllo delle take troppo basse, e meno take cattive suonate
+  per mancanza di tempo (il primo seme provato, 7, è spesso il cattivo).
 
 ## Rischi e cose aperte
 
