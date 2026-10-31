@@ -81,6 +81,17 @@ def test_a_crash_never_leaves_the_name_taken(name: str) -> None:
         assert alone is True
 
 
+@windows_only
+def test_held_by_an_administrator_is_taken_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CLAUDIO started as administrator: CreateMutexW cannot open its mutex and says
+    ERROR_ACCESS_DENIED. That is "already running" (code 3), not a crash (code 1)."""
+    monkeypatch.setattr(single_instance, "_create_mutex", lambda name: (0, 5))
+    assert SingleInstance("x").acquire() is False
+    monkeypatch.setattr(single_instance, "_create_mutex", lambda name: (0, 87))
+    with pytest.raises(OSError):  # any other failure is a real error
+        SingleInstance("x").acquire()
+
+
 def test_outside_windows_there_is_no_lock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(single_instance.sys, "platform", "linux")
     lock = SingleInstance("whatever")
@@ -115,3 +126,24 @@ def test_a_second_claudio_closes_at_once(
     assert main(["--config", str(config)]) == EXIT_ALREADY_RUNNING
     assert not (logs / "sessions").exists()
     assert "già acceso" in (logs / "claudio.log.jsonl").read_text(encoding="utf-8")
+
+
+def test_an_unexpected_error_reaches_the_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_logging: None
+) -> None:
+    """Under pythonw there is no console: the traceback must be in the log file, and the
+    exit code 1 tells the supervisor it was a crash."""
+    from claudio import __main__ as entry
+
+    async def broken(*args: object) -> None:
+        raise RuntimeError("CUDA failed to initialize")
+
+    logs = tmp_path / "logs"
+    config = tmp_path / "c.toml"
+    config.write_text(f'logs_dir = "{logs.as_posix()}"\n', encoding="utf-8")
+    monkeypatch.setattr(SingleInstance, "acquire", lambda self: True)
+    monkeypatch.setattr(entry, "run_assistant", broken)
+    assert entry.main(["--config", str(config)]) == 1
+    text = (logs / "claudio.log.jsonl").read_text(encoding="utf-8")
+    assert "si è fermato per un errore" in text
+    assert "CUDA failed to initialize" in text  # the traceback is in the record

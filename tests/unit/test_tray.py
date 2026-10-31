@@ -189,7 +189,8 @@ async def test_starting_until_the_models_load() -> None:
     system = SystemControl()
     icon_tray = Tray(system, asyncio.get_running_loop(), None, backend=FakePystray)
     assert icon_tray.start()
-    icon = icon_tray._icon
+    icon, thread = icon_tray._icon, icon_tray._thread
+    assert thread is not None
     try:
         assert icon.title.endswith("si avvia...")
         assert "Apri la chat" not in [i.text for i in icon.menu.items]  # no chat window
@@ -199,6 +200,7 @@ async def test_starting_until_the_models_load() -> None:
     finally:
         icon_tray.stop()
     assert icon.stopped.is_set()
+    assert not thread.is_alive()  # the loop really ended
     icon_tray.stop()  # twice: harmless (atexit calls it again)
     system.apply(OFF)  # after stop the listener does nothing
 
@@ -244,7 +246,8 @@ async def test_the_real_pystray_icon() -> None:
     system = SystemControl()
     icon_tray = Tray(system, asyncio.get_running_loop(), FakeChat())
     assert icon_tray.start()
-    icon = icon_tray._icon
+    icon, thread = icon_tray._icon, icon_tray._thread
+    assert thread is not None
     try:
         for _ in range(50):  # pystray creates its window in its own thread
             if icon.visible:
@@ -258,7 +261,61 @@ async def test_the_real_pystray_icon() -> None:
         assert icon.title.endswith("acceso")
     finally:
         icon_tray.stop()
-    assert icon_tray._thread is None
+    # pystray's message loop ended, and its last step removes the icon (NIM_DELETE; its
+    # `visible` flag is not reset, so the thread is what tells).
+    assert not thread.is_alive()
+
+
+class Idle:
+    """The assistant as close_when_idle sees it."""
+
+    def __init__(self) -> None:
+        from claudio.app import State
+
+        self.state = State.IDLE
+
+
+async def test_close_from_the_menu_without_a_microphone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No frame comes (microphone unplugged): "Chiudi CLAUDIO" must end the run anyway."""
+    from claudio import __main__ as entry
+    from claudio.app import State
+
+    monkeypatch.setattr(entry, "CLOSE_POLL_S", 0.01)
+    monkeypatch.setattr(entry, "CLOSE_GRACE_S", 0.05)
+    system, assistant = SystemControl(), Idle()
+    run = asyncio.create_task(asyncio.Event().wait())  # a run waiting for a frame forever
+    closer = asyncio.create_task(entry.close_when_idle(assistant, system, run))
+    assistant.state = State.SPEAKING
+    system.apply(SHUTDOWN)
+    await asyncio.sleep(0.2)
+    assert not run.done()  # "A presto." is still playing: wait for it
+    assistant.state = State.IDLE
+    await asyncio.wait_for(closer, 2)
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+
+async def test_close_with_a_microphone_leaves_the_run_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With frames coming the run ends by itself: close_when_idle cancels nothing."""
+    from claudio import __main__ as entry
+
+    monkeypatch.setattr(entry, "CLOSE_POLL_S", 0.01)
+    monkeypatch.setattr(entry, "CLOSE_GRACE_S", 0.05)
+    system = SystemControl()
+
+    async def ends_at_the_next_frame() -> None:
+        while not system.stopping:
+            await asyncio.sleep(0.01)
+
+    run = asyncio.create_task(ends_at_the_next_frame())
+    closer = asyncio.create_task(entry.close_when_idle(Idle(), system, run))
+    system.apply(SHUTDOWN)
+    await asyncio.wait_for(closer, 2)
+    assert run.done() and not run.cancelled()
 
 
 def test_listeners_hear_every_real_change() -> None:

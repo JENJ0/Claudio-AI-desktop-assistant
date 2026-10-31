@@ -109,3 +109,35 @@ def test_check_reports_the_whisper_model(tmp_path: Path, caplog: pytest.LogCaptu
     results.clear()
     check_whisper(settings, 1, lambda good, what: results.append((good, what)))
     assert results == [(True, "modello Whisper large-v3 (0.0 GB)")]
+
+
+def test_cuda_without_a_gpu_is_an_error(tmp_path: Path) -> None:
+    """device = "cuda" never falls back to the CPU: without a GPU CLAUDIO cannot start."""
+    from claudio.checks import check_whisper
+
+    fake_snapshot(tmp_path / "whisper", "Systran/faster-whisper-large-v3", COMPLETE)
+    base = load_settings()
+    stt = base.stt.model_copy(update={"device": "cuda", "model": "large-v3"})
+    settings = base.model_copy(update={"models_dir": tmp_path, "stt": stt})
+    results: list[tuple[bool, str]] = []
+    check_whisper(settings, 0, lambda good, what: results.append((good, what)))
+    assert results[0] == (False, '[stt] device = "cuda" senza GPU CUDA: Whisper non partirà')
+    results.clear()
+    check_whisper(settings, 1, lambda good, what: results.append((good, what)))
+    assert [good for good, _ in results] == [True]
+
+
+def test_a_broken_faster_whisper_does_not_stop_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claudio import checks
+
+    def broken(name: str, root: Path) -> Path:
+        raise ImportError("DLL load failed while importing _ext")
+
+    monkeypatch.setattr(checks, "find_whisper_model", broken)
+    settings = load_settings().model_copy(update={"models_dir": tmp_path})
+    results: list[tuple[bool, str]] = []
+    checks.check_whisper(settings, 1, lambda good, what: results.append((good, what)))
+    assert results[0][0] is False
+    assert "DLL load failed" in results[0][1]

@@ -37,6 +37,8 @@ FINAL_EXITS = frozenset({0, EXIT_CONFIG_ERROR, EXIT_ALREADY_RUNNING})
 RESTART_DELAYS_S = (5.0, 30.0, 60.0)  # before the 1st, 2nd and 3rd restart in WINDOW_S
 WINDOW_S = 600.0  # a crash older than this is forgotten: one a day is always restarted
 LOG_FILE = "supervisor.log.jsonl"  # its own file: two processes rotating one fail on Windows
+WAIT_SLICE_S = 0.5  # how often the wait for CLAUDIO lets a Ctrl+C through
+CTRL_C_GRACE_S = 10.0  # after Ctrl+C, CLAUDIO gets this long to close before it is killed
 
 
 def child_command(args: Sequence[str]) -> list[str]:
@@ -47,14 +49,20 @@ def child_command(args: Sequence[str]) -> list[str]:
 def run_child(command: Sequence[str]) -> int:
     process = subprocess.Popen(list(command))
     try:
-        return process.wait()
+        while True:  # in slices: on Windows a wait without a timeout ignores Ctrl+C
+            try:
+                return process.wait(timeout=WAIT_SLICE_S)
+            except subprocess.TimeoutExpired:
+                continue
     except KeyboardInterrupt:
         # Ctrl+C in a terminal reaches CLAUDIO too: it says goodbye and closes by itself.
         try:
-            return process.wait(timeout=10)
+            process.wait(timeout=CTRL_C_GRACE_S)
         except subprocess.TimeoutExpired:
             process.kill()
-            return 0
+        # The supervisor itself was asked to stop: whatever CLAUDIO's code (a Ctrl+C before
+        # CLAUDIO handles it ends it with STATUS_CONTROL_C_EXIT), never start it again.
+        return 0
 
 
 def supervise(
@@ -117,7 +125,10 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(logs_dir(config), file_name=LOG_FILE)
     command = child_command(args)
     log.info("Supervisore: avvio %s", " ".join(command))
-    return supervise(command)
+    try:
+        return supervise(command)
+    except KeyboardInterrupt:  # Ctrl+C while waiting to start CLAUDIO again
+        return 0
 
 
 if __name__ == "__main__":

@@ -154,6 +154,8 @@ class Tray:
                 log.exception("Icona nella system tray non chiusa")
         if self._thread is not None:
             self._thread.join(timeout=STOP_WAIT_S)
+            if self._thread.is_alive():  # stopped before pystray's loop had started
+                log.warning("Icona nella system tray: il suo thread non si è fermato")
         self._icon = self._thread = None
 
     # The menu. pystray reads the labels and the ticks when the menu is built, in its thread.

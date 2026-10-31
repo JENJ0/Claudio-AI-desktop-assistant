@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("claudio")
 
 CHAT_DB = "claudio.db"  # in data_dir: every conversation, shown by `claudio --ui`
+CLOSE_POLL_S = 0.5  # how often close_when_idle looks for "chiuditi"
+CLOSE_GRACE_S = 1.0  # a microphone sends a frame every 80 ms: this long means none is coming
 
 
 def build_tracker(settings: Settings) -> CostTracker:
@@ -563,15 +565,36 @@ async def run_assistant(
     ready = asyncio.create_task(
         announce_ready(assistant, settings, jack, jack_error, transcriber.device, t0)
     )
+    run = asyncio.create_task(assistant.run(capture.frames()))
+    closer = asyncio.create_task(close_when_idle(assistant, system, run))
     try:
-        await assistant.run(capture.frames())
+        await run
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():  # Ctrl+C: not close_when_idle's doing
+            raise
     finally:
+        closer.cancel()
         ready.cancel()
         if inbox is not None:
             inbox.cancel()
         speaker.player.close()
         if chat_window is not None:
-            chat_window.close()  # "spegniti" or Ctrl+C: the window goes with Claudio
+            chat_window.close()  # "chiuditi" or Ctrl+C: the window goes with Claudio
+
+
+async def close_when_idle(assistant: Any, system: SystemControl, run: asyncio.Task[None]) -> None:
+    """ "Chiuditi" or the tray menu end the run at the next microphone frame. With no
+    microphone (unplugged, switched off) no frame comes: the run is cancelled instead, once
+    CLAUDIO is idle and a frame had CLOSE_GRACE_S to end it."""
+    from claudio.app import State
+
+    while not (system.stopping and assistant.state is State.IDLE):
+        await asyncio.sleep(CLOSE_POLL_S)
+    await asyncio.sleep(CLOSE_GRACE_S)
+    if not run.done():
+        log.info("Nessun audio dal microfono: chiudo senza aspettarlo")
+        run.cancel()
 
 
 async def announce_ready(
@@ -676,6 +699,9 @@ def main(argv: list[str] | None = None) -> int:
         log.info("Chiusura richiesta: arrivederci")
     except (FileNotFoundError, ValueError) as exc:
         log.error("%s", exc)
+        return 1
+    except Exception:  # pythonw has no console: without this the reason would be lost
+        log.exception("CLAUDIO si è fermato per un errore")
         return 1
     finally:
         if instance is not None:
