@@ -7,13 +7,16 @@ for free. What no local command understands is answered by Claude (Anthropic API
 a daily budget. It understands Italian and English and answers in the language you spoke.
 
 ```
-Microphone ─► openWakeWord ("Hey Claudio") ─► beep
-           └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router ─► Kokoro, Nicola's voice (sentence by sentence)
+Microphone ─► openWakeWord ("Hey Claudio", "Claudio") ─► beep
+           └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router or Claude ─► Jack's voice (Qwen3-TTS, sentence by sentence; Kokoro if it fails)
 ```
 
-Status: **v0.2.2**, Phase 2 (Claude), third iteration. The wake word is our own "Hey Claudio", trained
-on the owner's voice (see [scripts/wakeword/README.md](scripts/wakeword/README.md); the model
-file is not in Git). "Claudio" alone is trained too but not reliable enough yet, so it is off.
+Status: **v0.4.0** (30/10/2026): Phases 1-3 (local commands, Claude, PC control) and the voice
+commands to pause, turn off ("spegniti"), turn on ("accenditi") and close ("chiuditi"); the
+reliability iteration IT-0 is closed. Not there yet: persistent memory (Phase 4), tray icon and
+automatic updates (Phase 5). The wake words are our own, trained on the owner's voice (see
+[scripts/wakeword/README.md](scripts/wakeword/README.md); the model files are not in Git):
+"Hey Claudio" and "Claudio" alone, which is weaker, so Whisper confirms each of its detections.
 Full specification (in Italian): [CLAUDE.md](CLAUDE.md).
 
 ## Requirements
