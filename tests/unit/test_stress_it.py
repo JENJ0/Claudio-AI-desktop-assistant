@@ -89,13 +89,37 @@ def test_words_stressed_before_the_second_to_last_syllable(word: str, stressed: 
     assert _lexicon().stressed(word) == stressed
 
 
-def test_an_imperative_that_is_also_a_participle_is_accented_where_a_clause_starts() -> None:
-    lexicon = _lexicon()
-    assert lexicon.stressed("Fermati", starts_clause=True) == "Férmati"
-    assert mark_stress("Fermati! Socio, fermati e poi fermati.", lexicon) == (
-        "Férmati! Socio, férmati e poi férmati."
-    )
-    assert mark_stress("Si sono fermati qui.", lexicon) == "Si sono fermati qui."
+@pytest.mark.parametrize(
+    ("text", "spoken"),
+    [
+        ("Fermati!", "Férmati!"),
+        ("Socio, fermati.", "Socio, férmati."),  # a comma after a vocative
+        ("Dai, fermati.", "Dai, férmati."),
+        ("Ora fermati. E fermati!", "Ora férmati. E férmati!"),  # an opener that starts it
+        ("Si sono fermati qui.", "Si sono fermati qui."),
+        ("Sono ora fermati.", "Sono ora fermati."),  # "ora" inside the clause
+        ("Salvati e fermati.", "Salvati e fermati."),  # a list of participles
+        ("Chiusi, fermati e salvati.", "Chiusi, fermati e salvati."),
+        ("Ne ho 1.250 fermati.", "Ne ho 1.250 fermati."),  # the point of a number
+    ],
+)
+def test_an_imperative_that_is_also_a_participle_is_accented_where_a_clause_starts(
+    text: str, spoken: str
+) -> None:
+    assert mark_stress(text, _lexicon()) == spoken
+
+
+def test_a_verb_and_pronouns_split_two_ways_is_left_as_written() -> None:
+    lexicon = StressLexicon(hosts={"manda": "mànda", "mandate": "mandàte"})
+    assert lexicon.stressed("mandatelo") is None  # màndatelo (2sg + te + lo) or mandàtelo
+    assert lexicon.stressed("mandami") == "màndami"
+
+
+def test_a_u_before_a_vowel_after_a_consonant_is_a_syllable() -> None:
+    assert syllables_after("stàtua", 2) == 2
+    assert syllables_after("contìnuo", 4) == 2
+    assert syllables_after("àcqua", 0) == 1  # after q and g it glides
+    assert syllables_after("lìngua", 1) == 1
 
 
 def test_no_accent_on_a_starting_u() -> None:
@@ -164,6 +188,21 @@ def real() -> StressLexicon:
         ("Costa un euro.", "Costa un euro."),  # èu-ro, not è-u-ro
         ("Calmati, socio.", "Calmati, socio."),  # "càlmati" was heard "chiamati" (A/B 30/10)
         ("Ultimo file utile.", "Ultimo file utile."),  # a starting "ù" is garbled
+        # Found by the review of 31/10: each was accented on the wrong vowel before.
+        ("Ci siamo capiti.", "Ci siamo capiti."),  # capìti (capire) / càpiti (capitare)
+        ("Sto benone, è famosissimo.", "Sto benone, è famosissimo."),  # not bène, famóso
+        ("Il bastoncino del fannullone.", "Il bastoncino del fannullone."),
+        ("Sono le tredici, cioè sedici.", "Sono le tredici, cioè sedici."),  # number words
+        ("Il machine learning.", "Il machine learning."),  # not the archaic "màchine"
+        ("Gli utensili e i micrometri.", "Gli utensili e i micrometri."),  # two stresses
+        ("Gli obiettivi perseguiti.", "Gli obiettivi perseguiti."),
+        ("Ecco i risultati. Risultati veri.", "Ecco i risultati. Risultati veri."),  # a noun
+        ("Rilassati! Si sono rilassati.", "Rilàssati! Si sono rilassati."),  # a Jack line
+        ("Aggrappati! Sono aggrappati.", "Aggrappati! Sono aggrappati."),  # not in the list
+        ("I dispositivi sono ora collegati.", "I dispositivi sono ora collegati."),
+        ("Copiati, rinominati e ordinati.", "Copiati, rinominati e ordinati."),
+        ("Ho trovato 1.250 risultati.", "Ho trovato 1.250 risultati."),
+        ("La statua e il residuo.", "La stàtua e il resìduo."),
     ],
 )
 def test_the_real_lexicon(real: StressLexicon, text: str, spoken: str) -> None:

@@ -15,21 +15,48 @@ def test_foreign_spellings(word: str) -> None:
 
 @pytest.mark.parametrize(
     "word",
-    ["accenditi", "socio", "atmosfera", "tecnico", "pneumatico", "cartella", "ho", "chiave", "per"],
+    [
+        "accenditi",
+        "socio",
+        "atmosfera",
+        "tecnico",
+        "pneumatico",
+        "cartella",
+        "ho",
+        "chiave",
+        "per",
+        "ed",
+        "ad",
+        "oh",
+        "eh",
+        "boh",
+        "nord",
+        "sud",
+        "est",
+        "opzioni",
+        "Etna",
+        "nafta",
+    ],
 )
 def test_italian_spellings(word: str) -> None:
     assert not looks_foreign(word)
 
 
 def test_unknown_words_are_logged_once_with_their_proposal(caplog) -> None:
-    unknown = UnknownWords({"online": "onlàin"})
+    unknown = UnknownWords({"chat": "ciàt", "video": "vìdeo"})
     with caplog.at_level(logging.INFO, logger="claudio.tts.loanwords"):
-        found = unknown.note("Il subprime è online, il subprime no.")
+        found = unknown.note("Il subprime è in chat, il subprime no. Ecco il video.")
         again = unknown.note("Ancora subprime.")
-    assert found == ["subprime", "online"]  # "online" looks Italian: known by its proposal
+    assert found == ["subprime", "chat"]  # "video" is spelled the Italian way: not logged
     assert again == []
-    assert "parola sconosciuta 'subprime'" in caplog.text
-    assert "proposta: 'onlàin'" in caplog.text
+    assert "parola sconosciuta 'subprime', candidata" in caplog.text
+    assert "parola sconosciuta 'chat' (proposta: 'ciàt')" in caplog.text
+
+
+def test_italian_words_interjections_and_elisions_are_not_candidates() -> None:
+    unknown = UnknownWords({})
+    text = "Ed ecco, oh, hai due opzioni ad esempio a nord. Anch'io dico: dov'è quest'anno?"
+    assert unknown.note(text) == []
 
 
 def test_the_table_acronyms_and_accented_words_are_not_candidates() -> None:

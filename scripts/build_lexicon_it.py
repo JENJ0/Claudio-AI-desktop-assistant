@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from claudio.tts.loanwords import PROPOSALS  # noqa: E402
+from claudio.tts.number_words import digits_to_words_it  # noqa: E402
 from claudio.tts.stress_it import (  # noqa: E402
     AT_START,
     HOST,
@@ -50,6 +51,12 @@ _LETTERS = re.compile(r"[a-zàèéìíòóùú]+")
 _NATIVE = re.compile(r"[a-zàèéìíòóùú]*[aeiouàèéìíòóùú]")
 _FOREIGN = re.compile(r"[jkwxy]")
 _SKIP_TAGS = {"table-tags", "inflection-template", "auxiliary", "romanization"}
+# An entry only archaic, dialectal or wrong lends no stress: "machina" made "màchine".
+_OLD_TAGS = {"archaic", "obsolete", "dialectal", "misspelling", "nonstandard"}
+# A plural or feminine keeps its lemma's stress; a superlative, diminutive or adverb does not
+# ("famóso" but "famosìssimo", "bène" but "benóne").
+_INFLECTION_TAGS = {"plural", "singular", "masculine", "feminine"}
+_DERIVATION_TAGS = {"superlative", "diminutive", "augmentative", "pejorative", "endearing"}
 _BORROWED = {"bor", "bor+", "ubor", "lbor"}  # etymology templates of a loanword
 # IPA vowels as Italian letters, plain and stressed (open è/ò, closed é/ó).
 _VOWELS = dict(zip("aeɛioɔuəæʌɪʊɐɜɒyø", "aeeiooueeaiuaeoue", strict=True))
@@ -57,6 +64,7 @@ _STRESSED = dict(zip("aeɛioɔuəæʌɪʊɐɜɒyø", "àéèìóòùèèàìùà
 _FRONT = set("eɛiɪəæɜyj")  # c and g before these are soft: "ch", "gh" keep them hard
 _AFFRICATES = {"t͡ʃ": "ʧ", "d͡ʒ": "ʤ", "t͡s": "ʦ", "d͡z": "ʣ", "tʃ": "ʧ", "dʒ": "ʤ"}
 _SAME = set("pbtdfvsmnlh")
+_AFFRICATE_OF = {"t": "ʧʦ", "d": "ʤʣ"}  # "t.t͡ʃ" is a long ʧ, written "cc"
 _SIMPLE = {
     "ɲ": "gn",
     "ŋ": "n",
@@ -77,6 +85,28 @@ _SIMPLE = {
 # Words Jack says right as written and worse with the accent (scripts/stress_ab.py, 30/10):
 # "càlmati" heard "chiamati", "cialmati", "calmate" 3 times in 5, "calmati" 5/5 without.
 _SAID_WORSE = {"calmati"}
+# Imperative + "ti" that is also a participle, accented where a clause starts: the ones Jack says
+# to JenJo. Any other ("copiati", "aggiornati") is left as written, read as the participle.
+_IMPERATIVES_SAID = {
+    "accomodati",
+    "alzati",
+    "arrangiati",
+    "divertiti",
+    "fermati",
+    "fidati",
+    "girati",
+    "guardati",
+    "preparati",
+    "rilassati",
+    "ricordati",
+    "riposati",
+    "sbrigati",
+    "scordati",
+    "sdraiati",
+    "svegliati",
+    "vestiti",
+    "voltati",
+}
 # Common English words Wiktionary gives no Italian IPA for, written by hand (JenJo asked for
 # "on", "off", 30/10): proposals to hear like the others.
 _HAND_PROPOSALS = {
@@ -130,9 +160,18 @@ def entries(path: Path) -> Iterator[dict[str, Any]]:
             yield json.loads(line)
 
 
+def syllables_of(parts: list[str]) -> list[str]:
+    """The syllables of a Wiktionary syllabification, given as one "ac‧cèn‧di‧ti" or as parts,
+    without a label: ["(traditional", "careful style) u", "ten", "sì", "le"] -> u ten sì le."""
+    text = "‧".join(parts)
+    if "(" in text or ")" in text:
+        text = text.rsplit(")", 1)[1] if ")" in text else ""
+    return [s.strip() for s in text.split("‧") if s.strip()]
+
+
 def from_syllables(parts: list[str]) -> str | None:
     """The accented word in a Wiktionary syllabification ("ac‧cèn‧di‧ti" -> "accènditi")."""
-    word = "".join(parts).replace("‧", "")
+    word = "".join(syllables_of(parts))
     return word if stress_index(word) is not None else None
 
 
@@ -162,6 +201,14 @@ def as_host(accented: str, kind: str) -> str:
     if kind != "infinitive":
         return accented
     return accented[:-2] if plain(accented).endswith("rre") else accented[:-1]
+
+
+def by_stress(spellings: Counter[str]) -> list[str]:
+    """The most frequent spelling for each stressed vowel ("utènsile", "utensìle")."""
+    best: dict[int | None, str] = {}
+    for spelling, _ in spellings.most_common():
+        best.setdefault(stress_index(spelling), spelling)
+    return list(best.values())
 
 
 def derived(source: str, form: str) -> str | None:
@@ -214,8 +261,19 @@ def respell_ipa(ipa: str) -> str | None:
     sounds = ipa_phonemes(ipa)
     letters = []
     for n, (sound, stressed) in enumerate(sounds):
-        after = sounds[n + 1][0] if n + 1 < len(sounds) else None
+        before = sounds[n - 1][0] if n else None
+        later = [s for s, _ in sounds[n + 1 :]]
+        if sound in "ɲʎʃ" and later[:1] == [sound]:
+            later = later[1:]  # a long "ʃ.ʃ" is written once: what follows decides the letters
+        after = later[0] if later else None
         soft, vowel = after in _FRONT, after in _VOWELS
+        if sound in "ɲʎʃ" and before == sound:
+            continue  # "gn", "gl", "sc" are already long: "agnòstico", not "agngnòstico"
+        if sound in "td" and after is not None and after in _AFFRICATE_OF[sound]:
+            letters.append({"ʧ": "c", "ʤ": "g", "ʦ": "z", "ʣ": "z"}[after])  # "cc", "zz"
+            continue
+        if sound in "ʧʤ" and not vowel:
+            return None  # "match", "bridge": Italian letters cannot end on that sound
         if sound in _VOWELS:
             letters.append(_STRESSED[sound] if stressed else _VOWELS[sound])
         elif sound == "k":
@@ -229,7 +287,7 @@ def respell_ipa(ipa: str) -> str | None:
             elif vowel:
                 letters.append(base + "i")  # "ciao", "giù", "sciare"
             else:
-                letters.append("sh" if sound == "ʃ" else base)
+                letters.append("sh")  # "flash": only ʃ gets here
         elif sound == "ʎ":
             letters.append("gl" if soft else "gli")
         elif sound in _SIMPLE:
@@ -267,30 +325,30 @@ class Collector:
 
     def add_entry(self, entry: dict[str, Any]) -> None:
         key = entry.get("word", "").lower()
-        if not _LETTERS.fullmatch(key):
-            return
         senses = entry.get("senses") or []
-        if any("compound-of" in (s.get("tags") or []) for s in senses):
+        if not _LETTERS.fullmatch(key) or (
+            senses and all(set(s.get("tags") or []) & _OLD_TAGS for s in senses)
+        ):
+            return
+        tags = [set(s.get("tags") or []) for s in senses]
+        if any("compound-of" in t for t in tags):
             self.compound.add(key)
         else:
             self.words[key].plain_word = True
-        lemma = None
         for hyphenation in entry.get("hyphenations") or []:
             parts = hyphenation.get("parts") or []
             accented = from_syllables(parts)
             if accented is None or plain(accented).lower() != key:
                 continue
             self.add_reading(key, accented.lower())
-            lemma = lemma or accented.lower()
             self.check_rule(accented, parts)
         for sound in entry.get("sounds") or []:
             after = ipa_syllables_after(sound.get("ipa", ""))
             if after is not None:
                 self.words[key].ipa_after.add(after)
-        if lemma is None:
-            self.add_pending(key, entry.get("pos"), senses)
+        self.add_pending(key, entry.get("pos"), senses)
         for form in entry.get("forms") or []:
-            self.add_form(form, entry.get("pos"), lemma)
+            self.add_form(form, entry.get("pos"), key)
         if borrowed_from_english(entry) and entry.get("pos") != "name":
             self.add_proposal(key, entry)
 
@@ -304,52 +362,62 @@ class Collector:
                 return
 
     def add_pending(self, key: str, pos: str | None, senses: list[dict[str, Any]]) -> None:
-        """A plural, feminine or participle without syllables: stressed as its source, later."""
+        """A plural or feminine of a noun, an adjective or a participle takes every stress of
+        its source, later. Not a superlative, diminutive or augmentative."""
         for sense in senses:
-            tags = sense.get("tags") or []
-            if "form-of" in tags and (pos != "verb" or "participle" in tags):
-                sources = [f["word"].lower() for f in sense.get("form_of") or [] if "word" in f]
-                if sources:
-                    self.pending.append((key, sources))
+            tags = set(sense.get("tags") or [])
+            if "form-of" not in tags or tags & _DERIVATION_TAGS:
+                continue
+            if not tags & {"plural", "feminine"} or (pos == "verb" and "participle" not in tags):
+                continue
+            sources = [f["word"].lower() for f in sense.get("form_of") or [] if "word" in f]
+            if sources:
+                self.pending.append((key, sources))
 
-    def add_form(self, form: dict[str, Any], pos: str | None, lemma: str | None) -> None:
+    def add_form(self, form: dict[str, Any], pos: str | None, lemma: str) -> None:
         tags = set(form.get("tags") or [])
         text = form.get("form", "").lower()
         if tags & _SKIP_TAGS or not _LETTERS.fullmatch(text):
             return
         key = plain(text)
         self.words[key].plain_word = True
-        if stress_index(text) is not None:
-            accented: str | None = text
-        elif pos != "verb" and lemma is not None:
-            accented = derived(lemma, text)
-        else:
-            accented = None
-        if accented is None:
+        if stress_index(text) is None:
+            if pos != "verb" and tags and tags <= _INFLECTION_TAGS:
+                self.pending.append((key, [lemma]))  # "àncore": the stresses of "ancora"
             return
+        accented = text
         self.add_reading(key, accented)
-        kind = host_kind(tags) if pos == "verb" else None
+        if pos != "verb":
+            return
+        if {"participle", "past"} <= tags and accented.endswith("o"):
+            for inflected in (accented[:-1] + ending for ending in "iae"):  # capìto: capìti
+                self.words[plain(inflected)].plain_word = True
+                self.add_reading(plain(inflected), inflected)
+        kind = host_kind(tags)
         if kind is not None and stress_index(accented) != len(accented) - 1:
             host = as_host(accented, kind)
             self.hosts[plain(host)][host] += 1
 
     def resolve_pending(self) -> None:
+        """Each form takes every stress its source has in Wiktionary: "utensili" both
+        utènsili and utensìli, so it is left as written like "utensile"."""
         for key, sources in self.pending:
             for source in sources:
                 word = self.words.get(source)
-                accented = one_stress(word.stressed) if word and word.stressed else None
-                stressed = derived(accented, key) if accented else None
-                if stressed is not None:
-                    self.add_reading(key, stressed)
+                for spelling in by_stress(word.stressed) if word else []:
+                    stressed = derived(spelling, key)
+                    if stressed is not None:
+                        self.add_reading(key, stressed)
 
     def check_rule(self, accented: str, parts: list[str]) -> None:
-        syllables = "".join(parts).split("‧")
-        stressed = next(i for i, s in enumerate(syllables) if stress_index(s) is not None)
+        syllables = syllables_of(parts)
+        stressed = [i for i, s in enumerate(syllables) if stress_index(s) is not None]
         index = stress_index(accented)
-        assert index is not None
+        if len(syllables) < 2 or len(stressed) != 1 or index is None:
+            return  # written in one block: nothing to compare
         self.checked += 1
         rule = syllables_after(accented, index)
-        if (rule >= 2) != (len(syllables) - stressed - 1 >= 2):  # only where marking changes
+        if (rule >= 2) != (len(syllables) - stressed[0] - 1 >= 2):  # only where marking changes
             self.mismatches.append("‧".join(syllables))
 
 
@@ -398,9 +466,12 @@ def build(collector: Collector) -> Lexicon:
             continue
         accented = one_stress(word.stressed)
         index = stress_index(accented) if accented else None
-        if accented is None or index is None:
-            continue
         guess = split(key)
+        if accented is None or index is None:
+            if guess is not None:  # two stresses in Wiktionary: left as written
+                out.words[key] = KEEP
+                out.stats["verbo + pronomi dalle sillabe"] += 1
+            continue
         if syllables_after(accented, index) >= 2 and guess != accented:
             out.words[key] = accented
         elif syllables_after(accented, index) < 2 and guess is not None:
@@ -412,18 +483,27 @@ def build(collector: Collector) -> Lexicon:
         guess = split(key) if word.plain_word else None
         if guess is None or out.words.get(key) == guess:
             continue
-        if key.endswith("ti") and key[-3] in "ai":  # "fermati": imperative or participle
+        # "Fermati!" or "si sono fermati": only the imperatives Jack says; "copiati", "salvati"
+        # open Claudio's reports as participles ("Chiusa, socio." in the 30/10 session).
+        if key in _IMPERATIVES_SAID:
             out.at_start[key] = guess
             out.words.pop(key, None)
             out.stats["imperativo + ti o participio (accento a inizio frase)"] += 1
         else:  # "aprile", "capitali"
             out.words[key] = KEEP
             out.stats["parole che sembrano verbo + pronome (lasciate)"] += 1
-    for key in _SAID_WORSE:
-        out.at_start.pop(key, None)
-        out.words[key] = KEEP
+    for key in _SAID_WORSE | number_words():
+        if key in out.words or key in out.at_start:
+            out.at_start.pop(key, None)
+            out.words[key] = KEEP
     out.stats["verbi che prendono pronomi"] = len(out.hosts)
     return out
+
+
+def number_words() -> set[str]:
+    """The words digits_to_words_it writes ("tredici", "sedici"): Jack says them every day, so
+    they stay as written also when Claude types them in letters."""
+    return {w for n in range(2101) for w in digits_to_words_it(str(n)).split()}
 
 
 def write(path: Path, lexicon: Lexicon, source: Path) -> None:

@@ -38,10 +38,19 @@ _CLITICS = sorted([(c, 1) for c in _ONE] + [(c, 2) for c in _TWO], key=lambda c:
 # "da'", "di'", "fa'", "sta'", "va'" double the pronoun's consonant: "dammi", "vattene".
 _SHORT_IMPERATIVES = {"da": "dà", "di": "dì", "fa": "fà", "sta": "stà", "va": "và"}
 _WORD = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ]+")
-_CLAUSE_MARKS = frozenset('.,;:!?…"«“(')
-_CLAUSE_WORDS = frozenset(
-    {"e", "ma", "o", "oppure", "poi", "ora", "adesso", "dai", "su", "allora", "quindi", "però"}
+# Where a clause starts: after these marks; after a comma only behind a vocative or an
+# interjection ("Socio, fermati", not "chiusi, salvati"); after an opener that itself starts the
+# clause ("E ricordati", "Ora fermati", not "sono ora collegati").
+_SENTENCE_MARKS = frozenset('.;:!?…"«“(\n')
+_VOCATIVES = frozenset(
+    {"socio", "eroe", "claudio", "jenjo", "capo", "amico", "ok", "okay", "dai", "ehi", "su"}
+    | {"allora", "ecco", "senti", "tranquillo", "bene", "perfetto", "fatto", "no"}
 )
+_OPENERS = frozenset(
+    {"e", "ma", "o", "oppure", "poi", "ora", "adesso", "dai", "su", "allora", "quindi", "però"}
+    | {"ok", "okay", "ecco", "ehi"}
+)
+_IN_NUMBER = re.compile(r"(?<=\d)[.,:](?=\d)")  # "1.250", "3,5", "10:30": not a clause mark
 
 
 def plain(word: str) -> str:
@@ -58,7 +67,8 @@ def stress_index(word: str) -> int | None:
 def syllables_after(word: str, index: int) -> int:
     """Syllables after the stressed vowel at `index`: 0 tronca, 1 piana, 2 sdrucciola. In a run
     of vowels each a, e, o is a syllable and i, u only glide, unless the run has nothing else
-    ("àquila", "Itàlia" -> 2, 1); right after the stress i and u join it ("àuto" -> 1)."""
+    ("àquila", "Itàlia" -> 2, 1); right after the stress i and u join it ("àuto" -> 1); u before
+    a, e, o after a consonant other than q and g is a syllable ("stàtua", "contìnuo" -> 2)."""
     w = plain(word.lower())
     count = 0
     i = index + 1
@@ -71,8 +81,11 @@ def syllables_after(word: str, index: int) -> int:
         end = i
         while end < len(w) and w[end] in _VOWELS:
             end += 1
-        strong = sum(c in _STRONG for c in w[i:end])
+        run = w[i:end]
+        strong = sum(c in _STRONG for c in run)
         count += strong if strong or joins_stress else 1
+        if not joins_stress and run[:1] == "u" and run[1:2] in _STRONG and w[i - 1] not in "qg":
+            count += 1
         joins_stress = False
         i = end
     return count
@@ -137,9 +150,11 @@ class StressLexicon:
 
     def with_pronouns(self, key: str) -> str | None:
         """A verb with pronouns attached, accented if that moves its stress before the
-        second-to-last syllable: "accenditi" -> "accènditi", "dimmelo" -> "dìmmelo"."""
+        second-to-last syllable: "accenditi" -> "accènditi", "dimmelo" -> "dìmmelo". Two ways
+        to split it with different stresses ("màndatelo" / "mandàtelo") leave it as written."""
         if not self.hosts:  # no lexicon, no accents: not even on "dammelo"
             return None
+        readings: set[tuple[int, str, bool]] = set()
         for clitic, syllables in _CLITICS:
             if not key.endswith(clitic) or len(key) <= len(clitic) + 1:
                 continue
@@ -147,15 +162,15 @@ class StressLexicon:
             accented = self.hosts.get(host)
             if accented is None and host[:-1] in _SHORT_IMPERATIVES and host[-1] == clitic[0]:
                 accented = _SHORT_IMPERATIVES[host[:-1]] + host[-1]  # dammi, vattene
-            if accented is None:
+            index = stress_index(accented) if accented else None
+            if accented is None or index is None:
                 continue
-            index = stress_index(accented)
-            if index is None:
-                return None
-            if syllables_after(accented, index) + syllables < 2:
-                return None
-            return put_accent(key, index, accented[index])
-        return None
+            early = syllables_after(accented, index) + syllables >= 2
+            readings.add((index, accented[index], early))
+        if len({index for index, _, _ in readings}) != 1:
+            return None
+        index, vowel, early = readings.pop()
+        return put_accent(key, index, vowel) if early else None
 
 
 def mark_stress(text: str, lexicon: StressLexicon, leave: Container[str] = ()) -> str:
@@ -164,17 +179,20 @@ def mark_stress(text: str, lexicon: StressLexicon, leave: Container[str] = ()) -
     out: list[str] = []
     end = 0
     previous: str | None = None
+    previous_starts = False
     for match in _WORD.finditer(text):
         word, gap = match.group(0), text[end : match.start()]
-        starts_clause = (
-            previous is None
-            or any(c in _CLAUSE_MARKS for c in gap)
-            or previous.lower() in _CLAUSE_WORDS
-        )
+        marks = _IN_NUMBER.sub("", gap)
+        if previous is None or any(c in _SENTENCE_MARKS for c in marks):
+            starts_clause = True
+        elif "," in marks:
+            starts_clause = previous.lower() in _VOCATIVES
+        else:
+            starts_clause = previous_starts and previous.lower() in _OPENERS
         if word.lower() not in leave and not any(c in _ACCENTED for c in word.lower()):
             word = lexicon.stressed(word, starts_clause) or word
         out += [gap, word]
-        end, previous = match.end(), match.group(0)
+        end, previous, previous_starts = match.end(), match.group(0), starts_clause
     out.append(text[end:])
     return "".join(out)
 

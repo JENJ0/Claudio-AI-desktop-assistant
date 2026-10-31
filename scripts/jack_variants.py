@@ -24,6 +24,8 @@ import re
 import statistics
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -368,7 +370,26 @@ def misheard_words(results: dict[str, list[dict]]) -> list[tuple[str, int, list[
     return [(w, n, heard_as[w][:3]) for w, n in counts.most_common()]
 
 
+@contextmanager
+def sent_as_written() -> Iterator[None]:
+    """The worker gets each candidate as written: no respellings and no accents from
+    mark_stress, so "accenditi" can be heard against "accènditi"."""
+    import claudio.tts.jack as jack_module
+
+    original = jack_module.to_spoken_it
+    jack_module.to_spoken_it = lambda text, words=None: to_spoken_it(text, stress=_NO_STRESS)
+    try:
+        yield
+    finally:
+        jack_module.to_spoken_it = original
+
+
 def run_spellings(settings: Any, out: Path, spellings: dict[str, list[str]] | None = None) -> None:
+    with sent_as_written():
+        _say_spellings(settings, out, spellings or SPELLINGS)
+
+
+def _say_spellings(settings: Any, out: Path, spellings: dict[str, list[str]]) -> None:
     from claudio.tts.jack import worker_command
 
     tts = settings.tts
@@ -387,7 +408,7 @@ def run_spellings(settings: Any, out: Path, spellings: dict[str, list[str]] | No
     lines = ["# Parole difficili", ""]
     try:
         synth.synthesize("Pronto.")
-        for word, candidates in (spellings or SPELLINGS).items():
+        for word, candidates in spellings.items():
             for n, spelling in enumerate(candidates, 1):
                 sentence = SPELLING_SENTENCE.get(word, ANY_SENTENCE).format(spelling)
                 audio = synth.synthesize(sentence)
