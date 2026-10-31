@@ -1,6 +1,6 @@
 # IT-1 – Consegne: comandi storpiati (2.1), niente "Dicevo:" fuori luogo (5.4), decisioni 1-2
 
-Branch locale `it1/comandi` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-comandi`),
+Branch locale `it1/comandi` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-comandi`),
 allineato a `main` v0.4.0 (rebase fatto), non pushato, da unire in `main` con gli altri thread
 di IT-1. 6 commit, dal più vecchio:
 
@@ -111,7 +111,7 @@ sulla GPU per testi da 1 a 14 pezzi, suite completa).
 ## Prova manuale (dopo l'unione in main)
 
 1. Apri PowerShell e scrivi:
-   `cd C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant`
+   `cd C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant`
    poi `uv run claudio`. Aspetta "Sono pronto".
 2. **Storia ripresa (deve ancora funzionare)**: di' "Claudio, raccontami una storia lunga". Mentre
    parla di' "Claudio, che ore sono?". Atteso: dice l'ora, poi "Dicevo: ..." e continua la storia.
@@ -126,7 +126,7 @@ sulla GPU per testi da 1 a 14 pezzi, suite completa).
 5. **Decisione 2**: "Claudio, spegniti" detto bene si spegne subito come prima (è un comando capito,
    non dedotto); solo quando è dedotto da una frase storpiata chiede sempre. Riaccendi con
    "Claudio, accenditi".
-6. Chiudi con "Claudio, chiuditi". In `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\logs\metrics.jsonl`
+6. Chiudi con "Claudio, chiuditi". In `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\logs\metrics.jsonl`
    le righe con `recovery_verdict` dicono cosa ha proposto e con che punteggi: mandamele se
    qualcosa non torna.
 

@@ -1,6 +1,6 @@
 # IT-0 – Consegne: "spegniti / accenditi" e avvio all'accesso
 
-Branch locale `it0/avvio` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it0-avvio`),
+Branch locale `it0/avvio` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it0-avvio`),
 non pushato. Test manuale: `piani\IT-0-avvio-test.md`.
 
 ## Fatto

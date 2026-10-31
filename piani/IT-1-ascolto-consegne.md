@@ -1,6 +1,6 @@
 # IT-1 Ascolto – Consegna (sezioni 1.1-1.4, 2.2-2.4 di IT-1-consegne.md)
 
-Stato al 31/10 notte: ramo `it1/ascolto` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-ascolto`),
+Stato al 31/10 notte: ramo `it1/ascolto` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-ascolto`),
 ribasato su `main` v0.4.0, **solo locale, nessun push**. 1790 test passano (+11 lenti con i modelli
 veri), ruff e mypy puliti, `claudio --check` ok, revisione con più agenti fatta e corretta (sotto).
 Decisioni usate: 8 (tic leggero da spento) e 9 (WAV scartati salvati con un limite) = sì.
@@ -119,7 +119,7 @@ Il tuo `.env` non tocca nessuna di queste chiavi.
 ## Prova manuale (dopo l'unione in main)
 
 1. Apri PowerShell e vai nel progetto:
-   `cd C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant`
+   `cd C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant`
 2. Avvia: `uv run claudio` e aspetta "Sono pronto".
 3. **1.1**: di' "Claudio, che ore sono?", aspetta la risposta e resta zitto 10 s: non deve partire
    nessun bip da solo.

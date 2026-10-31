@@ -1,6 +1,6 @@
 # IT-1 – Consegne: unione dei 7 rami nel ramo `it-1`
 
-Ramo locale `it-1` (cartella di lavoro `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-merge`), partito
+Ramo locale `it-1` (cartella di lavoro `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-merge`), partito
 da `main` = `ba3872f` (tag `v0.4.0`, con il commit dei documenti `3d5e9db`). **Non unito a `main`**
 (prima lo provi tu) e mai pushato.
 
@@ -92,10 +92,11 @@ cancellarli.
 
 1. Chiudi Claudio se è acceso ("Claudio, chiuditi") e i giochi.
 2. Apri PowerShell (non l'app Claude) e vai nella cartella principale:
-   `cd C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant`
+   `cd C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant`
 3. Controlla di essere sul ramo unito: `git branch --show-current` deve scrivere `it-1`
    (altrimenti `git switch it-1`; i tuoi `data\`, `models\`, `logs\` e `.env` restano).
-4. Installa la dipendenza nuova dell'icona: `uv sync` (aggiunge solo `pystray`).
+4. `uv sync`: l'ho già fatto io il 31/10 dopo lo spostamento (ha aggiunto `pystray`); rifarlo
+   scrive solo "Audited" e non fa danni.
 5. `uv run claudio --check`: ogni riga OK, compresa "OK modello Whisper large-v3 (3.1 GB)".
 6. Le frasi fisse di Jack sono già pronte (31/10 mattina): niente da fare. Per rifarle,
    GPU libera e Claudio chiuso: `uv run python scripts\jack_takes.py --from-logs 3`.
@@ -126,6 +127,25 @@ cancellarli.
 Il task all'avvio di Windows (avvio automatico di Claudio) non è ancora registrato: punto 4 di
 `piani\IT-1-sempreattivo-consegne.md`, da fare solo dopo l'unione in `main`.
 
+## Spostamento in `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO` (31/10 mattina)
+
+JenJo ha spostato il progetto e tutte le cartelle di lavoro dentro `PROGETTI\CLAUDIO`. Cosa si è
+rotto e come l'ho sistemato:
+
+- **Git**: le cartelle di lavoro (`claudio-it1-*`, `claudio-jack-wt`) risultavano "prunable",
+  cioè staccate dal repository: un `git worktree prune` le avrebbe perse. Riparate con
+  `git worktree repair` sui percorsi nuovi; `git worktree list` ora le mostra tutte.
+- **`.venv`**: l'installazione di `claudio` puntava ancora alla vecchia `src`, quindi
+  `import claudio` falliva. Rifatta con `uv sync --locked` (cache di uv in Temp e file copiati,
+  così si vedono anche dal tuo terminale); ha messo anche `pystray`.
+- **Configurazione e codice**: nessun percorso assoluto (`models\`, `data\`, `logs\` sono
+  relativi alla cartella del progetto). I percorsi in questi documenti `piani\` sono aggiornati.
+- **Non toccati**: gli script di addestramento in `models\voices\jack\` (`run_ft*.ps1`,
+  `rvc_*.ps1`) e `activate` della venv di Jack hanno ancora il percorso vecchio, ma a Claudio non
+  servono; vanno corretti solo se riaddestri Jack.
+
+Dopo lo spostamento: `claudio --check` tutto OK, `pytest` 2452 passati, 3 saltati (dalla cartella principale, con la `.venv` vera).
+
 ## Rischi e cose aperte
 
 1. **Wake debole + frase di memoria senza nome** (c'era già prima dell'unione, da memoria con il
@@ -149,7 +169,7 @@ PowerShell, **solo dopo** che `it-1` è in `main`. `-d` (minuscolo) e `worktree 
 soli se qualcosa non è unito o ha modifiche non salvate.
 
 ```powershell
-cd C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant
+cd C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant
 git branch -D it1/prova-latenza-voce   # unione di prova di latenza, non serve più
 foreach ($n in "memoria","comandi","ascolto","voce","latenza","pronuncia","sempreattivo") {
     git worktree remove "..\claudio-it1-$n"

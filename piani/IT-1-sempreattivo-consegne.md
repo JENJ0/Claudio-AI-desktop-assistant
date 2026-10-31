@@ -1,6 +1,6 @@
 # IT-1 – Consegne: sempre attivo (istanza unica, riavvio dopo un crash, system tray, check)
 
-Ramo locale `it1/sempreattivo` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-sempreattivo`),
+Ramo locale `it1/sempreattivo` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-sempreattivo`),
 partito da `main` = `ba3872f` (tag `v0.4.0`), non pushato. Sezioni 6.1, 6.2, 6.3, 6.6 e 6.7 di
 `piani/IT-1-consegne.md`, più la decisione 10.
 
@@ -57,11 +57,11 @@ c'è nessun task "Claudio".
 ## Test manuale per JenJo (dopo il merge in main)
 
 1. Apri PowerShell (non la app Claude) e vai nel progetto:
-   `cd C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant`
+   `cd C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant`
 2. Installa la dipendenza nuova: `uv sync` (aggiunge solo `pystray`).
 3. `uv run claudio --check`: deve esserci la riga "OK modello Whisper large-v3 (3.1 GB)".
 4. Registra l'avvio all'accesso:
-   `powershell -ExecutionPolicy Bypass -File C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\scripts\install_autostart.ps1`
+   `powershell -ExecutionPolicy Bypass -File C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\scripts\install_autostart.ps1`
 5. Esci da Windows e rientra (o riavvia il PC). Dopo circa 30 s, vicino all'orologio (anche
    sotto la freccia ^ delle icone nascoste) compare l'icona: blu, poi verde quando è pronto.
 6. Tasto destro sull'icona: prova "Spegni" (grigia), "Accendi" (verde), "Pausa" (arancione).

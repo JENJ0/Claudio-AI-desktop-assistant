@@ -1,6 +1,6 @@
 # IT-1 – Consegne: memoria a lungo termine (sezione 6.4, fase 4)
 
-Ramo locale `it1/memoria` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-memoria`),
+Ramo locale `it1/memoria` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-memoria`),
 partito da `main` 62f2b79 e in pari con `main` v0.4.0 (merge 92f1fe9). Non pushato.
 Test manuale: `piani\IT-1-memoria-test.md` (dopo il merge, dalla cartella principale).
 

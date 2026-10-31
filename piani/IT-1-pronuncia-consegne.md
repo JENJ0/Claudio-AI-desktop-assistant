@@ -1,6 +1,6 @@
 # IT-1 – Consegne: pronuncia di Jack (4.1 accenti, 4.2 parole inglesi)
 
-Branch locale `it1/pronuncia` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-pronuncia`),
+Branch locale `it1/pronuncia` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-pronuncia`),
 non pushato, aggiornato con `main` (v0.4.0). Decisioni usate: D.5 kaikki.org, D.6 "dèsk-top"
 (era già nella tua tabella).
 
@@ -41,7 +41,7 @@ Non sente gli accenti che lasciano uguali le vocali, quindi conta il tuo orecchi
   comune è la consonante finale **a fine frase**: "Apro clòd." diventa "clado"/"proclode" 2 volte
   su 5, "clòdd" mai; a metà frase "cròm" e "clòd" sono giusti 10 su 10 (decisione 3a, applicata).
 
-WAV da ascoltare, in `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\logs\pronuncia-it1\`:
+WAV da ascoltare, in `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\logs\pronuncia-it1\`:
 - `frasi-vere\7\` (e `\42\`, `\99\`): `frasi_01_riaccendermi_scritta.wav` contro
   `frasi_01_riaccendermi_accentata.wav`, e così per le 26 frasi; report in `frasi-vere\report.md`.
 - `parole-isolate\`: le 90 parole da sole, con `report.md`.
@@ -71,7 +71,7 @@ Risultati finali: `pytest` 1912 passed, 4 skipped; ruff e mypy puliti.
 ## Prova in locale (dopo il merge in `main`)
 
 1. Apri PowerShell nella cartella del progetto:
-   `cd C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant`
+   `cd C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant`
 2. Prova veloce senza GPU: `uv run python -c "from claudio.tts.spoken_text import to_spoken_it; print(to_spoken_it('Socio, accenditi e dimmelo subito.'))"`
    Deve stampare: `Socio, accènditi e dìmmelo subito.`
 3. Avvia Claudio come sempre, di' "Claudio, spegniti" e ascolta la risposta
@@ -116,9 +116,9 @@ Risultati finali: `pytest` 1912 passed, 4 skipped; ruff e mypy puliti.
 
 - Sorgente: `https://kaikki.org/dictionary/Italian/kaikki.org-dictionary-Italian.jsonl.gz`
   (77 MB compressi, stessi dati del file da 743 MB), scaricato una volta in
-  `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\models\kaikki\` (fuori da git).
+  `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\models\kaikki\` (fuori da git).
 - Per ricostruire il lessico (~20 s): `uv run python scripts\build_lexicon_it.py models\kaikki\kaikki.org-dictionary-Italian.jsonl.gz`
 - Se il file scaricato non ti serve più, cancellalo tu:
-  `Remove-Item C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\models\kaikki -Recurse`
+  `Remove-Item C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\models\kaikki -Recurse`
 - `data\stress_it.tsv` e `data\respell_en.tsv` sono adattamenti di Wiktionary: restano
   CC BY-SA 4.0 (intestazione nel file), separati dal codice di CLAUDIO.

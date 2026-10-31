@@ -1,6 +1,6 @@
 # IT-1 – Voce di Jack (sezioni 3.1-3.7): consegna
 
-Ramo `it1/voce` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-voce`), solo locale, non
+Ramo `it1/voce` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-voce`), solo locale, non
 unito: base `62f2b79`, 4 commit.
 
 | Commit | Cosa |
@@ -64,7 +64,7 @@ risposte (gli script sono nello scratchpad della sessione, non nel repo).
   take finiscono in `logs\jack-takes\`. A runtime una frase salvata si suona dalla WAV, anche con il
   worker spento o ancora in caricamento.
 - **Lanciato il 31/10** (`--from-logs 3`): 22 frasi fisse × 8 semi, salvate in
-  `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\data\jack_cache\` più
+  `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\data\jack_cache\` più
   `data\jack_takes.json` del checkout principale: il codice attuale di main le ignora, dopo l'unione
   si usano. Le take scartate vanno da 0 a 5 su 8 per frase. Il registro mediano delle take buone è
   129 Hz, coerente con `jack_usual_hz = 132`. Whisper sente giuste 18 frasi su 22; "Apro Chrome."

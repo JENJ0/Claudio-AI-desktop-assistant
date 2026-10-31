@@ -6,14 +6,14 @@ CLAUDIO chiuso (o dire "dimentica tutto" e poi "confermo").
 
 ## 0. Avvio (dopo il merge del ramo `it1/memoria` in `main`)
 
-Il worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-memoria` non ha `models\`, `.env` né il
+Il worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-memoria` non ha `models\`, `.env` né il
 tuo `data\`: prova dalla cartella principale dopo il merge. Nessuna dipendenza nuova.
 
 1. Apri **PowerShell** (Start, scrivi `PowerShell`, Invio). Non quello dentro Claude.
-2. `cd C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant`
+2. `cd C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant`
 3. Test automatici: `uv run pytest -q tests\unit` → deve finire con `passed` e nessun `failed`.
 4. Avvia: `uv run claudio`. Nel log all'avvio deve comparire
-   `Memoria: 0 ricordi in C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\data\memory.db`.
+   `Memoria: 0 ricordi in C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\Claudio-AI-desktop-assistant\data\memory.db`.
 
 ## 1. Salvare (in locale, gratis)
 

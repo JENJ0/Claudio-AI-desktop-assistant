@@ -1,6 +1,6 @@
 # IT-1 – Consegne: latenza (sezioni 5.1, 5.2, 5.3 di `IT-1-consegne.md`)
 
-Ramo locale `it1/latenza` (worktree `C:\Users\JenJo\Desktop\PROGETTI\claudio-it1-latenza`),
+Ramo locale `it1/latenza` (worktree `C:\Users\JenJo\Desktop\PROGETTI\CLAUDIO\claudio-it1-latenza`),
 partito da `main` v0.4.0, mai pushato. Tre commit: la funzione, le correzioni della revisione,
 test a tempo più robusti. **Non unito a `main`**: l'unione la fa il coordinatore con gli altri
 rami IT-1 (vedi "Unione con gli altri rami" sotto).
