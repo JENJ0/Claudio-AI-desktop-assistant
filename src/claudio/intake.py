@@ -129,19 +129,32 @@ class Recovery:
     question: str = ""
 
 
+# The actions of the commands a recovered phrase is never done on alone, however sure:
+# pausing, switching Claudio off or on, closing it (JenJo 30/10: "spegniti" is always asked).
+ALWAYS_ASKED = frozenset({"system"})
+# ...and the ones never asked about: "Hai detto: basta?" keeps talking to someone who wants
+# silence, and a wrong "basta" only ends the conversation (JenJo 30/10: it stops at once).
+NEVER_ASKED = frozenset({"stop"})
+
+
+def asked_or_done(sure: bool, action: str) -> Verdict:
+    """ASK or ACT for a recovered command worth answering: `sure` decides, except for the
+    actions always asked (ALWAYS_ASKED) and never asked (NEVER_ASKED)."""
+    if action in ALWAYS_ASKED:
+        return Verdict.ASK
+    return Verdict.ACT if sure or action in NEVER_ASKED else Verdict.ASK
+
+
 def verdict(
-    guess: Guess | None, doubt: Doubt, act_at: float, ask_at: float, asks_first: bool = False
+    guess: Guess | None, doubt: Doubt, act_at: float, ask_at: float, action: str = ""
 ) -> Verdict:
-    """What Claudio does with Claude's guess. A voice far from the microphone (the TV) is
-    never acted on, and `asks_first` (pausing, switching Claudio off) is never done on a
-    guess alone, however sure."""
+    """What Claudio does with Claude's guess of a command with this `action`. A voice far
+    from the microphone (the TV) is never acted on; below ask_at the phrase is dropped."""
     if guess is None or not guess.said.strip() or guess.probability < ask_at:
         return Verdict.DROP
     if doubt.close is False:
         return Verdict.DROP
-    if asks_first or guess.probability < act_at:
-        return Verdict.ASK
-    return Verdict.ACT
+    return asked_or_done(guess.probability >= act_at, action)
 
 
 @dataclass(frozen=True)
@@ -352,6 +365,15 @@ REQUEST_STARTS = frozenset(
         "which",
     ]
 )
+
+
+QUESTION_TAIL_CHARS = 60  # a "?" this close to the end of a reply asks something
+
+
+def asks_something(reply: str) -> bool:
+    """Claudio's reply asks JenJo something: a "?" at its end, maybe followed by a short
+    sentence ("Che tema vuoi? Dimmelo e la scrivo.")."""
+    return "?" in reply.rstrip()[-QUESTION_TAIL_CHARS:]
 
 
 def addressed_to_claudio(text: str) -> bool:

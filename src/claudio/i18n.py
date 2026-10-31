@@ -239,6 +239,24 @@ EN: dict[str, str] = {
     ),
     "Interrotto da una nuova richiesta: %r": "Interrupted by a new request: %r",
     "Riprendo la risposta interrotta: %r": "Resuming the interrupted reply: %r",
+    "Non riprendo la risposta interrotta: rispondeva a una frase incerta": (
+        "Not resuming the interrupted reply: it answered a phrase Whisper doubted"
+    ),
+    "Non riprendo la risposta interrotta: breve o una domanda": (
+        "Not resuming the interrupted reply: short, or a question"
+    ),
+    "Seconda opinione di Whisper non riuscita": "Whisper's second opinion failed",
+    "Seconda opinione di Whisper spenta: Whisper %s su %s": (
+        "Whisper's second opinion off: Whisper %s on %s"
+    ),
+    "Seconda opinione: %r era %r": "Second opinion: %r was %r",
+    "Seconda opinione incerta: %r, forse %r": "Unsure second opinion: %r, maybe %r",
+    "Seconda opinione: %r, Whisper propone %r: scartata": (
+        "Second opinion: %r, Whisper proposes %r: dropped"
+    ),
+    "Seconda trascrizione scartata (allucinazione nota): %r": (
+        "Second transcription dropped (known hallucination): %r"
+    ),
     "Frase lasciata a metà, ascolto il resto: %r": "Phrase left halfway, waiting for the rest: %r",
     "Vocabolario di Whisper: %d cartelle, %d programmi (%.0f ms)": (
         "Whisper vocabulary: %d folders, %d programs (%.0f ms)"

@@ -3,6 +3,7 @@ configured, Whisper first picks which one each request is in."""
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import re
@@ -18,6 +19,7 @@ from claudio.config import SttSettings
 from claudio.i18n import tr
 from claudio.intake import Segment
 from claudio.router.normalizer import normalize, only_wake_words
+from claudio.stt.recovery import NO_FIT, Fit, SecondHearing
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +59,7 @@ MAX_NEW_TOKENS = 80  # an 8 s request is about 50 tokens; a repetition loop stop
 QUICK_NEW_TOKENS = 24  # the second chance listens to 2.5 s: "hey claudio che ore sono" is ~12
 CANDIDATES = 5  # the closed list: how many transcriptions Whisper proposes
 LOOP_RATIO = 2.4  # gzip ratio above which a text is a loop ("Ciao, ciao, ciao..."), as in Whisper
+FORCED_MAX_TOKENS = 64  # a short command is ~10 word pieces: longer texts are not scored
 
 
 def register_cuda_dlls() -> None:
@@ -356,7 +359,93 @@ class WhisperTranscriber:
                 texts.append(text)
         return texts
 
+    def listen_again(self, audio: np.ndarray, prompt: str, language: str) -> SecondHearing:
+        """One more transcription of `audio` with `prompt` in place of the usual one, and the
+        scorer of any text on the same encoder pass (the command recovery, stt/recovery.py).
+        The request's own figures (last_segments, last_language) stay as they are. No check
+        for a piece of the prompt: its phrases are what may have been said."""
+        if not audible(audio):
+            return SecondHearing("", lambda texts: [NO_FIT] * len(texts))
+        audio = audio.astype(np.float32, copy=False)
+        window = self._window(audio)
+        encoded = type(self._model).encode(self._model, window)
+        self._encoded = (window, encoded)  # _decode() uses it instead of encoding again
+        text, _ = self._decode(audio, language, prompt, quick=False)
+        if text and is_hallucination(text):
+            log.info("Seconda trascrizione scartata (allucinazione nota): %r", text)
+            text = ""
+        return SecondHearing(text, functools.partial(self._fit, encoded, language))
+
+    def _window(self, audio: np.ndarray) -> np.ndarray:
+        """The first 30 s of log-Mel as transcribe() encodes them (its last frame dropped,
+        padded to 3000 frames), so that one encoding stands for both."""
+        from faster_whisper.audio import pad_or_trim
+
+        extractor = self._model.feature_extractor
+        features = extractor(audio)
+        return pad_or_trim(features[:, : min(extractor.nb_max_frames, features.shape[-1] - 1)])
+
+    def _fit(self, encoded: Any, language: str, texts: Sequence[str]) -> list[Fit]:
+        """How likely Whisper finds each text on the encoded audio with no prompt."""
+        from faster_whisper.tokenizer import Tokenizer
+
+        model = self._model
+        tokenizer = Tokenizer(
+            model.hf_tokenizer, model.model.is_multilingual, task="transcribe", language=language
+        )
+        start = [*tokenizer.sot_sequence, tokenizer.no_timestamps]
+        return [self._forced(encoded, start, tokenizer, text) for text in texts]
+
+    def _forced(self, encoded: Any, start: list[int], tokenizer: Any, text: str) -> Fit:
+        """`text` forced as the start of the transcription, then one free step: the
+        log-probability of each word piece and of the end of the text, over the whole
+        vocabulary. align() would be cheaper, but it leaves the end of the text out, and a
+        command that is only the start of what was said ("Apri Chrome." for "Apri Chrome e
+        cerca...") would then look likelier than all of it."""
+        tokens = tokenizer.encode(" " + text.strip()) if text.strip() else []
+        if not tokens or len(tokens) > FORCED_MAX_TOKENS:
+            return NO_FIT
+        result = self._model.model.generate(
+            encoded,
+            [start + tokens],
+            beam_size=1,
+            # ctranslate2 4.8.3 counts a forced piece about twice: 2L + 3 gives the L + 1 steps
+            # needed for any L (measured; 2L + 2 is one short for a single piece, "No")
+            max_length=2 * len(tokens) + 3,
+            return_logits_vocab=True,
+            suppress_blank=False,  # the raw probabilities: nothing masked
+            suppress_tokens=[],
+        )[0]
+        targets = [*tokens, tokenizer.eot]
+        steps = list(result.logits[0])[: len(targets)]
+        if len(steps) < len(targets):
+            raise RuntimeError(f"Whisper: {len(steps)} passi per {len(targets)} pezzi forzati")
+        vocabulary = tokenizer.tokenizer.get_vocab_size()  # the GPU model pads its own
+        logits = np.stack([host_logits(step)[:vocabulary] for step in steps])
+        picked = log_softmax(logits)[np.arange(len(targets)), targets]
+        return Fit(float(picked.sum()), float(picked.mean()))
+
 
 def first_known(candidates: Sequence[str], is_known: Callable[[str], bool]) -> str:
     """The closed list: the first candidate that is a known command, else the most likely."""
     return next((c for c in candidates if is_known(c)), candidates[0] if candidates else "")
+
+
+def audible(audio: np.ndarray) -> bool:
+    """Louder than MIN_RMS: something to transcribe or to score."""
+    return audio.size > 0 and float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) >= MIN_RMS
+
+
+def host_logits(step: Any) -> np.ndarray:
+    """One decoding step's logits as float64 numpy: a ctranslate2 StorageView is copied off
+    the GPU and out of float16 first (numpy reads neither)."""
+    if not isinstance(step, np.ndarray):
+        import ctranslate2
+
+        step = step.to_device(ctranslate2.Device.cpu).to(ctranslate2.DataType.float32)
+    return np.asarray(step, dtype=np.float64)
+
+
+def log_softmax(logits: np.ndarray) -> np.ndarray:
+    shifted = logits - logits.max(axis=-1, keepdims=True)
+    return shifted - np.log(np.exp(shifted).sum(axis=-1, keepdims=True))

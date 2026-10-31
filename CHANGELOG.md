@@ -39,6 +39,31 @@ answered locally in 0-13 ms; first Claude call ~6600 tokens written to the cache
 then ~6600 read and ~100 written (0.0001 $); after a forget ~6300 read and ~290 written;
 first word 0.6-1.1 s (1.5 s with `remember`); about 0.0013-0.0014 $ a run.
 
+### Misheard short commands, no stale "Dicevo:"
+
+#### Added
+- Whisper's second opinion (`stt/recovery.py`, `[recovery]`): a phrase of up to 6 words no
+  command understands, about to go to Claude or to be dropped, is heard again with the commands
+  as Whisper's prompt; the command proposed is judged on the sound alone (forced
+  log-probability without prompt, end of text included) against the first hearing. Clearly
+  likelier: done; about as likely: "Hai detto: ...?" answered locally; otherwise as before, then
+  Haiku's guess. Never on Claudio's echo, a far voice, a yes/no, the answer to Claude's question,
+  nor while paused, off or on the CPU fallback model. On JenJo's 240 recordings: 3 commands
+  recovered ("Scaniti." -> spegniti, "Chi lascia atto?" -> chiudi la chat), 0 wrong, 0 false;
+  +190 ms only on short phrases not understood. `Assistant._recover_command()` takes any other
+  phrase (the one said over the reply).
+- `scripts/stt_bench.py`: variant `recupero` (closed list and second opinion, as live) and a
+  `falsi` column. Commands right on the two sets: 40/48 live, 43/48 with `recupero`, 0 false.
+
+#### Changed
+- JenJo's decisions (IT-1): a "basta" guessed between 50 and 80 % stops at once instead of
+  asking (not right after a question of Claude's: there it is asked); pausing, "spegniti" and
+  "chiuditi" are always asked, by Haiku's guess and by the second opinion alike.
+- A reply cut by a new request is resumed ("Dicevo: ...") only when it is at least
+  `[conversation] resume_min_chars` (200) long, does not end asking something and did not answer
+  a request Whisper was unsure of: of the 14 resumes in the logs, the 9 wrong ones (questions,
+  short answers, banter) all stop.
+
 ## [0.4.0] - 2026-10-30 - IT-0: reliability
 
 Iteration 0: five threads merged locally on the `it-0` branch (30/10).
