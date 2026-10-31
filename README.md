@@ -13,9 +13,10 @@ Microphone ─► openWakeWord ("Hey Claudio", "Claudio") ─► beep
 
 Status: **v0.4.0** (30/10/2026): Phases 1-3 (local commands, Claude, PC control) and the voice
 commands to pause, turn off ("spegniti"), turn on ("accenditi") and close ("chiuditi"); the
-reliability iteration IT-0 is closed. Since then (IT-1): one CLAUDIO at a time, restarted
-after a crash, and an icon in the system tray. Not there yet: persistent memory (Phase 4) and
-automatic updates (Phase 5). The wake words are our own, trained on the owner's voice (see
+reliability iteration IT-0 is closed. Since then (IT-1, branch `it-1`, being tested): long-term
+memory (Phase 4), one CLAUDIO at a time, restarted after a crash, an icon in the system tray,
+misheard commands heard again, steadier listening, an even voice for Jack. Not there yet:
+conversation summaries (Phase 4) and automatic updates (Phase 5). The wake words are our own, trained on the owner's voice (see
 [scripts/wakeword/README.md](scripts/wakeword/README.md); the model files are not in Git):
 "Hey Claudio" and "Claudio" alone, which is weaker, so Whisper confirms each of its detections.
 Full specification (in Italian): [CLAUDE.md](CLAUDE.md).
@@ -106,7 +107,7 @@ After a reply CLAUDIO keeps listening for 6 seconds without the wake word (a bee
 another command needs no "Hey Claudio". The window closes on silence, on "basta", or on
 anything that is not a command (the TV, someone else talking), with a low beep and no reply.
 While it speaks, CLAUDIO keeps listening. A voice close to the microphone (`barge_in_min_dbfs`,
-at least 0.3 s) lowers the reply at once; when Whisper hears words the reply stops and what you
+measured before the microphone's gain, at least 0.3 s) lowers the reply at once; when Whisper hears words the reply stops and what you
 said becomes the next request if it starts with the name ("Claudio, che ore sono") or is a
 command ("basta" / "stop" only stops; `barge_in_needs_name = false` takes any phrase); once it
 is answered, the cut reply goes on ("Dicevo: ...", `resume_s`) if it was a long one (a story,
@@ -244,7 +245,19 @@ worker process** with its own venv, so Claudio itself does not depend on torch.
 
 Before Jack speaks, symbols, acronyms, Markdown and emoji become Italian words ("50%" ->
 "cinquanta per cento") and the words in `[tts.jack_words]` are respelled ("file" -> "fàiil"):
-`src/claudio/tts/spoken_text.py`. Add a word there when Jack says it wrong.
+`src/claudio/tts/spoken_text.py`. Add a word there when Jack says it wrong. Jack also writes
+the stress on sdrucciole ("accènditi", "dìmmelo"; lexicon `data/stress_it.tsv` from Wiktionary,
+CC BY-SA 4.0), never on the other words, and an English word not in the table is logged once
+("Jack: parola sconosciuta"); `scripts/jack_variants.py --words WORD...` lets you hear the
+options.
+
+Every take is brought to `jack_lufs` (-24 LUFS, peaks limited) and checked before it plays:
+one too high, shouted or babbling is generated again with the next seed (`jack_take_check`),
+and the seed of a good take is kept for that text (`data/jack_takes.json`). The fixed replies
+(commands, confirmations, "Sono pronto.") can be made in advance, with the GPU free and
+Claudio closed: `uv run python scripts/jack_takes.py --from-logs 3` (about 10 minutes, report
+in `logs/jack-takes/report.md`); they then play from `data/jack_cache/` with no TTS. Run it
+again after changing `[tts.jack_words]` or Jack's checkpoint.
 
 The worker loads in 10-30 s, in the background: Claudio listens as soon as Whisper and the
 wake word are loaded, and a reply asked meanwhile waits for Jack until `jack_first_wait_s`
