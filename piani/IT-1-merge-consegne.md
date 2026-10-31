@@ -81,7 +81,12 @@ JenJo (31/10, notte): "rigenerazione domani mattina appena accendo il computer".
 - cosa è successo: `logs\jack-takes\auto-run.log`; il risultato: `logs\jack-takes\report.md`;
 - lo script del task: `logs\jack-takes\run_once.ps1` (fuori da Git).
 
-Per toglierlo prima che parta: `Unregister-ScheduledTask -TaskName ClaudioJackTakes`.
+**Il task non l'ho potuto registrare io**: il sistema dei permessi blocca la creazione di task
+("persistenza"). Lo registra JenJo con un comando, che poi spegne il PC:
+`powershell -ExecutionPolicy Bypass -File C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\logs\jack-takes\register_and_shutdown.ps1`
+(con `-NoShutdown` alla fine registra soltanto). Se non è stato registrato, il punto 6 qui sotto
+fa la stessa cosa a mano. Per toglierlo prima che parta:
+`Unregister-ScheduledTask -TaskName ClaudioJackTakes`.
 
 ## Come provarlo (passi per JenJo)
 
