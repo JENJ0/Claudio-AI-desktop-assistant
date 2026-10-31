@@ -39,7 +39,7 @@ Non sente gli accenti che lasciano uguali le vocali, quindi conta il tuo orecchi
 - Nessun segno dell'effetto "soccio" sulle sdrucciole (nùmero, mùsica, vìsita, pàgina giuste).
 - **"Apro Chrome" → "apro croma"** (segnalato dal thread voce): non riprodotto in 8 prove. La causa
   comune è la consonante finale **a fine frase**: "Apro clòd." diventa "clado"/"proclode" 2 volte
-  su 5, "clòdd" mai; a metà frase "cròm" e "clòd" sono giusti 10 su 10 (decisione 3).
+  su 5, "clòdd" mai; a metà frase "cròm" e "clòd" sono giusti 10 su 10 (decisione 3a, applicata).
 
 WAV da ascoltare, in `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\logs\pronuncia-it1\`:
 - `frasi-vere\7\` (e `\42\`, `\99\`): `frasi_01_riaccendermi_scritta.wav` contro
@@ -61,12 +61,12 @@ WAV da ascoltare, in `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assista
 | A/B con Jack e Whisper: parole isolate o 26 frasi vere (`--frasi`) | `scripts\stress_ab.py` |
 | `jack_variants.py --words PAROLA...`: ogni parola come scritta (davvero, senza accenti), come in tabella e come proposta; voce come in Claudio; il WER non conta gli accenti scritti | `scripts\jack_variants.py` |
 | Traduzioni inglesi dei messaggi di log nuovi | `src\claudio\i18n.py` |
-| Test: 151 nuovi | `tests\unit\test_stress_it.py`, `test_loanwords.py`, `test_build_lexicon_it.py`, `test_stress_ab.py`, `test_jack_variants_words.py`, `test_spoken_text.py` |
+| Test: 159 nuovi | `tests\unit\test_stress_it.py`, `test_loanwords.py`, `test_build_lexicon_it.py`, `test_stress_ab.py`, `test_jack_variants_words.py`, `test_spoken_text.py` |
 
 Revisione indipendente (3 revisori + 1 verificatore): 20 difetti trovati e riprodotti, tutti
 corretti, tra cui "famósissimo", "bènone", "Ci siamo càpiti", "sono ora collégati",
 "salvati e órdinati", "1.250 risùltati", proposte come "agngnòstico".
-Risultati finali: `pytest` 1904 passed, 4 skipped; ruff e mypy puliti.
+Risultati finali: `pytest` 1912 passed, 4 skipped; ruff e mypy puliti.
 
 ## Prova in locale (dopo il merge in `main`)
 
@@ -82,20 +82,18 @@ Risultati finali: `pytest` 1904 passed, 4 skipped; ruff e mypy puliti.
    `uv run python scripts\jack_variants.py --words subprime chat link`
    I WAV sono in `logs\jack-variants\parole\` con l'elenco in `elenco.md`.
 
-## Da decidere (JenJo, rispondi con il numero)
+## Decisioni di JenJo (31/10, applicate)
 
-1. **Parole inglesi fuori tabella** (`parole-inglesi\`, `_1` scritta, `_2` proposta): on/òn,
-   off/òf, offline/oflàin, link/lìnk, app/èpp, chat/ciàt, software/sòftuer, weekend/uichènd,
-   meeting/mìting, team/tìm, backup/becàp, server/sèrver, update/apdèit, cloud/clàud; subprime
-   non ha proposta. Rispondi "1: chat, team, cloud" (quelle di cui preferisci la `_2`),
-   "1: tutte" o "1: nessuna": le aggiungo alla tua tabella.
-2. **Accenti sulle sdrucciole comuni** (nùmero, mùsica, vìsita). Consiglio 2a.
-   - 2a: tenerli (l'A/B non li peggiora e servono per casi come "accènditi").
-   - 2b: accento solo sui verbi con i pronomi (accènditi, dìmmelo).
-3. **Consonante finale a fine frase** (`consonante-finale\`). Consiglio 3a, dopo l'ascolto.
-   - 3a: a fine frase raddoppio la consonante finale delle tue riscritture che finiscono con
-     d, t, p, k, b, g: "clòd." → "clòdd." (Claude, desktop, upload, download, password).
-   - 3b: lascio la tabella com'è.
+1. **Tutte** le proposte inglesi in tabella: on/òn, off/òf, offline/oflàin, link/lìnk, app/èpp,
+   chat/ciàt, software/sòftuer, weekend/uichènd, meeting/mìting, team/tìm, backup/becàp,
+   server/sèrver, update/apdèit, cloud/clàud (`config\claudio.toml`, `[tts.jack_words]`).
+   "subprime" non ha proposta: resta nel log delle parole sconosciute.
+2. **2a**: accento su tutte le sdrucciole (eccezioni misurate escluse), nessuna modifica.
+3. **3a**: a fine frase una riscrittura della tabella che finisce con vocale + d, t, p, k, b, g
+   raddoppia la consonante: "Apro Claude." → "Apro clòdd.", "Sul desktop" → "Sul dèsk-topp",
+   "Apri la chat." → "ciàtt". A metà frase resta com'è ("Chiedo a clòd, socio."). Dopo un'altra
+   consonante non la raddoppio ("pàssuord" era già giusta 3 su 3 e l'italiano non scrive "rdd");
+   "cròm" finisce con m, che nell'A/B non cambiava nulla (`closed()` in `spoken_text.py`).
 
 ## Per chi fa il merge
 

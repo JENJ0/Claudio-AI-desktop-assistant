@@ -151,6 +151,20 @@ browser = "bràuser"
 password = "pàssuord"
 Claude = "clòd"            # JenJo's picks by ear (25/10), as desktop
 desktop = "dèsk-top"
+on = "òn"                  # from data/respell_en.tsv, JenJo chose all of them by ear (31/10)
+off = "òf"
+offline = "oflàin"
+link = "lìnk"
+app = "èpp"
+chat = "ciàt"
+software = "sòftuer"
+weekend = "uichènd"
+meeting = "mìting"
+team = "tìm"
+backup = "becàp"
+server = "sèrver"
+update = "apdèit"
+cloud = "clàud"
 
 # English replies are off while languages = ["it"]; their voices, if it comes back:
 # [tts.voices.en]

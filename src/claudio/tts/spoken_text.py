@@ -93,6 +93,10 @@ _ACCENTED = dict(zip("AEIOUaeiou", "àèìòùàèìòù", strict=True))
 _GLUED = re.compile(r"(?<=[a-zà-ÿ])([.!?])(?=[A-ZÀ-Ý])")
 _VOWELS = set("AEIOU")
 _SPACES = re.compile(r"[ \t]{2,}")
+_PLOSIVES = frozenset("dtpkbg")
+_VOWEL_LETTERS = frozenset("aeiouàèéìíòóùú")
+# What may follow the last word of a sentence: closing quotes, Markdown, then . ! ? or the end.
+_SENTENCE_END = re.compile(r"[\s\"'»”)*_`]*(?:[.!?…]+(?:\s|$)|$)")
 
 
 def _strip_emoji(text: str) -> str:
@@ -114,9 +118,19 @@ def _caps(match: re.Match[str]) -> str:
     return word.lower()
 
 
+def closed(respelling: str) -> str:
+    """A respelling that ends in a vowel and d, t, p, k, b or g, with that consonant doubled:
+    at the end of a sentence "Apro clòd." was heard "clado" 2 times in 5, "clòdd." never
+    (A/B of 31/10, JenJo's choice 3a). In the middle of a sentence it was always right."""
+    if len(respelling) > 1 and respelling[-1] in _PLOSIVES and respelling[-2] in _VOWEL_LETTERS:
+        return respelling + respelling[-1]
+    return respelling
+
+
 def respell(text: str, words: Mapping[str, str]) -> str:
     """Whole words (any case) written the way the voice says them right: "file" -> "fàil".
-    The keys are matched as written, so "PC" also catches "pc" and "Pc"."""
+    The keys are matched as written, so "PC" also catches "pc" and "Pc". At the end of a
+    sentence the respelling is closed (see closed)."""
     if not words:
         return text
     lookup = {key.lower(): value for key, value in words.items()}
@@ -126,7 +140,12 @@ def respell(text: str, words: Mapping[str, str]) -> str:
         + r")(?![\w-])",
         re.IGNORECASE,
     )
-    return pattern.sub(lambda m: lookup[m.group(0).lower()], text)
+
+    def replace(match: re.Match[str]) -> str:
+        value = lookup[match.group(0).lower()]
+        return closed(value) if _SENTENCE_END.match(text, match.end()) else value
+
+    return pattern.sub(replace, text)
 
 
 def to_spoken_it(
@@ -137,7 +156,7 @@ def to_spoken_it(
     `stress`, the accents written on the sdrucciole ("accenditi" -> "accènditi")."""
     words = words or {}
     text = respell(text, words)
-    table = words_of([*words, *words.values()])
+    table = words_of([*words, *words.values(), *map(closed, words.values())])
     text = _LINK.sub(r"\1", text)
     text = _URL.sub("il link", text)
     text = _MARKDOWN.sub("", text)
