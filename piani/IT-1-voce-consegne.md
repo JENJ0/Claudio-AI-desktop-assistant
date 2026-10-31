@@ -9,6 +9,7 @@ unito: base `62f2b79`, 4 commit.
 | `de6b7da` | 3.7: ducking con dissolvenza e log |
 | `e6324e2` | 3.1 + 3.2 + 3.3 + 3.4: level guard, controllo della take, seme per testo, frasi fisse |
 | `2252619` | latenza della prima frase (misurata sulla GPU) e semi cattivi ricordati |
+| (dopo) | 3.6: `jack_group_chars` 220 → 170 (A/B, scelta di JenJo) e questa consegna |
 
 Test: 1837 unit test passano (+84 rispetto a IT-0), ruff e mypy puliti. Ogni commit passa i suoi test
 anche da solo. Fonti delle misure: le 44 WAV di Jack della prova del 30/10
@@ -62,8 +63,18 @@ risposte (gli script sono nello scratchpad della sessione, non nel repo).
   livello, velocità e WER di Whisper, e salva la migliore in `data/jack_cache/`. Report e tutte le
   take finiscono in `logs\jack-takes\`. A runtime una frase salvata si suona dalla WAV, anche con il
   worker spento o ancora in caricamento.
-- **Da fare con la GPU libera**: lanciarlo una volta (circa 2 s di GPU per take, ~30 frasi × 8).
-  Va rilanciato dopo aver unito `it1/pronuncia`, perché la chiave usa il testo pronunciato.
+- **Lanciato il 31/10** (`--from-logs 3`): 22 frasi fisse × 8 semi, salvate in
+  `C:\Users\JenJo\Desktop\PROGETTI\Claudio-AI-desktop-assistant\data\jack_cache\` più
+  `data\jack_takes.json` del checkout principale: il codice attuale di main le ignora, dopo l'unione
+  si usano. Le take scartate vanno da 0 a 5 su 8 per frase. Il registro mediano delle take buone è
+  129 Hz, coerente con `jack_usual_hz = 132`. Whisper sente giuste 18 frasi su 22; "Apro Chrome."
+  resta "apro croma" anche nella migliore delle 8 (lavoro per il thread pronuncia). Le altre tre
+  differenze sono di punteggiatura o accento ("dì", "di'"). "accenditi" ora viene sentito giusto
+  (il 30/10 era "Accendete" quattro volte su quattro). Report: `logs\jack-takes\report.md` del
+  worktree.
+- **Va rilanciato dopo aver unito `it1/pronuncia`**, perché la chiave usa il testo pronunciato: le
+  frasi con parole cambiate (per esempio "accènditi") non combacerebbero più e verrebbero generate
+  dal vivo.
 
 ## 3.3 Controllo della take prima di suonarla – fatto
 
@@ -121,13 +132,20 @@ risposte (gli script sono nello scratchpad della sessione, non nel repo).
   gestire anche lui `chunk is CUT_SHORT` con `drop_unfinished()`, altrimenti "Attra" torna.
   Unione di riferimento: il ramo `it1/prova-latenza-voce` del thread latenza.
 
-## 3.6 Pezzi lunghi: A/B `jack_group_chars` 170 contro 220 – da fare (serve la GPU)
+## 3.6 Pezzi lunghi: A/B `jack_group_chars` 170 contro 220 – fatto, scelto 170
 
-Script pronto (`ab_group.py` nello scratchpad). Confronta le risposte lunghe dei log, divise a 170 e
-a 220 caratteri, con il level guard acceso. Misura la durata dei pezzi, la variazione di volume e di
-registro dentro il pezzo e il WER di Whisper, e salva le WAV per l'ascolto. Non lanciato perché la
-GPU era occupata da un gioco (decisione di JenJo: niente lavoro sulla GPU con un gioco aperto).
-Intanto il level guard contiene già gli sbalzi di volume dentro i pezzi lunghi.
+Le 8 risposte lunghe più recenti dei log, divise come fa lo speaker, con il level guard acceso e il
+controllo delle take spento (worker vero, 31/10):
+
+| Lunghezza | Pezzi | Durata media | Oltre 12 s | Sbalzo di volume nel pezzo | Sbalzo di registro | WER |
+|---|---|---|---|---|---|---|
+| 170 | 19 | 6,4 s | 1 | 1,8 dB | 3,6 st | 1,4 % |
+| 220 | 14 | 8,9 s | 3 | 2,5 dB | 3,8 st | 1,3 % |
+
+Un pezzo pieno a 220 caratteri dura 13-13,5 s, oltre i 12 s delle clip di addestramento; a 170
+resta sotto, tranne una frase sola più lunga che non si può dividere. In cambio i pezzi sono un
+terzo in più. JenJo ha scelto 170 (31/10): `jack_group_chars = 170`. Le WAV dell'A/B sono in
+`logs\jack-ab-group\` del worktree (`g170_*` contro `g220_*`).
 
 ## 3.7 Ducking – fatto
 
@@ -145,13 +163,14 @@ jack_take_check = true     # controllo della take prima di suonarla
 jack_take_retries = 2      # take in più per i pezzi dopo il primo
 jack_first_retries = 1     # take in più per il primo pezzo (0 = mai trattenuto)
 jack_usual_hz = 132        # registro abituale di Jack (riferimento di "troppo acuta")
+jack_group_chars = 170     # cambiato: era 220 (3.6)
 ```
 
 ## Prova in locale (dopo l'unione, GPU libera, nessun gioco aperto)
 
-1. (Facoltativo, consigliato) Prepara le frasi fisse, una volta:
-   `uv run python scripts/jack_takes.py` (circa 8-10 minuti, Claudio chiuso). Leggi
-   `logs\jack-takes\report.md`.
+1. Le frasi fisse sono già pronte nel `data\` del checkout principale. Dopo l'unione di
+   `it1/pronuncia` rifalle una volta: `uv run python scripts/jack_takes.py --from-logs 3`
+   (circa 10 minuti, Claudio chiuso, nessun gioco aperto), poi leggi `logs\jack-takes\report.md`.
 2. Avvia Claudio come sempre.
 3. Prova:
    - "Claudio, apri la chat": con le frasi fisse pronte, la risposta parte subito.
