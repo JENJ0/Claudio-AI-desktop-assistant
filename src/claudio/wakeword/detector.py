@@ -73,6 +73,9 @@ class OpenWakeWordDetector:
         )
         near = {k: v for k, v in self.thresholds.items() if k not in self.confirmed}
         self._near_miss = NearMissTracker(near, settings.near_miss_floor)
+        # A new Model starts from the same random-noise features as its reset()
+        # (AudioFeatures.__init__): flushed the same way, the first frames read only silence.
+        self.reset()
         log.info(
             "Wake word: %s", ", ".join(f"{k} (soglia {v:.2f})" for k, v in self.thresholds.items())
         )
