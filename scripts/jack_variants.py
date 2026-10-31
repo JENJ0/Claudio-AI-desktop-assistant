@@ -4,6 +4,7 @@ split into sentences as Claudio does, then Whisper writes down what it hears (WE
   uv run python scripts/jack_variants.py                 # all variants (~5 min of GPU)
   uv run python scripts/jack_variants.py --only A C      # some of them
   uv run python scripts/jack_variants.py --words         # spellings of hard words (~1 min)
+  uv run python scripts/jack_variants.py --words file online subprime   # yours: table, proposal
   uv run python scripts/jack_variants.py --from-log latest   # Claudio's real replies, C/F/T/Q
   uv run python scripts/jack_variants.py --only R K      # timbre: new draw each time vs fixed seed
   uv run python scripts/jack_variants.py --seeds 1 7 42 99   # which seed is the best Jack (~3 min)
@@ -23,6 +24,8 @@ import re
 import statistics
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,7 @@ from claudio.tts.jack import JackSynth  # noqa: E402
 from claudio.tts.number_words import digits_to_words_it  # noqa: E402
 from claudio.tts.sentence_splitter import SentenceSplitter  # noqa: E402
 from claudio.tts.spoken_text import to_spoken_it  # noqa: E402
+from claudio.tts.stress_it import StressLexicon  # noqa: E402
 from claudio.tts.voice_check import pitch_stats, suspicious  # noqa: E402
 
 # Replies like Haiku's with the Jack personality: commas, a question, numbers, an acronym.
@@ -131,11 +135,12 @@ class Silent:
 
 
 _CLOCK = re.compile(r"\b(\d{1,2})\.(\d{2})\b")  # Whisper writes "22 e 51" as "22.51"
+_NO_STRESS = StressLexicon()  # WER counts words said, not the accents written for the voice
 
 
 def words(text: str) -> list[str]:
-    text = digits_to_words_it(to_spoken_it(_CLOCK.sub(r"\1:\2", text))).lower()
-    return re.findall(r"[a-zàèéìòóù]+", text)
+    text = to_spoken_it(_CLOCK.sub(r"\1:\2", text), stress=_NO_STRESS)
+    return re.findall(r"[a-zàèéìòóù]+", digits_to_words_it(text).lower())
 
 
 def wer(reference: str, heard: str) -> float:
@@ -305,6 +310,24 @@ SPELLING_SENTENCE = {
     "Claude": "È una cartella di sistema di {}, non la tua.",
     "blocco note": "Apro il {} e scrivo qualcosa.",
 }
+ANY_SENTENCE = "Allora, ho detto: {}. Va bene?"  # for the words given on the command line
+
+
+def spellings_for(words: list[str], table: dict[str, str]) -> dict[str, list[str]]:
+    """Ways to write each word: as written, JenJo's table, the Wiktionary proposal
+    (data/respell_en.tsv, see claudio.tts.loanwords)."""
+    from claudio.tts.loanwords import load_proposals
+
+    proposals = load_proposals()
+    respelled = {key.lower(): value for key, value in table.items()}
+    return {
+        word: list(
+            dict.fromkeys(
+                w for w in (word, respelled.get(word.lower()), proposals.get(word.lower())) if w
+            )
+        )
+        for word in words
+    }
 
 
 def log_replies(path: Path, limit: int = 15) -> list[str]:
@@ -347,7 +370,26 @@ def misheard_words(results: dict[str, list[dict]]) -> list[tuple[str, int, list[
     return [(w, n, heard_as[w][:3]) for w, n in counts.most_common()]
 
 
-def run_spellings(settings: Any, out: Path) -> None:
+@contextmanager
+def sent_as_written() -> Iterator[None]:
+    """The worker gets each candidate as written: no respellings and no accents from
+    mark_stress, so "accenditi" can be heard against "accènditi"."""
+    import claudio.tts.jack as jack_module
+
+    original = jack_module.to_spoken_it
+    jack_module.to_spoken_it = lambda text, words=None: to_spoken_it(text, stress=_NO_STRESS)
+    try:
+        yield
+    finally:
+        jack_module.to_spoken_it = original
+
+
+def run_spellings(settings: Any, out: Path, spellings: dict[str, list[str]] | None = None) -> None:
+    with sent_as_written():
+        _say_spellings(settings, out, spellings or SPELLINGS)
+
+
+def _say_spellings(settings: Any, out: Path, spellings: dict[str, list[str]]) -> None:
     from claudio.tts.jack import worker_command
 
     tts = settings.tts
@@ -357,7 +399,7 @@ def run_spellings(settings: Any, out: Path) -> None:
         Silent(),
         tts.jack_startup_timeout_s,
         tts.jack_sentence_timeout_s,
-        rvc="sentence",  # the whole sentence: how most sentences of a reply are spoken
+        rvc=tts.jack_rvc,  # as Claudio speaks
     )  # no respellings: the candidates are sent as written
     print("Parole difficili - avvio del worker...")
     synth.start()
@@ -366,9 +408,9 @@ def run_spellings(settings: Any, out: Path) -> None:
     lines = ["# Parole difficili", ""]
     try:
         synth.synthesize("Pronto.")
-        for word, candidates in SPELLINGS.items():
+        for word, candidates in spellings.items():
             for n, spelling in enumerate(candidates, 1):
-                sentence = SPELLING_SENTENCE[word].format(spelling)
+                sentence = SPELLING_SENTENCE.get(word, ANY_SENTENCE).format(spelling)
                 audio = synth.synthesize(sentence)
                 name = f"{word.lower().replace(' ', '-')}_{n}.wav"
                 sf.write(folder / name, audio, synth.sample_rate)
@@ -382,7 +424,13 @@ def run_spellings(settings: Any, out: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--only", nargs="+", choices=sorted(VARIANTS), default=sorted(VARIANTS))
-    parser.add_argument("--words", action="store_true", help="only the hard-word spellings")
+    parser.add_argument(
+        "--words",
+        nargs="*",
+        metavar="WORD",
+        help="only the hard-word spellings; with words, each as written, in the table and as "
+        "proposed from Wiktionary (data/respell_en.tsv)",
+    )
     parser.add_argument(
         "--from-log",
         type=Path,
@@ -398,8 +446,9 @@ def main() -> None:
     settings = load_settings()
     out = ROOT / "logs" / "jack-variants"
     out.mkdir(parents=True, exist_ok=True)
-    if args.words:
-        run_spellings(settings, out)
+    if args.words is not None:
+        chosen = spellings_for(args.words, settings.tts.jack_words) if args.words else None
+        run_spellings(settings, out, chosen)
         print(f"WAV in {out / 'parole'}")
         return
     replies = log_replies(args.from_log) if args.from_log else None

@@ -337,6 +337,15 @@ EN: dict[str, str] = {
         "Jack did not answer (%s): using the fallback voice"
     ),
     "Riavvio del worker Jack fallito: %s": "Jack worker restart failed: %s",
+    "Accenti di Jack spenti: lessico non leggibile (%s)": (
+        "Jack's written accents off: lexicon not readable (%s)"
+    ),
+    "Jack: parola sconosciuta %r, candidata per [tts.jack_words]": (
+        "Jack: unknown word %r, a candidate for [tts.jack_words]"
+    ),
+    "Jack: parola sconosciuta %r (proposta: %r), candidata per [tts.jack_words]": (
+        "Jack: unknown word %r (proposal: %r), a candidate for [tts.jack_words]"
+    ),
     # wake word
     "Modello wake word '{model}' non trovato in {folder}. Se lo hai addestrato tu, "
     "copialo lì (scripts/wakeword/README.md); altrimenti esegui: "

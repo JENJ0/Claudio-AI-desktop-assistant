@@ -1,6 +1,13 @@
+import logging
+
 import pytest
 
+from claudio.tts import spoken_text
+from claudio.tts.loanwords import UnknownWords
 from claudio.tts.spoken_text import to_spoken_it
+from claudio.tts.stress_it import StressLexicon
+
+NO_STRESS = StressLexicon()  # the text alone, without the accents of mark_stress
 
 
 @pytest.mark.parametrize(
@@ -24,7 +31,7 @@ from claudio.tts.spoken_text import to_spoken_it
     ],
 )
 def test_text_becomes_italian_words(text: str, spoken: str) -> None:
-    assert to_spoken_it(text) == spoken
+    assert to_spoken_it(text, stress=NO_STRESS) == spoken
 
 
 def test_a_snake_case_name_keeps_its_underscores() -> None:
@@ -47,7 +54,8 @@ def test_the_default_config_respells_the_words_jenjo_heard_wrong() -> None:
 
     words = load_settings(DEFAULT_CONFIG).tts.jack_words
     assert {"PC", "file", "download", "Claude", "desktop"} <= set(words)
-    assert to_spoken_it("Sul Desktop di Claude", words) == "Sul dèsk-top di clòd"
+    assert to_spoken_it("Sul Desktop di Claude", words) == "Sul dèsk-top di clòdd"
+    assert {"chat", "team", "on", "off"} <= set(words)  # JenJo took every proposal (31/10)
 
 
 @pytest.mark.parametrize(
@@ -62,4 +70,56 @@ def test_the_default_config_respells_the_words_jenjo_heard_wrong() -> None:
     ],
 )
 def test_text_from_real_replies(text: str, spoken: str) -> None:
-    assert to_spoken_it(text) == spoken
+    assert to_spoken_it(text, stress=NO_STRESS) == spoken
+
+
+def test_jack_writes_the_accent_on_the_sdrucciole() -> None:
+    assert to_spoken_it("Socio, accenditi e chiudi Chrome.") == (
+        "Socio, accènditi e chiudi Chrome."
+    )
+    assert to_spoken_it("Il socio è qui.") == "Il socio è qui."  # "sòcio" was heard "soccio"
+    assert to_spoken_it("Sono le 13.") == "Sono le tredici."  # number words are left alone
+    assert to_spoken_it("Sono le tredici.") == "Sono le tredici."  # also typed in letters
+
+
+def test_jenjos_table_wins_over_the_accents() -> None:
+    assert to_spoken_it("Abitano qui.") == "Àbitano qui."
+    assert to_spoken_it("Abitano qui.", {"abitano": "abitano"}) == "abitano qui."
+
+
+def test_words_jack_may_misread_are_logged(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(spoken_text, "UNKNOWN", UnknownWords({"chat": "ciàt"}))
+    with caplog.at_level(logging.INFO, logger="claudio.tts.loanwords"):
+        to_spoken_it("Il PDF del subprime è in chat sul desktop.", {"desktop": "dèsk-top"})
+    assert spoken_text.UNKNOWN.seen == {"subprime", "chat"}
+
+
+@pytest.mark.parametrize(
+    ("text", "spoken"),
+    [
+        ("Apro Claude.", "Apro clòdd."),  # "clòd." was heard "clado" 2 times in 5
+        ("Apro Claude", "Apro clòdd"),  # the end of a piece is the end of a sentence
+        ("Vai su **Claude**!", "Vai su clòdd!"),
+        ("Chiedo a Claude, socio.", "Chiedo a clòd, socio."),  # inside the sentence
+        ("Leggo Claude.ai ora.", "Leggo clòd.ai ora."),  # a dot that ends no sentence
+        ("Inserisci la password.", "Inserisci la pàssuord."),  # after a consonant: as written
+        ("Apro Chrome.", "Apro cròm."),  # m is not a plosive
+    ],
+)
+def test_a_respelling_that_ends_the_sentence_is_closed(text: str, spoken: str) -> None:
+    from claudio.config import DEFAULT_CONFIG, load_settings
+
+    assert to_spoken_it(text, load_settings(DEFAULT_CONFIG).tts.jack_words) == spoken
+
+
+def test_closed_doubles_only_a_plosive_after_a_vowel() -> None:
+    from claudio.tts.spoken_text import closed
+
+    assert [closed(w) for w in ("clòd", "dèsk-top", "becàp", "èpp", "pàssuord", "cròm")] == [
+        "clòdd",
+        "dèsk-topp",
+        "becàpp",
+        "èpp",
+        "pàssuord",
+        "cròm",
+    ]

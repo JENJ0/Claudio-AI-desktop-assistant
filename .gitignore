@@ -21,6 +21,9 @@ logs/*
 !logs/.gitkeep
 data/*
 !data/.gitkeep
+# Jack's pronunciation data, built from Wiktionary (scripts/build_lexicon_it.py, CC BY-SA 4.0)
+!data/stress_it.tsv
+!data/respell_en.tsv
 samples/
 
 # Editors / OS
