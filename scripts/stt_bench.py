@@ -240,6 +240,8 @@ def whisper_engine(
     from claudio.__main__ import build_recovery
 
     recovery = build_recovery(settings, stt, matcher)
+    if recovery is None:  # off, on the CPU or another model: "recupero" is then the closed list
+        print("  Seconda opinione spenta per questo modello: recupero = solo lista chiusa")
 
     def transcribe(audio: np.ndarray, variant: Variant) -> str:
         stt.settings = base.model_copy(update={"beam_size": variant.beam or base.beam_size})
