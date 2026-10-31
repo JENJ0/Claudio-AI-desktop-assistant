@@ -214,10 +214,12 @@ class TtsSettings(BaseModel):
     # Jack says a reply's sentences together, up to this many characters per piece: one
     # generation keeps one voice, sentence by sentence the tone drifts (JenJo 28/10; measured
     # on long paragraphs: same-voice score 0.69 vs 0.63). Long replies start a little later.
-    # 220 chars is about 11 s of speech: the voice was trained on clips up to 12 s and loses
-    # its timbre past that (JenJo 29/10), so a longer reply goes out in several pieces.
+    # The voice was trained on clips up to 12 s and loses its timbre past that (JenJo 29/10),
+    # so a longer reply goes out in several pieces. 220 chars came out at 13-13.5 s (30/10);
+    # A/B on 8 long replies, 170 vs 220: pieces over 12 s 1 vs 3, loudness drift inside a
+    # piece 1.8 vs 2.5 dB, same Whisper WER, a third more pieces (JenJo chose 170, 31/10).
     # 0 = sentence by sentence.
-    jack_group_chars: int = Field(220, ge=0, le=2000)
+    jack_group_chars: int = Field(170, ge=0, le=2000)
     # A piece takes only the text already written by Claude: the first one leaves once it
     # has this many characters (or the reply is over), the rest of the reply follows in one
     # piece while it plays (JenJo 29/10: M1 up to 3.4 s waiting for 220 characters).

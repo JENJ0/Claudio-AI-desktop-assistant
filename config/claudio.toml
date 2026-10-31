@@ -120,7 +120,7 @@ effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (
 # jack_sentence_timeout_s = 15
 # jack_first_wait_s = 30    # Claudio listens while Jack loads: a reply meanwhile waits this long for Jack (0 = fallback voice at once)
 jack_speed = 1.0           # Jack's pace: < 1 slower; 1.0 = as generated (JenJo 28/10: no slowing)
-jack_group_chars = 220     # a reply's sentences said together (one voice), up to ~11 s (training clips <= 12 s); 0 = one by one
+jack_group_chars = 170     # a reply's sentences said together (one voice), up to ~10 s (training clips <= 12 s; 220 gave 13 s, JenJo 31/10); 0 = one by one
 jack_group_first_chars = 40  # the first piece starts as soon as Claude wrote this much; the rest of the reply follows in one piece
 jack_seed = 7              # the first seed tried for a new text; each text then keeps the seed of its good take (data/jack_takes.json; -1 = random)
 jack_lufs = -24            # level guard: every take at this loudness, peaks limited instead of clipped (JenJo 30/10: today's median; 0 = off)
