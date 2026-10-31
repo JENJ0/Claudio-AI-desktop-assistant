@@ -26,6 +26,9 @@ dependencies = [
     "pywinauto>=0.6.9; sys_platform == 'win32'",  # reads and drives windows (UI Automation, Phase 3)
     "psutil>=5.9; sys_platform == 'win32'",  # the program behind each window
     "pillow>=10.4",  # the last-resort screenshot to Haiku, shrunk to JPEG (v0.3.2)
+    # The icon in the system tray (Phase 5). Pinned: 0.19.5 (09/2023) is the latest release,
+    # no known advisories (OSV, 30/10/2026); it only adds `six`, already here via pywinauto.
+    "pystray==0.19.5; sys_platform == 'win32'",
 ]
 
 [project.scripts]

@@ -4,8 +4,10 @@
 
 .DESCRIPTION
     Registers the task "Claudio" for the current user: 30 s after login it runs
-    .venv\Scripts\pythonw.exe -m claudio (no console window) from the project folder.
-    No admin rights needed. Running it again replaces the task; -Uninstall twice is fine.
+    .venv\Scripts\pythonw.exe -m claudio.supervisor (no console window) from the project
+    folder. The supervisor starts CLAUDIO and starts it again after a crash (Task Scheduler's
+    own restart only covers a program that cannot start). No admin rights needed. Running it
+    again replaces the task; -Uninstall twice is fine.
     Same task as `python -m claudio.autostart install` (src/claudio/autostart.py).
 
 .EXAMPLE
@@ -48,7 +50,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $Project 'src\claudio') -PathType Co
     Write-Error "$Project is not the CLAUDIO project folder."
 }
 
-$action = New-ScheduledTaskAction -Execute $Python -Argument '-m claudio' -WorkingDirectory $Project
+$action = New-ScheduledTaskAction -Execute $Python -Argument '-m claudio.supervisor' `
+    -WorkingDirectory $Project
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
 $trigger.Delay = 'PT30S'  # the audio device is often not ready at the first second
 $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
@@ -60,9 +63,9 @@ $settings = New-ScheduledTaskSettingsSet `
 
 if ($DryRun) {
     Write-Host "Would register '$TaskName' for $User :"
-    Write-Host "  run     : $Python -m claudio"
+    Write-Host "  run     : $Python -m claudio.supervisor"
     Write-Host "  in      : $Project"
-    Write-Host "  when    : at login, after 30 s; restarted up to 3 times if it crashes"
+    Write-Host "  when    : at login, after 30 s; after a crash the supervisor starts it again"
     exit 0
 }
 

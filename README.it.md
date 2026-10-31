@@ -13,8 +13,9 @@ Microfono ─► openWakeWord ("Hey Claudio", "Claudio") ─► bip
 
 Stato: **v0.4.0** (30/10/2026): fasi 1-3 (comandi locali, Claude, controllo del PC) e i comandi
 vocali per la pausa, lo spegnimento ("spegniti"), la riaccensione ("accenditi") e la chiusura
-("chiuditi"); l'iterazione di affidabilità IT-0 è chiusa. Mancano ancora la memoria persistente
-(fase 4), l'icona nella system tray e gli aggiornamenti automatici (fase 5). Le wake word sono le
+("chiuditi"); l'iterazione di affidabilità IT-0 è chiusa. Da allora (IT-1): un solo CLAUDIO alla
+volta, riavviato dopo un crash, e l'icona nella system tray. Mancano ancora la memoria persistente
+(fase 4) e gli aggiornamenti automatici (fase 5). Le wake word sono le
 nostre, addestrate sulla voce del proprietario (vedi
 [scripts/wakeword/README.md](scripts/wakeword/README.md), in inglese; i file dei modelli non sono su
 Git): "Hey Claudio" e "Claudio" da solo, più debole, quindi Whisper conferma ogni sua rilevazione.
@@ -37,7 +38,7 @@ git clone https://github.com/JENJ0/Claudio-AI-desktop-assistant.git
 cd Claudio-AI-desktop-assistant
 uv sync                                   # senza GPU: uv sync --no-group gpu
 uv run python scripts/download_models.py  # Silero, openWakeWord, Kokoro, Piper, Whisper large-v3 + small (~3 GB)
-uv run claudio --check                    # tutte le righe devono essere OK
+uv run claudio --check                    # tutte le righe devono essere OK (anche il modello Whisper che userà)
 uv run python scripts/check_gpu.py        # verifica che Whisper giri davvero sulla RTX
 ```
 
@@ -294,6 +295,25 @@ powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -DryRun  
 powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1           # installa
 powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
 ```
+
+Il task esegue `python -m claudio.supervisor`, che avvia CLAUDIO e lo riavvia dopo un crash:
+dopo 5 s, 30 s e 60 s, poi si arrende se CLAUDIO è caduto 4 volte in 10 minuti (il motivo è in
+`logs/claudio.log.jsonl`, le righe del supervisore in `logs/supervisor.log.jsonl`). Lo fermano
+anche "chiuditi", il menu della system tray e un errore di configurazione. Il "riavvia in caso di
+errore" dell'Utilità di pianificazione non basta: riprova solo un programma che non parte, mai
+uno che si chiude con un errore (provato sul PC il 30/10/2026).
+
+Gira un solo CLAUDIO alla volta (un mutex di Windows con nome): un secondo `uv run claudio`,
+lanciato mentre gira quello partito all'accesso, scrive "CLAUDIO è già acceso" nel log e si chiude
+con codice 3 prima di caricare qualsiasi cosa, così due CLAUDIO non si contendono il microfono.
+
+## System tray
+
+Mentre CLAUDIO gira, la sua icona sta vicino all'orologio (`[startup] tray`, attiva di default;
+serve `pystray`, installato da `uv sync`). Il colore è lo stato: blu mentre carica i modelli, verde
+acceso, arancione in pausa, grigio spento ("spegniti"), e segue anche i comandi a voce. Il clic
+sinistro apre la chat; il menu del tasto destro lo spegne o riaccende, lo mette in pausa, apre la
+chat e chiude CLAUDIO. Senza `pystray` CLAUDIO funziona come prima, con un avviso nel log.
 
 ## Latenza
 

@@ -183,6 +183,7 @@ cloud = "clàud"
 [startup]
 parallel = true            # load Whisper, wake word, voice and Claude together (false = one after the other, slower)
 announce_ready = true      # say "Sono pronto" once everything, Jack's voice included, has loaded
+tray = true                # icon next to the clock: state by color, menu to turn off/on, pause, open the chat, close
 
 [router]
 commands_file = "config/commands.toml"
