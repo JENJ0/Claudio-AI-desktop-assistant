@@ -204,9 +204,10 @@ class Assistant:
         # text has the wake word, CLAUDIO wakes anyway. None: near misses are only logged.
         self.second_chance = second_chance
         # Milliseconds of voice in that audio (Silero): under wake_min_voice_ms Whisper is not
-        # even asked. None: every second chance goes to Whisper.
+        # even asked, and a clear detection does not wake. None: no check.
         self.voice_meter = voice_meter
         self.wake_min_voice_ms = wake_min_voice_ms
+        self._silent_wake = False  # the detection firing now was already rejected as silence
         # Saves what a second chance rejected, apart from the requests, with a cap of its own
         # (the negatives to retrain "claudio" on), and what was heard over a reply that was
         # not for CLAUDIO. None: near misses in audio_sink, as before.
@@ -397,9 +398,16 @@ class Assistant:
                     log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
                 self._on_near_miss(*detection)
             elif detection is not None:
-                self._on_wake(*detection)
-            elif (miss := self.wake.pop_near_miss()) is not None:
-                self._on_near_miss(*miss)
+                name, score = detection
+                voice = self._wake_voice(name, score)
+                if voice is None:
+                    self._on_wake(name, score)
+                elif voice >= self.wake_min_voice_ms:
+                    self._on_wake(name, score, wake_voice_ms=voice)
+            else:
+                self._silent_wake = False
+                if (miss := self.wake.pop_near_miss()) is not None:
+                    self._on_near_miss(*miss)
         elif self.state == State.LISTENING:
             self._on_listen(frame, own)
         elif self.state == State.TRANSCRIBING:
@@ -434,6 +442,21 @@ class Assistant:
             self._interaction.mark("speech_start")
         self._set_state(State.LISTENING)
         self.responder.prepare()
+
+    def _wake_voice(self, name: str, score: float) -> int | None:
+        """Milliseconds of voice around a clear detection (None: no voice meter). A clear
+        score needs a voice too, as a weak one does: 31/10 the headset's gate (-87 dBFS) woke
+        CLAUDIO twice at 0.64 and 0.77 with nobody talking. Fired for several frames in a
+        row on the same silence, it is logged and saved once (~6 ms a check)."""
+        if self.voice_meter is None:
+            return None
+        heard = self._recent.get()
+        voice = self.voice_meter(heard)
+        if voice < self.wake_min_voice_ms and not self._silent_wake:
+            self._silent_wake = True
+            log.info("Wake word su silenzio (%.2f, %d ms di voce): la ignoro", score, voice)
+            self._log_near_miss(name, score, heard, rejected="no_voice", wake_voice_ms=voice)
+        return voice
 
     def _weak(self, name: str, score: float) -> bool:
         """Whisper checks the name before CLAUDIO wakes: a low score, a noisy model, and
