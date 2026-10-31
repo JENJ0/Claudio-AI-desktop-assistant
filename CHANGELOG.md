@@ -243,6 +243,17 @@ Review (3 reviewers + a verifier): 15 findings, 14 confirmed, all fixed with a t
   graphics card is a `WorkerTimeout`, so Jack starts again once the card has room.
 - The ducking log also gives the voice's level before the gain, the one
   `barge_in_min_dbfs` is compared with.
+- From JenJo's live test of the merge (31/10, two wakes with nobody talking, both
+  "hey_claudio" on the headset's gate at -87 dBFS):
+  - a clear detection needs a voice too (`[wakeword] min_voice_ms`, Silero, ~6 ms), as a weak
+    one already did: the 0.64 in the first second after "Pronto" and the 0.77 after the tray's
+    Pausa/Accendi had 0 and 32 ms of voice before them. On the 21 wakes still in the logs
+    every real one had at least 224 ms, 6 of the 7 that heard nothing after them 0-32 ms.
+    Rejected once per burst, saved as `no_voice`;
+  - a new wake word detector is flushed with silence like after a reset (openWakeWord starts
+    from the same random-noise features as its `reset()`). Probably not the cause of the first
+    wake: on 2.5 s of the gate's audio the real models stayed under 0.05 in 50 starts either
+    way.
 
 ## [0.4.0] - 2026-10-30 - IT-0: reliability
 
