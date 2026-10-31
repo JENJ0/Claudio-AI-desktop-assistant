@@ -315,18 +315,20 @@ def test_old_logs_are_deleted(tmp_path) -> None:
     for folder in (old_session, new_session, current):
         folder.mkdir(parents=True)
         (folder / "console.log").write_text("x")
-    audio.mkdir()
+    (audio / "rejected").mkdir(parents=True)
     old_wav, new_wav = audio / "a_near_miss.wav", audio / "b_ok.wav"
-    old_wav.write_bytes(b"x")
-    new_wav.write_bytes(b"x")
+    old_rejected = audio / "rejected" / "c_no_name.wav"  # a second chance's, kept apart
+    for wav in (old_wav, new_wav, old_rejected):
+        wav.write_bytes(b"x")
     live, rotated = tmp_path / "metrics.jsonl", tmp_path / "metrics.jsonl.2"
     live.write_text("{}")
     rotated.write_text("{}")
-    for path in (old_session, current, old_wav, live, rotated):
+    for path in (old_session, current, old_wav, old_rejected, live, rotated):
         os.utime(path, (old_t, old_t))
 
-    assert purge_old_logs(tmp_path, 30, current=current, now=now) == 3
+    assert purge_old_logs(tmp_path, 30, current=current, now=now) == 4
     assert not old_session.exists() and not old_wav.exists() and not rotated.exists()
+    assert not old_rejected.exists()
     assert new_session.exists() and new_wav.exists() and current.exists() and live.exists()
     assert purge_old_logs(tmp_path / "missing", 30) == 0
 

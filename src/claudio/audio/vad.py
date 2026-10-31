@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -47,8 +48,13 @@ class SileroVad:
         return float(out[0, 0])
 
 
-ONE_BREATH_S = 0.3  # speech starting this soon after the wake word continues the same breath
 LEAD_IN_GAP_S = 0.25  # a pause this long separates the phrase from what was said before
+# A phrase begun before the wake word fired, with nothing said after the wake: it ends this
+# long after its last word. Longer than the usual pause, because after "Claudio" alone people
+# wait for the beep before the request; short enough that a request already finished when the
+# wake word fired late is answered (30/10: "Claudio, spegniti." heard by the second chance,
+# then 4 s of silence and a timeout).
+LEAD_IN_END_S = 0.9
 
 
 class EndpointEvent(enum.Enum):
@@ -72,13 +78,10 @@ class Endpointer:
 
     def reset(self, lead_in: np.ndarray | None = None, timeout_s: float | None = None) -> None:
         """Start a new phrase. `lead_in` (float32) is what was heard just before, wake word
-        included: its last stretch of speech is kept in case the phrase was said in one breath
-        ("hey claudio che ore sono") and its first words came before the wake word fired.
-        `timeout_s` replaces no_speech_timeout_s for this phrase (the conversation window)."""
+        included: a phrase said in one breath ("hey claudio che ore sono") began before the
+        wake word fired, and one said fast may be over by then. `timeout_s` replaces
+        no_speech_timeout_s for this phrase (the conversation window)."""
         self._timeout_s = self.settings.no_speech_timeout_s if timeout_s is None else timeout_s
-        self._lead_in = np.zeros(0, dtype=np.float32)
-        if lead_in is not None:
-            self._lead_in = self._speech_tail(lead_in)
         self.vad.reset()
         self._preroll.clear()
         self._pending = np.zeros(0, dtype=np.float32)
@@ -99,6 +102,12 @@ class Endpointer:
         self._wait_ms = 0  # extend(): the pause that ends the phrase until the voice comes back
         self._extended = False
         self._spoke_again = False
+        self._lead_only = False  # the phrase is all from the lead-in: nothing said since
+        self._tell_start = False
+        self._cut = False  # ended at max_utterance_s while the voice went on
+        self._quiet_run = 0  # before the phrase starts: samples of silence in a row
+        if lead_in is not None:
+            self._begin_with(lead_in)
 
     @property
     def started(self) -> bool:
@@ -108,12 +117,40 @@ class Endpointer:
     def trailing_silence_s(self) -> float:
         return self._silence_run / self.sample_rate
 
+    @property
+    def cut(self) -> bool:
+        """The phrase ended at max_utterance_s, not on a pause: the voice may go on."""
+        return self._cut
+
+    @property
+    def quiet_s(self) -> float:
+        """Before the phrase starts: how long the audio has been silence, without a break."""
+        return self._quiet_run / self.sample_rate
+
+    def leftover(self) -> np.ndarray:
+        """The samples after the last full VAD window (float32): a phrase that ended mid-frame
+        leaves them, and they belong to what comes next."""
+        return self._pending.copy()
+
+    def prepend(self, audio: np.ndarray) -> None:
+        """`audio` (float32) came just before the phrase began but was not heard: the window
+        was deaf while CLAUDIO's own sound could be in the room. It goes at its start."""
+        if not self._started or not audio.size:
+            return
+        audio = audio.astype(np.float32, copy=False)
+        self._chunks.insert(0, audio)
+        self._listened.insert(0, audio)  # the saved WAV has it too
+        self._utterance_len += len(audio)
+        self._start_len += len(audio)
+
     def process(self, frame: np.ndarray) -> EndpointEvent:
         if self._finished:
             return EndpointEvent.NONE
         samples = frame.astype(np.float32) / 32768.0 if frame.dtype == np.int16 else frame
         self._pending = np.concatenate((self._pending, samples))
         event = EndpointEvent.NONE
+        if self._tell_start:  # begun in the lead-in: told with the first frame
+            self._tell_start, event = False, EndpointEvent.START
         while len(self._pending) >= self._win and not self._finished:
             window, self._pending = self._pending[: self._win], self._pending[self._win :]
             result = self._on_window(window, self.vad(window))
@@ -135,11 +172,10 @@ class Endpointer:
         if not self._started:
             self._preroll.append(window)
             self._speech_run = self._speech_run + self._win if prob >= s.threshold else 0
+            self._quiet_run = self._quiet_run + self._win if prob < self._neg_threshold else 0
             if self._speech_run * 1000 >= s.min_speech_ms * self.sample_rate:
                 self._started = True
                 self._chunks = [self._preroll.get()]
-                if self._elapsed <= ONE_BREATH_S * self.sample_rate and self._lead_in.size:
-                    self._chunks.insert(0, self._lead_in)
                 self._utterance_len = sum(len(c) for c in self._chunks)
                 self._start_len = self._utterance_len
                 return EndpointEvent.START
@@ -152,12 +188,15 @@ class Endpointer:
         self._utterance_len += self._win
         if self._wait_ms and prob >= s.threshold:
             self._wait_ms, self._spoke_again = 0, True  # the rest of the phrase: usual pauses
+        if self._lead_only and prob >= s.threshold:
+            # The phrase goes on after the wake word: usual pauses, and the longer one counts
+            # from here (the lead-in and the wait for the beep are like the pre-roll).
+            self._lead_only = False
+            self._start_len = self._utterance_len - self._win
         self._silence_run = self._silence_run + self._win if prob < self._neg_threshold else 0
-        if (
-            self._silence_run * 1000 >= self._end_silence_ms() * self.sample_rate
-            or self._utterance_len >= s.max_utterance_s * self.sample_rate
-        ):
-            self._finished = True
+        paused = self._silence_run * 1000 >= self._end_silence_ms() * self.sample_rate
+        if paused or self._utterance_len >= s.max_utterance_s * self.sample_rate:
+            self._finished, self._cut = True, not paused
             return EndpointEvent.END
         return EndpointEvent.NONE
 
@@ -167,6 +206,8 @@ class Endpointer:
         s = self.settings
         if self._wait_ms:
             return self._wait_ms
+        if self._lead_only:
+            return max(round(LEAD_IN_END_S * 1000), s.end_silence_ms)
         spoken = self._utterance_len - self._start_len - self._silence_run
         if s.long_end_silence_ms > s.end_silence_ms and spoken >= s.long_after_s * self.sample_rate:
             return s.long_end_silence_ms
@@ -212,23 +253,46 @@ class Endpointer:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(self._chunks)
 
-    def _speech_tail(self, audio: np.ndarray) -> np.ndarray:
-        """The speech at the end of `audio`, back to the last pause; empty if it ends in a pause."""
-        win = self._win
-        n = len(audio) // win
-        audio = audio[len(audio) - n * win :]
-        self.vad.reset()
-        quiet = [self.vad(audio[i * win : (i + 1) * win]) < self._neg_threshold for i in range(n)]
+    def _begin_with(self, lead_in: np.ndarray) -> None:
+        """The phrase began before the reset when the lead-in ends with speech, or with a
+        pause shorter than LEAD_IN_END_S: its last stretch of speech (back to the pause before
+        it) and the silence after it start the utterance. If nothing more is said it ends
+        LEAD_IN_END_S after its last word, so a request finished before the wake word fired is
+        answered; "Claudio" alone then comes back as only the wake word, and the request after
+        it is listened for (the assistant's RELISTEN). The VAD keeps its state: the
+        microphone's next frame follows the lead-in."""
+        s, win = self.settings, self._win
+        n = len(lead_in) // win
+        audio = lead_in[len(lead_in) - n * win :].astype(np.float32, copy=False)
+        windows = [audio[i * win : (i + 1) * win] for i in range(n)]
+        probs = [self.vad(w) for w in windows]
+        voiced = [i for i, p in enumerate(probs) if p >= s.threshold]
+        if not voiced or (n - 1 - voiced[-1]) * win >= LEAD_IN_END_S * self.sample_rate:
+            return  # no speech, or a phrase over long before the wake word: not this one
+        quiet = next((i for i, p in enumerate(reversed(probs)) if p >= self._neg_threshold), n)
         gap = max(1, int(LEAD_IN_GAP_S * self.sample_rate) // win)
         start, run = 0, 0
-        for i in range(n - 1, -1, -1):
-            run = run + 1 if quiet[i] else 0
+        for i in range(voiced[-1], -1, -1):
+            run = run + 1 if probs[i] < self._neg_threshold else 0
             if run >= gap:
                 start = i + gap
                 break
-        if start >= n:
-            return audio[:0]
-        return audio[max(start - 1, 0) * win :]  # one window early: soft first sounds
+        start = max(start - 1, 0)  # one window early: soft first sounds
+        voiced_samples = sum(p >= s.threshold for p in probs[start:]) * win
+        if voiced_samples * 1000 < s.min_speech_ms * self.sample_rate:
+            return  # a click, not a word
+        self._started = self._lead_only = self._tell_start = True
+        self._chunks = windows[start:]
+        self._utterance_len = (n - start) * win
+        self._start_len = self._utterance_len
+        self._silence_run = quiet * win  # the pause after its last word has begun already
+        for window, prob in zip(windows[start:], probs[start:], strict=True):
+            self._max_prob = max(self._max_prob, prob)
+            energy = float(np.dot(window, window))
+            if prob >= s.threshold:  # its level counts: it is the request's voice
+                self._loudest = max(self._loudest, energy / win)
+                self._speech_samples += win
+                self._clipped += int(np.count_nonzero(np.abs(window) >= CLIP_LEVEL))
 
     def listened(self) -> np.ndarray:
         """Everything heard since reset() (for diagnostics), float32."""
@@ -262,3 +326,27 @@ class Endpointer:
 
 def dbfs(mean_square: float) -> float:
     return round(10 * float(np.log10(mean_square)), 1) if mean_square > 0 else -120.0
+
+
+class VoiceMeter:
+    """How much voice a stretch of audio holds, with a VAD of its own: the wake word's second
+    chance asks it before Whisper, so a click, a key or the headset's gate opening never costs
+    a transcription nor wakes CLAUDIO (30/10: "claudio" fired on sounds with Silero at 0.06)."""
+
+    def __init__(self, vad: SpeechProbability, threshold: float, sample_rate: int = 16000):
+        self.vad = vad
+        self.threshold = threshold
+        self.sample_rate = sample_rate
+        self._lock = threading.Lock()  # one VAD state: a second chance and a window may ask
+
+    def __call__(self, audio: np.ndarray) -> int:
+        """Milliseconds of `audio` (float32) in windows that sound like speech."""
+        win = self.vad.window_size
+        audio = audio.astype(np.float32, copy=False)
+        with self._lock:
+            self.vad.reset()
+            voiced = sum(
+                self.vad(audio[i : i + win]) >= self.threshold
+                for i in range(0, len(audio) - win + 1, win)
+            )
+        return voiced * win * 1000 // self.sample_rate

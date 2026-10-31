@@ -141,10 +141,14 @@ class LocalResponder:
         """A local command matches `text` (the assistant retries in Italian when not), or it
         is a memory request: no closed list or guess may turn "dimentica Anna" into another
         command, and it is a request also in the conversation window. memory=False: commands
-        only (words said over a reply need the name to be a memory request)."""
+        only (words said over a reply need the name to be a memory request). While CLAUDIO
+        is off only "accenditi" counts: no other command nor memory request is answered."""
+        match = self.matcher.match(text, language)
+        if self.actions.system.off:
+            return _turns_on(match)
         if memory and self.memory is not None and self.memory.understands(text):
             return True
-        return self.matcher.match(text, language) is not None
+        return match is not None
 
     def is_stop(self, text: str) -> bool:
         """`text` is only "basta" / "stop" (in any language): said while CLAUDIO speaks, it

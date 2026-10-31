@@ -63,6 +63,11 @@ EN: dict[str, str] = {
     "Seconda possibilità: Whisper ha sentito %r: niente da fare": (
         "Second chance: Whisper heard %r: nothing to do"
     ),
+    "Seconda possibilità: nessuna voce (%d ms), niente da fare": (
+        "Second chance: no voice (%d ms), nothing to do"
+    ),
+    "Da spento, lista chiusa: %r -> %r": "Off, closed list: %r -> %r",
+    "Lista chiusa da spento non riuscita": "The closed list while off failed",
     "Spegnimento richiesto a voce: chiudo": "Shutdown asked by voice: closing",
     "Impossibile salvare l'audio della wake word mancata": (
         "Could not save the audio of the missed wake word"
@@ -271,9 +276,15 @@ EN: dict[str, str] = {
     "Sentito mentre parlo, senza il mio nome: lo ignoro: %r": (
         "Heard while speaking, without my name: ignored: %r"
     ),
-    "Voce troppo debole mentre parlo (%.0f dBFS): ignorata": (
-        "Voice too quiet while speaking (%.0f dBFS): ignored"
+    "Voce troppo debole mentre parlo (%.0f dBFS, %.0f prima del guadagno): ignorata": (
+        "Voice too quiet while speaking (%.0f dBFS, %.0f before the gain): ignored"
     ),
+    "La frase era cominciata mentre non ascoltavo: tengo anche quell'audio": (
+        "The phrase began while I was not listening: keeping that audio too"
+    ),
+    "Misura della voce sorda non riuscita": "Measuring the voice heard while deaf failed",
+    "Impossibile salvare l'audio scartato": "Could not save the dropped audio",
+    "Salvato in %s (%.0f dBFS)": "Saved in %s (%.0f dBFS)",
     # cost
     "Nessun prezzo per il modello '{model}' in config/pricing.toml": (
         "No price for model '{model}' in config/pricing.toml"
@@ -324,6 +335,9 @@ EN: dict[str, str] = {
     "Wake word sotto soglia: %s %.2f (soglia %.2f)": (
         "Wake word below threshold: %s %.2f (threshold %.2f)"
     ),
+    "Wake word, soglie %s: %s": "Wake word, %s thresholds: %s",
+    "da spento": "off",
+    "normali": "normal",
     "Verifica della wake word non riuscita": "Wake word check failed",
     "Nome sentito prima della richiesta: %r": "Name heard before the request: %r",
     "Conversazione non salvata": "Conversation not saved",

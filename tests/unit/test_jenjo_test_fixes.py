@@ -67,12 +67,18 @@ async def test_weak_wake_without_the_name_stays_silent(
 async def test_weak_wake_with_the_name_or_a_command_wakes(
     fake_vad, vad_settings, make_frames, tmp_path, heard: str
 ) -> None:
-    """Said fast the name is often lost ("Apricrome" at 0.39): a command is enough."""
+    """Said fast the name is often lost ("Apricrome" at 0.39): a command is enough. The
+    command was already said, before the model fired: what the second chance heard is the
+    request, answered without waiting for another phrase."""
     assistant, speaker = weak(fake_vad, vad_settings, tmp_path, heard)
     await run_frames(assistant, make_frames("silence", 2400))
-    assert speaker.beeps == ["wake"] and assistant.state is State.LISTENING
-    assert assistant._interaction is not None
-    assert assistant._interaction.info["second_chance"] == heard
+    assert speaker.beeps[0] == "wake"
+    if heard == "Hey Claudio.":  # only the name: the request comes next
+        assert assistant.state is State.LISTENING and assistant._interaction is not None
+        assert assistant._interaction.info["second_chance"] == heard
+    else:
+        assert speaker.spoken == ["Apro Chrome."]
+        assert assistant.history[-1]["second_chance"] == heard
 
 
 async def test_a_strong_wake_needs_no_check(fake_vad, vad_settings, make_frames, tmp_path) -> None:

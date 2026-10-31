@@ -251,10 +251,15 @@ class WhisperTranscriber:
     def transcribe(
         self, audio: np.ndarray, *, quick: bool = False, language: str | None = None
     ) -> str:
-        """`quick`: the wake word's second chance. A short look at 2.5 s of audio, without the
-        prompt (it must not put "Claudio" in noise) and without touching the language kept for
-        the next unsure request. `language`: no detection, transcribe in that one (the retry
-        of a request not understood in the language Whisper guessed)."""
+        """`quick`: the wake word's second chance, or a phrase said over the reply. A short
+        look (QUICK_NEW_TOKENS) that leaves alone what the next request is judged on (its
+        segments, the language kept for an unsure one). Its prompt is the shipped sentences,
+        without the names on the PC (noise must not become a folder name): a lone "Claudio"
+        with its "C" cut by the headset's gate came out "Grazie." without a prompt and
+        "Claudio" with it (30/10: 11 of 11 against 6 of 11, no name in 90 phrases without
+        one); the voice meter keeps silence and clicks from Whisper. `language`: no
+        detection, transcribe in that one (the retry of a request not understood in the
+        language Whisper guessed)."""
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             if not quick:
                 self.last_segments = []
@@ -264,7 +269,7 @@ class WhisperTranscriber:
             language = self.detect_language(audio)
         else:
             self.language, self.language_confidence = language, 1.0
-        prompt = "" if quick else self.prompt(language)
+        prompt = self.settings.prompt(language) if quick else self.prompt(language)
         text, kept = self._decode(audio, language, prompt, quick)
         if text and prompt and is_prompt_echo(text, prompt):
             # Whisper repeats its prompt on unclear audio, but "alza il volume" is also a
