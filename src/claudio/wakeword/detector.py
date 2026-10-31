@@ -17,6 +17,9 @@ log = logging.getLogger(__name__)
 
 FEATURE_MODELS = ("melspectrogram.onnx", "embedding_model.onnx")
 NEAR_MISS_FLOOR = 0.15  # default for WakeWordSettings.near_miss_floor
+# The models read the features of the last 16 frames, each made from ~0.76 s of audio: 25
+# frames of silence (2 s) leave nothing of what came before in what they read.
+FLUSH_FRAMES = 25
 
 
 def find_wakeword_model(model: str, wakeword_dir: Path) -> Path:
@@ -60,7 +63,7 @@ class OpenWakeWordDetector:
         # openWakeWord names each model after its file stem (e.g. "hey_jarvis_v0.1").
         self.thresholds = {p.stem: m.threshold for p, m in zip(paths, settings.models, strict=True)}
         # While CLAUDIO is off ("spegniti") the assistant sets `strict`: higher thresholds.
-        self.strict = False
+        self._strict = False
         self.strict_thresholds = raised(self.thresholds, settings.off_threshold_boost)
         self.names = [m.name.replace("_", " ") for m in settings.models]
         self._silence = np.zeros(frame_size, dtype=np.int16)
@@ -74,11 +77,26 @@ class OpenWakeWordDetector:
             "Wake word: %s", ", ".join(f"{k} (soglia {v:.2f})" for k, v in self.thresholds.items())
         )
 
+    @property
+    def strict(self) -> bool:
+        return self._strict
+
+    @strict.setter
+    def strict(self, value: bool) -> None:
+        if value != self._strict:
+            log.info(
+                "Wake word, soglie %s: %s",
+                tr("da spento") if value else tr("normali"),
+                ", ".join(f"{k} {v:.2f}" for k, v in self._active(value).items()),
+            )
+        self._strict = value
+
+    def _active(self, strict: bool) -> dict[str, float]:
+        return self.strict_thresholds if strict else self.thresholds
+
     def process(self, frame: np.ndarray) -> tuple[str, float] | None:
         scores = self._model.predict(frame)
-        detection = best_detection(
-            scores, self.strict_thresholds if self.strict else self.thresholds
-        )
+        detection = best_detection(scores, self._active(self._strict))
         self._near_miss.update(scores, detection is not None)
         return detection
 
@@ -86,16 +104,19 @@ class OpenWakeWordDetector:
         miss = self._near_miss.pop()
         if miss is not None:
             name, score = miss
-            log.info(
-                "Wake word sotto soglia: %s %.2f (soglia %.2f)", name, score, self.thresholds[name]
-            )
+            threshold = self._active(self._strict)[name]  # off: the higher one (30/10)
+            log.info("Wake word sotto soglia: %s %.2f (soglia %.2f)", name, score, threshold)
         return miss
 
     def reset(self) -> None:
-        """Forget the last ~2 s of audio so the same wake word cannot fire twice."""
-        for _ in range(25):
-            self._model.predict(self._silence)
+        """Forget the last ~2 s of audio so the same wake word cannot fire twice. The model's
+        own reset() fills what it reads with the features of 4 s of random noise (openWakeWord
+        0.6.0, AudioFeatures.reset): ~0.5 s later that noise woke CLAUDIO on silence (30/10:
+        4 false wakes with prewake_ms 480, 19 of 100 quiet stretches). The silence goes in
+        after it, so the models read only silence when the microphone takes over."""
         self._model.reset()
+        for _ in range(FLUSH_FRAMES):
+            self._model.predict(self._silence)
         self._near_miss.reset()
 
 

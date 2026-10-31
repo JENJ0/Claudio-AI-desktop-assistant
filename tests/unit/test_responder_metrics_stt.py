@@ -387,8 +387,9 @@ def test_only_real_requests_set_the_fallback_language() -> None:
 
 
 def test_quick_mode_is_a_short_look_that_remembers_nothing() -> None:
-    """The wake word's second chance: no prompt (it must not put "Claudio" in noise), few
-    tokens, and the language kept for an unsure request stays that of the last real one."""
+    """The wake word's second chance: the shipped prompt (30/10: a lone "Claudio" came out
+    "Grazie." without it), few tokens, and the language kept for an unsure request stays
+    that of the last real one."""
     import numpy as np
 
     from claudio.config import SttSettings
@@ -399,7 +400,7 @@ def test_quick_mode_is_a_short_look_that_remembers_nothing() -> None:
     stt._model = FakeMultilingualWhisper([("<|en|>", 0.9)], text=" Open Chrome.")
     assert stt.transcribe(speech, quick=True) == "Open Chrome."
     kwargs = stt._model.kwargs
-    assert kwargs["initial_prompt"] is None and kwargs["max_new_tokens"] == 24
+    assert kwargs["initial_prompt"] == "x" and kwargs["max_new_tokens"] == 24
     assert stt.last_language == "it"  # a real request would have made it English
     stt.transcribe(speech)
     assert stt._model.kwargs["initial_prompt"] == "x" and stt.last_language == "en"
@@ -438,7 +439,7 @@ def test_stt_languages_and_prompts() -> None:
 
 def test_the_names_on_the_pc_come_before_the_sentences() -> None:
     """26/10: "Tesi" heard as "desi": the folder names go in the prompt, never in the quick
-    look of the wake word (noise must not become a folder name)."""
+    look of the wake word (noise must not become a folder name), which has the sentences."""
     import numpy as np
 
     from claudio.config import SttSettings
@@ -452,6 +453,6 @@ def test_the_names_on_the_pc_come_before_the_sentences() -> None:
     prompt = stt._model.kwargs["initial_prompt"]
     assert prompt == "Cartelle: Tesi, PSS. Ehi Claudio, che ore sono?"
     stt.transcribe(speech, quick=True)
-    assert stt._model.kwargs["initial_prompt"] is None
+    assert stt._model.kwargs["initial_prompt"] == "Ehi Claudio, che ore sono?"
     stt.vocabulary = None
     assert stt.prompt("it") == "Ehi Claudio, che ore sono?"

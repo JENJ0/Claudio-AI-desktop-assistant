@@ -1,6 +1,6 @@
 import numpy as np
 
-from claudio.audio.vad import Endpointer, EndpointEvent
+from claudio.audio.vad import LEAD_IN_END_S, Endpointer, EndpointEvent, VoiceMeter
 from claudio.config import VadSettings
 from tests.conftest import frames as make
 
@@ -102,15 +102,52 @@ def test_one_breath_phrase_keeps_the_speech_before_the_wake_word(
     assert 0.4 <= added <= 0.5  # the 400 ms of speech plus one window of margin
 
 
-def test_lead_in_is_ignored_after_a_pause(fake_vad, vad_settings, make_frames) -> None:
+def test_the_name_and_the_request_after_the_beep_are_one_phrase(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    """ "Claudio" [the beep] "apri Chrome": the name is in the phrase Whisper gets."""
     ep = Endpointer(fake_vad, vad_settings)
     rest = make_frames("speech", 600) + make_frames("silence", 600)
     alone = phrase_len(ep, None, rest)
-    # the wake word fired when the speech before it had already ended
-    assert phrase_len(ep, lead_in(("speech", 400), ("silence", 400)), rest) == alone
-    # the request starts well after the wake word: a new breath
+    # the wake word fired a little after the name: 400 ms of the pause are in the lead-in
+    added = phrase_len(ep, lead_in(("speech", 400), ("silence", 400)), rest) - alone
+    assert 0.8 <= added / 16000 <= 0.85  # the name, its pause and one window of margin
+    # the request starts 480 ms after the wake word: still the same phrase
     late = make_frames("silence", 480) + rest
-    assert phrase_len(ep, lead_in(("speech", 800)), late) == phrase_len(ep, None, late)
+    added = phrase_len(ep, lead_in(("speech", 800)), late) - phrase_len(ep, None, late)
+    assert 0.8 <= added / 16000 <= 1.3  # the name; the pause was already there
+
+
+def test_a_request_over_when_the_wake_word_fired_is_heard(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    """30/10 14:06:40: "Claudio, spegniti." said fast, the second chance woke CLAUDIO 350 ms
+    after it, then 4 s of silence and a timeout. Now it ends LEAD_IN_END_S after its last
+    word, without waiting for more."""
+    ep = Endpointer(fake_vad, vad_settings)
+    ep.reset(lead_in=lead_in(("silence", 400), ("speech", 800), ("silence", 320)))
+    events = feed(ep, make_frames("silence", 1200))
+    assert events == [EndpointEvent.START, EndpointEvent.END]
+    heard = len(ep.audio()) / 16000
+    assert 0.8 <= heard <= 1.0  # the phrase and ~100 ms of its silence
+    assert ep.stats()["voice_ms"] >= 768  # its level counts: it is the request's voice
+    assert ep.trailing_silence_s >= LEAD_IN_END_S
+
+
+def test_old_speech_or_a_click_before_the_wake_word_is_not_the_phrase(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    late = make_frames("silence", 480) + make_frames("speech", 600) + make_frames("silence", 600)
+    alone = phrase_len(ep, None, late)
+    # speech over long before the detection: someone else, not this request
+    old = lead_in(("speech", 400), ("silence", int(LEAD_IN_END_S * 1000) + 80))
+    assert phrase_len(ep, old, late) == alone
+    click = np.concatenate((np.zeros(16000), np.full(512, 0.5), np.zeros(4096))).astype(np.float32)
+    assert phrase_len(ep, click, late) == alone
+    # nothing said at all after it: the usual timeout
+    ep.reset(lead_in=old)
+    assert feed(ep, make_frames("silence", 3200)) == [EndpointEvent.TIMEOUT]
 
 
 def test_lead_in_without_pauses_is_kept_whole(fake_vad, vad_settings, make_frames) -> None:
@@ -119,6 +156,19 @@ def test_lead_in_without_pauses_is_kept_whole(fake_vad, vad_settings, make_frame
     alone = phrase_len(ep, None, rest)
     lead = lead_in(("speech", 1440))
     assert len(lead) - 512 < phrase_len(ep, lead, rest) - alone <= len(lead)
+
+
+def test_voice_meter_counts_the_windows_of_speech(fake_vad, make_frames) -> None:
+    meter = VoiceMeter(fake_vad, threshold=0.5)
+    audio = np.concatenate(
+        make_frames("silence", 1200) + make_frames("speech", 320) + make_frames("silence", 880)
+    ).astype(np.float32)
+    assert abs(meter(audio / 32768) - 320) <= 32  # one VAD window of margin
+    assert meter(np.zeros(40000, dtype=np.float32)) == 0  # silence: Whisper is not asked
+    click = np.zeros(40000, dtype=np.float32)
+    click[20000:20100] = 0.9
+    assert meter(click) <= 64  # one or two windows: under the 96 ms a word needs
+    assert fake_vad.resets >= 3  # each stretch is judged on its own
 
 
 def test_level_counts_speech_only_and_spots_clipping(fake_vad, vad_settings, make_frames) -> None:
@@ -157,3 +207,23 @@ def test_extend_ends_after_the_wait_when_nothing_more_is_said(
     assert feed(ep, make_frames("silence", 880)) == []
     assert feed(ep, make_frames("silence", 240)) == [EndpointEvent.END]
     assert not ep.spoke_again
+
+
+def test_what_follows_the_last_window_is_kept_for_the_next_phrase(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    """80 ms frames are not whole 32 ms windows: the 256 samples after the last window of a
+    phrase are the start of what follows (review 31/10: a hole at every cut)."""
+    ep = Endpointer(fake_vad, vad_settings)
+    ep.process(make_frames("speech", 80)[0])
+    assert len(ep.leftover()) == 1280 % 512
+    ep.reset()
+    assert len(ep.leftover()) == 0
+
+
+def test_the_quiet_before_a_phrase_counts_silence_only(fake_vad, vad_settings, make_frames) -> None:
+    ep = Endpointer(fake_vad, vad_settings)
+    feed(ep, make_frames("silence", 400))
+    assert abs(ep.quiet_s - 0.4) <= 0.04
+    ep.process(make_frames("speech", 80)[0][:512])  # a click: too short to start a phrase,
+    assert not ep.started and ep.quiet_s == 0  # but the silence is over

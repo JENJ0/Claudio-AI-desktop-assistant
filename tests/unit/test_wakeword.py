@@ -1,9 +1,18 @@
+from collections import deque
 from pathlib import Path
+from typing import ClassVar
 
+import numpy as np
 import pytest
 
 from claudio.config import WakeWordModel, WakeWordSettings
-from claudio.wakeword.detector import NearMissTracker, best_detection, find_wakeword_model
+from claudio.wakeword.detector import (
+    FEATURE_MODELS,
+    NearMissTracker,
+    OpenWakeWordDetector,
+    best_detection,
+    find_wakeword_model,
+)
 
 THRESHOLDS = {"hey_claudio": 0.5, "claudio": 0.7}
 
@@ -75,3 +84,86 @@ def test_near_miss_reset_drops_a_pending_burst() -> None:
     feed_scores(tracker, [0.3])
     tracker.reset()
     assert feed_scores(tracker, [0.0]) == []
+
+
+class NoisyResetModel:
+    """openWakeWord's Model as its reset() behaves: what the models read is filled with the
+    features of random noise, which scores high until 16 new frames have pushed it out."""
+
+    WINDOW = 16
+
+    def __init__(self, **_kwargs: object) -> None:
+        self.window: deque[str] = deque(maxlen=self.WINDOW)
+
+    def reset(self) -> None:
+        self.window.extend(["noise"] * self.WINDOW)
+
+    def predict(self, frame: np.ndarray) -> dict[str, float]:
+        self.window.append("audio")
+        return {"claudio": 0.9 if "noise" in self.window else 0.0}
+
+
+def fake_detector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: type
+) -> OpenWakeWordDetector:
+    for name in ("claudio.onnx", "hey_claudio.onnx", *FEATURE_MODELS):
+        (tmp_path / name).write_bytes(b"x")
+    monkeypatch.setattr("openwakeword.model.Model", model)
+    settings = WakeWordSettings(
+        models=[
+            WakeWordModel(name="hey_claudio", threshold=0.3),
+            WakeWordModel(name="claudio", threshold=0.25, confirm=True),
+        ]
+    )
+    return OpenWakeWordDetector(settings, tmp_path)
+
+
+def test_reset_leaves_no_noise_for_the_microphone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """30/10: a wake ~0.5 s after every beep, on silence: the noise of the model's own reset
+    was still in what it read when the microphone's frames arrived."""
+    detector = fake_detector(tmp_path, monkeypatch, NoisyResetModel)
+    detector.reset()
+    quiet = np.zeros(1280, dtype=np.int16)
+    assert all(detector.process(quiet) is None for _ in range(NoisyResetModel.WINDOW + 4))
+
+
+class ScriptedModel:
+    """Scores "hey_claudio" from a list, one per frame."""
+
+    scores: ClassVar[list[float]] = []
+
+    def __init__(self, **_kwargs: object) -> None:
+        self.frames = 0
+
+    def reset(self) -> None:
+        pass
+
+    def predict(self, frame: np.ndarray) -> dict[str, float]:
+        self.frames += 1
+        score = self.scores[self.frames - 1] if self.frames <= len(self.scores) else 0.0
+        return {"hey_claudio": score, "claudio": 0.0}
+
+
+def test_the_log_says_which_thresholds_are_in_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """30/10: off, a 0.31 was logged "under the threshold 0.30" while the threshold in use
+    was 0.40."""
+    monkeypatch.setattr(ScriptedModel, "scores", [0.0, 0.31, 0.0])
+    detector = fake_detector(tmp_path, monkeypatch, ScriptedModel)
+    caplog.clear()  # not the thresholds it starts with
+    with caplog.at_level("INFO"):
+        detector.strict = True
+        detector.strict = True  # once per change
+        for _ in range(3):
+            assert detector.process(np.zeros(1280, dtype=np.int16)) is None
+        assert detector.pop_near_miss() == ("hey_claudio", 0.31)
+        detector.strict = False
+    lines = [r.getMessage() for r in caplog.records]
+    assert lines == [
+        "Wake word, soglie da spento: hey_claudio 0.40, claudio 0.35",
+        "Wake word sotto soglia: hey_claudio 0.31 (soglia 0.40)",
+        "Wake word, soglie normali: hey_claudio 0.30, claudio 0.25",
+    ]

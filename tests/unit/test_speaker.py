@@ -76,7 +76,9 @@ async def test_beep_uses_player() -> None:
 
 def test_earcons_and_resample() -> None:
     tones = make_earcons(22050, 0.25)
-    assert set(tones) == {"wake", "cancel", "error"}
+    assert set(tones) == {"wake", "cancel", "error", "tick"}
+    assert len(tones["tick"]) < len(tones["wake"]) / 2  # the tick while off: short and soft
+    assert np.abs(tones["tick"]).max() < np.abs(tones["wake"]).max() / 2
     assert all(t.dtype == np.int16 and np.abs(t).max() <= 0.25 * 32767 + 1 for t in tones.values())
     audio = np.arange(1000, dtype=np.int16)
     assert len(resample(audio, 16000, 22050)) == 1378

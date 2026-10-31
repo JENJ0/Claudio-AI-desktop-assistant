@@ -96,6 +96,10 @@ class WakeWordSettings(BaseModel):
     # While off ("spegniti") every threshold is raised by this much: a wake word on the TV or
     # in a conversation should not make CLAUDIO transcribe what follows. 0 = same threshold.
     off_threshold_boost: float = Field(0.1, ge=0, lt=0.5)
+    # A second chance needs this much voice (Silero, in the audio it hears) before Whisper
+    # listens: a click, a key or the headset's gate opening is rejected for free. 0 = off.
+    # 30/10: every name Whisper heard had 128 ms or more, the misfires on silence 0.
+    min_voice_ms: int = Field(96, ge=0, le=2500)
 
 
 class VadSettings(BaseModel):
@@ -301,12 +305,17 @@ class ConversationSettings(BaseModel):
     window_s: float = Field(6.0, ge=0, le=30)
     # Listen while speaking: "basta" / "stop" cuts the reply short (best with headphones).
     barge_in: bool = True
-    barge_in_max_s: float = Field(1.2, gt=0, le=8)  # longer speech is checked in slices this long
+    # Speech over the reply is checked for "basta" every this many seconds of voice; the
+    # whole phrase is judged when it ends.
+    barge_in_max_s: float = Field(1.2, gt=0, le=8)
     # What a voice heard while speaking does: "duck" lowers the reply at once and stops it when
     # Whisper hears real words (back to full volume if it was noise); "stop" stops at once;
     # "confirm" keeps speaking until Whisper hears words. Then what was said is the next request.
     barge_in_mode: Literal["duck", "stop", "confirm"] = "duck"
-    barge_in_min_dbfs: float = Field(-30.0, le=0)  # quieter voices (the TV, the echo) are ignored
+    # Quieter voices (the TV, the echo) are ignored. Measured before the microphone's gain,
+    # which AutoGain moves (30/10: 4.8-12.5 dB in 8 minutes): JenJo over the reply -22..-31,
+    # the reply's echo -47 at most. -42 is the old -30 at the usual +12 dB.
+    barge_in_min_dbfs: float = Field(-42.0, le=0)
     barge_in_vad: float = Field(0.6, gt=0, lt=1)  # speech probability needed (stricter than [vad])
     barge_in_min_speech_ms: int = Field(300, ge=0)  # voice this long before anything happens
     duck_volume: float = Field(0.3, ge=0, le=1)  # the reply's volume while Whisper checks
@@ -536,6 +545,10 @@ class LoggingSettings(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_audio: bool = True  # WAV of what CLAUDIO heard, in logs/audio/ (local only)
     keep_audio: int = Field(50, ge=1)
+    # With save_audio: what the wake word's second chance rejected and what was heard over a
+    # reply that was not for CLAUDIO, apart in logs/audio/rejected/, at most this many WAVs
+    # (~80 KB each). They tune and retrain the wake word. 0 = none.
+    keep_rejected: int = Field(200, ge=0)
     # Every piece Jack says, as a WAV in the session folder (jack/), with its pitch in the
     # log: the robotic or too high takes are flagged there (local only).
     save_voice: bool = True
