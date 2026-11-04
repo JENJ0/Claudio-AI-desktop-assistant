@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from claudio.metrics import Interaction, MetricsWriter
@@ -182,6 +183,32 @@ def test_a_row_that_cannot_be_rendered_does_not_stop_the_metrics_write(
     row = writer.write(inter)  # format_row cannot read a call that is not a dict
     assert row["outcome"] == "ok"
     assert (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").count("\n") == 1
+
+
+def circular() -> list[object]:
+    loop: list[object] = []
+    loop.append(loop)
+    return loop
+
+
+@pytest.mark.parametrize(
+    "value",
+    [np.float32(-20.5), {"a"}, Path("x"), circular()],
+    ids=["numpy", "set", "path", "circular"],
+)
+def test_a_row_json_cannot_encode_does_not_stop_the_request(
+    tmp_path: Path, session: Path, value: object
+) -> None:
+    """np.float32, a set, a Path: TypeError; a circular list: ValueError. Either wedged Claudio."""
+    writer = MetricsWriter(tmp_path / "metrics.jsonl", ConversationLog(session))
+    inter = Interaction(
+        info={"wake_word": "hey_claudio", "outcome": "ok", "text": "che ore sono", "odd": value}
+    )
+    row = writer.write(inter)
+    assert row["outcome"] == "ok"
+    assert "**JenJo:** che ore sono" in (session / CONVERSATION_FILE).read_text(encoding="utf-8")
+    written = tmp_path / "metrics.jsonl"
+    assert not written.exists() or written.read_text(encoding="utf-8") == ""  # no half a line
 
 
 def test_console_log_rotates(session: Path) -> None:
