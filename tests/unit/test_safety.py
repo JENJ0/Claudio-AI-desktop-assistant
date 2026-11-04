@@ -17,6 +17,44 @@ from claudio.safety.confirmation import Answer, parse_answer, question
 from tests.unit.test_actions import Recorder
 from tests.unit.test_app import AudioClock, FakeSpeaker, FakeStt, FakeWake
 
+# A yes word, and words that say something else: each of these must leave the action alone.
+NOT_A_YES = [
+    "si chiama Anna",
+    "sì ma dopo",
+    "sì ma poi è andato via",
+    "si mica tanto",
+    "certo neanche per sogno",
+    "si nemmeno per idea",
+    "yes but not now",
+    "sure not now",
+    "yes I won't",
+    "si forse",
+    "certo ci penso",
+    "si vede",
+    "si fa tardi",
+    "yes open chrome",
+    "si apri chrome",
+    "ok later",
+    "ok ci penso",
+    "ok not now",
+    "ok apri chrome",
+    "ok che ore sono",
+    "certo che non voglio dimenticarlo",
+    "va bene ma non adesso",
+    "si va",
+    "ok senti",
+    "ok scusa",
+    "ok so now",
+    "you can do it",
+    "i will do it",
+    "can you do it",
+    "sì, Claudio",  # the name after the yes word is not a wake phrase here
+    "ok Claudio",
+    "go ahead and open chrome",
+    "do it later",
+    "per favore apri chrome",
+]
+
 
 @pytest.mark.parametrize(
     "text",
@@ -39,6 +77,56 @@ def test_yes(text: str) -> None:
 
 def test_go_alone_is_not_a_yes() -> None:
     assert parse_answer("go away") is not Answer.YES
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sì",
+        "sì sì",
+        "sì, grazie",
+        "sì, grazie mille",
+        "sì, grazie mille davvero",
+        "sì, va bene",
+        "sì, va bene, grazie mille",
+        "sì, per favore",
+        "sì, per favore, grazie mille",
+        "sì, procedi pure per favore",
+        "va bene",
+        "fai pure",
+        "certo",
+        "certo, grazie",
+        "ok",
+        "ok grazie",
+        "sì fallo",
+        "yes",
+        "yes please",
+        "yes thank you very much",
+        "go ahead",
+        "do it",
+        "sure",
+        "sure thanks",
+        "ma sì",
+        "ma certo",
+        "dai sì",
+        "allora sì",
+        "ehm sì",
+        "sì sì sì",
+        "sì, grazie mille, Clodio",  # as Whisper may spell it
+    ],
+)
+def test_a_yes_may_hold_only_yes_words_courtesy_fillers_and_the_name(text: str) -> None:
+    assert parse_answer(text) is Answer.YES
+
+
+@pytest.mark.parametrize("text", NOT_A_YES)
+def test_a_yes_word_among_other_words_is_not_a_yes(text: str) -> None:
+    assert parse_answer(text) is not Answer.YES
+
+
+@pytest.mark.parametrize("text", ["grazie mille", "per favore", "allora", "scusa"])
+def test_courtesy_without_a_yes_word_is_not_a_yes(text: str) -> None:
+    assert parse_answer(text) is Answer.UNCLEAR
 
 
 @pytest.mark.parametrize(
@@ -134,6 +222,17 @@ async def test_level_2_refused_or_unclear_does_nothing(matcher: CommandMatcher) 
     assert await say(r, "apri chrome") == "Non ho capito: non lo faccio."
     assert rec.combos == [] and rec.ran == []  # Chrome was not opened either
     assert r.last_route["answer"] == "unclear"
+
+
+@pytest.mark.parametrize("said", NOT_A_YES)
+async def test_a_phrase_that_is_not_only_a_yes_does_not_run_the_command(
+    matcher: CommandMatcher, said: str
+) -> None:
+    rec = Recorder()
+    r = responder(matcher, rec)
+    await say(r, "chiudi la finestra")
+    await say(r, said)
+    assert rec.combos == [] and not r.awaiting
 
 
 async def test_the_answer_is_in_the_language_of_the_question(matcher: CommandMatcher) -> None:

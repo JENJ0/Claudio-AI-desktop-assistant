@@ -30,6 +30,7 @@ from tests.unit.test_claude_brain import (
     settled,
 )
 from tests.unit.test_cost import PRICES, tracker
+from tests.unit.test_safety import NOT_A_YES
 
 
 class FakeDesktop:
@@ -509,6 +510,20 @@ async def test_anything_but_yes_cancels(
     await ask(b, "chiudi chrome")
     assert (await ask(b, answer)).startswith(reply)
     assert not [d for d in desk.done if d[0] == "close"] and len(client.calls) == 1
+
+
+@pytest.mark.parametrize("said", NOT_A_YES)
+async def test_a_phrase_that_is_not_only_a_yes_does_not_run_the_tools(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, said: str
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use("close_window", window="chrome")]),
+        (["Ok."], "end_turn", []),  # a long phrase is a new request
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "chiudi chrome")
+    await ask(b, said)
+    assert not [d for d in desk.done if d[0] == "close"] and not b.awaiting
 
 
 async def test_level_1_calls_wait_with_the_level_2_one(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -37,6 +37,7 @@ from tests.unit.test_actions import Recorder
 from tests.unit.test_conversation import build as build_conversation
 from tests.unit.test_conversation import talk
 from tests.unit.test_cost import PRICES, tracker
+from tests.unit.test_safety import NOT_A_YES
 
 
 @pytest.fixture(scope="module")
@@ -424,9 +425,37 @@ async def test_unsure_guess_asks_and_a_yes_needs_no_second_question(
 async def test_a_yes_with_more_words_after_it_answers_the_guess(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, None)
     r.propose("chiudi la finestra", "it")
-    # Any long phrase starting with a yes lands here too: a known bug, not pinned by this yes.
-    assert await say(r, "sì, grazie mille davvero") == "Fatto."  # too long for a plain yes
+    assert await say(r, "sì, grazie mille davvero") == "Fatto."
     assert rec.combos == [(VK_MENU, VK_F4)]
+
+
+@pytest.mark.parametrize("guessed", ["spegniti", "chiudi la finestra"])
+@pytest.mark.parametrize("said", NOT_A_YES)
+async def test_a_phrase_that_is_not_only_a_yes_does_not_answer_the_guess(
+    matcher: CommandMatcher, guessed: str, said: str
+) -> None:
+    r, _, rec = responder(matcher, None)
+    r.propose(guessed, "it")
+    await say(r, said)
+    assert not r.actions.system.off and (VK_MENU, VK_F4) not in rec.combos
+
+
+@pytest.mark.parametrize("said", ["si chiama Anna", "sì ma dopo", "ok ci penso", "certo ci penso"])
+async def test_a_phrase_that_is_not_only_a_yes_is_a_new_request(
+    matcher: CommandMatcher, said: str
+) -> None:
+    """The same path as any request: Claude hears it, word for word."""
+    asked: list[str] = []
+
+    async def claude(text: str, language: str) -> AsyncIterator[str]:
+        asked.append(text)
+        yield "Ok."
+
+    r = LocalResponder(matcher, ActionRunner(Recorder().ctx()), fallback=claude)
+    r.propose("spegniti", "it")
+    assert await say(r, said) == "Ok."
+    assert not r.actions.system.off
+    assert asked == [said] and r.last_route["route"] == "claude"
 
 
 async def test_a_yes_to_a_guessed_level_3_command_still_needs_its_confermo() -> None:

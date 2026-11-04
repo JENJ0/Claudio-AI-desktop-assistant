@@ -5,8 +5,9 @@ close an app, move a file). Level 3: CLAUDIO reads a summary of what will happen
 explicit "confermo" / "confirm" runs it (delete, terminal, install, network).
 
 Anything that is not a clear yes cancels: a TV in the background, a cough or a wrong word
-never confirms an action. A level 2 yes is also short (YES_MAX_WORDS), and the Assistant does
-not count an answer said far from the microphone (intake.py, noise.answer_min_dbfs)."""
+never confirms an action. A level 2 yes also holds nothing else (_only_yes), and the
+Assistant does not count an answer said far from the microphone (intake.py,
+noise.answer_min_dbfs)."""
 
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.router.matcher import Match
-from claudio.router.normalizer import normalize, strip_wake_words
+from claudio.router.normalizer import is_wake_word, normalize, strip_wake_words
 
 LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT = 1, 2, 3
 LEVELS = (LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT)
@@ -43,8 +44,20 @@ YES_WORDS = frozenset(
 # Level 3 accepts only the explicit words (a plain "sì" is too easy to say by accident).
 EXPLICIT_WORDS = frozenset({"confermo", "conferma", "confirm", "confirmed"})
 YES_PHRASES = ("va bene", "fai pure", "go ahead", "do it", "i confirm")
-# A level 2 yes is short ("sì", "sì, va bene"): "sì, ma poi è andato via" is the TV talking.
-YES_MAX_WORDS = 3
+# All a level 2 yes may hold besides yes words, whole yes phrases and the name: "sì, grazie
+# mille" is a yes, "si chiama Anna" has a yes word and says something else.
+YES_COURTESY_PHRASES = (
+    "grazie mille",
+    "per favore",
+    "per piacere",
+    "per cortesia",
+    "thank you very much",
+    "thank you",
+)
+YES_COURTESY_WORDS = frozenset(
+    {"grazie", "davvero", "pure", "gentilmente", "allora", "dai", "ma", "please", "thanks"}
+    | {"ehm", "eh", "uhm", "um", "uh", "ah"}
+)
 EXPLICIT_PHRASES = ("i confirm", "yes i confirm", "si confermo")
 
 
@@ -56,7 +69,8 @@ class Answer(enum.Enum):
 
 def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     """What the person said to "do you confirm?". At level 3 only an explicit
-    confirmation is a yes; an ordinary yes is unclear (the action is not run)."""
+    confirmation is a yes; an ordinary yes is unclear (the action is not run). Below it, a yes
+    word is not enough: every word must be one a yes may hold."""
     norm = normalize(text, drop_fillers=False)
     words = strip_wake_words(norm.split())
     if not words:
@@ -67,16 +81,17 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     if level >= LEVEL_EXPLICIT:
         explicit = EXPLICIT_WORDS.intersection(words) or any(p in joined for p in EXPLICIT_PHRASES)
         return Answer.YES if explicit else Answer.UNCLEAR
-    if len(_deduped(words)) > YES_MAX_WORDS:
-        return Answer.UNCLEAR
-    if YES_WORDS.intersection(words) or any(p in joined for p in YES_PHRASES):
-        return Answer.YES
-    return Answer.UNCLEAR
+    said_yes = YES_WORDS.intersection(words) or any(p in joined for p in YES_PHRASES)
+    return Answer.YES if said_yes and _only_yes(words) else Answer.UNCLEAR
 
 
-def _deduped(words: list[str]) -> list[str]:
-    """A word said twice in a row counts once ("sì sì, va bene")."""
-    return [w for i, w in enumerate(words) if i == 0 or w != words[i - 1]]
+def _only_yes(words: list[str]) -> bool:
+    """Nothing but a yes: take the whole phrases out, then every word left must be one a yes
+    may hold."""
+    rest = f" {' '.join(words)} "
+    for phrase in (*YES_PHRASES, *YES_COURTESY_PHRASES):
+        rest = rest.replace(f" {phrase} ", " ")
+    return all(w in YES_WORDS or w in YES_COURTESY_WORDS or is_wake_word(w) for w in rest.split())
 
 
 @dataclass(frozen=True)
