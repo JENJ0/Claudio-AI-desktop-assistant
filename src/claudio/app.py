@@ -319,10 +319,6 @@ class Assistant:
         again in this one (fast Italian often sounds English). None: never."""
         return self.intake.retry_language
 
-    @retry_language.setter
-    def retry_language(self, value: str | None) -> None:
-        self.intake.retry_language = value
-
     @property
     def closed_list_max_words(self) -> int:
         """Longer requests skip the closed list: a question for Claude (0: no limit)."""
@@ -381,39 +377,44 @@ class Assistant:
     async def handle_frame(self, frame: np.ndarray) -> None:
         own = self.own_sound.in_frame(len(frame))  # CLAUDIO's own sound may be in it
         if self.state == State.IDLE:
-            if self._hears_itself(own):
-                return
-            if isinstance(self.wake, StrictWake):
-                self.wake.strict = self.system.off
-            self._recent.append(frame.astype(np.float32) / 32768.0)
-            detection = self.wake.process(frame)
-            if self.system.off and self.second_chance is None:
-                # Off without Whisper's check: only a clear wake (the strict threshold) gets the
-                # phrase after it transcribed, to look for "accenditi".
-                self.wake.pop_near_miss()
-                if detection is not None:
-                    self._on_wake(*detection)
-            elif detection is not None and self._weak(*detection):
-                if not self._checking:
-                    log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
-                self._on_near_miss(*detection)
-            elif detection is not None:
-                name, score = detection
-                voice = self._wake_voice(name, score)
-                if voice is None:
-                    self._on_wake(name, score)
-                elif voice >= self.wake_min_voice_ms:
-                    self._on_wake(name, score, wake_voice_ms=voice)
-            else:
-                self._silent_wake = False
-                if (miss := self.wake.pop_near_miss()) is not None:
-                    self._on_near_miss(*miss)
+            self._on_idle_frame(frame, own)
         elif self.state == State.LISTENING:
             self._on_listen(frame, own)
         elif self.state == State.TRANSCRIBING:
             self._held.append(frame)  # the request itself, if the phrase was only the wake word
         elif self.state == State.SPEAKING and self.barge_in is not None:
             self._on_barge_frame(frame, self.barge_in)
+
+    def _on_idle_frame(self, frame: np.ndarray, own: bool) -> None:
+        """The wake word listens: a clear detection wakes CLAUDIO, a weak one or a near miss
+        goes to Whisper's second chance."""
+        if self._hears_itself(own):
+            return
+        if isinstance(self.wake, StrictWake):
+            self.wake.strict = self.system.off
+        self._recent.append(frame.astype(np.float32) / 32768.0)
+        detection = self.wake.process(frame)
+        if self.system.off and self.second_chance is None:
+            # Off without Whisper's check: only a clear wake (the strict threshold) gets the
+            # phrase after it transcribed, to look for "accenditi".
+            self.wake.pop_near_miss()
+            if detection is not None:
+                self._on_wake(*detection)
+        elif detection is not None and self._weak(*detection):
+            if not self._checking:
+                log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
+            self._on_near_miss(*detection)
+        elif detection is not None:
+            name, score = detection
+            voice = self._wake_voice(name, score)
+            if voice is None:
+                self._on_wake(name, score)
+            elif voice >= self.wake_min_voice_ms:
+                self._on_wake(name, score, wake_voice_ms=voice)
+        else:
+            self._silent_wake = False
+            if (miss := self.wake.pop_near_miss()) is not None:
+                self._on_near_miss(*miss)
 
     def _on_wake(self, name: str, score: float, **info: Any) -> None:
         self._interaction = Interaction(
@@ -506,7 +507,9 @@ class Assistant:
         finally:
             self._checking = False
 
-    async def _hear_second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
+    async def _hear_name(self, heard: np.ndarray) -> tuple[str, int | None, dict[str, Any]]:
+        """What Whisper wrote of `heard` ("" if it failed or there was no voice to ask it
+        about), the voice meter's reading and the row's fields for both."""
         assert self.second_chance is not None
         text, start, voice = "", self.clock(), None
         try:
@@ -520,6 +523,10 @@ class Assistant:
         info: dict[str, Any] = {"second_chance_ms": round((self.clock() - start) * 1000)}
         if voice is not None:
             info["wake_voice_ms"] = voice
+        return text, voice, info
+
+    async def _hear_second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
+        text, voice, info = await self._hear_name(heard)
         # A weak detection said fast often loses the name ("apri cancolatrice"): a command
         # counts. Off, the only command understood is "accenditi".
         language = self.transcriber.language
@@ -553,8 +560,8 @@ class Assistant:
                 # lead-in ("Claudio, accenditi." heard here, then a timeout): what the second
                 # chance heard is the request; it ends with the usual pause.
                 self.endpointer.resume(heard)
-                if self._interaction is not None:
-                    self._interaction.mark("speech_start")
+                assert self._interaction is not None
+                self._interaction.mark("speech_start")
             return
         if self._unsure_wake(name, score, text, voiced=bool(voice)):
             # Not a second chance: the request must have the name or be a command (verify).
@@ -701,33 +708,8 @@ class Assistant:
         # The reply before: the conversation window may be hearing its echo.
         self._said, self._reply_parts = "".join(self._reply_parts), []
         cut, self._cut = self._cut, None
-        self._candidates = None
-        continued, self._continued = self._continued, None
-        if not self.endpointer.extended:
-            continued = None  # left over from a phrase that ended another way
         try:
-            async with self._stt_lock:
-                if continued is not None and not self.endpointer.spoke_again:
-                    # Nothing more was said: the same phrase, no second Whisper pass.
-                    text, heard = continued, self.transcriber.language
-                    segments = list(self.stt_segments()) if self.stt_segments is not None else []
-                else:
-                    text = await asyncio.to_thread(self.transcriber.transcribe, audio)
-                    heard = self.transcriber.language
-                    # Whisper's confidence in the first pass: a retry only replaces it when
-                    # understood.
-                    segments = list(self.stt_segments()) if self.stt_segments is not None else []
-                    # Off, the only command understood is "accenditi": the retry and the
-                    # closed list look for that one (30/10: "Dai, accenditi." was the second
-                    # transcription of an attempt dropped as "Grazie a te.").
-                    text, heard = await self._retry(audio, text, heard, inter)
-                    text = await self._closed_list(audio, text, heard, inter)
-            inter.mark("stt_done")
-            inter.info["text"] = text
-            inter.info["stt_language"] = heard
-            log.info("Trascritto (%s): %r", heard, text)
-            if "retried_from" in inter.info or "closed_list_from" in inter.info:
-                segments = []  # a known command now: the first pass's doubts no longer apply
+            text, heard, segments = await self._hear_phrase(audio, inter)
             decision = await self._decide(audio, text, heard, inter, segments)
             outcome = decision.kind.value
             if decision.kind is Kind.RELISTEN:
@@ -743,29 +725,16 @@ class Assistant:
                 if decision.kind is not Kind.FALSE_WAKE:  # a false wake ends in silence
                     await self._beep_now("cancel")
                 return
-            if decision.kind is Kind.ASK:  # "Hai detto: ...?": the answer comes next
-                reply = _fixed_reply(decision.text)
-            else:
-                if not self.system.off:  # off: nothing goes to Claude, no n-best pass for it
-                    await self._tell_hearing(audio, decision.text, heard, segments, inter)
-                reply = self.responder.respond(decision.text, heard)
+            reply = await self._reply_to(decision, audio, heard, segments, inter)
             self._set_state(State.RESPONDING)
             resume = await self._unsaid(cut)  # the reply this request cut, read to its end
             cut = None
             await self._speak_reply(
                 reply, inter, on_first_audio=lambda: self._on_first_audio(inter)
             )
-            route = self.responder.last_route
-            if route.get("route") == "off":
-                outcome = "off"  # only "accenditi" is answered, without a sound otherwise
-            elif route.get("route") == "paused":
-                outcome = "paused"  # only the system commands are answered
+            outcome = self._reply_outcome(outcome)  # before the beep: it may be cancelled
+            if outcome in ("paused", "stopped"):
                 await self._beep_now("cancel")
-            elif route.get("command") == "stop":
-                outcome = "stopped"  # "basta": the conversation is over
-                await self._beep_now("cancel")
-            elif self._interrupted:
-                outcome = "interrupted"
             # A confirmation question ("Confermi?"): the answer comes without the wake word.
             follow_up = self.responder.awaiting and not self._interrupted
             if resume and outcome == "ok" and not follow_up and self._takeover is None:
@@ -781,19 +750,85 @@ class Assistant:
             if cut is not None:  # the request was dropped: the cut reply is not resumed
                 cut.stream.cancel()
             if outcome not in (Kind.RELISTEN.value, Kind.CONTINUE.value):
-                await self._judge_stranded()
-                route = self.responder.last_route
-                if route:
-                    inter.info.update(route)
-                if not follow_up:
-                    self._cancel_pending()  # an error or silence never leaves an action armed
-                self._finish(outcome)
-                if self._takeover is not None:
-                    self._listen_to_takeover()
-                elif follow_up:
-                    self._listen_for_answer()
-                elif self._keeps_conversation(outcome, inter):
-                    self._listen_for_answer(conversation=True)
+                await self._close_request(inter, outcome, follow_up)
+
+    async def _hear_phrase(
+        self, audio: np.ndarray, inter: Interaction
+    ) -> tuple[str, str, list[Segment]]:
+        """The phrase as Whisper heard it: its text, its language and Whisper's confidence in
+        it. The Whisper lock is free again on return (_decide's passes take it themselves)."""
+        self._candidates = None
+        continued, self._continued = self._continued, None
+        if not self.endpointer.extended:
+            continued = None  # left over from a phrase that ended another way
+        async with self._stt_lock:
+            if continued is not None and not self.endpointer.spoke_again:
+                # Nothing more was said: the same phrase, no second Whisper pass.
+                text, heard = continued, self.transcriber.language
+                segments = list(self.stt_segments()) if self.stt_segments is not None else []
+            else:
+                text = await asyncio.to_thread(self.transcriber.transcribe, audio)
+                heard = self.transcriber.language
+                # Whisper's confidence in the first pass: a retry only replaces it when
+                # understood.
+                segments = list(self.stt_segments()) if self.stt_segments is not None else []
+                # Off, the only command understood is "accenditi": the retry and the
+                # closed list look for that one (30/10: "Dai, accenditi." was the second
+                # transcription of an attempt dropped as "Grazie a te.").
+                text, heard = await self._retry(audio, text, heard, inter)
+                text = await self._closed_list(audio, text, heard, inter)
+        inter.mark("stt_done")
+        inter.info["text"] = text
+        inter.info["stt_language"] = heard
+        log.info("Trascritto (%s): %r", heard, text)
+        if "retried_from" in inter.info or "closed_list_from" in inter.info:
+            segments = []  # a known command now: the first pass's doubts no longer apply
+        return text, heard, segments
+
+    async def _reply_to(
+        self,
+        decision: Decision,
+        audio: np.ndarray,
+        heard: str,
+        segments: Sequence[Segment],
+        inter: Interaction,
+    ) -> AsyncIterator[str]:
+        """The reply to the phrase, not started yet: the router only runs once it is read. The
+        one place where a request reaches the router."""
+        if decision.kind is Kind.ASK:  # "Hai detto: ...?": the answer comes next
+            return _fixed_reply(decision.text)
+        if not self.system.off:  # off: nothing goes to Claude, no n-best pass for it
+            await self._tell_hearing(audio, decision.text, heard, segments, inter)
+        return self.responder.respond(decision.text, heard)
+
+    def _reply_outcome(self, outcome: str) -> str:
+        """`outcome`, unless the route or a barge-in says the reply ended another way."""
+        route = self.responder.last_route
+        if route.get("route") == "off":
+            return "off"  # only "accenditi" is answered, without a sound otherwise
+        if route.get("route") == "paused":
+            return "paused"  # only the system commands are answered
+        if route.get("command") == "stop":
+            return "stopped"  # "basta": the conversation is over
+        return "interrupted" if self._interrupted else outcome
+
+    async def _close_request(self, inter: Interaction, outcome: str, follow_up: bool) -> None:
+        """The request's row, then what listens next. It also runs on a cancel. Nothing may wait
+        between _finish and _listen_*: for that moment CLAUDIO looks IDLE to announce,
+        handle_typed and close_when_idle."""
+        await self._judge_stranded()
+        route = self.responder.last_route
+        if route:
+            inter.info.update(route)
+        if not follow_up:
+            self.responder.cancel_pending()  # an error or silence never leaves an action armed
+        self._finish(outcome)
+        if self._takeover is not None:
+            self._listen_to_takeover()
+        elif follow_up:
+            self._listen_for_answer()
+        elif self._keeps_conversation(outcome, inter):
+            self._listen_for_answer(conversation=True)
 
     async def _decide(
         self,
@@ -1086,9 +1121,6 @@ class Assistant:
             return True
         return False
 
-    def _cancel_pending(self) -> None:
-        self.responder.cancel_pending()
-
     def _listen_for_answer(self, conversation: bool = False) -> None:
         """Listen again at once, no wake word needed: the answer to the question just asked,
         or (`conversation`) another request within conversation_s of the reply."""
@@ -1114,22 +1146,7 @@ class Assistant:
         self._since_check.append(frame)
         event = barge.endpointer.process(frame)
         if event is EndpointEvent.START:
-            if not self._barge_loud(barge):
-                return
-            if self._sounds_like_echo(barge):
-                return  # no louder than CLAUDIO's own echo: wait for Whisper
-            if barge.mode == "stop":
-                # Everything heard so far is in the phrase (its slices too): nothing to add.
-                self._take_over(self._barge_audio(barge.endpointer.partial()), "", rest=[])
-            elif barge.mode == "duck":
-                self.speaker.duck(barge.duck_volume)
-                # Before the gain too: the level [conversation] barge_in_min_dbfs is tuned on.
-                level = barge.endpointer.stats()["speech_dbfs"]
-                log.info(
-                    "Abbasso la risposta: voce a %.0f dBFS (%.0f prima del guadagno)",
-                    level,
-                    self._before_gain(level),
-                )
+            self._on_barge_voice(barge)
         elif event is EndpointEvent.TIMEOUT:
             self._restart_barge(barge.endpointer)
         elif event is EndpointEvent.END:
@@ -1158,6 +1175,25 @@ class Assistant:
                 self._barge_slices.append((self._since_cut(ep), ep.stats()["speech_dbfs"]))
                 self._restart_barge(ep)
                 self._judge_barge_phrase(barge)
+
+    def _on_barge_voice(self, barge: BargeIn) -> None:
+        """A voice starts over the reply: `barge.mode` says what to do before Whisper hears it."""
+        if not self._barge_loud(barge):
+            return
+        if self._sounds_like_echo(barge):
+            return  # no louder than CLAUDIO's own echo: wait for Whisper
+        if barge.mode == "stop":
+            # Everything heard so far is in the phrase (its slices too): nothing to add.
+            self._take_over(self._barge_audio(barge.endpointer.partial()), "", rest=[])
+        elif barge.mode == "duck":
+            self.speaker.duck(barge.duck_volume)
+            # Before the gain too: the level [conversation] barge_in_min_dbfs is tuned on.
+            level = barge.endpointer.stats()["speech_dbfs"]
+            log.info(
+                "Abbasso la risposta: voce a %.0f dBFS (%.0f prima del guadagno)",
+                level,
+                self._before_gain(level),
+            )
 
     def _barge_audio(self, more: np.ndarray) -> np.ndarray:
         """The phrase said over the reply so far: its slices, then `more` (float32)."""
@@ -1384,8 +1420,8 @@ class Assistant:
         self._since_check.clear()
         self._barge_slices = []
         self._interrupted = True
-        if self._interaction is not None:
-            self._interaction.info["barge_in"] = text or "voice"
+        assert self._interaction is not None
+        self._interaction.info["barge_in"] = text or "voice"
         self.speaker.interrupt()
         self.speaker.duck(None)
 
@@ -1440,13 +1476,7 @@ class Assistant:
             inter.marks.pop(stage, None)
         self._prewake = np.concatenate((self._prewake, self.endpointer.listened()))  # saved WAV
         self.endpointer.reset()
-        self._set_state(State.LISTENING)
-        held = list(self._held)
-        self._held.clear()
-        for frame in held:
-            if self.state is not State.LISTENING:  # the request already ended (or timed out)
-                break
-            self._on_listen(frame)
+        self._listen_to_held()
 
     def _continue(self, inter: Interaction, audio: np.ndarray, text: str) -> None:
         """The phrase was left halfway ("apri Chrome e cerca..."): keep listening up to
@@ -1458,11 +1488,15 @@ class Assistant:
             inter.marks.pop(stage, None)
         self._prewake = np.concatenate((self._prewake, self.endpointer.listened()))  # saved WAV
         self.endpointer.extend(audio, wait_s=self.continue_s)
+        self._listen_to_held()
+
+    def _listen_to_held(self) -> None:
+        """Listening again, starting from the frames heard while transcribing."""
         self._set_state(State.LISTENING)
         held = list(self._held)
         self._held.clear()
         for frame in held:
-            if self.state is not State.LISTENING:  # the phrase already ended
+            if self.state is not State.LISTENING:  # the request already ended (or timed out)
                 break
             self._on_listen(frame)
 
@@ -1497,7 +1531,7 @@ class Assistant:
             log.exception("Errore rispondendo al messaggio scritto")
         finally:
             if self.responder.needs_voice:  # level 2-3: confirmed by voice only, never armed here
-                self._cancel_pending()
+                self.responder.cancel_pending()
                 note = in_language(TYPED_NEEDS_VOICE, self.responder.language)
                 inter.info["reply"] = note
                 outcome = "needs_voice"
