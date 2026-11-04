@@ -90,7 +90,7 @@ class LocalResponder:
         fallback_info: Callable[[], dict[str, Any]] | None = None,
         on_prepare: Callable[[], None] | None = None,
         fallback_awaiting: Callable[[], bool] | None = None,
-        fallback_cancel: Callable[[], None] | None = None,
+        fallback_cancel: Callable[[bool], None] | None = None,
         fallback_heard: Callable[[Hearing], None] | None = None,
         fallback_guess: GuessCall | None = None,
         fallback_guess_info: Callable[[], dict[str, Any]] | None = None,
@@ -299,7 +299,7 @@ class LocalResponder:
         log.info("Chiedo conferma della richiesta dedotta: %r", text, extra={"route": "guess"})
         return question
 
-    def cancel_pending(self, silence: bool = False) -> None:
+    def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:
         """Nothing was said after the question (or it was not understood as speech). After
         mere `silence` an action Claude proposed stays armed until it expires: JenJo may
         answer later with the wake word ("Hey Claudio, confermo")."""
@@ -314,7 +314,7 @@ class LocalResponder:
             log.info("Nessuna risposta: %r non eseguito", self._proposal.text)
             self._proposal = None
         if self.fallback_cancel is not None and not silence:
-            self.fallback_cancel()
+            self.fallback_cancel(cut)
         if self.memory is not None:
             # "Quale dimentico?" without an answer, even after mere silence: nothing is
             # forgotten, and a phrase much later is never taken for the answer.

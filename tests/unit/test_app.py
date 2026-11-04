@@ -83,7 +83,7 @@ class FakeResponder:
     def is_stop(self, text: str) -> bool:
         return False
 
-    def cancel_pending(self, silence: bool = False) -> None:
+    def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:
         pass
 
     async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
@@ -1126,7 +1126,7 @@ async def test_typed_actions_to_confirm_need_the_voice(fake_vad, vad_settings) -
     assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt(), set())
     cancelled: list[bool] = []
     responder.awaiting = True  # the router asked "Confermi?"
-    responder.cancel_pending = lambda: cancelled.append(True)  # type: ignore[method-assign]
+    responder.cancel_pending = lambda **_: cancelled.append(True)  # type: ignore[method-assign]
     reply = await assistant.handle_typed("chiudi la finestra", "it")
     assert "a voce" in reply and cancelled
     assert assistant.history[-1]["outcome"] == "needs_voice"
