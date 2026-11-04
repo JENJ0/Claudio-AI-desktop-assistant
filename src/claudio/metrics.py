@@ -16,17 +16,6 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-STAGES = (
-    "wake",
-    "speech_start",
-    "speech_end",
-    "endpoint",
-    "stt_done",
-    "first_text",
-    "first_audio",
-    "done",
-)
-
 
 @dataclass
 class Interaction:

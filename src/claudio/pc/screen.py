@@ -35,8 +35,3 @@ def image_block(jpeg: bytes) -> dict[str, Any]:
             "data": base64.b64encode(jpeg).decode("ascii"),
         },
     }
-
-
-def estimated_tokens(width: int, height: int) -> int:
-    """Anthropic's rule of thumb for an image: width * height / 750 tokens."""
-    return max(1, round(width * height / 750))
