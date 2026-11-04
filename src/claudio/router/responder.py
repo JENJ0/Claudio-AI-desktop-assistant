@@ -345,19 +345,9 @@ class LocalResponder:
     ) -> AsyncIterator[str]:
         """`confirmed`: JenJo already said yes to this very request ("Hai detto: chiudi la
         finestra?" "Sì"): a level 2 command runs without asking again."""
-        if self._pending is not None:
-            async for chunk in self._answer(text):
-                yield chunk
-            return
-        if self._proposal is not None:
-            async for chunk in self._answer_proposal(text, language):
-                yield chunk
-            return
-        if self._fallback_waits():
-            # The answer to Claude's "Confermi?" goes to Claude, never to a local command, and
-            # is answered in the language (and voice) of the question.
-            log.info("Risposta alla conferma di Claude: %r", text, extra={"route": "claude"})
-            async for chunk in self._ask_fallback(text):
+        answer = self._open_question(text, language)
+        if answer is not None:
+            async for chunk in answer:
                 yield chunk
             return
         match = self.matcher.match(text, language)
@@ -376,29 +366,11 @@ class LocalResponder:
             log.info("In pausa, ignoro: %r", text, extra={"route": "paused"})
             return  # nothing to say: the assistant answers with a low beep
         addressed, self._addressed = self._addressed, True
-        if self.memory is not None and _is_memory(match):
-            self.memory.moved_on()  # "cosa ricordi?" instead of an answer: the question is over
-        elif self.memory is not None:
-            # Before a fuzzy command: "ricordati che la pausa pranzo è alle 13" is no "pausa".
-            try:
-                reply = self.memory.handle(text, addressed)
-            except (sqlite3.Error, OSError):  # locked by another program, disk full...
-                log.exception("Memoria non disponibile")
-                self.last_route = {"route": "memory", "memory": "error", "error": True}
-                yield in_language(MEMORY_ERROR, self.language)
-                return
-            if reply is not None:
-                self.language = self._reply_language(reply.language, True)
-                self.last_route = {
-                    "route": "memory",
-                    "memory": reply.outcome,
-                    "language": self.language,
-                }
-                log.info("Memoria: %s", reply.outcome, extra={"route": "memory"})
-                if reply.text:  # "" for the echo of Claudio's own question
-                    yield reply.text
-                return
-            self.memory.moved_on()  # a command or Claude: "dimenticalo" is not about before
+        said = self._memory_reply(text, match, addressed)
+        if said is not None:
+            if said:
+                yield said
+            return
         if match is None and self.fallback is not None:
             self.language = self._reply_language(language, True)
             log.info("Non è un comando, chiedo a Claude: %r", text, extra={"route": "claude"})
@@ -410,6 +382,52 @@ class LocalResponder:
             log.info("Richiesta non riconosciuta: %r", text, extra={"route": "unknown"})
             yield in_language(self.unknown_reply, self.language)
             return
+        async for chunk in self._run_command(match, confirmed):
+            yield chunk
+
+    def _open_question(self, text: str, language: str) -> AsyncIterator[str] | None:
+        """The answer to a question waiting for one, not started yet (None: no question)."""
+        if self._pending is not None:
+            return self._answer(text)
+        if self._proposal is not None:
+            return self._answer_proposal(text, language)
+        if self._fallback_waits():
+            # The answer to Claude's "Confermi?" goes to Claude, never to a local command, and
+            # is answered in the language (and voice) of the question.
+            log.info("Risposta alla conferma di Claude: %r", text, extra={"route": "claude"})
+            return self._ask_fallback(text)
+        return None
+
+    def _memory_reply(self, text: str, match: Match | None, addressed: bool) -> str | None:
+        """What the memory says to `text`: None when it is not the memory's, "" when it was
+        handled in silence (the echo of Claudio's own question). Closes the memory's open
+        question when the phrase moved on, and records the route and language of its reply."""
+        if self.memory is None:
+            return None
+        if _is_memory(match):
+            self.memory.moved_on()  # "cosa ricordi?" instead of an answer: the question is over
+            return None
+        # Before a fuzzy command: "ricordati che la pausa pranzo è alle 13" is no "pausa".
+        try:
+            reply = self.memory.handle(text, addressed)
+        except (sqlite3.Error, OSError):  # locked by another program, disk full...
+            log.exception("Memoria non disponibile")
+            self.last_route = {"route": "memory", "memory": "error", "error": True}
+            return in_language(MEMORY_ERROR, self.language)
+        if reply is None:
+            self.memory.moved_on()  # a command or Claude: "dimenticalo" is not about before
+            return None
+        self.language = self._reply_language(reply.language, True)
+        self.last_route = {
+            "route": "memory",
+            "memory": reply.outcome,
+            "language": self.language,
+        }
+        log.info("Memoria: %s", reply.outcome, extra={"route": "memory"})
+        return reply.text
+
+    async def _run_command(self, match: Match, confirmed: bool) -> AsyncIterator[str]:
+        """The command `match`: run, or asked about first when its level needs a yes."""
         self.last_route = {
             "route": "local",
             "command": match.command.id,
