@@ -774,7 +774,8 @@ class ClaudeBrain:
             self.last_call["claude_error"] = "auth"
             yield in_language(BAD_KEY, language)
             return
-        except (anthropic.APIConnectionError, httpx2.TransportError) as exc:  # also timeouts
+        # Also timeouts. DecodingError: the body arrived corrupted, the reply is just as lost.
+        except (anthropic.APIConnectionError, httpx2.TransportError, httpx2.DecodingError) as exc:
             log.error("Claude non raggiungibile: %s", exc)
             self.last_call["claude_error"] = "network"
             # The SDK wraps these only at request time; raw, they broke a reply under way. Its
@@ -787,7 +788,10 @@ class ClaudeBrain:
         except anthropic.APIStatusError as exc:
             log.error("Claude errore %s: %s", exc.status_code, exc.message)
             self.last_call["claude_error"] = exc.status_code
-            yield in_language(API_ERROR, language)
+            # Also an error event during a reply (an overloaded API): as a lost connection.
+            leg.complete = stream is not None
+            yield CUT_SHORT
+            yield _space(leg) + in_language(API_ERROR, language)
             return
         finally:
             self._last_contact = self.clock()
