@@ -83,7 +83,8 @@ class MetricsWriter:
         try:
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-        except OSError:  # held by another program: the row still goes to the caller
+        # Held by another program, or a value JSON cannot encode: the row still goes to the caller.
+        except (OSError, TypeError, ValueError):
             log.exception("Metriche non salvate")
         if self.conversation is not None:
             self.conversation.add(row)
