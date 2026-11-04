@@ -526,6 +526,11 @@ class MemoryVoice:
                     self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options, q.language)
                 )
             return None
+        return self._which_answer(words, text, q)
+
+    def _which_answer(self, words: list[str], text: str, q: _Question) -> Reply | None:
+        """The answer to "which one?": all of them, an ordinal or one named. `words` is the
+        stripped answer, `text` the raw one (a "?" makes a named answer a question)."""
         if _all(words):
             return self._forgot(q.options, q.language)
         index = _ordinal(words, len(q.options))
