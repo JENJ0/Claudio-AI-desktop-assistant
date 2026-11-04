@@ -29,7 +29,7 @@ from claudio.echo import WORD_SHARE, word_share
 from claudio.memory.relevance import STOPWORDS, rank, stems
 from claudio.memory.store import Kind, Memory, MemoryRefused, MemoryStore
 from claudio.router.normalizer import normalize, strip_accents, strip_wake_words
-from claudio.safety.confirmation import NO_WORDS, YES_WORDS, Answer, parse_answer
+from claudio.safety.confirmation import NO_WORDS, Answer, parse_answer
 
 Action = Literal["remember", "rule", "forget", "forget_it", "forget_last", "recall"]
 
@@ -43,6 +43,11 @@ TALKED_TTL_S = 60.0  # "dimenticalo" means the memory just talked about, this re
 SPOKEN_MAX = 80  # a memory longer than this is not read back when saved
 ANSWER_WORDS = 4  # "tutti e due", "la seconda": an answer is short
 NAMED_ANSWER_WORDS = 6  # "quella che abita a Torino"
+
+# The rule question's own words: "sì, tienila come regola" is a yes, "tienila come regola" is not.
+RULE_QUESTION_WORDS = frozenset(
+    {"tienila", "tienilo", "tieni", "come", "regola", "keep", "it", "as", "a", "rule"}
+)
 
 _SEP = r"[\W_]+"
 _ACCENTED = {"a": "[aàá]", "e": "[eèé]", "i": "[iìí]", "o": "[oòó]", "u": "[uùú]"}
@@ -521,7 +526,7 @@ class MemoryVoice:
             kept = say["rule_dropped" if q.kind == "rule" else "kept"]
             return Reply(kept, q.language, "kept")
         if q.kind != "which":
-            if words[0] in YES_WORDS or parse_answer(" ".join(words)) is Answer.YES:
+            if parse_answer(" ".join(_without_question(q, words))) is Answer.YES:
                 return (
                     self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options, q.language)
                 )
@@ -611,6 +616,12 @@ def _ordinal(words: Sequence[str], count: int) -> int | None:
     index = _ORDINALS[rest[0]]
     index = count - 1 if index < 0 else index
     return index if index < count else None
+
+
+def _without_question(q: _Question, words: Sequence[str]) -> list[str]:
+    """At the rule question its own words are no part of the answer ("sì, tienila come regola")."""
+    drop = RULE_QUESTION_WORDS if q.kind == "rule" else frozenset()
+    return [w for w in words if w not in drop]
 
 
 def _echo(text: str, q: _Question) -> bool:

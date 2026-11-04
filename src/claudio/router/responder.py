@@ -38,7 +38,6 @@ from claudio.safety.confirmation import (
     LEVEL_SAFE,
     NO_WORDS,
     NOT_UNDERSTOOD,
-    YES_WORDS,
     Answer,
     Pending,
     parse_answer,
@@ -465,8 +464,6 @@ class LocalResponder:
         assert proposal is not None
         answer = parse_answer(text)
         words = strip_wake_words(normalize(text, drop_fillers=False).split())
-        if answer is Answer.UNCLEAR and words and words[0] in YES_WORDS:
-            answer = Answer.YES  # "sì, grazie mille": a yes with something after it
         if answer is Answer.UNCLEAR and word_share(text, proposal.question) >= WORD_SHARE:
             # The question's own echo ("...detto spegniti"), never a yes: JenJo says "sì".
             self.last_route = {"route": "guess_echo", "guess": proposal.text}

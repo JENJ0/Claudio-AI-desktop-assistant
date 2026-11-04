@@ -659,6 +659,19 @@ async def test_no_means_haiku_answers(pricing: Pricing) -> None:
     assert second["messages"] == first["messages"]
 
 
+@pytest.mark.parametrize("said", ["sì ma dopo", "ok ci penso", "certo che ci penso"])
+async def test_a_phrase_that_is_not_only_a_yes_is_no_answer_to_the_offer(
+    pricing: Pricing, said: str
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
+    b = brain(pricing, client)
+    await ask(b, "fammi un piano di viaggio")
+    assert await ask(b, said) == "Ok."
+    assert client.calls[1]["model"] == "claude-haiku-5-5"
+    assert client.calls[1]["messages"][-1]["content"].endswith(said)
+    assert b._offer is None
+
+
 async def test_a_new_question_drops_the_offer(pricing: Pricing) -> None:
     client = ScriptedClient(([], "tool_use", HANDOFF), (["Roma."], "end_turn", []))
     b = brain(pricing, client)

@@ -27,10 +27,12 @@ from claudio.memory.voice import (
     TALKED_TTL_S,
     Intent,
     MemoryVoice,
+    Reply,
     parse,
     without_wake_words,
 )
 from claudio.safety.confirmation import LEVEL_CONFIRM, LEVEL_EXPLICIT, LEVEL_SAFE
+from tests.unit.test_safety import NOT_A_YES
 
 DAY = 1_793_000_000.0  # 2026-10-26, a fixed "now" for the stored memories
 
@@ -783,6 +785,43 @@ def test_a_long_yes(voice: MemoryVoice, said: str) -> None:
 def test_a_long_yes_to_the_rule(voice: MemoryVoice) -> None:
     reply(voice, "da ora in poi chiamami capo", addressed=False)
     assert reply(voice, "Sì, tienila come regola.") == "D'accordo, da ora in poi: chiamami capo."
+
+
+def test_the_rules_own_words_alone_are_not_a_yes(voice: MemoryVoice) -> None:
+    reply(voice, "da ora in poi chiamami capo", addressed=False)
+    got = voice.handle("tienila come regola")  # Claudio's own question heard back: still waiting
+    assert got is not None and got.outcome == "echo"
+    assert len(voice.store) == 0
+
+
+def test_the_rules_own_words_are_not_a_yes_to_forget(voice: MemoryVoice) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert _not_an_answer(voice.handle("sì, tienila come regola"))
+    assert texts(voice.store) == ["mio padre ha 60 anni"]
+
+
+def _not_an_answer(got: Reply | None) -> bool:
+    """A new request (None), or, when only openers and the name are left ("ok senti", "sì,
+    Claudio"), the question asked again: never a yes."""
+    return got is None or got.outcome == "unclear"
+
+
+@pytest.mark.parametrize("said", NOT_A_YES)
+def test_a_phrase_that_is_not_only_a_yes_does_not_forget(voice: MemoryVoice, said: str) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert _not_an_answer(voice.handle(said))
+    assert texts(voice.store) == ["mio padre ha 60 anni"]
+
+
+@pytest.mark.parametrize("said", NOT_A_YES)
+def test_a_phrase_that_is_not_only_a_yes_does_not_save_the_rule(
+    voice: MemoryVoice, said: str
+) -> None:
+    reply(voice, "da ora in poi chiamami capo", addressed=False)
+    assert _not_an_answer(voice.handle(said))
+    assert len(voice.store) == 0
 
 
 @pytest.mark.parametrize(
