@@ -458,8 +458,8 @@ class LocalResponder:
 
     async def _answer_proposal(self, text: str, language: str) -> AsyncIterator[str]:
         """The answer to "Hai detto: ...?". A yes (also "sì, grazie") answers the guessed
-        request; "no" alone drops it; anything else ("no, abbassa il volume", "apri Chrome")
-        is what JenJo wants instead, answered as a new request."""
+        request; "no" alone drops it; a phrase that is neither ("no, abbassa il volume", "apri
+        Chrome", "sì, chiudi la porta") is what JenJo wants instead, answered as a new request."""
         proposal, self._proposal = self._proposal, None
         assert proposal is not None
         answer = parse_answer(text)

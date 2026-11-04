@@ -49,10 +49,13 @@ NAMED_ANSWER_CONNECTORS = frozenset(
     | {"the", "one", "that", "of", "about"}
 )
 
-# The rule question's own words: "sì, tienila come regola" is a yes, "tienila come regola" is not.
-RULE_QUESTION_WORDS = frozenset(
-    {"tienila", "tienilo", "tieni", "come", "regola", "keep", "it", "as", "a", "rule"}
+# The rule question's own phrases, whole: "sì, tienila come regola" is a yes, "tienila come
+# regola" is not, nor is "come sì" or "sì a". Longest first, so "keep it as a rule" is one.
+_RULE_QUESTION = (
+    *("tienila come regola", "tienilo come regola", "keep it as a rule"),
+    *("tienila", "tienilo", "keep it"),
 )
+RULE_QUESTION_PHRASES = re.compile(rf"\b(?:{'|'.join(_RULE_QUESTION)})\b")
 
 _SEP = r"[\W_]+"
 _ACCENTED = {"a": "[aàá]", "e": "[eèé]", "i": "[iìí]", "o": "[oòó]", "u": "[uùú]"}
@@ -625,9 +628,11 @@ def _ordinal(words: Sequence[str], count: int) -> int | None:
 
 
 def _without_question(q: _Question, words: Sequence[str]) -> list[str]:
-    """At the rule question its own words are no part of the answer ("sì, tienila come regola")."""
-    drop = RULE_QUESTION_WORDS if q.kind == "rule" else frozenset()
-    return [w for w in words if w not in drop]
+    """At the rule question its own phrases are no part of the answer ("sì, tienila come
+    regola")."""
+    if q.kind != "rule":
+        return list(words)
+    return RULE_QUESTION_PHRASES.sub(" ", " ".join(words)).split()
 
 
 def _holds(memory: Memory, said: Sequence[str]) -> bool:

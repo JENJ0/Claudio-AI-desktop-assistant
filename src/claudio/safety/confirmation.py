@@ -12,6 +12,7 @@ noise.answer_min_dbfs)."""
 from __future__ import annotations
 
 import enum
+import re
 from dataclasses import dataclass
 
 from claudio.config import DEFAULT_LANGUAGE
@@ -53,12 +54,22 @@ YES_COURTESY_PHRASES = (
     "per cortesia",
     "thank you very much",
     "thank you",
+    "d accordo",
+    "certo che si",
+    "of course",
+    "sure thing",
+    "please do",
 )
 YES_COURTESY_WORDS = frozenset(
-    {"grazie", "davvero", "pure", "gentilmente", "allora", "dai", "ma", "please", "thanks"}
+    {"grazie", "davvero", "pure", "gentilmente", "dai", "please", "thanks"}
     | {"ehm", "eh", "uhm", "um", "uh", "ah"}
+    | {"vai", "perfetto", "giusto", "assolutamente", "adesso", "subito", "cosi", "usalo", "fine"}
 )
+# Words that may open a yes ("ma sì", "allora sì"); after it they start something else ("sì ma").
+YES_OPENERS = frozenset({"ma", "allora"})
 EXPLICIT_PHRASES = ("i confirm", "yes i confirm", "si confermo")
+_PHRASES_LONGEST_FIRST = sorted((*YES_PHRASES, *YES_COURTESY_PHRASES), key=len, reverse=True)
+_ALLOWED_PHRASES = re.compile(rf"\b(?:{'|'.join(_PHRASES_LONGEST_FIRST)})\b")
 
 
 class Answer(enum.Enum):
@@ -86,11 +97,11 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
 
 
 def _only_yes(words: list[str]) -> bool:
-    """Nothing but a yes: take the whole phrases out, then every word left must be one a yes
-    may hold."""
-    rest = f" {' '.join(words)} "
-    for phrase in (*YES_PHRASES, *YES_COURTESY_PHRASES):
-        rest = rest.replace(f" {phrase} ", " ")
+    """Nothing but a yes: drop an opener, take the whole phrases out (longest first, so "va
+    bene, va bene" is both), then every word left must be one a yes may hold."""
+    if words[0] in YES_OPENERS:
+        words = words[1:]
+    rest = _ALLOWED_PHRASES.sub(" ", " ".join(words))
     return all(w in YES_WORDS or w in YES_COURTESY_WORDS or is_wake_word(w) for w in rest.split())
 
 

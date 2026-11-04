@@ -48,11 +48,20 @@ NOT_A_YES = [
     "you can do it",
     "i will do it",
     "can you do it",
-    "sì, Claudio",  # the name after the yes word is not a wake phrase here
+    "sì, Claudio",  # the name is a wake phrase, but not at the start: it is not stripped
     "ok Claudio",
     "go ahead and open chrome",
     "do it later",
     "per favore apri chrome",
+    "Sì, ma...",  # "ma" and "allora" open a yes ("ma sì"), they never follow it
+    "Va bene, ma",
+    "Certo, ma",
+    "Ok, ma...",
+    "Ok, allora...",
+    "sì, allora",
+    "sì ma dai",
+    "sì ma grazie",
+    "ma sì ma sì",
 ]
 
 
@@ -113,9 +122,25 @@ def test_go_alone_is_not_a_yes() -> None:
         "ehm sì",
         "sì sì sì",
         "sì, grazie mille, Clodio",  # as Whisper may spell it
+        "sì, va bene, va bene",
+        "go ahead go ahead",
+        "sì vai",
+        "ok vai",
+        "sì, usalo",
+        "sì perfetto",
+        "sì giusto",
+        "certo che sì",
+        "assolutamente sì",
+        "sì d'accordo",
+        "sì adesso",
+        "va bene così",
+        "yes of course",
+        "sure thing",
+        "yes please do",
+        "okay fine",
     ],
 )
-def test_a_yes_may_hold_only_yes_words_courtesy_fillers_and_the_name(text: str) -> None:
+def test_a_yes_may_hold_only_yes_words_courtesy_hesitations_and_the_name(text: str) -> None:
     assert parse_answer(text) is Answer.YES
 
 
