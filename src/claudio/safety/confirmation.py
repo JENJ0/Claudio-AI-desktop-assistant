@@ -79,9 +79,9 @@ class Answer(enum.Enum):
 
 
 def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
-    """What the person said to "do you confirm?". At level 3 only an explicit
-    confirmation is a yes; an ordinary yes is unclear (the action is not run). Below it, a yes
-    word is not enough: every word must be one a yes may hold."""
+    """What the person said to "do you confirm?". At level 3 only an explicit confirmation is a
+    yes; an ordinary yes is unclear (the action is not run). At both levels a yes word is not
+    enough: every word must be one a yes may hold."""
     norm = normalize(text, drop_fillers=False)
     words = strip_wake_words(norm.split())
     if not words:
@@ -91,7 +91,7 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     joined = " ".join(words)
     if level >= LEVEL_EXPLICIT:
         explicit = EXPLICIT_WORDS.intersection(words) or any(p in joined for p in EXPLICIT_PHRASES)
-        return Answer.YES if explicit else Answer.UNCLEAR
+        return Answer.YES if explicit and _only_yes(words) else Answer.UNCLEAR
     said_yes = YES_WORDS.intersection(words) or any(p in joined for p in YES_PHRASES)
     return Answer.YES if said_yes and _only_yes(words) else Answer.UNCLEAR
 
