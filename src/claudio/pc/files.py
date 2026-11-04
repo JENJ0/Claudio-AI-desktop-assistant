@@ -289,7 +289,7 @@ def walk(
     wanted = prepare(terms)
     deadline = time.monotonic() + budget_s
     found: list[Found] = []
-    close: list[tuple[float, str, Path]] = []  # a min-heap of the best `similar` scores
+    close: list[tuple[float, str]] = []  # (score, path) of the names like the search
     queue: deque[Path] = deque(roots)
     while queue and time.monotonic() <= deadline:
         folder = queue.popleft()
@@ -311,21 +311,13 @@ def walk(
             elif similar and not found:
                 score = likeness(query, folded, sounds, wanted)
                 if score >= SIMILAR_CUTOFF:
-                    item = (score, entry.path, Path(entry.path))
-                    if len(close) < similar:
-                        heapq.heappush(close, item)
-                    elif item > close[0]:
-                        heapq.heapreplace(close, item)
+                    close.append((score, entry.path))
     found.sort(key=lambda f: f.modified, reverse=True)
     if found:
         return Walk(found[:limit])
-    alike = []
-    for _score, _key, path in sorted(close, reverse=True):
-        try:
-            alike.append(Found(path, path.stat().st_mtime))
-        except OSError:
-            continue
-    return Walk([], alike)
+    return Walk(
+        [], _dated((Path(p) for _, p in heapq.nlargest(similar, close)), newest_first=False)
+    )
 
 
 _EXTENSIONS = {
