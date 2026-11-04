@@ -474,7 +474,7 @@ class LocalResponder:
             async for chunk in self._respond(proposal.text, proposal.language, confirmed=True):
                 yield chunk
             return
-        rest = [w for w in words if w not in NO_WORDS] if answer is Answer.NO else words
+        rest = _after_no(words) if answer is Answer.NO else words
         if len(rest) >= 2 or (rest and answer is Answer.UNCLEAR):
             again = " ".join(rest) if answer is Answer.NO else text
             log.info("Non era %r: nuova richiesta %r", proposal.text, again)
@@ -544,6 +544,13 @@ class LocalResponder:
             return
         if reply:
             yield reply
+
+
+def _after_no(words: list[str]) -> list[str]:
+    """What follows a refusal: "no, abbassa il volume" is a new request. "non spegnerti adesso"
+    refuses what it names: taking the "non" out would run it."""
+    rest = words[1:] if words[0] in ("no", "nope") else []
+    return [] if NO_WORDS.intersection(rest) else rest
 
 
 def quoted(text: str) -> str:

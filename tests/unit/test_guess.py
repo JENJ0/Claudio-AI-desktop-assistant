@@ -404,6 +404,40 @@ async def test_no_and_another_request_answers_that(matcher: CommandMatcher) -> N
     assert rec.keys and set(rec.keys) == {MEDIA_KEYS["volume_up"]}
 
 
+@pytest.mark.parametrize(
+    "said",
+    [
+        "non spegnerti adesso",
+        "non spegnerti",
+        "no non spegnerti",
+        "va bene ma non adesso",
+        "no basta",
+    ],
+)
+async def test_a_refusal_does_not_run_what_it_refuses(matcher: CommandMatcher, said: str) -> None:
+    """ "non spegnerti adesso" with the "non" taken out was the request "spegnerti adesso"."""
+    r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
+    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    assert await say(r, said) == "Va bene, lascio stare."
+    assert not r.actions.system.off and not r.awaiting
+    assert r.last_route["route"] == "guess_refused"
+
+
+async def test_no_and_lower_the_volume_is_still_a_new_request(matcher: CommandMatcher) -> None:
+    r, _, rec = responder(matcher, Guess("spegniti", 0.99, "off"))
+    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    await say(r, "no, abbassa il volume")
+    assert not r.actions.system.off
+    assert rec.keys and set(rec.keys) == {MEDIA_KEYS["volume_down"]}
+
+
+async def test_a_refusal_of_closing_the_window_presses_nothing(matcher: CommandMatcher) -> None:
+    r, _, rec = responder(matcher, Guess("chiudi la finestra", 0.6, "close_window"))
+    await r.guess(Doubt("Chiudi la fenestra.", "it", "not_a_request"))
+    assert await say(r, "non chiudere la finestra") == "Va bene, lascio stare."
+    assert rec.combos == []
+
+
 async def test_the_questions_own_echo_is_no_answer(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
     await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
