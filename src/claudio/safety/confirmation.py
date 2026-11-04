@@ -31,7 +31,8 @@ ASK_LEVEL_3 = {
 CANCELLED = {"it": "Va bene, non lo faccio.", "en": "Okay, I won't do it."}
 NOT_UNDERSTOOD = {"it": "Non ho capito: non lo faccio.", "en": "I didn't catch that: not doing it."}
 
-# Normalised (lowercase, no accents or punctuation). A refusal anywhere wins over a yes.
+# Normalised (lowercase, no accents or punctuation). A refusal anywhere, also in the name's
+# lead-in, wins over a yes.
 NO_WORDS = frozenset(
     {"no", "non", "annulla", "annullare", "ferma", "fermo", "basta", "stop", "niente", "mai"}
     | {"nope", "dont", "don", "cancel", "abort", "nevermind", "never", "negative", "wait"}
@@ -82,12 +83,12 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     """What the person said to "do you confirm?". At level 3 only an explicit confirmation is a
     yes; an ordinary yes is unclear (the action is not run). At both levels a yes word is not
     enough: every word must be one a yes may hold."""
-    norm = normalize(text, drop_fillers=False)
-    words = strip_wake_words(norm.split())
+    heard = normalize(text, drop_fillers=False).split()
+    if NO_WORDS.intersection(heard):  # before the name is stripped: "no Claudio" is a no
+        return Answer.NO
+    words = strip_wake_words(heard)
     if not words:
         return Answer.UNCLEAR
-    if NO_WORDS.intersection(words):
-        return Answer.NO
     joined = " ".join(words)
     if level >= LEVEL_EXPLICIT:
         explicit = EXPLICIT_WORDS.intersection(words) or any(p in joined for p in EXPLICIT_PHRASES)
