@@ -85,6 +85,19 @@ async def test_closed_list_without_a_command_keeps_the_text(
     assert "closed_list_from" not in assistant.history[-1]
 
 
+async def test_closed_list_keeps_whisper_to_itself(fake_vad, vad_settings, make_frames) -> None:
+    assistant, _, _, _ = setup(fake_vad, vad_settings, "Claudio, a prick roam")
+    held: list[bool] = []
+
+    def closed_list(audio, language):
+        held.append(assistant._stt_lock.locked())
+        return ["apri chrome"]
+
+    assistant.closed_list = closed_list
+    await run_frames(assistant, request(make_frames))
+    assert held == [True]  # or a phrase said over the reply starts a second pass at once
+
+
 async def test_request_after_a_pause_is_kept_when_the_wake_audio_has_the_name(
     fake_vad, vad_settings, make_frames
 ) -> None:

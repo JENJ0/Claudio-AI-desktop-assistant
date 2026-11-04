@@ -606,6 +606,60 @@ async def test_second_chance_never_wakes_a_busy_assistant(
     assert row["superseded"] is True and "audio_file" not in row and "rejected" not in row
 
 
+async def test_going_busy_counts_ahead_of_no_voice(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """Busy by the time the voice meter answers: a row for the record, and no WAV kept apart as
+    a negative to retrain the wake word on, even if the meter heard no voice."""
+    reached, gate = threading.Event(), threading.Event()
+    saved: list[str] = []
+
+    def meter(audio: np.ndarray) -> int:
+        reached.set()
+        gate.wait(5)
+        return 0
+
+    assistant, _ = second_chance_with(
+        fake_vad,
+        vad_settings,
+        SecondChance("Hey Claudio"),
+        tmp_path,
+        voice_meter=meter,
+        wake_min_voice_ms=96,
+        rejected_sink=lambda audio, kind: saved.append(kind) or f"{kind}.wav",
+    )
+    for frame in make_frames("silence", 1600):  # the near miss is on the last one
+        await assistant.handle_frame(frame)
+    for _ in range(500):
+        if reached.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert reached.is_set()
+    assistant.state = State.RESPONDING
+    gate.set()
+    await assistant.wait_idle()
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["superseded"] is True and "rejected" not in row and saved == []
+
+
+async def test_a_second_chance_over_a_phrase_already_begun_keeps_to_its_lead_in(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    """The name heard with the voice still going: the phrase is the 1.5 s of lead-in and what
+    follows. The 2.4 s the second chance heard replace them only for a phrase already over."""
+    assistant, _ = second_chance_with(
+        fake_vad, vad_settings, SecondChance("Claudio, apri Chrome."), tmp_path
+    )
+    assistant.wake.miss_on = {30}
+    for frame in make_frames("speech", 2400):  # the near miss is on the last one
+        await assistant.handle_frame(frame)
+    await assistant.wait_idle()
+    for frame in make_frames("silence", 1200):
+        await assistant.handle_frame(frame)
+    await assistant.wait_idle()
+    assert 1.4 < len(assistant.transcriber.audio) / 16000 < 1.8
+
+
 async def test_quiet_microphone_is_reported_once(fake_vad, vad_settings, make_frames, caplog):
     assistant, *_ = build(fake_vad, vad_settings, FakeStt(), {1, 30})
     stats = assistant.endpointer.stats
@@ -656,8 +710,21 @@ async def test_only_the_wake_word_listens_again(fake_vad, vad_settings, make_fra
     (row,) = assistant.history
     assert row["outcome"] == "ok" and row["relisten"] == "Hey Claudio."
     assert row["text"] == "apri chrome" and row["m1_ms"] is not None
-    assert row["prewake_ms"] == 80 and len(saved[0]) / 16000 > 0.08 + 0.4 + 0.8  # both phrases
+    assert row["prewake_ms"] == 80 and len(saved[0]) / 16000 > 1.9  # both phrases and pauses
     assert assistant.state is State.IDLE and wake.resets == 1
+
+
+async def test_what_was_held_stops_at_the_timeout(fake_vad, vad_settings, make_frames) -> None:
+    """ "Hey Claudio." took Whisper longer than the timeout, and only silence was held: the
+    window times out in the middle of those frames, and the rest are not listened to."""
+    assistant, _, speaker, _ = build(fake_vad, vad_settings, FakeStt("Hey Claudio."), {1})
+    phrase = make_frames("silence", 80) + make_frames("speech", 400) + make_frames("silence", 480)
+    for frame in phrase + make_frames("silence", 3600):  # no await that suspends: all held
+        await assistant.handle_frame(frame)
+    await assistant.wait_idle()
+    assert assistant.history[-1]["outcome"] == "timeout" and assistant.state is State.IDLE
+    assert speaker.beeps == ["wake", "cancel"]
+    assert assistant._task is not None and assistant._task.exception() is None
 
 
 async def test_wake_word_twice_then_gives_up(fake_vad, vad_settings, make_frames) -> None:
@@ -819,6 +886,64 @@ async def test_a_phrase_heard_on_another_microphone_does_not_move_this_ones_leve
         make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
     )
     assert assistant.history[0]["outcome"] == "ok" and level.seen == []
+
+
+async def test_an_error_beep_that_cannot_play_still_closes_the_request(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    class Unplugged(FakeSpeaker):
+        async def beep(self, kind: str = "wake") -> None:
+            if kind == "error":
+                raise RuntimeError("device gone")
+            await super().beep(kind)
+
+    assistant = Assistant(
+        FakeWake({1}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        FailingResponder(),
+        Unplugged(),
+        clock=AudioClock(),
+    )
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert assistant.history[0]["outcome"] == "error" and assistant.state is State.IDLE
+    assert assistant._task is not None and assistant._task.exception() is None
+
+
+async def test_a_request_cancelled_during_its_last_beep_keeps_its_outcome(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    class EndlessBeep(FakeSpeaker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.beeping = asyncio.Event()
+
+        async def beep(self, kind: str = "wake") -> None:
+            await super().beep(kind)
+            if kind == "cancel":
+                self.beeping.set()
+                await asyncio.Event().wait()
+
+    speaker = EndlessBeep()
+    assistant = Assistant(
+        FakeWake({1}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(),
+        StopResponder(),
+        speaker,
+        clock=AudioClock(),
+    )
+    frames = make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800)
+    for frame in frames:
+        await assistant.handle_frame(frame)
+    await asyncio.wait_for(speaker.beeping.wait(), 5)
+    assert assistant._task is not None
+    assistant._task.cancel()
+    await assistant.wait_idle()
+    assert assistant.history[0]["outcome"] == "stopped" and assistant.state is State.IDLE
 
 
 @pytest.mark.parametrize("state", list(State))
@@ -1081,6 +1206,39 @@ async def test_a_finished_phrase_is_answered_at_once(fake_vad, vad_settings, mak
     await run_frames(assistant, frames)
     assert responder.seen == ["Apri Chrome e cerca Dainese Moto."]
     assert "continued_from" not in assistant.history[-1]
+
+
+async def test_a_phrase_left_over_from_another_one_is_not_the_request(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt("apri chrome"), {1})
+    assistant._continued = "Dimmi..."  # its phrase ended another way
+    frames = make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800)
+    await run_frames(assistant, frames)
+    assert responder.seen == ["apri chrome"]
+
+
+async def test_a_wake_word_reset_failing_once_still_goes_back_to_idle(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    # "Hey Claudio." listens again and the window times out while the held frames are replayed.
+    # That _finish fails after clearing the interaction, so the request closes with none left.
+    assistant, wake, _, _ = build(fake_vad, vad_settings, FakeStt("Hey Claudio."), {1})
+    real_reset = wake.reset
+    failures = [RuntimeError("onnx hiccup")]
+
+    def reset_failing_once() -> None:
+        if failures and assistant.history:  # its row is written just before the reset
+            raise failures.pop()
+        real_reset()
+
+    wake.reset = reset_failing_once
+    phrase = make_frames("silence", 80) + make_frames("speech", 400) + make_frames("silence", 480)
+    for frame in phrase + make_frames("silence", 3600):
+        await assistant.handle_frame(frame)
+    await assistant.wait_idle()
+    assert not failures  # it did fail
+    assert assistant.state is State.IDLE
 
 
 async def test_continuing_is_off_with_zero(fake_vad, vad_settings, make_frames) -> None:

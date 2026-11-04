@@ -35,6 +35,18 @@ async def test_responder_known_unknown_and_error(matcher) -> None:
     assert await collect(r.respond("open chrome", "en")) == ["I couldn't do it."]
 
 
+async def test_claude_answers_in_a_language_with_no_fixed_reply(matcher) -> None:
+    """No "non lo so fare" in French, so the fixed reply would be Italian. Claude can write it."""
+
+    async def claude(text: str, language: str):
+        yield language
+
+    r = make_responder(matcher)
+    r.fallback = claude
+    assert await collect(r.respond("quelle heure est-il", "fr")) == ["fr"]
+    assert r.language == "fr"
+
+
 async def test_responder_answers_in_the_language_of_the_phrase(matcher) -> None:
     r = make_responder(matcher)
     assert await collect(r.respond("Open Chrome, please.", "en")) == ["Opening Chrome."]

@@ -180,6 +180,17 @@ async def test_long_doubted_question_pays_one_more_pass(
     assert "alternatives_ms" in assistant.history[-1]
 
 
+async def test_the_other_guesses_are_of_this_phrase(fake_vad, vad_settings, make_frames) -> None:
+    question = "Il punto è una storia lunga su un robot che vive in città?"
+    assistant, responder, passes = setup(
+        fake_vad, vad_settings, question, [DOUBTED], ["Raccontami una storia lunga su un robot"]
+    )
+    assistant._candidates = ["the closed list of the phrase before"]
+    await run_frames(assistant, request(make_frames))
+    assert passes == ["it"]
+    assert responder.hearings == [Hearing(True, ("Raccontami una storia lunga su un robot",))]
+
+
 async def test_sure_request_costs_nothing_more(fake_vad, vad_settings, make_frames) -> None:
     assistant, responder, passes = setup(
         fake_vad, vad_settings, "Quanto dista la Luna dalla Terra?", [SURE], ["x"]

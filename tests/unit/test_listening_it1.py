@@ -13,6 +13,7 @@ import pytest
 from claudio.app import Assistant, BargeIn, State
 from claudio.audio.vad import Endpointer
 from claudio.config import VadSettings
+from claudio.router.actions import VK_F4, VK_MENU
 from claudio.router.matcher import CommandMatcher
 from tests.conftest import FakeVad
 from tests.unit.test_app import AudioClock, FakeWake
@@ -278,6 +279,35 @@ async def test_a_phrase_still_going_when_the_reply_ends_is_not_lost(
     assert speaker.spoken[1] == "Apro Chrome."
     assert assistant.history[1]["wake_word"] == "barge_in"
     assert speaker.beeps == ["wake"]  # no beep for the request that went on
+
+
+async def test_a_phrase_still_going_over_a_question_answers_it(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    """The reply ended on "Confermi?" with a phrase still being said over it: the phrase goes
+    on without the beep of a window for the answer, and the action stays armed for it."""
+    speaker = CueSpeaker()
+    assistant, _, rec, _ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["chiudi la finestra", "Claudio, sì."],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=slicing_barge(vad_settings, lambda audio: "Claudio, sì."),
+    )
+
+    def end_the_reply(n: int) -> None:
+        if n == 13:
+            speaker.done.set()
+
+    await say_over_the_reply(
+        assistant, make_frames, speaker, speech_ms=1600, on_frame=end_the_reply
+    )
+    assert speaker.spoken[0].endswith("Confermi?") and speaker.beeps == ["wake"]
+    assert assistant.history[0]["barge_in"] == "Claudio, sì."  # judged before its row is written
+    assert assistant.history[1]["wake_word"] == "barge_in"
+    assert assistant.history[1]["route"] == "confirmed" and rec.combos == [(VK_MENU, VK_F4)]
 
 
 # --- 2.3: the barge-in threshold, before the gain -------------------------------------------
