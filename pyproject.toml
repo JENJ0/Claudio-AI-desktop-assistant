@@ -20,6 +20,7 @@ dependencies = [
     "scipy>=1.11",  # voice effects (already required by openwakeword)
     "pycaw>=20240316; sys_platform == 'win32'",  # Windows' current default output (Core Audio)
     "anthropic>=1.15,<2",  # Claude API (Phase 2): answers what the local router does not know
+    "httpx2==2.14.0",  # the SDK's transport: its errors come raw during a reply (brain/claude.py)
     "fastapi>=0.115",  # local server behind the chat window (later also the iPhone, Phase 6)
     "uvicorn>=0.32",
     "pywebview>=5.3; sys_platform == 'win32'",  # the chat window (Windows WebView2)

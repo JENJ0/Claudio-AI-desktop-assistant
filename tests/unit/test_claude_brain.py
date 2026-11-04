@@ -833,6 +833,120 @@ async def test_the_answer_to_the_offer_keeps_the_language_of_the_question(
     assert reply == "It depends. A b I'll stop here: ask and I'll go on."
 
 
+NETWORK_SAID = "Non riesco a collegarmi a Claude. Controlla la connessione."
+
+
+class BreakingStream(ScriptedStream):
+    """The connection dies after its chunks. The SDK wraps errors only at request time: here
+    the transport's own exception comes out of `text_stream` (tried on anthropic 1.15)."""
+
+    def __init__(self, chunks: list[str], error: BaseException):
+        super().__init__(chunks, "end_turn", [], dict(USAGE))
+        self.broken = error
+
+    @property
+    def text_stream(self) -> AsyncIterator[str]:
+        async def gen() -> AsyncIterator[str]:
+            for chunk in self.chunks:
+                yield chunk
+            raise self.broken
+
+        return gen()
+
+
+class BreakingClient(ScriptedClient):
+    """Its last reply is cut by `error`."""
+
+    def __init__(self, error: BaseException, *replies: tuple[list[str], str, list[Any]]):
+        super().__init__(*replies)
+        self.error = error
+
+    def stream(self, **params: Any) -> ScriptedStream:
+        stream = super().stream(**params)
+        return stream if self.replies else BreakingStream(stream.chunks, self.error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx2.RemoteProtocolError("peer closed"),
+        httpx2.ReadError("reset"),
+        httpx2.ReadTimeout("stalled"),
+    ],
+    ids=lambda e: type(e).__name__,
+)
+async def test_a_connection_lost_during_a_reply_is_said_once_and_keeps_the_words(
+    pricing: Pricing, error: Exception
+) -> None:
+    """ask() raised: an error beep, no sentence, and the turn was lost."""
+    b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert chunks == ["Prima frase. ", "Seconda fra", "", f" {NETWORK_SAID}"]
+    assert chunks[2] is CUT_SHORT
+    assert b.last_call["claude_error"] == "network"
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+    # What was generated is billed: 400 in, the 24 characters said at 3 per token.
+    assert b.tracker.calls_today() == 1
+    assert b.last_call["input_tokens"] == 400 and b.last_call["output_tokens"] == 8
+
+
+async def test_the_voice_says_the_network_error_without_the_unfinished_sentence(
+    pricing: Pricing,
+) -> None:
+    client = BreakingClient(httpx2.ReadError("reset"), (["Prima frase. Attra"], "end_turn", []))
+    b = brain(pricing, client)
+    assert [s async for s in split_stream(b.ask("raccontami una storia", "it"))] == [
+        "Prima frase.",
+        "Non riesco a collegarmi a Claude.",
+        "Controlla la connessione.",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("replies", "before", "text", "question"),
+    [
+        ([(["Prima fra"], "end_turn", [])], [], "Pensaci bene: 17?", "[it] Pensaci bene: 17?"),
+        (  # the "no" to the offer: Haiku answers without its tools
+            [([], "tool_use", HANDOFF), (["Prima fra"], "end_turn", [])],
+            ["fammi un confronto tra treno e auto"],
+            "no",
+            "[it] fammi un confronto tra treno e auto",
+        ),
+    ],
+)
+async def test_a_connection_lost_keeps_the_words_of_the_model_that_answers(
+    pricing: Pricing,
+    replies: list[tuple[list[str], str, list[Any]]],
+    before: list[str],
+    text: str,
+    question: str,
+) -> None:
+    b = brain(pricing, BreakingClient(httpx2.ReadError("reset"), *replies))
+    for said in before:
+        await ask(b, said)
+    assert await ask(b, text) == f"Prima fra {NETWORK_SAID}"
+    assert list(b._history) == [(question, "Prima fra")]
+
+
+async def test_a_connection_refused_at_request_time_keeps_nothing(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(error=anthropic.APIConnectionError(request=REQUEST)))
+    assert await ask(b, "chi era Dante") == NETWORK_SAID
+    assert b.last_call["claude_error"] == "network"
+    assert not b._history and b.tracker.calls_today() == 0
+
+
+async def test_a_cancel_during_a_reply_is_not_a_network_error(pricing: Pricing) -> None:
+    client = BreakingClient(asyncio.CancelledError(), (["Prima frase. "], "end_turn", []))
+    b = brain(pricing, client)
+    chunks = []
+    with pytest.raises(asyncio.CancelledError):
+        async for chunk in b.ask("raccontami una storia", "it"):
+            chunks.append(chunk)
+    assert chunks == ["Prima frase. "]  # nothing is said on the way out of a cut
+    assert "claude_error" not in b.last_call
+    assert list(b._history) == [("[it] raccontami una storia", f"Prima frase. {CUT_NOTE}")]
+
+
 async def test_think_phrase_in_another_language(pricing: Pricing) -> None:
     b = brain(pricing, ScriptedClient())
     assert b.wants_smart("think hard about this", "it")

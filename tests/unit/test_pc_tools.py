@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx2
 import pytest
 
 from claudio.brain.claude import CUT_NOTE, ClaudeBrain
@@ -19,7 +20,15 @@ from claudio.pc.files import Found
 from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import DEFINITIONS, LEVELS, App, PcTools, ToolCall, Window
 from claudio.router.matcher import CommandMatcher
-from tests.unit.test_claude_brain import Monotonic, ScriptedClient, hybrid, say, settled
+from tests.unit.test_claude_brain import (
+    NETWORK_SAID,
+    BreakingClient,
+    Monotonic,
+    ScriptedClient,
+    hybrid,
+    say,
+    settled,
+)
 from tests.unit.test_cost import PRICES, tracker
 
 
@@ -614,6 +623,31 @@ async def test_a_cut_after_the_yes_is_recorded_at_once(
     assert question == "[it] chiudi chrome"
     assert reply.endswith(f"Chiusa. {CUT_NOTE} [Claudio ran: close_window ok]")
     assert b.last_call["output_tokens"] == 2  # the 8 characters said, at 3 per token
+
+
+@pytest.mark.parametrize(
+    ("chunks", "said", "kept"),
+    [
+        (["Dice di "], "Ci guardo. Dice di ", "Ci guardo. Dice di"),
+        ([], "Ci guardo. ", "Ci guardo."),  # before any word of the second round
+    ],
+)
+async def test_a_connection_lost_after_a_tool_round_keeps_its_note(
+    pricing: Pricing, tools: PcTools, chunks: list[str], said: str, kept: str
+) -> None:
+    """The request read a window: a lost note would let the next `remember` run unasked."""
+    client = BreakingClient(
+        httpx2.RemoteProtocolError("peer closed"),
+        ([], "tool_use", [use("read_window", window="blocco note")]),
+        (chunks, "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "leggimi il blocco note") == f"{said}{NETWORK_SAID}"
+    assert b.last_call["claude_error"] == "network"
+    assert list(b._history) == [
+        ("[it] leggimi il blocco note", f"{kept} [Claudio ran: read_window ok]")
+    ]
+    assert b._read_outside()
 
 
 async def test_a_cut_at_the_word_before_the_tools_of_a_yes_runs_nothing(
