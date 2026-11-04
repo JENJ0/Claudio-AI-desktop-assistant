@@ -45,9 +45,13 @@ ANSWER_WORDS = 4  # "tutti e due", "la seconda": an answer is short
 NAMED_ANSWER_WORDS = 6  # "quella che abita a Torino"
 # All a named answer may hold besides the memory's own words: "chi abita a Torino" is a question.
 NAMED_ANSWER_CONNECTORS = frozenset(
-    {"quella", "quello", "la", "il", "l", "che", "di", "del", "della", "su", "sul", "sulla"}
-    | {"the", "one", "that", "of", "about"}
+    {"quella", "quello", "la", "il", "l", "di", "del", "della", "dei", "su", "sul", "sulla"}
+    | {"the", "one", "of", "about"}
 )
+# Only after a lead ("quella che abita a Torino"): at the start they make a question
+# ("che riunione è", "dove abita a Torino"), a delete.
+NAMED_ANSWER_LEADS = frozenset({"quella", "quello", "la", "il", "l", "the", "that"})
+NAMED_ANSWER_AFTER_LEAD = frozenset({"che", "dove", "con", "cosa", "that", "where", "with"})
 
 # The rule question's own phrases, whole: "sì, tienila come regola" is a yes, "tienila come
 # regola" is not, nor is "come sì" or "sì a". Longest first, so "keep it as a rule" is one.
@@ -552,7 +556,10 @@ class MemoryVoice:
             return self._forgot([q.options[index]], q.language)
         if len(words) <= NAMED_ANSWER_WORDS and not text.rstrip().endswith("?"):
             # "quella di Torino": every word in one of them, as a whole word
-            said = [w for w in words if w not in NAMED_ANSWER_CONNECTORS]
+            allowed = NAMED_ANSWER_CONNECTORS
+            if words[0] in NAMED_ANSWER_LEADS:
+                allowed = allowed | NAMED_ANSWER_AFTER_LEAD
+            said = [w for w in words if w not in allowed]
             whole = [s for s in rank(" ".join(said), q.options) if s.exact == 1.0]
             if len(whole) == 1 and _holds(whole[0].memory, said):
                 return self._forgot([whole[0].memory], q.language)
