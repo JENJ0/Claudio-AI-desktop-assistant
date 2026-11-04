@@ -96,6 +96,11 @@ class SentenceSplitter:
         self._buf = ""
         return done
 
+    def consume(self, chunk: str) -> list[str]:
+        """A chunk of a reply stream. CUT_SHORT (cut at max_tokens, found by identity): never
+        the fragment ("Attra"); what follows it (a closing sentence) is said as usual."""
+        return self.drop_unfinished() if chunk is CUT_SHORT else self.feed(chunk)
+
     def ended(self) -> list[str]:
         """Claude stopped writing (a tool is running): the sentence held back for what might
         follow it ("3." before "5") is complete after all. An unfinished one, or one ending
@@ -121,7 +126,7 @@ class SentenceSplitter:
             if j >= len(buf):
                 return None  # wait: the next chunk may continue the number/abbreviation
             if not buf[j].isspace():
-                if ch != "\n" and buf[j].isupper() and i > 0 and buf[i - 1].islower():
+                if buf[j].isupper() and i > 0 and buf[i - 1].islower():
                     return j  # "Cerco il nome.Nessuna cartella": two turns glued together
                 continue  # "3.5", "www.sito.it", "10:30", "U.S.A."
             if ch == "." and j == i + 1 and self._is_abbreviation(buf[: i + 1]):
@@ -152,7 +157,7 @@ def joined_reply(parts: Sequence[str]) -> str:
     splitter = SentenceSplitter(max_chars=len("".join(parts)) + 1)
     said: list[str] = []
     for part in parts:
-        said += splitter.drop_unfinished() if part is CUT_SHORT else splitter.feed(part)
+        said += splitter.consume(part)
     return " ".join(said + splitter.flush())
 
 
@@ -161,11 +166,7 @@ async def split_stream(
 ) -> AsyncIterator[str]:
     splitter = SentenceSplitter(max_chars, first_clause_chars)
     async for chunk in chunks:
-        if chunk is CUT_SHORT:  # what follows it (a closing sentence) is said as usual
-            for sentence in splitter.drop_unfinished():
-                yield sentence
-            continue
-        for sentence in splitter.feed(chunk):
+        for sentence in splitter.consume(chunk):
             yield sentence
     for sentence in splitter.flush():
         yield sentence
@@ -205,13 +206,9 @@ async def group_stream(
         nonlocal moved
         try:
             async for chunk in text:
-                if chunk is CUT_SHORT:  # cut at max_tokens: never the fragment ("Attra")
-                    for sentence in splitter.drop_unfinished():
-                        await ready.put(sentence)
-                    continue
-                if chunk.strip():
+                if chunk.strip():  # never CUT_SHORT: it is an empty str
                     moved = loop.time()
-                for sentence in splitter.feed(chunk):
+                for sentence in splitter.consume(chunk):
                     await ready.put(sentence)
             for sentence in splitter.flush():
                 await ready.put(sentence)
