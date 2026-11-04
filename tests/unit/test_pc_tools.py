@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import anthropic
 import httpx2
 import pytest
 
@@ -24,8 +25,10 @@ from tests.unit.test_claude_brain import (
     API_SAID,
     NETWORK_SAID,
     OVERLOADED_MID_REPLY,
+    REQUEST,
     BreakingClient,
     Monotonic,
+    RefusingClient,
     ScriptedClient,
     hybrid,
     say,
@@ -706,6 +709,40 @@ async def test_a_status_error_after_a_tool_round_keeps_its_note(
         ("[it] leggimi il blocco note", "Ci guardo. Dice di [Claudio ran: read_window ok]")
     ]
     assert b._read_outside()
+
+
+REFUSED_AT_REQUEST_TIME = [
+    anthropic.APIConnectionError(request=REQUEST),
+    anthropic.InternalServerError(
+        "overloaded", response=httpx2.Response(529, request=REQUEST), body=None
+    ),
+]
+
+
+@pytest.mark.parametrize("error", REFUSED_AT_REQUEST_TIME, ids=lambda e: type(e).__name__)
+async def test_a_request_refused_in_a_later_tool_round_keeps_its_note(
+    pricing: Pricing, tools: PcTools, error: Exception
+) -> None:
+    """Spotify was opened, then the next call failed before any reply: "Claudio ran" stays,
+    or the next request would hear that nothing was done (24/10)."""
+    client = RefusingClient(error, ([], "tool_use", [use("open_app", name="spotify")]))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "apri spotify")
+    assert len(client.calls) == 2
+    assert list(b._history) == [("[it] apri spotify", "[Claudio ran: open_app ok]")]
+
+
+@pytest.mark.parametrize("error", REFUSED_AT_REQUEST_TIME, ids=lambda e: type(e).__name__)
+async def test_a_request_refused_after_a_yes_keeps_its_note(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, error: Exception
+) -> None:
+    client = RefusingClient(error, ([], "tool_use", [use("close_window", window="chrome")]))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "chiudi chrome")
+    await ask(b, "sì")
+    assert ("close", "YouTube - Google Chrome") in desk.done
+    assert len(client.calls) == 2
+    assert list(b._history) == [("[it] chiudi chrome", "Confermi? [Claudio ran: close_window ok]")]
 
 
 async def test_a_cut_at_the_word_before_the_tools_of_a_yes_runs_nothing(
