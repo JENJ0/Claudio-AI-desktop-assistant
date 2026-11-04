@@ -80,8 +80,11 @@ class MetricsWriter:
     def write(self, interaction: Interaction) -> dict[str, Any]:
         row = {"ts": time.time(), **interaction.summary()}
         self._rotate()
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        try:
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except OSError:  # held by another program: the row still goes to the caller
+            log.exception("Metriche non salvate")
         if self.conversation is not None:
             self.conversation.add(row)
         if self.chat is not None:

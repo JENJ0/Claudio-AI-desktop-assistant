@@ -90,7 +90,7 @@ class ConversationLog:
         try:
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(format_row(row))
-        except OSError:
+        except Exception:  # a row that cannot be rendered must not stop the request either
             log.exception("Conversazione non salvata")
 
 

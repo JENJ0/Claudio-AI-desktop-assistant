@@ -386,6 +386,7 @@ EN: dict[str, str] = {
     "Nome sentito prima della richiesta: %r": "Name heard before the request: %r",
     "Conversazione non salvata": "Conversation not saved",
     "Rotazione di %s non riuscita": "Rotation of %s failed",
+    "Metriche non salvate": "Metrics not saved",
     "Sessione salvata in %s": "Session saved in %s",
     "Chat: %d messaggi più vecchi di %d giorni eliminati": (
         "Chat: %d messages older than %d days deleted"

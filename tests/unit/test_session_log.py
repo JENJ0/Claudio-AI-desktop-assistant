@@ -174,6 +174,16 @@ def test_metrics_rows_reach_the_conversation(tmp_path: Path, session: Path) -> N
     assert "**JenJo:** che ore sono" in (session / CONVERSATION_FILE).read_text(encoding="utf-8")
 
 
+def test_a_row_that_cannot_be_rendered_does_not_stop_the_metrics_write(
+    tmp_path: Path, session: Path
+) -> None:
+    writer = MetricsWriter(tmp_path / "metrics.jsonl", ConversationLog(session))
+    inter = Interaction(info={"wake_word": "hey_claudio", "outcome": "ok", "claude_calls": [7]})
+    row = writer.write(inter)  # format_row cannot read a call that is not a dict
+    assert row["outcome"] == "ok"
+    assert (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").count("\n") == 1
+
+
 def test_console_log_rotates(session: Path) -> None:
     from logging.handlers import RotatingFileHandler
 

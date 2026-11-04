@@ -300,6 +300,23 @@ async def test_failing_audio_sink_does_not_break_the_request(
     assert assistant.state is State.IDLE
 
 
+async def test_a_metrics_file_held_by_another_program_does_not_wedge_the_assistant(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    # A directory where metrics.jsonl should be: opening it for append raises OSError, as a
+    # file locked by another program does on Windows.
+    (tmp_path / "metrics.jsonl").mkdir()
+    assistant, _wake, _speaker, responder = build(
+        fake_vad, vad_settings, FakeStt(), {1, 40}, tmp_path
+    )
+    utterance = make_frames("speech", 800) + make_frames("silence", 800)
+    frames = make_frames("silence", 80) + utterance + make_frames("silence", 1600) + utterance
+    await run_frames(assistant, frames + make_frames("silence", 800))
+    assert assistant.state is State.IDLE
+    assert responder.seen == ["apri chrome", "apri chrome"]  # the next request was heard
+    assert len(assistant.history) == 2 and assistant.history[-1]["outcome"] == "ok"
+
+
 async def test_near_miss_is_logged_without_waking(fake_vad, vad_settings, make_frames, tmp_path):
     saved: list[str] = []
 
