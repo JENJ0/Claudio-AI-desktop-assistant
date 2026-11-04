@@ -626,7 +626,10 @@ class ClaudeBrain:
         sense to Claude (before, only finished replies were kept and the story was lost)."""
         said = "".join(turn.parts).strip()
         note = CUT_NOTE if said else CUT_BEFORE_NOTE
-        self._history.append((turn.question, f"{said} {note}".strip()))
+        answer = f"{said} {note}".strip()
+        if turn.done:  # after the cut note: "interrupted here" stays right after the words
+            answer = f"{answer} {ACTIONS_NOTE}{', '.join(turn.done)}]"
+        self._history.append((turn.question, answer))
         self._last_turn = self.clock()
 
     def _messages(self, text: str, language: str) -> list[dict[str, Any]]:

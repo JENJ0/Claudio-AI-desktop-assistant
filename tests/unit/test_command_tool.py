@@ -185,8 +185,10 @@ async def test_a_cut_at_the_commands_own_reply_is_marked(pricing: Pricing, tools
     assert await anext(stream) == "Volume alzato."
     await stream.aclose()
     # The finished entry before this one is the doubled cut bookkeeping: a known bug, not pinned.
-    # No action note: a known bug to fix (a cut loses the read-outside taint), not intended.
-    assert b._history[-1] == ("[it] Audio alsa il volu", f"Volume alzato. {CUT_NOTE}")
+    assert b._history[-1] == (
+        "[it] Audio alsa il volu",
+        f"Volume alzato. {CUT_NOTE} [Claudio ran: claudio_command ok]",
+    )
 
 
 async def test_nothing_claude_meant_to_add_is_dropped(pricing: Pricing, tools: PcTools) -> None:
