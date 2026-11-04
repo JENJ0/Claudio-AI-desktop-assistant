@@ -26,7 +26,7 @@ from typing import Literal
 
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.echo import WORD_SHARE, word_share
-from claudio.memory.relevance import STOPWORDS, rank, stems
+from claudio.memory.relevance import STOPWORDS, rank, same_word, stems
 from claudio.memory.store import Kind, Memory, MemoryRefused, MemoryStore
 from claudio.router.normalizer import normalize, strip_accents, strip_wake_words
 from claudio.safety.confirmation import NO_WORDS, Answer, parse_answer
@@ -43,6 +43,11 @@ TALKED_TTL_S = 60.0  # "dimenticalo" means the memory just talked about, this re
 SPOKEN_MAX = 80  # a memory longer than this is not read back when saved
 ANSWER_WORDS = 4  # "tutti e due", "la seconda": an answer is short
 NAMED_ANSWER_WORDS = 6  # "quella che abita a Torino"
+# All a named answer may hold besides the memory's own words: "chi abita a Torino" is a question.
+NAMED_ANSWER_CONNECTORS = frozenset(
+    {"quella", "quello", "la", "il", "l", "che", "di", "del", "della", "su", "sul", "sulla"}
+    | {"the", "one", "that", "of", "about"}
+)
 
 # The rule question's own words: "sì, tienila come regola" is a yes, "tienila come regola" is not.
 RULE_QUESTION_WORDS = frozenset(
@@ -543,8 +548,9 @@ class MemoryVoice:
             return self._forgot([q.options[index]], q.language)
         if len(words) <= NAMED_ANSWER_WORDS and not text.rstrip().endswith("?"):
             # "quella di Torino": every word in one of them, as a whole word
-            whole = [s for s in rank(" ".join(words), q.options) if s.exact == 1.0]
-            if len(whole) == 1:
+            said = [w for w in words if w not in NAMED_ANSWER_CONNECTORS]
+            whole = [s for s in rank(" ".join(said), q.options) if s.exact == 1.0]
+            if len(whole) == 1 and _holds(whole[0].memory, said):
                 return self._forgot([whole[0].memory], q.language)
         return None
 
@@ -622,6 +628,12 @@ def _without_question(q: _Question, words: Sequence[str]) -> list[str]:
     """At the rule question its own words are no part of the answer ("sì, tienila come regola")."""
     drop = RULE_QUESTION_WORDS if q.kind == "rule" else frozenset()
     return [w for w in words if w not in drop]
+
+
+def _holds(memory: Memory, said: Sequence[str]) -> bool:
+    """Every word of `said` is in `memory`, stopwords too: `rank` does not look at those."""
+    own = normalize(memory.text, drop_fillers=False).split()
+    return all(any(same_word(word, w) for w in own) for word in said)
 
 
 def _echo(text: str, q: _Question) -> bool:
