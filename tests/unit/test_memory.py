@@ -849,6 +849,19 @@ def test_a_long_yes_to_the_rule(voice: MemoryVoice) -> None:
     assert reply(voice, "Sì, tienila come regola.") == "D'accordo, da ora in poi: chiamami capo."
 
 
+@pytest.mark.parametrize("said", ["do it", "yes do it", "Sì, tienila come regola."])
+def test_a_yes_to_the_rule_may_repeat_its_words(voice: MemoryVoice, said: str) -> None:
+    reply(voice, "da ora in poi chiamami capo", addressed=False)
+    assert reply(voice, said) == "D'accordo, da ora in poi: chiamami capo."
+
+
+@pytest.mark.parametrize("said", ["come sì", "a regola sì", "sì a"])
+def test_the_rules_words_around_a_yes_do_not_save_it(voice: MemoryVoice, said: str) -> None:
+    reply(voice, "da ora in poi chiamami capo", addressed=False)
+    assert _not_an_answer(voice.handle(said))
+    assert len(voice.store) == 0
+
+
 def test_the_rules_own_words_alone_are_not_a_yes(voice: MemoryVoice) -> None:
     reply(voice, "da ora in poi chiamami capo", addressed=False)
     got = voice.handle("tienila come regola")  # Claudio's own question heard back: still waiting
@@ -864,8 +877,8 @@ def test_the_rules_own_words_are_not_a_yes_to_forget(voice: MemoryVoice) -> None
 
 
 def _not_an_answer(got: Reply | None) -> bool:
-    """A new request (None), or, when only openers and the name are left ("ok senti", "sì,
-    Claudio"), the question asked again: never a yes."""
+    """A new request (None), or, when only openers and the name are left ("ok senti"), the
+    "Non ho capito" reply, which also drops the question: never a yes."""
     return got is None or got.outcome == "unclear"
 
 
