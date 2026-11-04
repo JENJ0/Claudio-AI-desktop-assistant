@@ -280,3 +280,152 @@ async def test_basta_from_another_thread_also_wakes_it() -> None:
     start = time.perf_counter()
     await speaker.speak(text())
     assert time.perf_counter() - start < 1.0 and speaker.played == ["Uno."]
+
+
+class Voice(FakeSynth):
+    """Like Jack: told when a reply begins and when it is stopped."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.began_after: list[int] = []  # the sentences it had said at each new reply
+        self.cancelled = 0
+
+    def begin_reply(self) -> None:
+        self.began_after.append(len(self.calls))
+
+    def cancel(self) -> None:
+        self.cancelled += 1
+
+
+async def test_every_voice_is_told_a_reply_begins_before_it_speaks() -> None:
+    main, english = Voice(), Voice()
+    speaker = StreamingSpeaker(main, FakePlayer(), voices={"en": english, "de": FakeSynth()})
+    await speaker.speak(stream("Uno."))
+    await speaker.speak(stream("Due."))
+    assert main.began_after == [0, 1] and english.began_after == [0, 0]
+
+
+def test_interrupt_between_two_replies_stops_the_voices_and_not_the_next_reply() -> None:
+    main, english, player = Voice(), Voice(), FakePlayer()
+    speaker = StreamingSpeaker(main, player, voices={"en": english, "de": FakeSynth()})
+    asyncio.run(speaker.speak(stream("Uno.")))
+    speaker.interrupt()  # its loop is closed: nothing is left to wake
+    assert main.cancelled == 1 and english.cancelled == 1
+    asyncio.run(speaker.speak(stream("Due.")))
+    assert speaker.played == ["Due."] and len(player.played) == 2
+
+
+async def test_a_player_error_reaches_the_caller_ahead_of_a_voice_error() -> None:
+    class BrokenPlayer(FakePlayer):
+        def write(self, audio: np.ndarray, sample_rate: int | None = None, cancel=None) -> None:
+            time.sleep(0.1)  # the voice has already failed on the next sentence
+            raise RuntimeError("player")
+
+    speaker = StreamingSpeaker(FakeSynth(fail_on="Due."), BrokenPlayer())
+    with pytest.raises(RuntimeError, match="player"):
+        await speaker.speak(stream("Uno. Due. Tre."))
+    assert speaker.played == ["Uno."]  # counted as it started
+
+
+async def test_cancelling_a_reply_stops_the_text_and_leaves_nothing_running() -> None:
+    ended: list[str] = []
+
+    async def text():
+        try:
+            yield "Uno. "
+            await asyncio.sleep(30)
+            yield "Due."
+        finally:
+            ended.append("text")
+
+    first = asyncio.Event()
+    speaker = StreamingSpeaker(FakeSynth(), FakePlayer())
+    reply = asyncio.ensure_future(speaker.speak(text(), on_first_audio=first.set))
+    await asyncio.wait_for(first.wait(), 2)
+    reply.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(reply, 2)
+    assert reply.cancelled() and ended == ["text"]
+    assert asyncio.all_tasks() == {asyncio.current_task()}
+
+
+async def test_basta_while_a_voice_is_busy_in_its_thread_raises_nothing() -> None:
+    """Its stream cannot be closed while a thread runs in it (ValueError): it ends by itself."""
+    release = threading.Event()
+
+    class BusySynth(StreamingSynth):
+        def stream(self, text: str):
+            yield np.full(100, 1, dtype=np.int16)
+            release.wait(10)
+            yield np.full(100, 2, dtype=np.int16)
+
+    player = FakePlayer()
+    speaker = StreamingSpeaker(BusySynth(), player)
+    asyncio.get_running_loop().call_later(0.2, speaker.interrupt)
+    try:
+        await asyncio.wait_for(speaker.speak(stream("Uno.")), 2)
+    finally:
+        release.set()
+    assert speaker.played == ["Uno."] and [first for first, _ in player.played] == [1]
+
+
+async def test_basta_with_the_queue_full_stops_the_reply() -> None:
+    """A long reply rendered ahead of the player: no room for the wake-up, none is needed."""
+
+    class WaitingPlayer(FakePlayer):
+        def write(self, audio: np.ndarray, sample_rate: int | None = None, cancel=None) -> bool:
+            self.played.append((int(audio[0]), 0.0))
+            cancel.wait(10)
+            return False
+
+    async def rendered_ahead() -> None:
+        while len(synth.calls) < 18:  # 1 in the player, 16 queued, 1 waiting for room
+            await asyncio.sleep(0.05)
+
+    synth, player = FakeSynth(), WaitingPlayer()
+    speaker = StreamingSpeaker(synth, player)
+    loop = asyncio.get_running_loop()
+    errors: list[dict] = []
+    loop.set_exception_handler(lambda _, context: errors.append(context))
+    reply = asyncio.ensure_future(speaker.speak(stream("Frase. " * 20 + "Fine.")))
+    try:
+        await asyncio.wait_for(rendered_ahead(), 5)
+        speaker.interrupt()
+        await asyncio.wait_for(reply, 2)
+    finally:
+        loop.set_exception_handler(None)
+    assert speaker.played == ["Frase."] and len(player.played) == 1
+    assert errors == []
+
+
+async def test_basta_as_soon_as_the_text_starts_also_wakes_it() -> None:
+    """speak() can be woken before the text is first read: no gap for a "basta" to fall into."""
+    speaker = StreamingSpeaker(FakeSynth(), FakePlayer())
+
+    async def text():
+        speaker.interrupt()
+        await asyncio.sleep(2)
+        yield "Uno."
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await speaker.speak(text())
+    assert loop.time() - start < 1.0 and speaker.played == []
+
+
+async def test_the_language_is_read_at_every_sentence_as_it_comes() -> None:
+    """The responder only knows the language of its reply once it has matched the request."""
+    italian, english = FakeSynth(), FakeSynth()
+    speaker = StreamingSpeaker(italian, FakePlayer(), voices={"en": english})
+    language = "it"
+
+    async def text():
+        nonlocal language
+        language = "en"
+        yield "Opening. "
+        language = "it"
+        yield "Apro. "
+
+    await speaker.speak(text(), language=lambda: language)
+    assert [t for t, _ in english.calls] == ["Opening."]
+    assert [t for t, _ in italian.calls] == ["Apro."]

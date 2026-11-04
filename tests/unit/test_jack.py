@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from claudio.tts.jack import JackSynth, WorkerError
+from claudio.tts.voice_check import TakeVerdict
 
 # A stand-in for jack_worker.py: same protocol, no GPU. MODE picks how it misbehaves.
 FAKE_WORKER = textwrap.dedent(
@@ -46,8 +47,16 @@ FAKE_WORKER = textwrap.dedent(
             sys.exit(1)
         if mode == "stale":  # a leftover of an earlier sentence arrives first
             emit({"event": "audio", "id": rid - 1, "bytes": 4}, b"\\x07\\x00\\x07\\x00")
+        if mode == "unknown":  # an event this Claudio does not know about
+            emit({"event": "progress", "id": rid})
+        if mode == "cancelled":  # interrupted after some audio
+            emit({"event": "audio", "id": rid, "bytes": 2}, b"\\x01\\x00")
+            emit({"event": "done", "id": rid, "cancelled": True, "first_ms": 5})
+            continue
         for k in range(3):
-            pcm = (np_k := bytes([k + 1, 0])) * 100
+            if k and mode.startswith("slow"):
+                time.sleep(0.5)
+            pcm = (np_k := bytes([k + 1, 0])) * (9600 if mode == "slow_big" else 100)
             emit({"event": "audio", "id": rid, "bytes": len(pcm)}, pcm)
         emit({"event": "done", "id": rid, "cancelled": False, "first_ms": 5, "total_ms": 9})
     """
@@ -215,6 +224,7 @@ def test_stream_yields_the_chunks_as_they_come(tmp_path, synths) -> None:
     synth.start()
     pieces = list(synth.stream("Ciao."))
     assert [int(p[0]) for p in pieces] == [1, 2, 3]
+    assert all(p.flags.writeable for p in pieces)  # never the read-only view of the bytes
     assert synth.last_first_ms == 5 and synth.last_total_ms == 9
     assert fallback.texts == []
 
@@ -410,6 +420,123 @@ FAKE_APPLIO = textwrap.dedent(
             self.embedder = name
     """
 )
+
+
+class FakeJudge:
+    """Every take good or bad without listening to it; notes what it was asked to judge."""
+
+    def __init__(self, good: bool = True) -> None:
+        self.good = good
+        self.asked: list[tuple[int, bool]] = []  # samples, whole take or not
+
+    def judge(self, audio, rate, spoken, raw=None, complete=True) -> TakeVerdict:
+        self.asked.append((len(audio), complete))
+        return TakeVerdict([] if self.good else ["finta"], None)
+
+
+def judged(tmp_path, synths, mode: str, plays_for: float, good: bool = True, **kwargs):
+    """A later piece: what plays before it lasts `plays_for` seconds. Seeds from 7."""
+    judge = FakeJudge(good)
+    synth, fallback = make(tmp_path, mode, judge=judge, seed=7, startup_timeout_s=10, **kwargs)
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+    synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    synth._horizon = time.monotonic() + plays_for
+    return synth, judge, sent, fallback
+
+
+def test_a_take_cancelled_by_the_worker_is_dropped_and_not_tried_again(tmp_path, synths) -> None:
+    synth, judge, sent, fallback = judged(tmp_path, synths, "cancelled", plays_for=10)
+    assert list(synth.stream("Ciao.")) == []  # what was held is not played
+    assert judge.asked == [] and fallback.texts == []
+    assert [m["op"] for m in sent] == ["speak"]  # it ended: no second seed, no interrupt
+    assert synth.last_first_ms == 5 and synth.last_total_ms == 0
+
+
+def test_an_unknown_event_is_ignored(tmp_path, synths) -> None:
+    synth, fallback = make(tmp_path, "unknown", startup_timeout_s=10)
+    synths.append(synth)
+    synth.start()
+    assert len(synth.synthesize("Ciao.")) == 300 and fallback.texts == []
+
+
+def test_a_later_piece_too_short_for_the_early_look_is_judged_only_whole(tmp_path, synths) -> None:
+    synth, judge, _, _ = judged(tmp_path, synths, "ok", plays_for=10)
+    assert [int(p[0]) for p in synth.stream("Ciao.")] == [1, 2, 3]  # 100 samples each
+    assert judge.asked == [(300, True)]
+
+
+@pytest.mark.parametrize(
+    "plays_for",
+    [1.3, 1.8],  # chunks at 0, 0.5, 1 s; 0.4 s from the end it goes, 1 s from it no more takes
+    ids=["let_go_before_the_end_of_what_plays", "whole_but_no_time_for_another"],
+)
+def test_a_bad_take_with_no_time_left_for_another_is_played_to_its_end(
+    tmp_path, synths, plays_for
+) -> None:
+    synth, judge, sent, _ = judged(tmp_path, synths, "slow", plays_for, good=False)
+    assert [int(p[0]) for p in synth.stream("Ciao.")] == [1, 2, 3]
+    assert judge.asked == [(300, True)]
+    assert [m["seed"] for m in sent if m["op"] == "speak"] == [7]
+    assert [m for m in sent if m["op"] == "interrupt"] == []
+
+
+def test_a_bad_early_look_with_no_time_left_for_another_is_played_to_its_end(
+    tmp_path, synths
+) -> None:
+    """Time for another take when it began, none by the time it is looked at (0.5 s later)."""
+    synth, judge, sent, _ = judged(tmp_path, synths, "slow_big", plays_for=1.3, good=False)
+    assert [int(p[0]) for p in synth.stream("Ciao.")] == [1, 2, 3]
+    assert judge.asked == [(19_200, False), (28_800, True)]
+    assert [m["seed"] for m in sent if m["op"] == "speak"] == [7]
+
+
+def test_closing_a_take_during_its_last_release_stops_nothing(tmp_path, synths) -> None:
+    """The worker has already said "done": there is nothing left for it to stop."""
+    synth, _, sent, _ = judged(tmp_path, synths, "ok", plays_for=10)
+    stream = synth.stream("Ciao.")
+    assert int(next(stream)[0]) == 1  # held until the take was whole
+    stream.close()
+    assert [m["op"] for m in sent] == ["speak"]
+
+
+def test_audio_restarts_the_timeout_of_a_sentence(tmp_path, synths) -> None:
+    """A reply in one piece can last longer than the timeout: only silence fails."""
+    synth, fallback = make(tmp_path, "slow", startup_timeout_s=10, sentence_timeout_s=0.8)
+    synths.append(synth)
+    synth.start()  # 1 s of chunks, 0.5 s apart
+    assert [int(p[0]) for p in synth.stream("Ciao.")] == [1, 2, 3]
+    assert fallback.texts == []
+
+
+def test_a_cancel_while_a_request_leaves_covers_it(tmp_path, synths) -> None:
+    """cancel() comes from another thread and reads _next_id: up to date before the send."""
+    synth, _ = make(tmp_path, "ok", startup_timeout_s=10)
+    synths.append(synth)
+    synth.start()
+    sent: list[dict] = []
+    original = synth._send
+
+    def send(message, proc=None):
+        sent.append(message)
+        if message["op"] == "speak":
+            synth.cancel()
+        return original(message, proc)
+
+    synth._send = send
+    synth.synthesize("Ciao.")
+    assert sent[1] == {"op": "interrupt", "upto": sent[0]["id"]}
+
+
+def test_generate_take_passes_on_a_worker_error(tmp_path, synths) -> None:
+    synth, fallback = make(tmp_path, "error", startup_timeout_s=10)
+    synths.append(synth)
+    synth.start()
+    with pytest.raises(WorkerError):
+        synth.generate_take("Ciao.", 5)
+    assert fallback.texts == []  # a saved take is Jack's, or nothing
 
 
 def test_whole_sentence_rvc_converts_once_at_the_end(tmp_path, monkeypatch) -> None:

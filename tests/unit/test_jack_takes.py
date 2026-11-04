@@ -11,7 +11,7 @@ import pytest
 from claudio.tts.jack import JackSynth
 from claudio.tts.spoken_text import to_spoken_it
 from claudio.tts.takes import TakeStore
-from claudio.tts.voice_check import TakeJudge
+from claudio.tts.voice_check import TakeJudge, TakeVerdict
 
 # Same protocol as jack_worker.py. A take is a 120 Hz tone (Jack's usual register) or, for
 # the seeds in argv[1], a 300 Hz one (the strained, high Jack); 3 chunks of 0.67 s, with
@@ -101,6 +101,16 @@ def test_a_bad_first_take_is_dropped_before_it_is_heard(tmp_path, jacks, caplog)
     assert any("scartata (seme 7)" in r.getMessage() for r in caplog.records)
 
 
+def test_a_take_dropped_at_the_first_look_stops_the_worker_at_once(tmp_path, jacks) -> None:
+    jack = make(jacks, tmp_path, bad="7")
+    sent: list[dict] = []
+    original = jack.synth._send
+    jack.synth._send = lambda message, proc=None: (sent.append(message), original(message, proc))[1]
+    jack.synth.synthesize(TEXT)
+    assert [m["op"] for m in sent] == ["speak", "interrupt", "speak"]
+    assert sent[1]["upto"] == sent[0]["id"] and sent[2]["seed"] == 8
+
+
 def test_the_opening_piece_is_judged_on_its_first_chunk(tmp_path, jacks) -> None:
     """+0.3-0.5 s only when the first take is bad: a good one is let go after one chunk."""
     jack = make(jacks, tmp_path, pause=1.0)
@@ -134,6 +144,44 @@ def test_a_held_take_goes_out_before_what_plays_runs_out(tmp_path, jacks) -> Non
     started = time.monotonic()
     next(iter(jack.synth.stream(TEXT)))
     assert 0.9 < time.monotonic() - started < 1.4  # held, then out 0.4 s before the end
+
+
+def test_a_take_good_at_first_and_bad_as_a_whole_is_generated_again(tmp_path, jacks) -> None:
+    class Judge(TakeJudge):
+        """Fine on the early look; only the whole of the first take is bad."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.asked: list[tuple[int, bool, dict]] = []
+
+        def judge(self, audio, rate, spoken, raw=None, complete=True) -> TakeVerdict:
+            self.asked.append((len(audio), complete, dict(raw)))
+            whole_takes = sum(1 for _, whole, _ in self.asked if whole)
+            return TakeVerdict(["finta"] if complete and whole_takes == 1 else [], None)
+
+    judge = Judge()
+    jack = make(jacks, tmp_path, bad="7", judge=judge)  # seed 7 is 300 Hz, seed 8 is 120 Hz
+    jack.synth._horizon = time.monotonic() + 20  # a later piece: no hurry
+    audio = jack.synth.synthesize(TEXT)
+    assert jack.seeds() == [7, 8]
+    assert len(audio) == 3 * 16_000 and abs(pitch(audio) - 120) < 5  # nothing of the first take
+    raw = {"raw_lufs": -24.0, "raw_clipped": 0}  # of the chunk being judged, already there
+    assert judge.asked == [(16_000, False, raw), (48_000, True, raw)] * 2
+
+
+def test_generate_take_gives_one_take_of_that_seed_never_judged(tmp_path, jacks) -> None:
+    """scripts/jack_takes.py picks the best of several: a bad one is kept like any other."""
+    jack = make(jacks, tmp_path, bad="5")
+    jack.synth.rvc = "auto"
+    audio, raw = jack.synth.generate_take(TEXT, 5)
+    assert len(audio) == 3 * 16_000 and abs(pitch(audio) - 300) < 5
+    assert raw == {"raw_lufs": -24.0, "raw_clipped": 0}
+    jack.synth.generate_take(TEXT, 6, rvc="sentence")
+    requests = [json.loads(line) for line in jack.log.read_text(encoding="utf-8").splitlines()]
+    assert [(r["seed"], r["rvc"]) for r in requests] == [(5, "blocks"), (6, "sentence")]
+    jack.synth.cancel(upto=jack.synth._next_id + 1)  # the worker answers with no audio
+    audio, raw = jack.synth.generate_take(TEXT, 7)
+    assert len(audio) == 0 and audio.dtype == np.int16 and raw == {}
 
 
 def test_with_too_little_time_left_a_take_is_not_held(tmp_path, jacks) -> None:

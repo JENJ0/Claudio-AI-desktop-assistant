@@ -110,6 +110,7 @@ CLOSING = " Mi fermo qui: se vuoi, continuo."
         (["Fine. Attra", CUT_SHORT, CLOSING], ["Fine.", CLOSING.strip()]),
         ([CUT_SHORT, CLOSING], [CLOSING.strip()]),
         (["Uno. Due", ". Tre"], ["Uno.", "Due.", "Tre"]),  # no marker: the rest is said
+        (["Fine. Attra", "", "verso."], ["Fine.", "Attraverso."]),  # "" equals it, but is no cut
     ],
 )
 async def test_a_cut_reply_drops_its_unfinished_sentence(
@@ -320,3 +321,74 @@ async def test_group_stream_passes_on_a_failing_text_stream() -> None:
 
     with pytest.raises(RuntimeError):
         await _collect(group_stream(broken(), 220))
+
+
+async def test_group_stream_a_pause_takes_the_sentences_already_queued() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    pieces = group_stream(
+        _raw((0, "Ah. "), (0.1, "Bene. "), (0, "Sì. "), (0.6, "Fine.")),
+        220,
+        first_chars=40,
+        pause_s=0.05,
+    )
+    assert await pieces.__anext__() == "Ah."
+    await asyncio.sleep(0.3)  # said while the text comes and stops again: the pause has passed
+    assert await pieces.__anext__() == "Bene. Sì."  # both, and neither waits any longer
+    assert [p async for p in pieces] == ["Fine."]
+
+
+async def test_group_stream_a_short_first_piece_keeps_a_next_sentence_that_overflows() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    long = "x" * 50 + "."
+    got = await _collect(group_stream(_raw((0, "Ah. "), (0.03, f"{long} "), (0, "Ok.")), 20, 10))
+    assert got == ["Ah.", long, "Ok."]
+
+
+async def _waits_for_ever(ended: list[str]):
+    """Three sentences, then a text that stops: the reader is blocked in it until cancelled."""
+    try:
+        yield "Uno. Due. Tre. "
+        await asyncio.sleep(30)
+        yield "Mai."
+    finally:
+        ended.append("text")
+
+
+async def test_group_stream_closed_at_a_piece_stops_reading_the_text() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    ended: list[str] = []
+    pieces = group_stream(_waits_for_ever(ended), 5)  # one sentence per piece: some stay queued
+    assert await pieces.__anext__() == "Uno."
+    await asyncio.sleep(0.03)
+    await asyncio.wait_for(pieces.aclose(), 2)
+    assert ended == ["text"]
+
+
+async def test_group_stream_cancelled_while_it_waits_for_more_stops_reading_the_text() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    ended: list[str] = []
+    pieces = group_stream(_waits_for_ever(ended), 220, first_chars=40, pause_s=20.0)
+    waiting = asyncio.ensure_future(pieces.__anext__())
+    await asyncio.sleep(0.05)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(waiting, 2)
+    assert waiting.cancelled() and ended == ["text"]
+
+
+async def test_group_stream_on_a_text_error_the_unfinished_sentence_is_not_said() -> None:
+    from claudio.tts.sentence_splitter import group_stream
+
+    async def broken():
+        yield "Uno. Attra"
+        raise RuntimeError("rete")
+
+    got: list[str] = []
+    with pytest.raises(RuntimeError):
+        async for piece in group_stream(broken(), 220):
+            got.append(piece)
+    assert got == ["Uno."]
