@@ -105,6 +105,68 @@ def test_a_claude_request_reads_like_a_chat() -> None:
     assert "wake_check: Ehi Claudio." in text
 
 
+def test_a_full_row_is_written_in_a_fixed_order() -> None:
+    """Heading, conversation lines, then one italic line of figures: order and separators."""
+    row = {
+        "ts": NOW.timestamp(),
+        "wake_word": "claudio",
+        "wake_score": 0.9,
+        "outcome": "ok",
+        "route": "router",
+        "command": "apri chrome",
+        "text": "apri chrome",
+        "reply": "Fatto.",
+        "tools": ["apri Chrome", "digita ciao"],
+        "shown": "dir C:\\",
+        "m1_ms": 0.0,  # zero is shown: only None hides a figure
+        "m2_ms": 12.4,
+        "stt_ms": 150.6,
+        "claude_first_ms": 0,
+        "claude_calls": [{"ttft_ms": 610}, {}],
+        "api_rtt_ms": 220,
+        "api_rtt_new_connection": True,
+        "model": "claude-haiku-5-5",
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cost": 0,
+        "claude_error": "boom",
+        "barge_in": True,
+        "wake_check": "Ehi Claudio.",
+        "closed_list_from": "a",
+        "retried_from": "b",
+        "recovered_from": "c",
+        "audio_file": "last.wav",
+    }
+    assert format_row(row) == (
+        "\n## 16:32:44 · claudio 0.90 · ok · router (apri chrome)\n"
+        "\n"
+        "**JenJo:** apri chrome\n"
+        "**Claudio:** Fatto.\n"
+        "**Azioni:** apri Chrome; digita ciao\n"
+        "**Comando proposto:** `dir C:\\`\n"
+        "\n"
+        "_M1 0 ms · M2 12 ms · STT 151 ms · Claude prima parola 0 ms"
+        " · TTFT 610 · - ms (rete 220 ms, connessione nuova)"
+        " · claude-haiku-5-5 100 in / 20 out = 0.00000 $"
+        " · claude_error: boom · barge_in: True · wake_check: Ehi Claudio."
+        " · closed_list_from: a · retried_from: b · recovered_from: c"
+        " · audio: last.wav_\n"
+    )
+
+
+def test_empty_figures_are_left_out_of_a_row() -> None:
+    """Text, score and the flags are truthy checks: empty or zero values add nothing."""
+    row = {
+        "ts": NOW.timestamp(),
+        "wake_word": "claudio",
+        "wake_score": 0.0,
+        "text": "",
+        "claude_error": "",
+        "audio_file": "",
+    }
+    assert format_row(row) == "\n## 16:32:44 · claudio · ?\n\n"
+
+
 def test_metrics_rows_reach_the_conversation(tmp_path: Path, session: Path) -> None:
     writer = MetricsWriter(tmp_path / "metrics.jsonl", ConversationLog(session))
     inter = Interaction(info={"wake_word": "hey_claudio", "outcome": "ok", "text": "che ore sono"})

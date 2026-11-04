@@ -866,3 +866,34 @@ def test_a_memory_to_confirm_is_read_whole(store: MemoryStore) -> None:
     assert tools.refusal(REMEMBER, {"text": long}) is None  # level 1: nothing to read out
     assert tools.refusal(REMEMBER, {"text": "chiamami capo", "kind": "rule"}) is None
     assert tools.describe(REMEMBER, {"text": "x " * 30, "kind": "rule"}, "it").count("x") == 30
+
+
+# --- IT-2 R1: what each kind of question takes as an answer -----------------------------------
+
+
+def test_dimenticalo_to_the_rule_question_drops_the_rule(voice: MemoryVoice) -> None:
+    reply(voice, "da ora in poi chiamami capo", addressed=False)
+    assert reply(voice, "dimenticalo") == "Va bene, non la salvo."
+    assert len(voice.store) == 0 and not voice.awaiting
+
+
+def test_a_bare_forget_verb_answers_nothing_and_keeps_the_memories(voice: MemoryVoice) -> None:
+    remember(voice.store, "mia sorella si chiama Anna", "mia sorella abita a Torino")
+    reply(voice, "dimentica mia sorella")
+    assert voice.handle("dimentica") is None  # nothing left after the verb
+    assert len(voice.store) == 2 and not voice.awaiting
+
+
+def test_a_phrase_that_is_not_a_yes_does_not_answer_a_yes_no_question(voice: MemoryVoice) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")  # "Dimentico questo: ...?"
+    assert voice.handle("alza il volume") is None  # the router answers it
+    assert len(voice.store) == 1 and not voice.awaiting
+
+
+def test_a_yes_does_not_choose_among_the_options(voice: MemoryVoice) -> None:
+    """ "Quale dimentico?" is not a yes/no question: "sì" picks none and the question is dropped."""
+    remember(voice.store, "mia sorella si chiama Anna", "mia sorella abita a Torino")
+    reply(voice, "dimentica mia sorella")
+    assert voice.handle("sì") is None
+    assert len(voice.store) == 2 and not voice.awaiting
