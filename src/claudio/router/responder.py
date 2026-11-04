@@ -38,6 +38,7 @@ from claudio.safety.confirmation import (
     LEVEL_SAFE,
     NO_WORDS,
     NOT_UNDERSTOOD,
+    YES_WORDS,
     Answer,
     Pending,
     parse_answer,
@@ -462,8 +463,9 @@ class LocalResponder:
         Chrome", "sì, chiudi la porta") is what JenJo wants instead, answered as a new request."""
         proposal, self._proposal = self._proposal, None
         assert proposal is not None
-        answer = parse_answer(text)
         words = strip_wake_words(normalize(text, drop_fillers=False).split())
+        repeated = _yes_then_guess(text, words, proposal.text)
+        answer = Answer.YES if repeated else parse_answer(text)
         if answer is Answer.UNCLEAR and word_share(text, proposal.question) >= WORD_SHARE:
             # The question's own echo ("...detto spegniti"), never a yes: JenJo says "sì".
             self.last_route = {"route": "guess_echo", "guess": proposal.text}
@@ -544,6 +546,13 @@ class LocalResponder:
             return
         if reply:
             yield reply
+
+
+def _yes_then_guess(text: str, words: list[str], guess: str) -> bool:
+    """A yes word and exactly the guessed request ("sì, chiudi la finestra"): the answer to
+    "Hai detto: chiudi la finestra?", not the question heard back."""
+    same = words[1:] == normalize(guess, drop_fillers=False).split()
+    return bool(words) and words[0] in YES_WORDS and same and not text.rstrip().endswith("?")
 
 
 def _after_no(words: list[str]) -> list[str]:

@@ -492,6 +492,42 @@ async def test_a_phrase_that_is_not_only_a_yes_is_a_new_request(
     assert asked == [said] and r.last_route["route"] == "claude"
 
 
+async def test_a_yes_that_repeats_the_guess_answers_it(matcher: CommandMatcher) -> None:
+    """Not the question's echo: "sì, chiudi la finestra" at "Hai detto: chiudi la finestra?"."""
+    r, _, rec = responder(matcher, None)
+    r.propose("chiudi la finestra", "it")
+    assert await say(r, "sì, chiudi la finestra") == "Fatto."
+    assert rec.combos == [(VK_MENU, VK_F4)]
+
+
+async def test_a_yes_that_repeats_switching_off_switches_off(matcher: CommandMatcher) -> None:
+    r, _, _ = responder(matcher, None)
+    r.propose("spegniti", "it")
+    await say(r, "sì, spegniti")
+    assert r.actions.system.off
+
+
+async def test_the_guess_repeated_without_a_yes_is_still_the_echo(matcher: CommandMatcher) -> None:
+    r, _, rec = responder(matcher, None)
+    r.propose("chiudi la finestra", "it")
+    assert await say(r, "chiudi la finestra") == ""
+    assert rec.combos == [] and r.last_route["route"] == "guess_echo"
+
+
+async def test_a_yes_and_another_request_is_a_new_request(matcher: CommandMatcher) -> None:
+    asked: list[str] = []
+
+    async def claude(text: str, language: str) -> AsyncIterator[str]:
+        asked.append(text)
+        yield "Ok."
+
+    rec = Recorder()
+    r = LocalResponder(matcher, ActionRunner(rec.ctx()), fallback=claude)
+    r.propose("chiudi la finestra", "it")
+    assert await say(r, "sì, chiudi la porta") == "Ok."
+    assert rec.combos == [] and asked == ["sì, chiudi la porta"]
+
+
 async def test_a_yes_to_a_guessed_level_3_command_still_needs_its_confermo() -> None:
     level_3 = Command(id="delete", phrases=("cancella tutto",), action="close_window", level=3)
     r, _, rec = responder(CommandMatcher([level_3]), None)
