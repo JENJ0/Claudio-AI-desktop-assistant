@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
+
 import numpy as np
 import pytest
 
 from claudio.app import Assistant, State
 from claudio.audio.vad import Endpointer
 from claudio.config import WakeWordSettings
+from claudio.metrics import MetricsWriter
 from claudio.protocols import StrictWake
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import CommandMatcher
@@ -301,3 +306,131 @@ async def test_off_noise_never_reaches_whisper(
     await run_requests(assistant, make_frames, 2)
     assert system.off and checks.calls == 0 and saved == ["no_voice"]
     assert speaker.beeps == ["wake"]
+
+
+async def test_the_wake_word_is_strict_from_the_first_frame_after_switching_off(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    assistant, _, system, wake, *_ = build(fake_vad, vad_settings, matcher, ["x"])
+    quiet = make_frames("silence", 80)[0]
+    await assistant.handle_frame(quiet)
+    system.apply("off")
+    await assistant.handle_frame(quiet)
+    system.apply("on")
+    await assistant.handle_frame(quiet)
+    assert wake.strict_seen == [False, True, False]
+
+
+async def test_off_claude_is_not_told_how_the_phrase_was_heard(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    told: list[object] = []
+    assistant, _, system, *_ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["Claudio, apri Chrome."],
+        ["Claudio."],
+        on_heard=told.append,
+    )
+    system.apply("off")
+    await run_requests(assistant, make_frames, 1)
+    assert [row["outcome"] for row in assistant.history] == ["off"] and told == []
+
+
+def rows(tmp_path) -> list[dict]:
+    lines = (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines]
+
+
+async def test_off_without_whisper_only_a_clear_wake_counts(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher, tmp_path
+) -> None:
+    """Off with no second chance to ask, the strict threshold decides alone: a clear wake gets
+    the phrase after it, without a sound; a near miss leaves no row and no WAV."""
+    system = SystemControl()
+    system.apply("off")
+    saved: list[str] = []
+    speaker = FakeSpeaker()
+    assistant = Assistant(
+        FakeWake({4}, miss_on={2}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt("Claudio, accenditi."),
+        LocalResponder(matcher, ActionRunner(Recorder().ctx(), system)),
+        speaker,
+        MetricsWriter(tmp_path / "metrics.jsonl"),
+        clock=AudioClock(),
+        audio_sink=lambda audio, kind: saved.append(kind) or f"{kind}.wav",
+        system=system,
+    )
+    frames = make_frames("silence", 400) + make_frames("speech", 800) + make_frames("silence", 800)
+    await run_frames(assistant, frames)
+    assert speaker.beeps == [] and speaker.spoken == ["Eccomi, sono acceso."] and not system.off
+    assert saved == ["ok"] and [r["outcome"] for r in rows(tmp_path)] == ["ok"]
+
+
+async def test_going_busy_during_the_closed_list_stops_the_second_chance(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher, tmp_path
+) -> None:
+    """Off, the closed list looks for "accenditi" after the state was checked: a message from
+    the chat window may be answered by the time it finds it. No wake over that, and its seconds
+    are not the second chance's."""
+    reached, gate = threading.Event(), threading.Event()
+
+    def closed_list(audio: np.ndarray, language: str) -> list[str]:
+        reached.set()
+        assistant.clock.t += 5.0
+        gate.wait(5)
+        return ["Dai, accenditi."]
+
+    assistant, speaker, system, *_ = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["x"],
+        ["Grazie a te."],
+        closed_list=closed_list,
+        metrics=MetricsWriter(tmp_path / "metrics.jsonl"),
+    )
+    system.apply("off")
+    await assistant.handle_frame(make_frames("speech", 80)[0])
+    for _ in range(500):
+        if reached.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert reached.is_set()
+    assistant.state = State.RESPONDING
+    gate.set()
+    await assistant.wait_idle()
+    assert assistant.state is State.RESPONDING and speaker.beeps == []
+    (row,) = rows(tmp_path)
+    assert row["superseded"] is True and row["second_chance_ms"] == 0
+    assert row["second_chance"] == "Dai, accenditi." and row["second_chance_from"] == "Grazie a te."
+
+
+async def test_a_failing_closed_list_while_off_is_a_plain_rejection(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher, tmp_path, caplog
+) -> None:
+    def closed_list(audio: np.ndarray, language: str) -> list[str]:
+        raise RuntimeError("CUDA esplosa")
+
+    assistant, speaker, system, _, _, checks = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["x"],
+        ["Grazie a te."],
+        closed_list=closed_list,
+        metrics=MetricsWriter(tmp_path / "metrics.jsonl"),
+    )
+    system.apply("off")
+    loud, quiet = make_frames("speech", 80)[0], make_frames("silence", 80)[0]
+    with caplog.at_level("ERROR"):
+        for frame in (loud, quiet, loud):  # two detections, one after the other has decided
+            await assistant.handle_frame(frame)
+            await assistant.wait_idle()
+    assert checks.calls == 2 and speaker.beeps == [] and assistant.state is State.IDLE
+    assert "CUDA esplosa" in caplog.text
+    first, second = rows(tmp_path)
+    assert first["rejected"] == second["rejected"] == "no_name"
+    assert first["second_chance"] == "Grazie a te." and "second_chance_from" not in first

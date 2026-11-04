@@ -7,6 +7,7 @@ import pytest
 
 from claudio.app import Assistant
 from claudio.audio.vad import Endpointer
+from claudio.intake import Segment
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import CommandMatcher
 from claudio.router.responder import LocalResponder
@@ -97,6 +98,23 @@ async def test_a_retry_not_understood_keeps_the_first_text(
     assert stt.calls == [None, "it"]
     assert speaker.spoken == ["I can't do that yet."]
     assert "retried_from" not in assistant.history[-1]
+
+
+@pytest.mark.parametrize(
+    ("first", "italian", "logprob"),
+    [
+        ("What's the weather?", "Che tempo fa?", -0.65),  # not understood: the first pass stands
+        ("Hey Claudio, cue the calculator.", "apri la calcolatrice", None),  # a command: no doubt
+    ],
+)
+async def test_whispers_doubts_are_those_of_the_first_pass(
+    fake_vad, vad_settings, make_frames, matcher, first: str, italian: str, logprob: float | None
+) -> None:
+    stt = TwoLanguageStt(first, "en", italian)
+    assistant, *_ = build(fake_vad, vad_settings, matcher, stt, retry=True)
+    assistant.stt_segments = lambda: [Segment(0.05, -0.65 if len(stt.calls) == 1 else -0.05)]
+    await run_frames(assistant, request(make_frames))
+    assert stt.calls == [None, "it"] and assistant.history[-1].get("stt_logprob") == logprob
 
 
 async def test_italian_and_disabled_retry_cost_nothing(

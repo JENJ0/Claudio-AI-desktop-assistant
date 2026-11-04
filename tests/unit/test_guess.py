@@ -421,6 +421,24 @@ async def test_unsure_guess_asks_and_a_yes_needs_no_second_question(
     assert rec.combos == [(VK_MENU, VK_F4)]
 
 
+async def test_a_yes_with_more_words_after_it_answers_the_guess(matcher: CommandMatcher) -> None:
+    r, _, rec = responder(matcher, None)
+    r.propose("chiudi la finestra", "it")
+    # Any long phrase starting with a yes lands here too: a known bug, not pinned by this yes.
+    assert await say(r, "sì, grazie mille davvero") == "Fatto."  # too long for a plain yes
+    assert rec.combos == [(VK_MENU, VK_F4)]
+
+
+async def test_a_yes_to_a_guessed_level_3_command_still_needs_its_confermo() -> None:
+    level_3 = Command(id="delete", phrases=("cancella tutto",), action="close_window", level=3)
+    r, _, rec = responder(CommandMatcher([level_3]), None)
+    r.propose("cancella tutto", "it")
+    assert "confermo" in await say(r, "sì")
+    assert rec.combos == [] and r.awaiting and r.last_route["route"] == "confirm"
+    await say(r, "confermo")
+    assert rec.combos == [(VK_MENU, VK_F4)]
+
+
 async def test_sure_level_2_command_still_asks_its_own_question(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, Guess("chiudi la finestra", 0.9, "close_window"))
     recovery = await r.guess(Doubt("Chiudi la fenestra.", "it", "not_a_request"))

@@ -190,6 +190,90 @@ async def test_a_locked_database_is_said_not_crashed(
     assert r.last_route["memory"] == "error" and len(store) == 0
 
 
+async def test_a_locked_database_keeps_what_was_just_talked_about(
+    matcher: CommandMatcher, store: MemoryStore
+) -> None:
+    r = responder(matcher, store)
+    await say(r, "ricordati che il gatto si chiama Leo")
+    holder = sqlite3.connect(store.path)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        await say(r, "ricordati che domani piove")
+    finally:
+        holder.rollback()
+        holder.close()
+    assert r.last_route == {"route": "memory", "memory": "error", "error": True}
+    assert await say(r, "dimenticalo") == "Dimenticato: il gatto si chiama Leo."
+
+
+async def test_the_echo_of_the_memorys_question_says_nothing_and_keeps_it_open(
+    matcher: CommandMatcher, store: MemoryStore
+) -> None:
+    r = responder(matcher, store)
+    store.add("mia sorella si chiama Anna")
+    store.add("mia sorella abita a Torino")
+    question = await say(r, "dimentica mia sorella")
+    # No chunk at all: an empty one would mark first_text and write an empty reply in the row.
+    assert [chunk async for chunk in r.respond(question, "it")] == []
+    assert r.last_route == {"route": "memory", "memory": "echo", "language": "it"}
+    assert r.awaiting and len(store) == 2
+
+
+async def test_a_memory_command_that_asks_first_still_ends_the_question(
+    matcher: CommandMatcher, store: MemoryStore
+) -> None:
+    r = responder(matcher, store)
+    store.add("mia sorella si chiama Anna")
+    store.add("mia sorella abita a Torino")
+    await say(r, "dimentica mia sorella")
+    await say(r, "dimentica tutto")  # asks for "confermo": its own question, not the memory's
+    await say(r, "no")
+    assert not r.awaiting
+
+
+async def test_dimenticalo_after_a_command_is_not_about_the_memory_before(
+    matcher: CommandMatcher, store: MemoryStore
+) -> None:
+    r = responder(matcher, store)
+    await say(r, "ricordati che il gatto si chiama Leo")
+    await say(r, "che ore sono")
+    await say(r, "dimenticalo")
+    assert len(store) == 1
+
+
+async def test_a_memory_reply_has_the_voice_of_its_own_language(
+    matcher: CommandMatcher, store: MemoryStore
+) -> None:
+    r = responder(matcher, store)
+    await say(r, "remember that my cat is called Leo", "it")
+    assert r.language == "en" and r.last_route["language"] == "en"
+
+
+@pytest.mark.parametrize(("asleep", "back"), [("pause", "resume"), ("off", "on")])
+async def test_a_phrase_ignored_while_asleep_leaves_the_hearing_to_the_next(
+    matcher: CommandMatcher, store: MemoryStore, asleep: str, back: str
+) -> None:
+    system = SystemControl()
+    r = responder(matcher, store, system=system)
+    system.apply(asleep)
+    r.heard(Hearing(addressed=False))
+    assert await say(r, "apri chrome") == ""
+    system.apply(back)
+    assert (await say(r, "da ora in poi chiamami capo")).endswith("La tengo come regola?")
+    assert len(store) == 0
+
+
+async def test_the_answer_to_a_question_leaves_the_hearing_to_the_next(
+    matcher: CommandMatcher, store: MemoryStore
+) -> None:
+    r = responder(matcher, store)
+    await say(r, "chiudi la finestra")
+    r.heard(Hearing(addressed=False))
+    await say(r, "no")
+    assert (await say(r, "da ora in poi chiamami capo")).endswith("La tengo come regola?")
+    assert len(store) == 0
+
+
 async def test_forgetting_everything_needs_confermo(
     matcher: CommandMatcher, store: MemoryStore
 ) -> None:

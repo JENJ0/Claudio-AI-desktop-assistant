@@ -411,3 +411,30 @@ async def test_a_long_phrase_said_over_the_end_of_the_reply_is_never_the_echo(
     rows = list(assistant.history)
     assert [row["command"] for row in rows][:2] == ["close_chat", "open_chat"]
     assert rows[1]["listened_ms"] <= 300 and rows[1]["voice_ms"] > 1000
+
+
+async def test_the_replys_end_written_as_a_command_is_still_its_echo(
+    fake_vad, vad_settings, matcher
+) -> None:
+    """The window opened with "Apro Chrome." still in the room and Whisper wrote words a command
+    understands: the request filter keeps them, the echo check does not (Chrome would open
+    again, on Claudio's own voice)."""
+    stt = EchoStt(["apri chrome", "Apro Chrome."], echo="")
+    assistant, speaker, rec = assistant_for(
+        fake_vad, vad_settings, matcher, stt, FakeWake({3}), conversation_s=3.0
+    )
+    assert assistant.responder.understands("Apro Chrome.")
+
+    async def steps() -> AsyncIterator[np.ndarray]:
+        for f in several(SILENCE, 3) + several(VOICE, 10):
+            yield f
+        async for f in until(assistant, lambda: bool(speaker.spoken)):
+            yield f
+        for f in several(VOICE, 15) + several(SILENCE, 30):  # from the reply's last words
+            yield f
+
+    await play(assistant, steps())
+    rows = list(assistant.history)
+    assert [row["outcome"] for row in rows][:2] == ["ok", "conversation_end"]
+    assert rows[1]["listened_ms"] <= 300 and rows[1]["voice_ms"] <= 1000
+    assert speaker.spoken == ["Apro Chrome."] and len(rec.ran) == 1

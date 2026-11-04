@@ -379,8 +379,13 @@ def barge(vad_settings: VadSettings, heard: list[str], **kwargs) -> BargeIn:
     )
 
 
-async def speak_over(assistant: Assistant, make_frames, speaker: LongSpeaker) -> None:
-    """A request, then speech while CLAUDIO is speaking, then silence."""
+async def speak_over(
+    assistant: Assistant,
+    make_frames,
+    speaker: LongSpeaker,
+    ready: Callable[[], bool] = lambda: True,
+) -> None:
+    """A request, then speech while CLAUDIO is speaking (once `ready()`), then silence."""
     clock = assistant.clock
     assert isinstance(clock, AudioClock)
     silence = np.zeros(1280, dtype=np.int16)
@@ -391,7 +396,7 @@ async def speak_over(assistant: Assistant, make_frames, speaker: LongSpeaker) ->
             yield f
             await asyncio.sleep(0)
         for _ in range(200):
-            if assistant.state is State.SPEAKING:
+            if assistant.state is State.SPEAKING and ready():
                 break
             clock.t += 0.08
             yield silence
@@ -1010,6 +1015,204 @@ def test_a_stop_word_the_reply_says_is_not_a_stop(fake_vad, vad_settings, matche
     assert not assistant._says_stop("non serve a niente")  # its own echo
     assert assistant._says_stop("non serve basta")
     assert not assistant._says_stop("che ore sono")
+
+
+@pytest.mark.parametrize("mode", ["duck", "stop"])
+async def test_a_voice_no_louder_than_the_echo_waits_for_whisper(
+    fake_vad, vad_settings, make_frames, matcher, mode: str
+) -> None:
+    heard: list[int] = []
+    speaker = LongSpeaker()
+    b = barge(vad_settings, ["eh"], mode=mode)
+    transcribe = b.transcribe
+    b.transcribe = lambda audio: heard.append(1) or transcribe(audio)
+    assistant, _, _, _ = build(
+        fake_vad, vad_settings, matcher, ["che ore sono"], window_s=0.0, speaker=speaker, barge_in=b
+    )
+    assistant._echo_dbfs = 0.0  # no voice is louder than this echo
+    await speak_over(assistant, make_frames, speaker)
+    assert heard and not speaker.cut
+    assert speaker.ducks == [None]  # only Whisper's verdict: never lowered, never stopped
+
+
+async def test_the_barge_in_listener_goes_on_after_its_timeout(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    """WHILE_SPEAKING_S is an hour, not forever: a listener left timed out hears nothing more."""
+    speaker = LongSpeaker()
+    b = barge(vad_settings, ["Basta!"])
+    assistant, _, _, _ = build(fake_vad, vad_settings, matcher, ["x"], speaker=speaker, barge_in=b)
+    assistant._set_state(State.SPEAKING)
+    b.endpointer.reset(timeout_s=0.16)
+    frames = make_frames("silence", 320) + make_frames("speech", 480) + make_frames("silence", 800)
+    for frame in frames:
+        await assistant.handle_frame(frame)
+    await assistant.wait_idle()
+    assert speaker.cut
+
+
+# --- the real speaker: it starts with the reply still arriving and stops halfway --------------
+
+
+class QuietPlayer(SlowPlayer):
+    """Also what the assistant reads of a real player."""
+
+    def queued_s(self) -> float:
+        return 0.0
+
+
+class WrittenSynth(Synth):
+    """Keeps what it was asked to say, in order."""
+
+    def __init__(self) -> None:
+        self.said: list[str] = []
+
+    def synthesize(self, text: str) -> np.ndarray:
+        self.said.append(text)
+        return super().synthesize(text)
+
+
+async def test_a_story_cut_with_the_real_speaker_goes_on_from_the_sentence_it_was_saying(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    """FakeSpeaker reads the whole reply before it "plays" it. The real one starts on the first
+    sentence with the rest still arriving: this reply cannot end before it is cut, so reaching
+    the cut means the barge-in listened from the first audio on. Its last words arrive once the
+    next phrase is transcribed: the router waits for them, or they would write in the next
+    request's route. No assertion on the first row's "reply": a cut reply can lose it (known
+    bug, the speaker does not close its stream)."""
+    first = "C'era una volta un drago che viveva sulla montagna più alta della valle."
+    second = (
+        "Al mattino volava sopra il lago e contava le barche dei pescatori, una per una,"
+        " senza mai sbagliare."
+    )
+    third = "Una volta ne trovò una in più, tutta d'oro, e decise di seguirla."
+    synth = WrittenSynth()
+    speaker = StreamingSpeaker(synth, QuietPlayer())  # type: ignore[arg-type]
+    assistant, _, _, r = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["raccontami una storia", "che giorno è oggi"],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+    )
+
+    stt = assistant.transcriber
+    assert isinstance(stt, FakeStt)
+
+    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+        yield f"{first} {second} "
+        for _ in range(1000):
+            if len(stt.heard) == 2:
+                break
+            await asyncio.sleep(0.005)
+        yield third
+
+    r.fallback = claude
+    r.fallback_info = lambda: {"model": "the reply that was cut"}
+    await speak_over(assistant, make_frames, speaker, ready=lambda: len(speaker.played) == 2)
+    first_row, second_row = assistant.history
+    assert (first_row["outcome"], second_row["outcome"]) == ("interrupted", "ok")
+    assert second_row["reply"] == "Oggi è domenica 18 ottobre 2026."
+    assert second_row["resumed"] is True and "model" not in second_row
+    assert synth.said[:3] == [first, second, "Oggi è domenica 18 ottobre 2026."]
+    assert " ".join(synth.said[3:]) == f"Dicevo: {second} {third}"
+    assert assistant.state is State.IDLE
+
+
+async def test_a_reply_still_arriving_stops_when_the_phrase_that_cut_it_is_dropped(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    stopped: list[bool] = []
+    speaker = StreamingSpeaker(Synth(), QuietPlayer())  # type: ignore[arg-type]
+    assistant, _, _, r = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["raccontami una storia", ""],  # Whisper finds nothing in what took over
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+    )
+
+    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+        yield "C'era una volta un drago. "
+        try:
+            await asyncio.Event().wait()  # the rest never comes: only a cancel ends this
+        finally:
+            stopped.append(True)
+
+    r.fallback = claude
+    await speak_over(assistant, make_frames, speaker)
+    assert [row["outcome"] for row in assistant.history] == ["interrupted", "empty"]
+    assert stopped == [True] and assistant._cut is None
+
+
+@pytest.mark.parametrize(
+    ("piece", "mark"),
+    [("Hey Claudio.", "relisten"), ("Dimmi...", "continued_from")],
+)
+async def test_a_cut_reply_waits_for_the_request_said_in_two_phrases(
+    fake_vad, vad_settings, make_frames, matcher, piece: str, mark: str
+) -> None:
+    """What took over was only the name, or left halfway: still the same request, so the reply
+    it cut goes on after its answer."""
+    speaker = LongSpeaker()
+    assistant, _, _, r = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["chi ce l'ha fatta", piece, "che giorno è oggi"],
+        window_s=0.0,
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["che giorno è oggi"]),
+    )
+    claude_says(r, STORY)
+    assistant.continue_s = 2.0
+    assistant.intake.continue_incomplete = True
+    clock = assistant.clock
+    assert isinstance(clock, AudioClock)
+    silence = np.zeros(1280, dtype=np.int16)
+
+    def listening_for_the_rest() -> bool:
+        inter = assistant._interaction
+        return assistant.state is State.LISTENING and inter is not None and mark in inter.info
+
+    async def until(done: Callable[[], bool]) -> AsyncIterator[np.ndarray]:
+        for _ in range(400):
+            if done():
+                return
+            clock.t += 0.08
+            yield silence
+            await asyncio.sleep(0.005)
+        raise AssertionError("never reached")
+
+    async def said(kind: str, ms: int) -> AsyncIterator[np.ndarray]:
+        for f in make_frames(kind, ms):
+            clock.t += 0.08
+            yield f
+            await asyncio.sleep(0.001)
+
+    async def gen() -> AsyncIterator[np.ndarray]:
+        for part in (
+            said("silence", 240),
+            said("speech", 640),
+            until(lambda: assistant.state is State.SPEAKING),
+            said("speech", 480),  # takes over
+            said("silence", 800),
+            until(listening_for_the_rest),
+            said("speech", 640),  # the rest of the request
+            said("silence", 1200),
+        ):
+            async for frame in part:
+                yield frame
+
+    await assistant.run(gen())
+    second = assistant.history[1]
+    assert mark in second and second["text"] == "che giorno è oggi" and second["resumed"] is True
+    assert speaker.spoken[-1] == f"Dicevo: {STORY}"
 
 
 async def test_a_phrase_heard_while_whisper_is_busy_waits_its_turn(
