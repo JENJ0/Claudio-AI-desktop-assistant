@@ -178,9 +178,33 @@ def test_anything_else_is_unclear(text: str) -> None:
     assert parse_answer(text) is Answer.UNCLEAR
 
 
-@pytest.mark.parametrize("text", ["confermo", "Sì, confermo.", "I confirm", "confirm"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "confermo",
+        "Sì, confermo.",
+        "I confirm",
+        "confirm",
+        "sì confermo",
+        "confermo grazie",
+        "ok confermo",
+        "conferma",
+        "yes I confirm",
+        "confirm please",
+    ],
+)
 def test_level_3_needs_an_explicit_confirmation(text: str) -> None:
     assert parse_answer(text, 3) is Answer.YES
+
+
+@pytest.mark.parametrize("text", ["ti confermo che ci vediamo domani", "confermo che è vero"])
+def test_level_3_confirmation_holds_nothing_else(text: str) -> None:
+    assert parse_answer(text, 3) is Answer.UNCLEAR
+
+
+def test_level_3_si_alone_and_a_refused_confirmation() -> None:
+    assert parse_answer("si", 3) is Answer.UNCLEAR
+    assert parse_answer("non confermo", 3) is Answer.NO
 
 
 @pytest.mark.parametrize("text", ["sì", "ok", "yes", "va bene", "go ahead"])

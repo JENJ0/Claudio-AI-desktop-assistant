@@ -290,6 +290,17 @@ async def test_forgetting_everything_needs_confermo(
     assert len(store) == 0
 
 
+@pytest.mark.parametrize("said", ["ti confermo che ci vediamo domani", "confermo che è vero"])
+async def test_a_sentence_with_confermo_does_not_forget_everything(
+    matcher: CommandMatcher, store: MemoryStore, said: str
+) -> None:
+    r = responder(matcher, store)
+    await say(r, "ricordati che il gatto si chiama Leo")
+    await say(r, "dimentica tutto")
+    assert await say(r, said) == "Non ho capito: non lo faccio."
+    assert len(store) == 1
+
+
 async def test_which_one_keeps_listening(matcher: CommandMatcher, store: MemoryStore) -> None:
     r = responder(matcher, store)
     store.add("mia sorella si chiama Anna")
