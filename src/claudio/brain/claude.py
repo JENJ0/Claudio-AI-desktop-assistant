@@ -740,6 +740,7 @@ class ClaudeBrain:
         first_key: str = "claude_first_ms",
     ) -> AsyncGenerator[str, None]:
         import anthropic
+        import httpx2
 
         model = params["model"]
         stream: Any = None
@@ -768,10 +769,15 @@ class ClaudeBrain:
             self.last_call["claude_error"] = "auth"
             yield in_language(BAD_KEY, language)
             return
-        except anthropic.APIConnectionError as exc:  # also timeouts
+        except (anthropic.APIConnectionError, httpx2.TransportError) as exc:  # also timeouts
             log.error("Claude non raggiungibile: %s", exc)
             self.last_call["claude_error"] = "network"
-            yield in_language(NETWORK_ERROR, language)
+            # The SDK wraps these only at request time; raw, they broke a reply under way. Its
+            # words and the tools that ran stay in the history (no cut note: JenJo did not
+            # interrupt), and the voice never says "Attra" before this sentence.
+            leg.complete = stream is not None
+            yield CUT_SHORT
+            yield _space(leg) + in_language(NETWORK_ERROR, language)
             return
         except anthropic.APIStatusError as exc:
             log.error("Claude errore %s: %s", exc.status_code, exc.message)
@@ -947,7 +953,7 @@ def _quoted(text: str) -> str:
     return text.replace('"', "'").strip()
 
 
-def _space(turn: _Turn) -> str:
+def _space(turn: _Turn | _Leg) -> str:
     said = "".join(turn.parts)
     return "" if not said or said[-1].isspace() else " "
 
