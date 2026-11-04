@@ -611,7 +611,8 @@ async def test_a_cut_after_the_yes_is_recorded_at_once(
     assert ("close", "YouTube - Google Chrome") in desk.done
     question, reply = b._history[-1]
     # endswith hides "Confermi?Chiusa." in the history: a known oddity, not desired behavior.
-    assert question == "[it] chiudi chrome" and reply.endswith(f"Chiusa. {CUT_NOTE}")
+    assert question == "[it] chiudi chrome"
+    assert reply.endswith(f"Chiusa. {CUT_NOTE} [Claudio ran: close_window ok]")
     assert b.last_call["output_tokens"] == 2  # the 8 characters said, at 3 per token
 
 
