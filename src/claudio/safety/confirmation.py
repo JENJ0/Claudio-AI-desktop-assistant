@@ -86,6 +86,8 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     heard = normalize(text, drop_fillers=False).split()
     if NO_WORDS.intersection(heard):  # before the name is stripped: "no Claudio" is a no
         return Answer.NO
+    if text.rstrip().endswith("?"):  # "Sì?" asks, it does not answer (normalize drops the "?")
+        return Answer.UNCLEAR
     words = strip_wake_words(heard)
     if not words:
         return Answer.UNCLEAR

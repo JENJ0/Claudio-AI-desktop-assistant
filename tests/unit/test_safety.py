@@ -177,6 +177,19 @@ def test_no_wins(text: str) -> None:
     assert parse_answer(text) is Answer.NO
 
 
+@pytest.mark.parametrize("text", ["Sì?", "Va bene?", "Certo?", "Ah sì? Davvero?", "ok ?"])
+def test_a_question_is_not_a_yes(text: str) -> None:
+    assert parse_answer(text) is Answer.UNCLEAR
+
+
+def test_a_question_is_not_an_explicit_confirmation() -> None:
+    assert parse_answer("confermo?", 3) is Answer.UNCLEAR
+
+
+def test_a_refusal_in_a_question_is_still_a_no() -> None:
+    assert parse_answer("no?") is Answer.NO
+
+
 @pytest.mark.parametrize("text", ["", "apri chrome", "boh", "Claudio", "che ore sono"])
 def test_anything_else_is_unclear(text: str) -> None:
     assert parse_answer(text) is Answer.UNCLEAR
