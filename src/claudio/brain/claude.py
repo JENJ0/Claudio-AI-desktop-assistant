@@ -239,38 +239,27 @@ class ClaudeBrain:
 
     async def _answer(self, text: str, language: str) -> AsyncGenerator[str, None]:
         start = self.clock()
-        action = self._take_action()
-        if action is not None and _new_request(text, action.level):
-            # Not an answer but another request (said with the wake word after the window
-            # closed): the action is dropped and the request answered.
-            log.info("Nuova richiesta al posto della conferma: azione annullata")
-            self._note_tools(action.calls, "refused")
-            action = None
-        if action is not None:
-            async for chunk in self._confirm(action, text, start):
+        reply = self._route(text, language, start)
+        async with contextlib.aclosing(reply) as stream:
+            async for chunk in stream:
                 yield chunk
-            return
-        offer = self._take_offer()
-        if offer is not None and self.memory is not None and self.memory.forget_pending:
-            # A memory was forgotten after "Lo uso?": the question kept the old memories
-            # (and a history that may quote them), so it is not sent again.
-            log.info("Ricordo dimenticato dopo la proposta di Sonnet: proposta annullata")
-            offer = None
-        if offer is not None:
-            answer = parse_answer(text)
-            if answer is not Answer.UNCLEAR:
-                # The reply to "Vuoi che usi Sonnet?": the question it was about, not "sì".
-                messages, language = offer
-                if answer is Answer.YES:
-                    log.info("Sonnet approvato")
-                    self.last_call["escalated"] = "approved"
-                    async for chunk in self._sonnet(messages, language, start):
-                        yield chunk
-                else:
-                    log.info("Sonnet rifiutato: risponde Haiku")
-                    async for chunk in self._haiku(messages, language, start, tools=False):
-                        yield chunk
-                return
+
+    def _route(self, text: str, language: str, start: float) -> AsyncGenerator[str, None]:
+        """Who answers `text`, not started yet: what waits for an answer comes first (an action,
+        then an offer); anything else is a new request."""
+        action = self._pending_action(text)
+        if action is not None:
+            return self._confirm(action, text, start)
+        answered = self._answered_offer(text)
+        if answered is not None:
+            # The reply to "Vuoi che usi Sonnet?": the question it was about, not "sì".
+            messages, language, answer = answered
+            if answer is Answer.YES:
+                log.info("Sonnet approvato")
+                self.last_call["escalated"] = "approved"
+                return self._sonnet(messages, language, start)
+            log.info("Sonnet rifiutato: risponde Haiku")
+            return self._haiku(messages, language, start, tools=False)
         messages = self._messages(text, language)
         if self.tools is not None:
             # Text read from a window or a file earlier in this conversation may still be in
@@ -279,21 +268,47 @@ class ClaudeBrain:
         if self.wants_smart(text, language):  # JenJo asked for it: that is the approval
             log.info("Richiesta di ragionare: chiedo direttamente a Sonnet")
             self.last_call["escalated"] = "asked"
-            async for chunk in self._sonnet(messages, language, start):
-                yield chunk
-            return
+            return self._sonnet(messages, language, start)
         if self.settings.escalate and self.wants_offer(text, language):
             log.info("Richiesta dettagliata: propongo Sonnet")
-            self._offer = (messages, language, self.clock())
-            self.last_call["escalated"] = "offered"
-            yield in_language(OFFER, language)
-            return
+            return self._propose(messages, language)
         turn = _Turn(messages[-1]["content"])
-        async with contextlib.aclosing(
-            self._loop(messages, language, start, turn, 0, offer_from=messages)
-        ) as haiku:
-            async for chunk in haiku:
-                yield chunk
+        return self._loop(messages, language, start, turn, 0, offer_from=messages)
+
+    def _pending_action(self, text: str) -> _Action | None:
+        """The action `text` answers: None when none waits or `text` is another request."""
+        action = self._take_action()
+        if action is not None and _new_request(text, action.level):
+            # Not an answer but another request (said with the wake word after the window
+            # closed): the action is dropped and the request answered.
+            log.info("Nuova richiesta al posto della conferma: azione annullata")
+            self._note_tools(action.calls, "refused")
+            return None
+        return action
+
+    def _answered_offer(self, text: str) -> tuple[list[dict[str, Any]], str, Answer] | None:
+        """The offer `text` answers (its messages and language) and the answer: None when none
+        waits, it cannot be sent any more or `text` is not a yes or a no."""
+        offer = self._take_offer()
+        if offer is None:
+            return None
+        if self.memory is not None and self.memory.forget_pending:
+            # A memory was forgotten after "Lo uso?": the question kept the old memories
+            # (and a history that may quote them), so it is not sent again.
+            log.info("Ricordo dimenticato dopo la proposta di Sonnet: proposta annullata")
+            return None
+        answer = parse_answer(text)
+        if answer is Answer.UNCLEAR:
+            return None
+        return offer[0], offer[1], answer
+
+    async def _propose(
+        self, messages: list[dict[str, Any]], language: str, lead: str = ""
+    ) -> AsyncGenerator[str, None]:
+        """Ask "Vuoi che usi Sonnet?" and keep the question: the next request is the answer."""
+        self._offer = (messages, language, self.clock())
+        self.last_call["escalated"] = "offered"
+        yield lead + in_language(OFFER, language)
 
     async def _loop(
         self,
@@ -303,56 +318,28 @@ class ClaudeBrain:
         turn: _Turn,
         round_no: int,
         offer_from: list[dict[str, Any]] | None = None,
-        said_before: bool = False,
     ) -> AsyncGenerator[str, None]:
         """Haiku, with its tools, until it answers in words: each round runs the level-1
         calls and sends their results back; a level 2-3 call stops here and asks first."""
-        said_here = said_before
+        # Only within this reply: after a yes the turn holds the question, already spoken.
+        said_here = False
         streaming: _Leg | None = None  # the leg whose words are not in `turn` yet
         try:
             while True:
-                last = self.tools is None or round_no >= self.pc.max_rounds - 1
+                last = round_no >= self.pc.max_rounds - 1
                 leg = streaming = _Leg()
                 async with contextlib.aclosing(
                     self._stream(self._params(messages, last_round=last), language, start, leg)
                 ) as haiku:
-                    # 25/10: "La apro.Aperta" was read without a pause. Only within this
-                    # reply: after a yes the turn holds the question, already spoken.
-                    gap = _space(turn) if said_here else ""
                     async for chunk in haiku:
-                        if gap and chunk:
-                            if not chunk[0].isspace():
-                                turn.parts.append(gap)
-                                chunk = gap + chunk
-                            gap = ""
                         said_here = said_here or bool(chunk.strip())
                         yield chunk
                 turn.parts.extend(leg.parts)
                 streaming = None
-                if (
-                    leg.handoff
-                    and not leg.calls
-                    and offer_from is not None
-                    # JenJo's words only: a "storia" in a recalled memory is not a story asked for
-                    and self.never_offer(without_recalled(offer_from[-1]["content"]), language)
-                ):
-                    # Haiku asked for Sonnet for a story: it tells it itself, no question.
-                    log.info("Sonnet chiesto per una storia: risponde Haiku")
-                    self.last_call["escalated"] = "skipped"
-                    async for chunk in self._haiku(offer_from, language, start, tools=False):
+                if reply := self._handed_over(leg, offer_from, turn, language, start):
+                    async for chunk in reply:
                         yield chunk
                     return
-                if leg.handoff and not leg.calls and self.smart_model and offer_from is not None:
-                    # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question.
-                    log.info("Haiku propone Sonnet: chiedo conferma")
-                    self._offer = (offer_from, language, self.clock())
-                    self.last_call["escalated"] = "offered"
-                    yield _space(turn) + in_language(OFFER, language)
-                    return
-                if leg.handoff and leg.calls:  # Sonnet in the middle of an action: not now
-                    leg.content = [
-                        b for b in leg.content if b.get("name") != ASK_SONNET_TOOL["name"]
-                    ]
                 if not leg.complete or not leg.calls or self.tools is None:
                     turn.complete = leg.complete
                     self._remember(turn)
@@ -365,38 +352,13 @@ class ClaudeBrain:
                 await self.tools.prepare(active)
                 confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
                 if confirm:
-                    level = max(self.tools.level(c) for c in confirm)
-                    ask = await self.tools.question(confirm, language)
-                    self._action = _Action(messages, leg.calls, turn, language, level, round_no)
-                    self._action.refused = refused
-                    self._action.handoff = leg.handoff
-                    self._action.asked = self.clock()
-                    self._show(confirm)
-                    self._note_tools(confirm, "ask")
-                    log.info(
-                        "Conferma richiesta (livello %d): %s",
-                        level,
-                        ", ".join(c.brief() for c in confirm),
-                        extra={"route": "confirm", "level": level},
+                    yield await self._ask_first(
+                        messages, leg, confirm, refused, turn, language, round_no
                     )
-                    said = _space(turn) + ask
-                    turn.parts.append(said)
-                    yield said
                     return
-                slow = any(c.name in SLOW_TOOLS for c in active)
-                if self.pc.bridge and slow and not "".join(leg.parts).strip():
-                    # The trailing space ends the sentence: the voice says it now.
-                    lead = _space(turn) if said_here else ""
-                    said = lead + in_language(BRIDGE, language) + " "
-                    turn.parts.append(said)
+                if said := self._before_tools(turn, leg, active, said_here, language):
                     said_here = True
                     yield said
-                if said_here and (end := _space(turn)):
-                    # The space ends the sentence: it is said while the tools run. Without it
-                    # the splitter held "Ci guardo, socio." for the next round's text (30/10
-                    # 14:07: the first word came 2.1 s later, after three calls).
-                    turn.parts.append(end)
-                    yield end
                 alone = not turn.done and not leg.handoff  # nothing else in this request
                 results, own = await self._run_calls(leg.calls, language, refused, turn)
                 if own is not None and alone:
@@ -410,6 +372,78 @@ class ClaudeBrain:
                 turn.parts.extend(streaming.parts)
             self._remember_cut(turn)  # "continua la storia" must know what was cut
             raise
+
+    def _handed_over(
+        self,
+        leg: _Leg,
+        offer_from: list[dict[str, Any]] | None,
+        turn: _Turn,
+        language: str,
+        start: float,
+    ) -> AsyncGenerator[str, None] | None:
+        """Who goes on, not started yet, when Haiku asked for Sonnet and called nothing else:
+        None when nobody does and its reply ends as it is."""
+        if not leg.handoff or leg.calls or offer_from is None:
+            return None
+        # JenJo's words only: a "storia" in a recalled memory is not a story asked for
+        if self.never_offer(without_recalled(offer_from[-1]["content"]), language):
+            # Haiku asked for Sonnet for a story: it tells it itself, no question.
+            log.info("Sonnet chiesto per una storia: risponde Haiku")
+            self.last_call["escalated"] = "skipped"
+            return self._haiku(offer_from, language, start, tools=False)
+        if self.smart_model:
+            # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question.
+            log.info("Haiku propone Sonnet: chiedo conferma")
+            return self._propose(offer_from, language, _space(turn))
+        return None
+
+    async def _ask_first(
+        self,
+        messages: list[dict[str, Any]],
+        leg: _Leg,
+        confirm: list[ToolCall],
+        refused: dict[str, str],
+        turn: _Turn,
+        language: str,
+        round_no: int,
+    ) -> str:
+        """Level 2-3 calls wait for JenJo's yes: returns the question to say."""
+        assert self.tools is not None
+        level = max(self.tools.level(c) for c in confirm)
+        ask = await self.tools.question(confirm, language)
+        self._action = _Action(messages, leg.calls, turn, language, level, round_no)
+        self._action.refused = refused
+        self._action.handoff = leg.handoff
+        self._action.asked = self.clock()
+        self._show(confirm)
+        self._note_tools(confirm, "ask")
+        log.info(
+            "Conferma richiesta (livello %d): %s",
+            level,
+            ", ".join(c.brief() for c in confirm),
+            extra={"route": "confirm", "level": level},
+        )
+        said = _space(turn) + ask
+        turn.parts.append(said)
+        return said
+
+    def _before_tools(
+        self, turn: _Turn, leg: _Leg, active: list[ToolCall], said_here: bool, language: str
+    ) -> str:
+        """What to say before the tools run ("" = nothing): "Ci guardo" before a slow action
+        when Haiku said nothing, else the end of the sentence it said."""
+        slow = any(c.name in SLOW_TOOLS for c in active)
+        if self.pc.bridge and slow and not "".join(leg.parts).strip():
+            # The trailing space ends the sentence: the voice says it now.
+            said = in_language(BRIDGE, language) + " "
+        else:
+            # The space ends the sentence: it is said while the tools run. Without it
+            # the splitter held "Ci guardo, socio." for the next round's text (30/10
+            # 14:07: the first word came 2.1 s later, after three calls), and 25/10:
+            # "La apro.Aperta" was read without a pause.
+            said = _space(turn) if said_here else ""
+        turn.parts.append(said)
+        return said
 
     async def _confirm(self, action: _Action, text: str, start: float) -> AsyncGenerator[str, None]:
         """The answer to "Confermi?": yes runs the calls and Haiku goes on; anything else
@@ -449,17 +483,12 @@ class ClaudeBrain:
                 yield chunk
 
     async def _run_calls(
-        self,
-        calls: list[ToolCall],
-        language: str,
-        refused: dict[str, str] | None = None,
-        turn: _Turn | None = None,
+        self, calls: list[ToolCall], language: str, refused: dict[str, str], turn: _Turn
     ) -> tuple[list[dict[str, Any]], str | None]:
         """One tool_result per call, in order; a refused call is answered without running.
         Also Claudio's own words for the round when every call ran and has them (only
         claudio_command): None when Claude must read the results."""
         assert self.tools is not None
-        refused = refused or {}
         results = []
         own: list[str] | None = []
         for call in calls:
@@ -481,8 +510,7 @@ class ClaudeBrain:
             elif own is not None:
                 own.append(outcome.spoken)
             self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
-            if turn is not None:
-                turn.done.append(f"{call.name} {'failed' if outcome.error else 'ok'}")
+            turn.done.append(f"{call.name} {'failed' if outcome.error else 'ok'}")
             block: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": call.id,
@@ -561,10 +589,6 @@ class ClaudeBrain:
     async def _sonnet(
         self, messages: list[dict[str, Any]], language: str, start: float
     ) -> AsyncGenerator[str, None]:
-        if self.smart_model is None:
-            async for chunk in self._haiku(messages, language, start, tools=False):
-                yield chunk
-            return
         leg = _Leg()
         try:
             async with contextlib.aclosing(
@@ -868,6 +892,8 @@ class _Leg:
                     self.handoff = True
                 elif getattr(final, "stop_reason", None) == "tool_use":
                     self.calls.append(ToolCall(getattr(block, "id", ""), block.name, args))
+        if self.handoff and self.calls:  # Sonnet in the middle of an action: not now
+            self.content = [b for b in self.content if b.get("name") != ASK_SONNET_TOOL["name"]]
 
 
 class _Turn:

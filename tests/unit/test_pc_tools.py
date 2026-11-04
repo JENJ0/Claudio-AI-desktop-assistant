@@ -3,6 +3,7 @@ the dispatcher, the Claude tool loop and the spoken yes."""
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from claudio.brain.claude import ClaudeBrain
+from claudio.brain.claude import CUT_NOTE, ClaudeBrain
 from claudio.brain.prompts import SYSTEM_PROMPT_TOOLS
 from claudio.config import ClaudeSettings, PcSettings
 from claudio.cost.pricing import Pricing, load_pricing
@@ -18,7 +19,7 @@ from claudio.pc.files import Found
 from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import DEFINITIONS, LEVELS, App, PcTools, ToolCall, Window
 from claudio.router.matcher import CommandMatcher
-from tests.unit.test_claude_brain import Monotonic, ScriptedClient, hybrid, say
+from tests.unit.test_claude_brain import Monotonic, ScriptedClient, hybrid, say, settled
 from tests.unit.test_cost import PRICES, tracker
 
 
@@ -519,6 +520,118 @@ async def test_cancel_pending(pricing: Pricing, tools: PcTools, desk: FakeDeskto
     assert not b.awaiting
     await ask(b, "sì")
     assert not [d for d in desk.done if d[0] == "close"]
+
+
+async def test_a_silent_round_after_the_yes_says_nothing_before_its_tools(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    """After a yes the turn holds the question, already spoken: no space is due to end it."""
+    client = ScriptedClient(
+        ([], "tool_use", [use("close_window", window="chrome")]),
+        ([], "tool_use", [use("list_windows")]),
+        (["Fatto."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "chiudi chrome")
+    assert [c async for c in b.ask("sì", "it")] == ["Fatto."]
+
+
+# --- cut short between two calls to Claude: only the turn holds what was said ---------------
+
+
+@pytest.mark.parametrize(
+    ("reply", "said", "kept"),
+    [
+        (([], "tool_use", [use("search_files", query="fattura")]), ["Ci guardo. "], "Ci guardo."),
+        (  # the space that ends Haiku's sentence
+            (["Cerco."], "tool_use", [text("Cerco."), use("search_files", query="fattura")]),
+            ["Cerco.", " "],
+            "Cerco.",
+        ),
+    ],
+)
+async def test_a_cut_before_the_tools_run_keeps_the_words_and_runs_nothing(
+    pricing: Pricing,
+    tools: PcTools,
+    desk: FakeDesktop,
+    reply: tuple[list[str], str, list[Any]],
+    said: list[str],
+    kept: str,
+) -> None:
+    b = acting_brain(pricing, ScriptedClient(reply), tools)
+    stream = b.ask("trova la fattura", "it")
+    assert [await anext(stream) for _ in said] == said
+    await stream.aclose()
+    assert list(b._history) == [("[it] trova la fattura", f"{kept} {CUT_NOTE}")]
+    assert not desk.done
+
+
+@pytest.mark.parametrize(
+    ("method", "tool"),
+    [
+        ("run", use("open_app", name="spotify")),
+        ("question", use("close_window", window="chrome")),  # no answer is awaited yet
+    ],
+)
+async def test_a_cancel_while_nothing_streams_keeps_the_words_and_awaits_no_answer(
+    pricing: Pricing,
+    tools: PcTools,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    tool: SimpleNamespace,
+) -> None:
+    async def hang(*args: Any) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(tools, method, hang)
+    client = ScriptedClient((["Un attimo."], "tool_use", [text("Un attimo."), tool]))
+    b = acting_brain(pricing, client, tools)
+    task = asyncio.create_task(ask(b, "fallo"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(b._history) == [("[it] fallo", f"Un attimo. {CUT_NOTE}")]
+    assert not b.awaiting
+
+
+async def test_a_cut_after_the_yes_is_recorded_at_once(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """Its words and tokens are in by the time aclose() returns, not a few ticks later."""
+    client = ScriptedClient(
+        ([], "tool_use", [use("close_window", window="chrome")]),
+        (["Chiusa. ", "Altro?"], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "chiudi chrome")
+    stream = b.ask("sì", "it")
+    assert await anext(stream) == "Chiusa. "
+    await stream.aclose()
+    assert ("close", "YouTube - Google Chrome") in desk.done
+    question, reply = b._history[-1]
+    # endswith hides "Confermi?Chiusa." in the history: a known oddity, not desired behavior.
+    assert question == "[it] chiudi chrome" and reply.endswith(f"Chiusa. {CUT_NOTE}")
+    assert b.last_call["output_tokens"] == 2  # the 8 characters said, at 3 per token
+
+
+async def test_a_cut_at_the_word_before_the_tools_of_a_yes_runs_nothing(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(
+        (
+            [],
+            "tool_use",
+            [use("search_files", query="fattura"), use("close_window", window="chrome")],
+        ),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "trova la fattura e chiudi chrome")
+    stream = b.ask("sì", "it")
+    assert await anext(stream) == "Eseguo. "
+    await stream.aclose()
+    await settled()
+    assert not desk.done and len(client.calls) == 1 and not b.awaiting
 
 
 async def test_history_keeps_only_words(pricing: Pricing, tools: PcTools) -> None:

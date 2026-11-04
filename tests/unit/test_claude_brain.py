@@ -739,6 +739,100 @@ async def test_sonnet_and_the_second_haiku_pass_the_cut_marker_on(
     assert b._history[-1][1].endswith(CLOSING)
 
 
+async def settled() -> None:
+    """A generator dropped without aclose() is closed by the event loop a few ticks later."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+TWO_SENTENCES = (["Prima frase. ", "Seconda frase."], "end_turn", [])
+
+
+@pytest.mark.parametrize(
+    ("replies", "before", "text", "question"),
+    [
+        ([TWO_SENTENCES], [], "Pensaci bene: 17 per 23?", "[it] Pensaci bene: 17 per 23?"),
+        (  # the "no" to the offer: Haiku answers without its tools
+            [([], "tool_use", HANDOFF), TWO_SENTENCES],
+            ["fammi un confronto tra treno e auto"],
+            "no",
+            "[it] fammi un confronto tra treno e auto",
+        ),
+    ],
+)
+async def test_a_cut_through_the_model_that_answers_is_recorded_at_once(
+    pricing: Pricing,
+    replies: list[tuple[list[str], str, list[Any]]],
+    before: list[str],
+    text: str,
+    question: str,
+) -> None:
+    """Its words and tokens are in by the time aclose() returns, not a few ticks later."""
+    b = brain(pricing, ScriptedClient(*replies))
+    for said in before:
+        await ask(b, said)
+    stream = b.ask(text, "it")
+    assert await anext(stream) == "Prima frase. "
+    await stream.aclose()
+    assert list(b._history) == [(question, f"Prima frase. {CUT_NOTE}")]
+    assert b.last_call["input_tokens"] == 400
+    assert b.last_call["output_tokens"] == 4  # the 13 characters said, at 3 per token
+
+
+async def test_a_cut_in_the_story_haiku_tells_itself_keeps_its_words_and_tokens(
+    pricing: Pricing,
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), TWO_SENTENCES)
+    b = brain(pricing, client)
+    stream = b.ask("raccontami una storia lunga sui pirati", "it")
+    assert await anext(stream) == "Prima frase. "
+    await stream.aclose()
+    await settled()
+    # What "continua la storia" reads. The "no answer" entry before it is the doubled cut
+    # bookkeeping: a known bug, not pinned here.
+    assert b._history[-1] == (
+        "[it] raccontami una storia lunga sui pirati",
+        f"Prima frase. {CUT_NOTE}",
+    )
+    assert b.tracker.calls_today() == 2
+
+
+async def test_a_cut_at_the_offer_keeps_the_words(pricing: Pricing) -> None:
+    b = brain(pricing, ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF)))
+    stream = b.ask("spiegami il mutuo variabile", "it")
+    assert await anext(stream) == "Domanda complessa."
+    assert (await anext(stream)).endswith("Lo uso?")
+    # Ready by the time the voice says it; what a cut should do to it is left open.
+    assert b._offer is not None
+    await stream.aclose()
+    assert list(b._history) == [
+        ("[it] spiegami il mutuo variabile", f"Domanda complessa. {CUT_NOTE}")
+    ]
+
+
+async def test_a_handoff_with_no_sonnet_to_offer_ends_the_reply_as_it_is(pricing: Pricing) -> None:
+    client = ScriptedClient((["Il mutuo."], "tool_use", HANDOFF))
+    b = brain(pricing, client, smart_model="")
+    assert await ask(b, "spiegami il mutuo variabile") == "Il mutuo."
+    assert b._offer is None and len(client.calls) == 1
+    assert list(b._history) == [("[it] spiegami il mutuo variabile", "Il mutuo.")]
+
+
+@pytest.mark.parametrize("answer", ["sì", "no"])
+async def test_the_answer_to_the_offer_keeps_the_language_of_the_question(
+    pricing: Pricing, answer: str
+) -> None:
+    """A short answer may be heard as another language: the reply still follows the question."""
+    client = ScriptedClient(
+        ([], "tool_use", HANDOFF),
+        (["It depends. A b"], "max_tokens", []),
+    )
+    b = brain(pricing, client)
+    await ask(b, "compare trains and cars for me", "en")
+    reply = await ask(b, answer, "it")
+    assert reply == "It depends. A b I'll stop here: ask and I'll go on."
+
+
 async def test_think_phrase_in_another_language(pricing: Pricing) -> None:
     b = brain(pricing, ScriptedClient())
     assert b.wants_smart("think hard about this", "it")
