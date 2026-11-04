@@ -882,6 +882,20 @@ class BreakingClient(ScriptedClient):
         return stream if self.replies else BreakingStream(stream.chunks, self.error)
 
 
+class RefusingClient(ScriptedClient):
+    """Its replies, then a request that fails before any reply: `error` at request time."""
+
+    def __init__(self, error: Exception, *replies: tuple[list[str], str, list[Any]]):
+        super().__init__(*replies)
+        self.error = error
+
+    def stream(self, **params: Any) -> Any:
+        if self.replies:
+            return super().stream(**params)
+        self.calls.append(params)
+        return FakeStream([], dict(USAGE), "end_turn", self.error)
+
+
 @pytest.mark.parametrize(
     "error",
     [
@@ -946,6 +960,7 @@ async def test_a_connection_lost_keeps_the_words_of_the_model_that_answers(
 
 
 async def test_a_connection_refused_at_request_time_keeps_nothing(pricing: Pricing) -> None:
+    """The first round: nothing was said or run, so there is nothing to keep."""
     b = brain(pricing, FakeClient(error=anthropic.APIConnectionError(request=REQUEST)))
     assert await ask(b, "chi era Dante") == NETWORK_SAID
     assert b.last_call["claude_error"] == "network"
@@ -999,6 +1014,7 @@ async def test_the_voice_says_the_status_error_without_the_unfinished_sentence(
 
 
 async def test_a_status_error_at_request_time_keeps_nothing(pricing: Pricing) -> None:
+    """The first round: nothing was said or run, so there is nothing to keep."""
     error = anthropic.InternalServerError(
         "overloaded", response=httpx2.Response(529, request=REQUEST), body=None
     )

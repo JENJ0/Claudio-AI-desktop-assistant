@@ -780,8 +780,10 @@ class ClaudeBrain:
             self.last_call["claude_error"] = "network"
             # The SDK wraps these only at request time; raw, they broke a reply under way. Its
             # words and the tools that ran stay in the history (no cut note: JenJo did not
-            # interrupt), and the voice never says "Attra" before this sentence.
-            leg.complete = stream is not None
+            # interrupt), and the voice never says "Attra" before this sentence. Also when the
+            # request itself failed, in a later round: the note of what ran must not be lost
+            # (a first round with nothing said or run stores nothing anyway: `_remember`).
+            leg.complete = True
             yield CUT_SHORT
             yield _space(leg) + in_language(NETWORK_ERROR, language)
             return
@@ -789,7 +791,7 @@ class ClaudeBrain:
             log.error("Claude errore %s: %s", exc.status_code, exc.message)
             self.last_call["claude_error"] = exc.status_code
             # Also an error event during a reply (an overloaded API): as a lost connection.
-            leg.complete = stream is not None
+            leg.complete = True
             yield CUT_SHORT
             yield _space(leg) + in_language(API_ERROR, language)
             return
