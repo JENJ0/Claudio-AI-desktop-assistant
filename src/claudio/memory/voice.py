@@ -534,7 +534,8 @@ class MemoryVoice:
             kept = say["rule_dropped" if q.kind == "rule" else "kept"]
             return Reply(kept, q.language, "kept")
         if q.kind != "which":
-            if parse_answer(" ".join(_without_question(q, words))) is Answer.YES:
+            asked = text.rstrip().endswith("?")  # parse_answer gets the words, without the "?"
+            if not asked and parse_answer(" ".join(_without_question(q, words))) is Answer.YES:
                 return (
                     self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options, q.language)
                 )

@@ -855,6 +855,17 @@ def test_a_yes_to_the_rule_may_repeat_its_words(voice: MemoryVoice, said: str) -
     assert reply(voice, said) == "D'accordo, da ora in poi: chiamami capo."
 
 
+@pytest.mark.parametrize("said", ["Sì?", "Va bene?", "Ah sì? Davvero?"])
+def test_a_question_is_not_a_yes_to_forget_or_to_the_rule(voice: MemoryVoice, said: str) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert _not_an_answer(voice.handle(said))
+    assert texts(voice.store) == ["mio padre ha 60 anni"]
+    reply(voice, "da ora in poi chiamami capo", addressed=False)
+    assert _not_an_answer(voice.handle(said))
+    assert texts(voice.store) == ["mio padre ha 60 anni"]
+
+
 @pytest.mark.parametrize("said", ["come sì", "a regola sì", "sì a"])
 def test_the_rules_words_around_a_yes_do_not_save_it(voice: MemoryVoice, said: str) -> None:
     reply(voice, "da ora in poi chiamami capo", addressed=False)
