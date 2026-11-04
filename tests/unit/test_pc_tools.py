@@ -220,8 +220,32 @@ async def test_typing_in_notepad_needs_no_yes(tools: PcTools) -> None:
     await tools.prepare(calls)
     assert tools.level(calls[0]) == 1 and tools.level(calls[1]) == 2
     new = [ToolCall("t3", "type_text", {"text": "x", "window": "Blocco note"})]
-    await tools.prepare(new)  # a Notepad opened in the same reply: matched by the name
+    await tools.prepare(new)  # the open Notepad is found: its process notepad.exe decides
     assert tools.level(new[0]) == 1 and tools.level(calls[0]) == 2  # reset per reply
+
+
+async def test_a_window_titled_notepad_in_another_app_still_asks(
+    tools: PcTools, desk: FakeDesktop
+) -> None:
+    """A Chrome tab titled "notepad online" is not Notepad: typing into it asks."""
+    desk.open_windows.append(Window(4, "notepad online - Google Chrome", "chrome.exe"))
+    web = [call("type_text", text="ciao", window="notepad online")]
+    await tools.prepare(web)
+    assert tools.level(web[0]) == 2
+
+
+async def test_a_window_not_found_counts_by_the_name_claude_gave(
+    tools: PcTools, desk: FakeDesktop
+) -> None:
+    """A Notepad opened in the same reply has no window yet: the query alone decides."""
+    desk.open_windows.pop(0)  # the Notepad of the fixture
+    calls = [
+        ToolCall("t1", "type_text", {"text": "ciao", "window": "blocco note"}),
+        ToolCall("t2", "type_text", {"text": "ciao", "window": "foglio dei conti"}),
+    ]
+    await tools.prepare(calls)
+    assert tools.level(calls[0]) == 1
+    assert tools.level(calls[1]) == 2
 
 
 async def test_long_text_is_pasted(tools: PcTools, desk: FakeDesktop) -> None:

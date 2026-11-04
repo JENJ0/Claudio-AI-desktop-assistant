@@ -458,7 +458,7 @@ class PcTools:
             query = str(call.args.get("window") or "")
             try:
                 window = await self._call(self._find_window, query)
-                where = f"{window.title} {window.process}"
+                where = window.process  # not the title: a tab named "notepad online" is Chrome
             except Exception:
                 where = query
             where = where.casefold()
