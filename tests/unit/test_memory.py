@@ -451,6 +451,9 @@ def test_a_request_is_not_an_answer(voice: MemoryVoice, said: str) -> None:
 
 SISTER_IT = ("mia sorella abita a Torino", "mia sorella si chiama Anna")
 SISTER_EN = ("my sister lives in Turin", "my sister was called Anna")
+MEETINGS = ("mia zia è a una riunione", "mia zia è a un pranzo")
+BIKES = ("Luca ha una moto rossa", "Luca ha una bici blu")
+FATHER_MOTHER = ("mio padre ha 60 anni", "mia madre ha 58 anni")
 
 
 @pytest.mark.parametrize(
@@ -474,6 +477,15 @@ SISTER_EN = ("my sister lives in Turin", "my sister was called Anna")
             "quella volta di quando ero piccolo",
         ),
         (SISTER_EN, "forget my sister", "the one about Turin", SISTER_EN[0]),
+        (SISTER_IT, "dimentica mia sorella", "quella con Anna", SISTER_IT[1]),
+        (SISTER_IT, "dimentica mia sorella", "quella dove abita a Torino", SISTER_IT[0]),
+        (SISTER_IT, "dimentica mia sorella", "la cosa di Torino", SISTER_IT[0]),
+        (
+            (*SISTER_IT, "mio padre ha 60 anni"),
+            "dimentica mia sorella e mio padre",
+            "quella dei 60 anni",
+            "mio padre ha 60 anni",
+        ),
     ],
 )
 def test_a_named_answer_holding_only_the_memorys_words_forgets_it(
@@ -499,6 +511,12 @@ def test_a_named_answer_holding_only_the_memorys_words_forgets_it(
         (SISTER_IT, "dimentica mia sorella", "abita a Torino?"),
         (SISTER_EN, "forget my sister", "is my sister called Anna"),
         (SISTER_EN, "forget my sister", "which lives in Turin"),
+        (SISTER_IT, "dimentica mia sorella", "dove abita a Torino"),
+        (SISTER_IT, "dimentica mia sorella", "con chi abita"),
+        (MEETINGS, "dimentica mia zia", "che riunione è"),
+        (BIKES, "dimentica Luca", "che moto ha Luca"),
+        (FATHER_MOTHER, "dimentica gli anni", "che anni ha mio padre"),
+        (FATHER_MOTHER, "dimentica gli anni", "che ha mio padre"),
     ],
 )
 def test_a_named_answer_with_a_word_not_in_the_memory_forgets_nothing(
