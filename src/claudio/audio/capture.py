@@ -93,11 +93,10 @@ class AudioCapture:
         """Takes effect from the next frame (the callback reads it every time)."""
         self.gain = 10 ** (gain_db / 20)
 
-    async def frames(self) -> AsyncIterator[np.ndarray]:
-        import sounddevice as sd
-
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[np.ndarray] = asyncio.Queue(maxsize=self.queue_size)
+    def _frame_callback(
+        self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue[np.ndarray]
+    ) -> Callable[[np.ndarray, int, object, object], None]:
+        """The stream's callback: runs on PortAudio's thread, the frames reach `queue` on `loop`."""
 
         def put(frame: np.ndarray) -> None:
             if queue.full():  # consumer is late: drop the oldest frame, never block
@@ -112,20 +111,60 @@ class AudioCapture:
             frame = apply_gain(frame, self.gain)
             loop.call_soon_threadsafe(put, frame)
 
+        return callback
+
+    async def _pick_index(self, opened_on: str | None, portaudio_default: bool) -> int | None:
+        """The device to open; None is PortAudio's own default."""
+        if self.chooser is not None:
+            return await asyncio.to_thread(self.chooser, None)
+        if not portaudio_default:
+            return pick_device(self.device, "input", opened_on)
+        return None
+
+    def _announce(self, index: int | None) -> None:
+        description = describe_device(index, "input")
+        if self.on_device is not None:
+            self.on_device(microphone_key(description))  # may change the gain
+        log.info(
+            "Microfono: %s%s",
+            description,
+            f", guadagno +{20 * np.log10(self.gain):.0f} dB" if self.gain > 1 else "",
+        )
+
+    async def _louder_microphone(
+        self, frame: np.ndarray, index: int | None, loud: float
+    ) -> tuple[int | None, float]:
+        """After QUIET_S with nothing above QUIET_PEAK: the microphone to move to, if any, and
+        when this one was last loud (or last checked)."""
+        assert self.chooser is not None
+        now_t = time.monotonic()
+        if int(np.abs(frame.astype(np.int32)).max()) > QUIET_PEAK:
+            return None, now_t
+        if now_t - loud < QUIET_S:
+            return None, loud
+        # The stream stays open: the probe opens the others alongside.
+        best = await asyncio.to_thread(self.chooser, index)
+        if best is not None and best != index:
+            log.info("Un altro microfono sente di più: passo a quello")
+            return best, now_t
+        return None, now_t
+
+    async def frames(self) -> AsyncIterator[np.ndarray]:
+        import sounddevice as sd
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[np.ndarray] = asyncio.Queue(maxsize=self.queue_size)
+        callback = self._frame_callback(loop, queue)
         portaudio_default = False  # the WASAPI default failed once: use PortAudio's (MME)
         lost_at: float | None = None  # when the microphone went missing
         retries = 0
         switch_to: int | None = None  # "auto" found a microphone that hears more
         while True:
-            index = None
+            index, switch_to = switch_to, None
             opened_on = self._windows_default()
             try:
-                if switch_to is not None:
-                    index, switch_to = switch_to, None
-                elif self.chooser is not None:
-                    index = await asyncio.to_thread(self.chooser, None)
-                elif not portaudio_default:
-                    index = pick_device(self.device, "input", opened_on)
+                if index is None:
+                    index = await self._pick_index(opened_on, portaudio_default)
                 with sd.InputStream(
                     samplerate=self.sample_rate,
                     blocksize=self.block_size,
@@ -135,14 +174,7 @@ class AudioCapture:
                     callback=callback,
                     extra_settings=stream_settings(index),
                 ):
-                    description = describe_device(index, "input")
-                    if self.on_device is not None:
-                        self.on_device(microphone_key(description))  # may change the gain
-                    log.info(
-                        "Microfono: %s%s",
-                        description,
-                        f", guadagno +{20 * np.log10(self.gain):.0f} dB" if self.gain > 1 else "",
-                    )
+                    self._announce(index)
                     checked = loud = time.monotonic()
                     while True:
                         # No frame for 2 s means the device stopped delivering audio.
@@ -161,17 +193,9 @@ class AudioCapture:
                             lost_at, retries = None, 0
                         yield frame
                         if self.chooser is not None:
-                            now_t = time.monotonic()
-                            if int(np.abs(frame.astype(np.int32)).max()) > QUIET_PEAK:
-                                loud = now_t
-                            elif now_t - loud >= QUIET_S:
-                                loud = now_t
-                                # The stream stays open: the probe opens the others alongside.
-                                best = await asyncio.to_thread(self.chooser, index)
-                                if best is not None and best != index:
-                                    log.info("Un altro microfono sente di più: passo a quello")
-                                    switch_to = best
-                                    break
+                            switch_to, loud = await self._louder_microphone(frame, index, loud)
+                            if switch_to is not None:
+                                break
                 if switch_to is not None:
                     continue  # no re-scan: it would also break the speaker's open stream
                 # Windows' microphone changed: re-scan, a just-plugged one is not listed yet.
@@ -179,16 +203,7 @@ class AudioCapture:
                 sd._terminate()
                 sd._initialize()
             except (sd.PortAudioError, TimeoutError, ValueError) as exc:
-                # Unplugged, it fails every second: warn once, then every ~30 s, not 3600 lines/h.
-                if lost_at is None:
-                    lost_at = time.monotonic()
-                    log.warning("Microfono non disponibile (%s): riprovo tra 1 s", exc)
-                elif retries % STILL_MISSING_EVERY == 0:
-                    log.warning(
-                        "Microfono ancora non disponibile da %.0f s (%s): ricollegalo",
-                        time.monotonic() - lost_at,
-                        exc,
-                    )
+                lost_at = _warn_missing(exc, lost_at, retries)
                 retries += 1
                 if self.device == "" and index is not None and isinstance(exc, sd.PortAudioError):
                     portaudio_default = True
@@ -196,3 +211,18 @@ class AudioCapture:
                 # Re-scan devices so a re-plugged USB microphone is found again.
                 sd._terminate()
                 sd._initialize()
+
+
+def _warn_missing(exc: Exception, lost_at: float | None, retries: int) -> float:
+    """Unplugged, it fails every second: warn once, then every ~30 s, not 3600 lines/h. Returns
+    when the microphone went missing."""
+    if lost_at is None:
+        lost_at = time.monotonic()
+        log.warning("Microfono non disponibile (%s): riprovo tra 1 s", exc)
+    elif retries % STILL_MISSING_EVERY == 0:
+        log.warning(
+            "Microfono ancora non disponibile da %.0f s (%s): ricollegalo",
+            time.monotonic() - lost_at,
+            exc,
+        )
+    return lost_at
