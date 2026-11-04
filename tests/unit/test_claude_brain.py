@@ -11,9 +11,9 @@ import anthropic
 import httpx2
 import pytest
 
-from claudio.app import addressed_to_claudio
+from claudio.app import Assistant, addressed_to_claudio
 from claudio.brain.claude import CUT_NOTE, ClaudeBrain
-from claudio.brain.prompts import ASK_SONNET_TOOL, SYSTEM_PROMPT
+from claudio.brain.prompts import ASK_SONNET_TOOL, OFFER, SYSTEM_PROMPT
 from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
 from claudio.protocols import CUT_SHORT
@@ -25,8 +25,8 @@ from tests.unit.test_actions import Recorder
 from tests.unit.test_app import FakeSpeaker, run_frames
 from tests.unit.test_app_verify_closed_list import request
 from tests.unit.test_app_verify_closed_list import setup as setup_closed_list
+from tests.unit.test_conversation import LongSpeaker, barge, speak_over, talk
 from tests.unit.test_conversation import build as build_conversation
-from tests.unit.test_conversation import talk
 from tests.unit.test_cost import PRICES, tracker
 
 
@@ -802,9 +802,11 @@ async def test_a_cut_at_the_offer_keeps_the_words(pricing: Pricing) -> None:
     stream = b.ask("spiegami il mutuo variabile", "it")
     assert await anext(stream) == "Domanda complessa."
     assert (await anext(stream)).endswith("Lo uso?")
-    # Ready by the time the voice says it; what a cut should do to it is left open.
+    # Ready by the time the voice says it; the cut itself reaches the brain through
+    # cancel_pending(cut=True), not through closing the stream.
     assert b._offer is not None
     await stream.aclose()
+    assert b._offer is not None
     assert list(b._history) == [
         ("[it] spiegami il mutuo variabile", f"Domanda complessa. {CUT_NOTE}")
     ]
@@ -1045,3 +1047,110 @@ async def test_the_yes_reaches_claude_through_the_router(
     assert r.asked_question  # the conversation window takes the one-word answer
     assert await say(r, "sì") == "Ecco il piano."
     assert client.calls[1]["model"] == "claude-sonnet-5-5"
+
+
+# --- an offer survives the end of its own request, not a cut ----------------------------
+
+OFFER_CASES = [
+    ("it", "fammi un confronto tra treno e auto", "sì"),
+    ("en", "compare trains and cars for me", "yes"),
+]
+
+
+def wired(assistant: Assistant, r: LocalResponder, b: ClaudeBrain) -> None:
+    """The lines of __main__.build_responder that matter to an offer."""
+    r.fallback = b.ask
+    r.fallback_info = lambda: b.last_call
+    r.fallback_awaiting = lambda: b.awaiting
+    r.fallback_cancel = b.cancel_pending
+    assistant.claude_min_words = 3
+
+
+def sonnet_calls(client: ScriptedClient) -> int:
+    return sum(c["model"] == "claude-sonnet-5-5" for c in client.calls)
+
+
+@pytest.mark.parametrize(("language", "question", "yes"), OFFER_CASES)
+async def test_a_completed_offer_survives_its_request_and_the_yes_reaches_sonnet(
+    fake_vad, vad_settings, make_frames, matcher, pricing, language, question, yes
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
+    assistant, speaker, _, r = build_conversation(fake_vad, vad_settings, matcher, [question, yes])
+    assistant.transcriber.language = language
+    b = brain(pricing, client)
+    wired(assistant, r, b)
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert speaker.spoken[0] == OFFER[language]
+    assert sonnet_calls(client) == 1
+
+
+async def test_the_yes_after_the_window_timed_out_still_reaches_sonnet(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
+    assistant, speaker, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["fammi un confronto tra treno e auto"]
+    )
+    b = brain(pricing, client)
+    wired(assistant, r, b)
+    await talk(assistant, make_frames, speaker, requests=1, tail_frames=80)  # the window times out
+    assert await say(r, "Hey Claudio, sì") == "Ok."
+    assert sonnet_calls(client) == 1
+
+
+async def test_basta_as_its_own_request_then_yes_does_not_start_sonnet(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
+    assistant, speaker, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["fammi un confronto tra treno e auto", "basta"]
+    )
+    b = brain(pricing, client)
+    wired(assistant, r, b)
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert [h["outcome"] for h in assistant.history] == ["ok", "stopped"]
+    await say(r, "sì")
+    assert sonnet_calls(client) == 0
+
+
+async def test_basta_over_the_offer_then_yes_does_not_start_sonnet(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
+    speaker = LongSpeaker()
+    assistant, _, _, r = build_conversation(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["fammi un confronto tra treno e auto"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, ["basta"]),
+    )
+    b = brain(pricing, client)
+    wired(assistant, r, b)
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut
+    await say(r, "sì")
+    assert sonnet_calls(client) == 0
+
+
+async def test_a_yes_said_over_the_offer_is_a_takeover_and_reaches_sonnet(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
+    speaker = LongSpeaker()
+    assistant, _, _, r = build_conversation(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["fammi un confronto tra treno e auto", "Claudio, sì"],
+        speaker=speaker,
+        # a bare "sì" is not heard over a reply: the name makes it a request
+        barge_in=barge(vad_settings, ["Claudio, sì"], resume_min_chars=0),
+    )
+    b = brain(pricing, client)
+    wired(assistant, r, b)
+    await speak_over(assistant, make_frames, speaker)
+    first, second = list(assistant.history)[:2]
+    assert first["outcome"] == "interrupted" and second["wake_word"] == "barge_in"
+    assert sonnet_calls(client) == 1

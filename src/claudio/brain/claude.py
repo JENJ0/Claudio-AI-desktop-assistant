@@ -152,12 +152,17 @@ class ClaudeBrain:
         """An action asked "Confermi?": the next request is the answer."""
         return self._action is not None and self.clock() - self._action.asked < ACTION_TTL_S
 
-    def cancel_pending(self) -> None:
-        """No answer came (silence, "basta", a typed message): the action is not run."""
+    def cancel_pending(self, cut: bool = False) -> None:
+        """A request is over (it runs at the end of every one, not only after a cut): the
+        action Claude asked "Confermi?" for is not run. The Sonnet offer ("Lo uso?") is dropped
+        only when `cut`, JenJo stopped the reply ("basta"): otherwise it waits for the "sì"."""
         if self._action is not None:
             names = ", ".join(c.name for c in self._action.calls)
             log.info("Conferma scaduta: %s non eseguito", names, extra={"route": "tool"})
             self._action = None
+        if cut and self._offer is not None:
+            log.info("Offerta di Sonnet scaduta: interrotta", extra={"route": "tool"})
+            self._offer = None
 
     def warm_up(self) -> None:
         """JenJo is about to speak (wake word): open the HTTPS connection now, for free (a

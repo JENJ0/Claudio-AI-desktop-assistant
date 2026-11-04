@@ -821,7 +821,9 @@ class Assistant:
         if route:
             inter.info.update(route)
         if not follow_up:
-            self.responder.cancel_pending()  # an error or silence never leaves an action armed
+            # An error or silence never leaves an action armed; a real cut also drops the offer.
+            cut = outcome in ("interrupted", "stopped") and self._takeover is None
+            self.responder.cancel_pending(cut=cut)
         self._finish(outcome)
         if self._takeover is not None:
             self._listen_to_takeover()
