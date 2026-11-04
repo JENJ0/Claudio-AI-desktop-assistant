@@ -449,6 +449,68 @@ def test_a_request_is_not_an_answer(voice: MemoryVoice, said: str) -> None:
     assert not voice.awaiting and len(voice.store) == 2
 
 
+SISTER_IT = ("mia sorella abita a Torino", "mia sorella si chiama Anna")
+SISTER_EN = ("my sister lives in Turin", "my sister was called Anna")
+
+
+@pytest.mark.parametrize(
+    ("memories", "asked", "said", "gone"),
+    [
+        (SISTER_IT, "dimentica mia sorella", "quella che abita a Torino", SISTER_IT[0]),
+        (SISTER_IT, "dimentica mia sorella", "quella di Torino", SISTER_IT[0]),
+        (SISTER_IT, "dimentica mia sorella", "Torino", SISTER_IT[0]),
+        (SISTER_IT, "dimentica mia sorella", "abita a Torino", SISTER_IT[0]),
+        (SISTER_IT, "dimentica mia sorella", "quella che si chiama Anna", SISTER_IT[1]),
+        (
+            (*SISTER_IT, "mio padre ha 60 anni"),
+            "dimentica mia sorella e mio padre",
+            "quella di mio padre",
+            "mio padre ha 60 anni",
+        ),
+        (
+            (SISTER_IT[0], "quella volta di quando ero piccolo"),
+            "dimentica mia sorella da piccola",
+            "quella di quando ero piccolo",
+            "quella volta di quando ero piccolo",
+        ),
+        (SISTER_EN, "forget my sister", "the one about Turin", SISTER_EN[0]),
+    ],
+)
+def test_a_named_answer_holding_only_the_memorys_words_forgets_it(
+    voice: MemoryVoice, memories: tuple[str, ...], asked: str, said: str, gone: str
+) -> None:
+    remember(voice.store, *memories)
+    assert "?" in reply(voice, asked)
+    assert voice.handle(said) is not None
+    assert sorted(texts(voice.store)) == sorted(m for m in memories if m != gone)
+
+
+@pytest.mark.parametrize(
+    ("memories", "asked", "said"),
+    [
+        (SISTER_IT, "dimentica mia sorella", "come si chiama mia sorella"),
+        (SISTER_IT, "dimentica mia sorella", "dove abita mia sorella"),
+        (SISTER_IT, "dimentica mia sorella", "chi abita a Torino"),
+        (SISTER_IT, "dimentica mia sorella", "dimmi se abita a Torino"),
+        (SISTER_IT, "dimentica mia sorella", "mi dici se abita a Torino"),
+        (SISTER_IT, "dimentica mia sorella", "sai se si chiama Anna"),
+        (SISTER_IT, "dimentica mia sorella", "hai detto che abita a Torino"),
+        (SISTER_IT, "dimentica mia sorella", "ma abita a Torino"),
+        (SISTER_IT, "dimentica mia sorella", "abita a Torino?"),
+        (SISTER_EN, "forget my sister", "is my sister called Anna"),
+        (SISTER_EN, "forget my sister", "which lives in Turin"),
+    ],
+)
+def test_a_named_answer_with_a_word_not_in_the_memory_forgets_nothing(
+    voice: MemoryVoice, memories: tuple[str, ...], asked: str, said: str
+) -> None:
+    """Whisper rarely writes the "?": "come si chiama mia sorella" deleted what it asked about."""
+    remember(voice.store, *memories)
+    assert "?" in reply(voice, asked)
+    assert voice.handle(said) is None  # a new request
+    assert sorted(texts(voice.store)) == sorted(memories)
+
+
 def test_the_echo_of_the_question_is_not_an_answer(voice: MemoryVoice) -> None:
     """review: the speakers' "si chiama Anna. Quale dimentico?" deleted Anna."""
     remember(voice.store, "mia sorella si chiama Anna", "mia sorella abita a Torino")
