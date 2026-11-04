@@ -163,63 +163,20 @@ class StreamingSpeaker:
     ) -> None:
         """`language` may be a callable, read at every sentence: the responder only knows the
         language of its reply once it has matched the request."""
-        self._cancel.clear()
-        # Every reply starts at full volume, at once: after a silence the player has nothing to
-        # fade (a fade-in would only swallow the first syllable).
-        self.duck(None)
-        self.played = []
-        for synth in (self.synth, *self.voices.values()):
-            if begin := getattr(synth, "begin_reply", None):  # Jack: one voice per reply
-                begin()
+        self._reset_for_reply()
         # Rendering runs ahead of playback: the next sentences are ready before they are due
         # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued. The first
         # piece of each sentence carries its text.
         queue: asyncio.Queue[tuple[np.ndarray, int, str | None] | None] = asyncio.Queue(maxsize=16)
-
-        async def produce() -> None:
-            try:
-                if self.group_chars:
-                    pieces = group_stream(
-                        text_stream,
-                        self.group_chars,
-                        self.group_first_chars,
-                        self.group_pause_s,
-                    )
-                else:
-                    pieces = split_stream(text_stream, first_clause_chars=self.first_clause_chars)
-                async for sentence in pieces:
-                    lang = language() if callable(language) else language
-                    log.debug("TTS (%s): %s", lang, sentence)
-                    text: str | None = sentence
-                    async for audio, rate in self.render_stream(sentence, lang):
-                        await queue.put((audio, rate, text))
-                        text = None
-            finally:
-                await queue.put(None)
-
-        producer = asyncio.create_task(produce())
+        producer = asyncio.create_task(self._produce(text_stream, language, queue))
         loop = asyncio.get_running_loop()
 
         def wake() -> None:  # interrupt() may come from another thread
             loop.call_soon_threadsafe(_end_now, queue)
 
         self._wake = wake
-        first = True
         try:
-            # "basta" while waiting for a piece, or while it was made: nothing more plays,
-            # and it is not counted as played (the resume and the echo filter read that).
-            while (item := await queue.get()) is not None and not self._cancel.is_set():
-                if first and on_first_audio is not None:
-                    on_first_audio()
-                first = False
-                audio, rate, sentence = item
-                if sentence is not None:
-                    self.played.append(sentence)
-                done = await asyncio.to_thread(self.player.write, audio, rate, self._cancel)
-                if done is False or self._cancel.is_set():
-                    break
-            if self._cancel.is_set():
-                log.info("Risposta interrotta")
+            await self._play(queue, on_first_audio)
         finally:
             self._wake = None
             if not producer.done():
@@ -231,6 +188,63 @@ class StreamingSpeaker:
             (result,) = await asyncio.gather(producer, return_exceptions=True)
         if isinstance(result, Exception):
             raise result
+
+    def _reset_for_reply(self) -> None:
+        self._cancel.clear()
+        # Every reply starts at full volume, at once: after a silence the player has nothing to
+        # fade (a fade-in would only swallow the first syllable).
+        self.duck(None)
+        self.played = []
+        for synth in (self.synth, *self.voices.values()):
+            if begin := getattr(synth, "begin_reply", None):  # Jack: one voice per reply
+                begin()
+
+    async def _produce(
+        self,
+        text_stream: AsyncIterator[str],
+        language: str | Callable[[], str],
+        queue: asyncio.Queue[tuple[np.ndarray, int, str | None] | None],
+    ) -> None:
+        try:
+            if self.group_chars:
+                pieces = group_stream(
+                    text_stream,
+                    self.group_chars,
+                    self.group_first_chars,
+                    self.group_pause_s,
+                )
+            else:
+                pieces = split_stream(text_stream, first_clause_chars=self.first_clause_chars)
+            async for sentence in pieces:
+                lang = language() if callable(language) else language
+                log.debug("TTS (%s): %s", lang, sentence)
+                text: str | None = sentence
+                async for audio, rate in self.render_stream(sentence, lang):
+                    await queue.put((audio, rate, text))
+                    text = None
+        finally:
+            await queue.put(None)
+
+    async def _play(
+        self,
+        queue: asyncio.Queue[tuple[np.ndarray, int, str | None] | None],
+        on_first_audio: Callable[[], None] | None,
+    ) -> None:
+        first = True
+        # "basta" while waiting for a piece, or while it was made: nothing more plays,
+        # and it is not counted as played (the resume and the echo filter read that).
+        while (item := await queue.get()) is not None and not self._cancel.is_set():
+            if first and on_first_audio is not None:
+                on_first_audio()
+            first = False
+            audio, rate, sentence = item
+            if sentence is not None:
+                self.played.append(sentence)
+            done = await asyncio.to_thread(self.player.write, audio, rate, self._cancel)
+            if done is False or self._cancel.is_set():
+                break
+        if self._cancel.is_set():
+            log.info("Risposta interrotta")
 
 
 def _end_now(queue: asyncio.Queue[Any]) -> None:
