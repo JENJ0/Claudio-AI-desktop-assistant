@@ -94,26 +94,8 @@ class ConversationLog:
             log.exception("Conversazione non salvata")
 
 
-def format_row(row: dict[str, Any]) -> str:
-    when = datetime.fromtimestamp(row.get("ts") or 0).strftime("%H:%M:%S")
-    wake = row.get("wake_word", "?")
-    score = row.get("wake_score")
-    head = f"\n## {when} · {wake}" + (f" {score:.2f}" if score else "")
-    head += f" · {row.get('outcome', '?')}"
-    route = row.get("route")
-    if route:
-        head += f" · {route}"
-        if row.get("command"):
-            head += f" ({row['command']})"
-    lines = [head, ""]
-    if row.get("text"):
-        lines.append(f"**JenJo:** {row['text']}")
-    if row.get("reply"):
-        lines.append(f"**Claudio:** {row['reply']}")
-    if row.get("tools"):
-        lines.append("**Azioni:** " + "; ".join(row["tools"]))
-    if row.get("shown"):
-        lines.append(f"**Comando proposto:** `{row['shown']}`")
+def _details(row: dict[str, Any]) -> list[str]:
+    """The figures of a row (latencies, cost, flags), in the order they are written."""
     details = []
     for key, label in (("m1_ms", "M1"), ("m2_ms", "M2"), ("stt_ms", "STT")):
         if row.get(key) is not None:
@@ -143,6 +125,30 @@ def format_row(row: dict[str, Any]) -> str:
             details.append(f"{key}: {row[key]}")
     if row.get("audio_file"):
         details.append(f"audio: {row['audio_file']}")
+    return details
+
+
+def format_row(row: dict[str, Any]) -> str:
+    when = datetime.fromtimestamp(row.get("ts") or 0).strftime("%H:%M:%S")
+    wake = row.get("wake_word", "?")
+    score = row.get("wake_score")
+    head = f"\n## {when} · {wake}" + (f" {score:.2f}" if score else "")
+    head += f" · {row.get('outcome', '?')}"
+    route = row.get("route")
+    if route:
+        head += f" · {route}"
+        if row.get("command"):
+            head += f" ({row['command']})"
+    lines = [head, ""]
+    if row.get("text"):
+        lines.append(f"**JenJo:** {row['text']}")
+    if row.get("reply"):
+        lines.append(f"**Claudio:** {row['reply']}")
+    if row.get("tools"):
+        lines.append("**Azioni:** " + "; ".join(row["tools"]))
+    if row.get("shown"):
+        lines.append(f"**Comando proposto:** `{row['shown']}`")
+    details = _details(row)
     if details:
         lines.append("")
         lines.append("_" + " · ".join(details) + "_")
