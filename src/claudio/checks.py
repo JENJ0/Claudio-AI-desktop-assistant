@@ -109,14 +109,7 @@ def download_hint(name: str) -> str:
     return f"uv run python scripts/download_models.py --whisper {name}"
 
 
-def run_checks(settings: Settings) -> bool:
-    ok = True
-
-    def report(good: bool, what: str) -> None:
-        nonlocal ok
-        ok &= good
-        (log.info if good else log.error)("%s %s", "OK  " if good else "ERR ", what)
-
+def check_packages(report: Callable[[bool, str], None]) -> None:
     for name in PACKAGES:
         try:
             mod = importlib.import_module(name)
@@ -124,6 +117,8 @@ def run_checks(settings: Settings) -> bool:
         except Exception as exc:
             report(False, f"{name}: {exc}")
 
+
+def check_commands(settings: Settings, report: Callable[[bool, str], None]) -> None:
     try:
         from claudio.router.matcher import CommandMatcher, load_commands
 
@@ -140,8 +135,11 @@ def run_checks(settings: Settings) -> bool:
     except Exception as exc:
         report(False, tr("comandi: {error}", error=exc))
 
-    models = settings.resolve(settings.models_dir)
-    from claudio.wakeword.detector import FEATURE_MODELS, find_wakeword_model
+
+def check_model_files(
+    settings: Settings, models: Path, report: Callable[[bool, str], None]
+) -> None:
+    from claudio.wakeword.detector import FEATURE_MODELS
 
     wanted = [
         models / "vad" / "silero_vad.onnx",
@@ -155,15 +153,22 @@ def run_checks(settings: Settings) -> bool:
     wanted += [models / "wakeword" / f for f in FEATURE_MODELS]
     for path in wanted:
         report(path.exists(), tr("modello {path}", path=path.relative_to(models)))
-    if (
-        settings.tts.engine == "jack"
-    ):  # optional: without it Kokoro speaks (a warning, not an error)
-        tts = settings.tts
-        for rel in (tts.jack_python, tts.jack_checkpoint, tts.jack_rvc_model, tts.jack_applio):
-            if (models / rel).exists():
-                report(True, tr("modello {path}", path=rel))
-            else:
-                log.warning("WARN voce di Jack non installata (%s): parlerà Kokoro", rel)
+
+
+def check_jack(settings: Settings, models: Path, report: Callable[[bool, str], None]) -> None:
+    """Optional: without it Kokoro speaks (a warning, not an error)."""
+    if settings.tts.engine != "jack":
+        return
+    tts = settings.tts
+    for rel in (tts.jack_python, tts.jack_checkpoint, tts.jack_rvc_model, tts.jack_applio):
+        if (models / rel).exists():
+            report(True, tr("modello {path}", path=rel))
+        else:
+            log.warning("WARN voce di Jack non installata (%s): parlerà Kokoro", rel)
+
+
+def check_voices(settings: Settings, models: Path) -> None:
+    """The voice of each language Whisper may hear: a missing one only gets a warning."""
     for language in settings.stt.languages:
         if settings.tts.engine in ("kokoro", "jack"):  # one model, a voice per language inside it
             voice = settings.tts.kokoro_voice_for(language)
@@ -183,6 +188,11 @@ def run_checks(settings: Settings) -> bool:
                 voice,
                 language,
             )
+
+
+def check_wake_words(settings: Settings, models: Path, report: Callable[[bool, str], None]) -> None:
+    from claudio.wakeword.detector import find_wakeword_model
+
     for wake in settings.wakeword.models:
         try:
             path = find_wakeword_model(wake.name, models / "wakeword")
@@ -197,6 +207,9 @@ def run_checks(settings: Settings) -> bool:
         except FileNotFoundError as exc:
             report(False, str(exc))
 
+
+def check_gpu(settings: Settings, report: Callable[[bool, str], None]) -> int:
+    """The number of CUDA GPUs found, 0 when there is none or counting fails (a warning)."""
     gpus = 0
     try:
         from claudio.stt.transcriber import register_cuda_dlls
@@ -216,8 +229,10 @@ def run_checks(settings: Settings) -> bool:
             )
     except Exception as exc:
         log.warning("WARN controllo GPU fallito: %s", exc)
-    check_whisper(settings, gpus, report)
+    return gpus
 
+
+def check_audio(settings: Settings, report: Callable[[bool, str], None]) -> None:
     from claudio.audio.devices import (
         WindowsDefaultOutput,
         describe_device,
@@ -244,6 +259,26 @@ def run_checks(settings: Settings) -> bool:
             report(False, f"{label}: {exc}")
         except Exception as exc:  # no audio hardware at all (e.g. CI)
             log.warning("WARN %s: %s", label, exc)
+
+
+def run_checks(settings: Settings) -> bool:
+    ok = True
+
+    def report(good: bool, what: str) -> None:
+        nonlocal ok
+        ok &= good
+        (log.info if good else log.error)("%s %s", "OK  " if good else "ERR ", what)
+
+    check_packages(report)
+    check_commands(settings, report)
+    models = settings.resolve(settings.models_dir)
+    check_model_files(settings, models, report)
+    check_jack(settings, models, report)
+    check_voices(settings, models)
+    check_wake_words(settings, models, report)
+    gpus = check_gpu(settings, report)
+    check_whisper(settings, gpus, report)
+    check_audio(settings, report)
 
     if not ok:
         log.error(
