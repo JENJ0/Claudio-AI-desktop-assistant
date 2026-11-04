@@ -434,9 +434,58 @@ def test_a_rescan_that_keeps_failing_warns_like_an_unplugged_microphone(
 ) -> None:
     sd = fake_sd(failures=65)
     sd.rescan_failures = 65
-    sd.initialize_failures = 65
+    sd.initialize_failures = 29  # one more is the limit: the capture ends
     with caplog.at_level(logging.INFO, logger=capture.__name__):
         frames, error = take_or_error(sd, 3)
     assert error is None and len(frames) == 3
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 3  # as with a working re-scan: not one more line per try
+
+
+def test_a_rescan_that_never_recovers_raises_the_real_error_out_of_frames(
+    fake_sd, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Claudio deaf and mute with a green tray: only a new process can cure it, and the error
+    leaving frames() is what makes the supervisor start one."""
+    sd = fake_sd(failures=1000)
+    sd.initialize_failures = 1000
+    with caplog.at_level(logging.WARNING, logger=capture.__name__):
+        frames, error = take_or_error(sd)
+    assert str(error) == "Error initializing"
+    assert frames == [] and sd.initializes == 30
+    real = [r.getMessage() for r in caplog.records if "Error initializing" in r.getMessage()]
+    assert len(real) == 1
+
+
+def test_rescans_failing_short_of_the_limit_keep_going_and_a_success_resets_the_count(
+    fake_sd,
+) -> None:
+    sd = fake_sd(failures=30)
+    sd.initialize_failures = 29
+    mic = capture.AudioCapture(16000, 4, device="C270")
+    assert len(asyncio.run(take(1, mic))) == 1
+    sd.opened, sd.initialize_failures = 0, 29  # a count not reset would reach the limit at once
+    assert len(asyncio.run(take(1, mic))) == 1
+    assert sd.initializes == 60
+
+
+def test_a_terminate_that_always_fails_never_gives_up(fake_sd) -> None:
+    """It always raises after a failed _initialize, and the next _initialize may still work."""
+    sd = fake_sd(failures=100)
+    sd.rescan_failures = 1000
+    frames, error = take_or_error(sd)
+    assert error is None and len(frames) == 1 and sd.initializes == 100
+
+
+def test_one_failed_rescan_after_a_long_absence_does_not_give_up(fake_sd) -> None:
+    """A microphone unplugged for an hour: its re-scans work, so many retries are no reason."""
+    sd = fake_sd(failures=100)
+    initialize = sd._initialize
+
+    def fails_once_late() -> None:
+        sd.initialize_failures = 1 if sd.initializes == 50 else 0
+        initialize()
+
+    sd._initialize = fails_once_late
+    frames, error = take_or_error(sd)
+    assert error is None and len(frames) == 1 and sd.initializes == 100

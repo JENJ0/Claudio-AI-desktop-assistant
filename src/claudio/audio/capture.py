@@ -33,6 +33,7 @@ FOLLOW_S = 2.0  # how often the Windows default microphone is checked (no device
 QUIET_PEAK = 100  # int16: about -50 dBFS
 QUIET_S = 60.0
 STILL_MISSING_EVERY = 30  # retries between two "still missing" warnings (~30 s)
+RESCAN_FAILURES_MAX = 30  # re-scans failed in a row (~30 s): only a new process can cure PortAudio
 
 
 def apply_gain(frame: np.ndarray, gain: float) -> np.ndarray:
@@ -75,6 +76,7 @@ class AudioCapture:
         self.windows_default = (windows_default or WindowsDefaultInput()) if device == "" else None
         # "auto": every microphone is listened to and the one hearing the most is used.
         self.chooser = (chooser or self._choose) if device == AUTO else None
+        self._rescan_failures = 0  # _initialize failed this many times in a row
 
     def _choose(self, current: int | None) -> int | None:
         """`current`: the microphone in use (None at start: Windows' own keeps the job)."""
@@ -210,19 +212,32 @@ class AudioCapture:
                     portaudio_default = True
                 await asyncio.sleep(RETRY_S)
                 # Re-scan devices so a re-plugged USB microphone is found again.
-                _rescan(sd)
+                self._rescan(sd)
 
-
-def _rescan(sd: Any) -> None:
-    """Read the device list again, whatever happens: a failing re-scan is one more try lost
-    (the open that follows fails and warns), never the end of the capture. _initialize runs
-    even when _terminate fails: after an earlier failed _initialize PortAudio is not started,
-    every _terminate raises, and only _initialize brings the microphone back."""
-    for step in (sd._terminate, sd._initialize):
+    def _rescan(self, sd: Any) -> None:
+        """Read the device list again. A failing re-scan is one more try lost (the open that
+        follows fails and warns); after RESCAN_FAILURES_MAX in a row its error ends the capture
+        and the supervisor starts a clean process. Only _initialize counts, and it runs even
+        when _terminate fails: after a failed _initialize PortAudio is not started, every
+        _terminate raises, and only _initialize brings the microphone back."""
         try:
-            step()
+            sd._terminate()
         except sd.PortAudioError:
             log.debug("Nuova scansione dei dispositivi non riuscita", exc_info=True)
+        try:
+            sd._initialize()
+        except sd.PortAudioError as exc:
+            log.debug("Nuova scansione dei dispositivi non riuscita", exc_info=True)
+            self._rescan_failures += 1
+            if self._rescan_failures >= RESCAN_FAILURES_MAX:
+                log.warning(
+                    "Audio bloccato: %d nuove scansioni fallite di seguito (%s), mi riavvio",
+                    self._rescan_failures,
+                    exc,
+                )
+                raise
+        else:
+            self._rescan_failures = 0
 
 
 def _warn_missing(exc: Exception, lost_at: float | None, retries: int) -> float:
