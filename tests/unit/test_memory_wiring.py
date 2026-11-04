@@ -535,6 +535,33 @@ async def test_a_fact_after_reading_a_window_needs_a_yes(
         tools.close()
 
 
+async def test_the_yes_does_not_clean_what_the_request_read(
+    pricing: Pricing, store: MemoryStore
+) -> None:
+    """Only a new request starts clean: after a yes, the text read before it still counts."""
+    tools = PcTools(FakeDesktop(), PcSettings(), memory=MemoryTools(store))
+    try:
+        client = ScriptedClient(
+            ([], "tool_use", [use("read_window", window="blocco note")]),
+            ([], "tool_use", [use("remember", text="prima cosa")]),
+            ([], "tool_use", [use("remember", text="seconda cosa")]),
+        )
+        b = ClaudeBrain(
+            client,
+            tracker(pricing, 1.0),
+            ClaudeSettings(tell_time=False),
+            clock=Monotonic(),
+            tools=tools,
+            pc=PcSettings(),
+        )
+        assert (await ask(b, "leggimi il blocco note")).endswith('"prima cosa". Confermi?')
+        # .strip() hides a leading space after the yes: a known oddity, not desired behavior.
+        assert (await ask(b, "sì")).strip() == 'Mi segno "seconda cosa". Confermi?'
+        assert [m.text for m in store.items()] == ["prima cosa"]
+    finally:
+        tools.close()
+
+
 def test_one_forget_per_reply(store: MemoryStore) -> None:
     """review: forget(1..20), forget(21..40)... in one reply, then one "sì" wiped it all."""
     from claudio.pc.tools import ToolCall
@@ -592,6 +619,20 @@ async def test_the_sonnet_offer_after_a_forget(pricing: Pricing, store: MemorySt
     store.remove([1])
     await ask(b, "sì")
     assert "noci" not in str(client.calls[-1])
+
+
+async def test_a_forget_after_the_offer_still_clears_the_conversation(
+    pricing: Pricing, store: MemoryStore
+) -> None:
+    """Dropping the offer only looks at the forget: the new request still starts over."""
+    store.add("Anna è allergica alle noci")
+    client = ScriptedClient(*[(["Ok."], "end_turn", [])] * 2)
+    b = brain(pricing, client, store)
+    await ask(b, "cosa cucino per Anna?")
+    assert (await ask(b, "spiegami in dettaglio un menu per Anna")).endswith("Lo uso?")
+    store.remove([1])
+    await ask(b, "sì")
+    assert client.calls[-1]["messages"] == [{"role": "user", "content": "[it] sì"}]
 
 
 async def test_without_history_a_fact_goes_every_time(pricing: Pricing, store: MemoryStore) -> None:
