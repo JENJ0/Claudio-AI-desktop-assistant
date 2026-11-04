@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 import numpy as np
 
@@ -209,8 +210,19 @@ class AudioCapture:
                     portaudio_default = True
                 await asyncio.sleep(RETRY_S)
                 # Re-scan devices so a re-plugged USB microphone is found again.
-                sd._terminate()
-                sd._initialize()
+                _rescan(sd)
+
+
+def _rescan(sd: Any) -> None:
+    """Read the device list again, whatever happens: a failing re-scan is one more try lost
+    (the open that follows fails and warns), never the end of the capture. _initialize runs
+    even when _terminate fails: after an earlier failed _initialize PortAudio is not started,
+    every _terminate raises, and only _initialize brings the microphone back."""
+    for step in (sd._terminate, sd._initialize):
+        try:
+            step()
+        except sd.PortAudioError:
+            log.debug("Nuova scansione dei dispositivi non riuscita", exc_info=True)
 
 
 def _warn_missing(exc: Exception, lost_at: float | None, retries: int) -> float:

@@ -26,6 +26,8 @@ class FakeSd(types.ModuleType):
         self.silent = 0  # how many streams, after the failures, open and deliver nothing
         self.status: str | None = None  # told to the callback with every frame
         self.rescan_failures = 0  # how many re-scans fail
+        self.initializes = 0  # how many times PortAudio was started again
+        self.initialize_failures = 0  # how many of those fail
         self.bad_devices: set[int] = set()  # the ones that never open
         sd = self
 
@@ -55,7 +57,10 @@ class FakeSd(types.ModuleType):
             raise self.PortAudioError("Error terminating")
 
     def _initialize(self) -> None:
-        pass
+        self.initializes += 1
+        if self.initialize_failures:
+            self.initialize_failures -= 1
+            raise self.PortAudioError("Error initializing")
 
 
 @pytest.fixture
@@ -396,3 +401,42 @@ def test_a_rescan_that_fails_after_a_change_of_microphone_is_tried_again(
         frames = asyncio.run(take(1, mic))
     assert len(frames) == 1 and sd.opened == 2 and sd.rescans == 2
     assert ["Microfono non disponibile" in r.getMessage() for r in caplog.records] == [True]
+
+
+def take_or_error(sd: FakeSd, n: int = 1) -> tuple[list[np.ndarray], Exception | None]:
+    """What frames() delivered, and the error that ended it (None: it was still going)."""
+    try:
+        return asyncio.run(take(n)), None
+    except sd.PortAudioError as exc:
+        return [], exc
+
+
+def test_a_failing_terminate_does_not_skip_the_initialize(fake_sd) -> None:
+    """PortAudio left uninitialized by an earlier failure makes every _terminate raise: the
+    _initialize after it is the only way back, so it must always run."""
+    sd = fake_sd(failures=1)
+    sd.rescan_failures = 1
+    frames, error = take_or_error(sd)
+    assert error is None
+    assert len(frames) == 1 and sd.initializes == 1
+
+
+def test_a_failing_initialize_is_tried_again(fake_sd) -> None:
+    sd = fake_sd(failures=2)
+    sd.initialize_failures = 1
+    frames, error = take_or_error(sd)
+    assert error is None
+    assert len(frames) == 1 and sd.initializes == 2
+
+
+def test_a_rescan_that_keeps_failing_warns_like_an_unplugged_microphone(
+    fake_sd, caplog: pytest.LogCaptureFixture
+) -> None:
+    sd = fake_sd(failures=65)
+    sd.rescan_failures = 65
+    sd.initialize_failures = 65
+    with caplog.at_level(logging.INFO, logger=capture.__name__):
+        frames, error = take_or_error(sd, 3)
+    assert error is None and len(frames) == 3
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 3  # as with a working re-scan: not one more line per try
