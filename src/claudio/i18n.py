@@ -391,6 +391,9 @@ EN: dict[str, str] = {
     "Rotazione di %s non riuscita": "Rotation of %s failed",
     "Metriche non salvate": "Metrics not saved",
     "Nuova scansione dei dispositivi non riuscita": "Device re-scan failed",
+    "Audio bloccato: %d nuove scansioni fallite di seguito (%s), mi riavvio": (
+        "Audio stuck: %d device re-scans failed in a row (%s), restarting"
+    ),
     "Sessione salvata in %s": "Session saved in %s",
     "Chat: %d messaggi più vecchi di %d giorni eliminati": (
         "Chat: %d messages older than %d days deleted"
