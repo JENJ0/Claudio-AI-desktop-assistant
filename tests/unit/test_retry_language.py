@@ -81,6 +81,25 @@ async def test_misheard_english_is_retried_in_italian(
     assert row["stt_language"] == "it"
 
 
+async def test_a_failing_retry_keeps_the_first_transcription(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    class FailingRetry(TwoLanguageStt):
+        def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
+            if language:
+                raise RuntimeError("CUDA esplosa")
+            return super().transcribe(audio)
+
+    stt = FailingRetry("Hey Claudio, cue the calculator.", "en", "")
+    assistant, speaker, _rec = build(fake_vad, vad_settings, matcher, stt, retry=True)
+    await run_frames(assistant, request(make_frames))
+    assert "error" not in speaker.beeps  # the first transcription goes on to the router
+    row = assistant.history[-1]
+    assert row["text"] == "Hey Claudio, cue the calculator." and row["stt_language"] == "en"
+    assert "retried_from" not in row and row["outcome"] != "error"
+    assert not assistant._stt_lock.locked()
+
+
 async def test_real_english_is_not_retried(fake_vad, vad_settings, make_frames, matcher) -> None:
     stt = TwoLanguageStt("Hey Claudio, open Chrome.", "en", "Ehi Claudio, open crome.")
     assistant, speaker, _rec = build(fake_vad, vad_settings, matcher, stt, retry=True)

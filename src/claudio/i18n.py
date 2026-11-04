@@ -71,6 +71,8 @@ EN: dict[str, str] = {
     ),
     "Da spento, lista chiusa: %r -> %r": "Off, closed list: %r -> %r",
     "Lista chiusa da spento non riuscita": "The closed list while off failed",
+    "Lista chiusa non riuscita": "The closed list failed",
+    "Ripetizione in %s non riuscita": "The retry in %s failed",
     "Spegnimento richiesto a voce: chiudo": "Shutdown asked by voice: closing",
     "Impossibile salvare l'audio della wake word mancata": (
         "Could not save the audio of the missed wake word"
