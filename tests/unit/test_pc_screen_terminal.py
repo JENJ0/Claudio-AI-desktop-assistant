@@ -235,6 +235,26 @@ async def test_command_asks_for_confermo_and_shows_the_command(
     assert result["content"].startswith("Exit code 0.") and "is_error" not in result
 
 
+async def test_a_cut_at_the_question_keeps_the_words_and_the_action(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    opened: list[bool] = []
+    client = ScriptedClient((["Controllo. "], "tool_use", [text("Controllo. "), command()]))
+    b = acting_brain(pricing, client, tools)
+    b.on_show = lambda: opened.append(True)
+    stream = b.ask("quali programmi usano più memoria?", "it")
+    assert await anext(stream) == "Controllo. "
+    assert (await anext(stream)).endswith("confermo.")
+    # Ready by the time the voice says it: the command in the chat, the answer awaited.
+    assert opened == [True] and b.awaiting
+    await stream.aclose()
+    question, reply = b._history[-1]
+    assert question == "[it] quali programmi usano più memoria?"
+    assert reply.startswith("Controllo. Per vedere")
+    assert reply.endswith(f"confermo. {claude.CUT_NOTE}")
+    assert not [d for d in desk.done if d[0] == "command"]
+
+
 @pytest.mark.parametrize("answer", ["sì", "va bene", "ok fallo", "no"])
 async def test_a_plain_yes_never_runs_a_command(
     pricing: Pricing, tools: PcTools, desk: FakeDesktop, answer: str

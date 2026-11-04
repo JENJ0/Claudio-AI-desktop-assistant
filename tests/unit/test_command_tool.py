@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from claudio.brain.claude import CUT_NOTE
 from claudio.config import PcSettings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.pc.tools import PcTools
@@ -161,6 +162,33 @@ async def test_claude_still_reads_mixed_or_failed_rounds(pricing: Pricing, tools
     assert len(client.calls) == 4
 
 
+async def test_a_command_after_a_tool_without_words_still_goes_back_to_claude(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        (
+            [],
+            "tool_use",
+            [use("open_app", name="spotify"), use(NAME, command="volume_up", last=True)],
+        ),
+        (["Spotify aperto, volume su."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "apri spotify e alza") == "Spotify aperto, volume su."
+    assert len(client.calls) == 2
+
+
+async def test_a_cut_at_the_commands_own_reply_is_marked(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(([], "tool_use", [use(NAME, command="volume_up", last=True)]))
+    b = acting_brain(pricing, client, tools)
+    stream = b.ask("Audio alsa il volu", "it")
+    assert await anext(stream) == "Volume alzato."
+    await stream.aclose()
+    # The finished entry before this one is the doubled cut bookkeeping: a known bug, not pinned.
+    # No action note: a known bug to fix (a cut loses the read-outside taint), not intended.
+    assert b._history[-1] == ("[it] Audio alsa il volu", f"Volume alzato. {CUT_NOTE}")
+
+
 async def test_nothing_claude_meant_to_add_is_dropped(pricing: Pricing, tools: PcTools) -> None:
     """Review of 5.3: the shortcut ends a request only when Claude marked the command
     `last` and nothing else ran or was asked for in it."""
@@ -194,3 +222,18 @@ async def test_switching_off_waits_for_the_yes(
     assert await ask(b, "sì") == "A presto."  # the command's own reply
     assert system.stopping
     assert len(client.calls) == 1  # no call after the yes
+
+
+async def test_a_silent_command_stays_silent_after_the_yes(
+    pricing: Pricing, tools: PcTools, rec: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tools, "level", lambda c: 2)  # no silent command asks in commands.toml
+    client = ScriptedClient(([], "tool_use", [use(NAME, command="mute", last=True)]))
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "togli l'audio") == "Confermi?"
+    assert [c async for c in b.ask("sì", "it")] == []
+    assert rec.keys == [MEDIA_KEYS["mute"]] and len(client.calls) == 1
+    assert b._history[-1] == (
+        "[it] togli l'audio",
+        "Confermi? [Claudio ran: claudio_command ok]",
+    )
