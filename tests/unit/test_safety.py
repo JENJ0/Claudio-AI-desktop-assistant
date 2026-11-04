@@ -167,6 +167,10 @@ def test_courtesy_without_a_yes_word_is_not_a_yes(text: str) -> None:
         "don't",
         "sì, anzi no",
         "yes, no wait",
+        "no Claudio, va bene",  # the name after the "no" is stripped with it: no still wins
+        "no Claudio sì",
+        "no Claudio",
+        "non Claudio, ok",
     ],
 )
 def test_no_wins(text: str) -> None:
