@@ -68,6 +68,23 @@ async def test_closed_list_picks_the_known_command(fake_vad, vad_settings, make_
     assert row["closed_list_from"] == "Claudio, a prick roam" and "closed_list_ms" in row
 
 
+async def test_a_failing_closed_list_keeps_the_transcribed_request(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    assistant, speaker, responder, _ = setup(fake_vad, vad_settings, "Claudio, a prick roam", [])
+
+    def closed_list(audio, language):
+        raise RuntimeError("CUDA esplosa")
+
+    assistant.closed_list = closed_list
+    await run_frames(assistant, request(make_frames))
+    assert "error" not in speaker.beeps  # Whisper understood the phrase: it is not lost
+    assert responder.seen == ["Claudio, a prick roam"]
+    row = assistant.history[-1]
+    assert row["outcome"] == "ok" and "closed_list_from" not in row
+    assert not assistant._stt_lock.locked()
+
+
 async def test_closed_list_not_used_when_understood(fake_vad, vad_settings, make_frames) -> None:
     assistant, _, _, calls = setup(fake_vad, vad_settings, "apri chrome", ["x"])
     await run_frames(assistant, request(make_frames))

@@ -1037,7 +1037,11 @@ class Assistant:
         ):
             return text
         start = self.clock()
-        candidates = await asyncio.to_thread(self.closed_list, audio, heard)
+        try:
+            candidates = await asyncio.to_thread(self.closed_list, audio, heard)
+        except Exception:
+            log.exception("Lista chiusa non riuscita")
+            return text
         self._candidates = candidates
         inter.info["closed_list_ms"] = round((self.clock() - start) * 1000)
         found = next((c for c in candidates if c != text and understands(c, heard)), None)
@@ -1456,9 +1460,13 @@ class Assistant:
         if first is None or not self.intake.wants_retry(text, heard, self.responder):
             return text, heard
         start = self.clock()
-        again = await asyncio.to_thread(
-            functools.partial(self.transcriber.transcribe, audio, language=first)
-        )
+        try:
+            again = await asyncio.to_thread(
+                functools.partial(self.transcriber.transcribe, audio, language=first)
+            )
+        except Exception:
+            log.exception("Ripetizione in %s non riuscita", first)
+            return text, heard
         inter.info["retry_ms"] = round((self.clock() - start) * 1000)
         if again and understands(again, first):
             log.info("Riprovato in %s: %r -> %r", first, text, again)
