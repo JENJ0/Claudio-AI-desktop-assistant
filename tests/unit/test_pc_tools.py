@@ -21,7 +21,9 @@ from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import DEFINITIONS, LEVELS, App, PcTools, ToolCall, Window
 from claudio.router.matcher import CommandMatcher
 from tests.unit.test_claude_brain import (
+    API_SAID,
     NETWORK_SAID,
+    OVERLOADED_MID_REPLY,
     BreakingClient,
     Monotonic,
     ScriptedClient,
@@ -685,6 +687,23 @@ async def test_a_connection_lost_after_a_tool_round_keeps_its_note(
     assert b.last_call["claude_error"] == "network"
     assert list(b._history) == [
         ("[it] leggimi il blocco note", f"{kept} [Claudio ran: read_window ok]")
+    ]
+    assert b._read_outside()
+
+
+async def test_a_status_error_after_a_tool_round_keeps_its_note(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = BreakingClient(
+        OVERLOADED_MID_REPLY,
+        ([], "tool_use", [use("read_window", window="blocco note")]),
+        (["Dice di "], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Dice di {API_SAID}"
+    assert b.last_call["claude_error"] == 200
+    assert list(b._history) == [
+        ("[it] leggimi il blocco note", "Ci guardo. Dice di [Claudio ran: read_window ok]")
     ]
     assert b._read_outside()
 

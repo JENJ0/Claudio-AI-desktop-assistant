@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -887,6 +888,7 @@ class BreakingClient(ScriptedClient):
         httpx2.RemoteProtocolError("peer closed"),
         httpx2.ReadError("reset"),
         httpx2.ReadTimeout("stalled"),
+        httpx2.DecodingError("bad gzip"),
     ],
     ids=lambda e: type(e).__name__,
 )
@@ -948,6 +950,96 @@ async def test_a_connection_refused_at_request_time_keeps_nothing(pricing: Prici
     assert await ask(b, "chi era Dante") == NETWORK_SAID
     assert b.last_call["claude_error"] == "network"
     assert not b._history and b.tracker.calls_today() == 0
+
+
+API_SAID = "Claude non ha risposto. Riprova tra poco."
+# As the SDK raises an SSE error event: the HTTP response itself was a 200, hence the class.
+OVERLOADED_MID_REPLY = anthropic.APIStatusError(
+    "{'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}}",
+    response=httpx2.Response(200, request=REQUEST),
+    body={"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}},
+)
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (OVERLOADED_MID_REPLY, 200),
+        (
+            anthropic.InternalServerError(
+                "overloaded", response=httpx2.Response(529, request=REQUEST), body=None
+            ),
+            529,
+        ),
+    ],
+    ids=["sse_event", "status_class"],
+)
+async def test_a_status_error_during_a_reply_is_said_once_and_keeps_the_words(
+    pricing: Pricing, error: Exception, status: int
+) -> None:
+    """ "Seconda fraClaude non ha risposto": glued to the fragment, and the turn was lost."""
+    b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert chunks == ["Prima frase. ", "Seconda fra", "", f" {API_SAID}"]
+    assert chunks[2] is CUT_SHORT
+    assert b.last_call["claude_error"] == status
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+
+
+async def test_the_voice_says_the_status_error_without_the_unfinished_sentence(
+    pricing: Pricing,
+) -> None:
+    client = BreakingClient(OVERLOADED_MID_REPLY, (["Prima frase. Attra"], "end_turn", []))
+    b = brain(pricing, client)
+    assert [s async for s in split_stream(b.ask("raccontami una storia", "it"))] == [
+        "Prima frase.",
+        "Claude non ha risposto.",
+        "Riprova tra poco.",
+    ]
+
+
+async def test_a_status_error_at_request_time_keeps_nothing(pricing: Pricing) -> None:
+    error = anthropic.InternalServerError(
+        "overloaded", response=httpx2.Response(529, request=REQUEST), body=None
+    )
+    b = brain(pricing, FakeClient(error=error))
+    assert await ask(b, "chi era Dante") == API_SAID
+    assert b.last_call["claude_error"] == 529
+    assert not b._history and b.tracker.calls_today() == 0
+
+
+def sse(event: str, **data: Any) -> bytes:
+    return f"event: {event}\ndata: {json.dumps({'type': event, **data})}\n\n".encode()
+
+
+async def test_an_error_event_through_the_real_sdk_is_a_status_error_of_200(
+    pricing: Pricing,
+) -> None:
+    """The SDK's own way of raising it (anthropic 1.15): the response status, not the overload."""
+    usage = {"input_tokens": 400, "output_tokens": 1}
+    message = {"id": "m", "type": "message", "role": "assistant", "content": [], "usage": usage}
+    body = b"".join(
+        [
+            sse("message_start", message={**message, "model": "claude-haiku-5-5"}),
+            sse("content_block_start", index=0, content_block={"type": "text", "text": ""}),
+            sse(
+                "content_block_delta",
+                index=0,
+                delta={"type": "text_delta", "text": "Prima frase. Seconda fra"},
+            ),
+            sse("error", error={"type": "overloaded_error", "message": "Overloaded"}),
+        ]
+    )
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body)
+
+    http = anthropic.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(answer))
+    client = anthropic.AsyncAnthropic(api_key="not-a-key", max_retries=0, http_client=http)
+    b = brain(pricing, client)
+    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {API_SAID}"
+    assert b.last_call["claude_error"] == 200
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
 
 
 async def test_a_cancel_during_a_reply_is_not_a_network_error(pricing: Pricing) -> None:
