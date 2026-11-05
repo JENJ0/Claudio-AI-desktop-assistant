@@ -18,10 +18,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from rapidfuzz import fuzz
+
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import Command, Match
-from claudio.safety.confirmation import LEVEL_CONFIRM
+from claudio.router.normalizer import normalize
+from claudio.safety.confirmation import LEVEL_CONFIRM, YES_WORDS
 
 NAME = "claudio_command"
 ACTIONS = frozenset({"media_key", "chat", "system", "tell_spend"})
@@ -36,8 +39,11 @@ class UnknownCommand(ValueError):
 class CommandTool:
     """The definition Claude gets, the level of a call and the run."""
 
-    def __init__(self, commands: Sequence[Command], actions: ActionRunner) -> None:
+    def __init__(
+        self, commands: Sequence[Command], actions: ActionRunner, threshold: float = 85
+    ) -> None:
         self.actions = actions
+        self.threshold = threshold  # the matcher's: how close counts as said
         self.commands = {
             cmd.id: cmd
             for cmd in commands
@@ -89,6 +95,22 @@ class CommandTool:
         except UnknownCommand:
             return str(args.get("command", ""))
         return (cmd.phrases_in(language) or cmd.phrases)[0]
+
+    def said_again(self, args: Mapping[str, Any], text: str, language: str) -> bool:
+        """`text` is this command once more: close to one of its own phrases ("spegni" is 85.7
+        from "spegniti", and no phrase of the matcher's), in the `language` of the question:
+        over an Italian one "qui" is not the English "quit". One yes word may open it ("sì,
+        spegniti")."""
+        try:
+            cmd = self.command(args)
+        except UnknownCommand:
+            return False
+        words = normalize(text, lang=language).split()
+        heard = " ".join(words[1:] if words and words[0] in YES_WORDS else words)
+        return any(
+            fuzz.ratio(heard, normalize(phrase, lang=language)) >= self.threshold
+            for phrase in cmd.phrases_in(language)
+        )
 
     def run(self, args: Mapping[str, Any], language: str = DEFAULT_LANGUAGE) -> str:
         """Run it; the command's reply in `language`, as the router would say it ("" for

@@ -447,6 +447,13 @@ class PcTools:
             return LEVEL_SAFE  # nothing will be pressed: the run reports the error
         return LEVEL_SAFE if all(c in self.safe_keys for c in combos) else LEVEL_CONFIRM
 
+    def repeats(self, calls: Sequence[ToolCall], text: str, language: str) -> bool:
+        """`text` says again the one claudio_command waiting for its yes: never with other
+        calls beside it, which nobody said again. `language`: the question's."""
+        if self.commands is None or len(calls) != 1 or calls[0].name != command_tool.NAME:
+            return False
+        return self.commands.said_again(calls[0].args, text, language)
+
     async def prepare(self, calls: Sequence[ToolCall]) -> None:
         """Before the levels are read: typing into a window of `[pc] free_typing` (Notepad)
         is level 1. The window is looked up now (on the worker thread); a window that does

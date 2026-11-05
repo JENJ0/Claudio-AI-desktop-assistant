@@ -106,7 +106,8 @@ def build_responder(
     memory = MemoryVoice(store) if store is not None else None
     actions = ActionRunner(system=system, tracker=tracker, chat=chat, memory=memory)
     # Claude runs the commands it recognises in garbled words through the same actions.
-    brain = build_brain(settings, tracker, chat, CommandTool(commands, actions), store)
+    own_commands = CommandTool(commands, actions, matcher.threshold)
+    brain = build_brain(settings, tracker, chat, own_commands, store)
     guesser = None
     if brain is not None and settings.guess.enabled:
         from claudio.brain.guess import Guesser
