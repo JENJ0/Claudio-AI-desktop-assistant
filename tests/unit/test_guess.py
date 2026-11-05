@@ -660,6 +660,19 @@ async def test_an_unsure_guess_is_asked_then_done_on_yes(
     assert r.actions.system.off
 
 
+async def test_an_ask_row_keeps_the_route_of_its_question(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    # propose() writes last_route while the request is decided: the row must carry it.
+    assistant, speaker, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["che ore sono", "Spenditi."]
+    )
+    guessing(r, assistant, Guess("spegniti", 0.95, "off"))
+    await talk(assistant, make_frames, speaker, requests=2)
+    row = assistant.history[1]
+    assert row["outcome"] == "ask" and row["route"] == "guess" and row["guess"] == "spegniti"
+
+
 async def test_a_guessed_basta_ends_the_conversation_at_once(
     fake_vad, vad_settings, make_frames, matcher
 ) -> None:
