@@ -22,7 +22,7 @@ from rapidfuzz import fuzz, process
 
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.i18n import tr
-from claudio.router.normalizer import extract_number, normalize
+from claudio.router.normalizer import extract_number, last_clauses, normalize
 from claudio.router.normalizer import language as language_rules
 from claudio.router.phonetic import sound_key, spell_capitals
 
@@ -209,22 +209,12 @@ class CommandMatcher:
 
     def match(self, text: str, language: str = DEFAULT_LANGUAGE) -> Match | None:
         order = [language, *(lang for lang in self._by_phrase if lang != language)]
-        texts = {lang: extract_number(normalize(text, lang=lang), lang) for lang in order}
-        raw = normalize(text, drop_fillers=False).split()
-        for lang in order:  # an exact phrase in any language beats a fuzzy one
-            norm, number = texts[lang]
-            cmd = self._by_phrase.get(lang, {}).get(norm) if norm else None
-            if cmd is None:
-                continue
-            # An exact-only command ("shut down") must be all that was said: not cut off
-            # on an article ("shut down the...") nor followed by a number ("by ten").
-            if cmd.exact and (
-                number is not None or (raw and raw[-1] in language_rules(lang).articles)
-            ):
-                continue
-            return Match(cmd, 100.0, number, lang)
+        # A stop goes before the fuzzy match: "apri la calcolatrice, stop" is close to a command.
+        found = self._exact(text, order) or self._stop_at_end(text, order)
+        if found is not None:
+            return found
         for lang in order:
-            norm, number = texts[lang]
+            norm, number = extract_number(normalize(text, lang=lang), lang)
             if not norm or not self._choices.get(lang):
                 continue
             words = set(norm.split())
@@ -236,6 +226,33 @@ class CommandMatcher:
                 if needed is None or words & needed:
                     return Match(cmd, float(score), number, lang)
         return self._match_sound(text, order)
+
+    def _exact(self, text: str, order: list[str]) -> Match | None:
+        """`text` is a command's phrase, in any language: that beats a fuzzy match in the first."""
+        raw = normalize(text, drop_fillers=False).split()
+        for lang in order:
+            norm, number = extract_number(normalize(text, lang=lang), lang)
+            cmd = self._by_phrase.get(lang, {}).get(norm) if norm else None
+            if cmd is None:
+                continue
+            # An exact-only command ("shut down") must be all that was said: not cut off
+            # on an article ("shut down the...") nor followed by a number ("by ten").
+            if cmd.exact and (
+                number is not None or (raw and raw[-1] in language_rules(lang).articles)
+            ):
+                continue
+            return Match(cmd, 100.0, number, lang)
+        return None
+
+    def _stop_at_end(self, text: str, order: list[str]) -> Match | None:
+        """A longer phrase said to Claudio whose last clause is a stop: what came before it is
+        not done, and Claude is not asked ("No, Claudio, non parlare. Claudio, stop.", 01/11)."""
+        for lang in order:
+            for clause in last_clauses(text, lang):
+                found = self._exact(clause, [lang])
+                if found is not None and found.command.action == "stop":
+                    return found
+        return None
 
     def _match_sound(self, text: str, order: list[str]) -> Match | None:
         """The same, comparing how the phrases sound: an exact command ("chiuditi") only when

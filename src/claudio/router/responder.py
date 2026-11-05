@@ -152,8 +152,9 @@ class LocalResponder:
         return match is not None
 
     def is_stop(self, text: str) -> bool:
-        """`text` is only "basta" / "stop" (in any language): said while CLAUDIO speaks, it
-        interrupts. Repeated words count once ("basta, basta")."""
+        """`text` is only "basta" / "stop" (in any language), or a phrase to Claudio ending with
+        it (the matcher's rule): said while CLAUDIO speaks, it interrupts. Repeated words count
+        once ("basta, basta")."""
         words = normalize(text, drop_fillers=False).split()
         deduped = " ".join(w for i, w in enumerate(words) if i == 0 or w != words[i - 1])
         for candidate in {text, deduped}:

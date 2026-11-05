@@ -142,6 +142,182 @@ def test_is_stop(matcher: CommandMatcher, text: str, stop: bool) -> None:
     assert responder(matcher, Recorder()).is_stop(text) is stop
 
 
+# --- a stop at the end of a longer phrase: no API call --------------------------------
+
+SAID_ON_01_11 = "No, Claudio, non parlare. Claudio, stop."  # went to Claude: "zitto come una tomba"
+
+
+def brain() -> tuple[Callable[[str, str], AsyncGenerator[str, None]], list[str]]:
+    """Claude as the responder sees it, and what it was asked."""
+    asked: list[str] = []
+
+    async def fallback(text: str, language: str) -> AsyncGenerator[str, None]:
+        asked.append(text)
+        yield "Zitto come una tomba."
+
+    return fallback, asked
+
+
+@pytest.mark.parametrize(
+    ("text", "language"),
+    [
+        (SAID_ON_01_11, "it"),
+        ("no claudio non parlare claudio stop", "it"),  # Whisper wrote no punctuation
+        ("No, Claudio, non parlare! Claudio stop", "it"),
+        ("Claudio, che ore sono? Basta.", "it"),
+        ("Claudio, apri Chrome, stop.", "it"),  # the whole phrase is close to "apri chrome"
+        ("Claudio, non parlare, stop, grazie.", "it"),
+        ("Non parlare", "it"),
+        ("Claudio, non parlare.", "it"),
+        ("No, Claudio, don't talk. Claudio, stop.", "en"),
+        ("Don't talk.", "en"),
+    ],
+)
+def test_a_stop_ending_a_phrase_to_claudio_is_the_stop_command(
+    matcher: CommandMatcher, text: str, language: str
+) -> None:
+    match = matcher.match(text, language)
+    assert match is not None and match.command.id == "stop", text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Claudio, come si dice stop in inglese?",  # a question
+        "Claudio, si dice stop?",
+        "Claudio, ti ho detto, stop?",  # the last clause is one, and it asks
+        "Non dire basta",  # no name
+        "Claudio, non dire basta",  # the clause is more than the stop
+        "Stop alla musica, Claudio",  # the name comes after
+        "Apri Chrome, basta, Claudio",
+        "Claudio, stop alla musica",
+        "Claudio, non fermarti",
+        "Claudio, scrivi: basta.",  # what to write, not a clause of its own
+        "Claudio, dimmi solo il totale e basta",  # "e basta" is how the request ends
+        "Ho detto basta, grazie e poi niente altro",  # no name
+        "Claudio apri chrome e poi basta",  # "only this", as "e basta": the request stands
+        "Claudio, open Chrome and then stop.",
+        "Apri Chrome, stop",  # no name: stays as today, the whole phrase is not a stop
+    ],
+)
+def test_a_stop_word_inside_a_phrase_is_not_the_stop_command(
+    matcher: CommandMatcher, text: str
+) -> None:
+    match = matcher.match(text)
+    assert match is None or match.command.id != "stop", text
+
+
+@pytest.mark.parametrize("text", ["basta così, grazie", "Claudio, basta così", "Stop!"])
+def test_a_stop_said_alone_stays_as_it_was(matcher: CommandMatcher, text: str) -> None:
+    match = matcher.match(text)
+    assert match is not None and match.command.id == "stop", text
+
+
+def test_only_a_stop_counts_at_the_end_of_a_phrase(matcher: CommandMatcher) -> None:
+    assert matcher.match("Claudio, ti saluto, apri Chrome.") is None  # Claude's, as before
+
+
+async def test_the_real_phrase_stops_with_no_call_to_claude(matcher: CommandMatcher) -> None:
+    fallback, asked = brain()
+    r = responder(matcher, Recorder())
+    r.fallback = fallback
+    assert r.understands(SAID_ON_01_11)
+    assert await say(r, SAID_ON_01_11) == ""
+    assert asked == []
+    assert r.last_route["route"] == "local" and r.last_route["command"] == "stop"
+
+
+async def test_claude_still_answers_a_phrase_that_only_mentions_a_stop(
+    matcher: CommandMatcher,
+) -> None:
+    fallback, asked = brain()
+    r = responder(matcher, Recorder())
+    r.fallback = fallback
+    await say(r, "Claudio, come si dice stop in inglese?")
+    assert asked == ["Claudio, come si dice stop in inglese?"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [SAID_ON_01_11, "no claudio non parlare claudio stop"],
+)
+async def test_the_whole_assistant_stops_in_silence_with_no_call_to_claude(
+    fake_vad, vad_settings, make_frames, matcher, text: str
+) -> None:
+    """Heard after a wake word that had to be confirmed: the name is not at the start, so only
+    a phrase the router understands gets through."""
+    fallback, asked = brain()
+    assistant, speaker, _, r = build(fake_vad, vad_settings, matcher, [text])
+    r.fallback = fallback
+    assistant.verify_wake = True
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert asked == []
+    assert speaker.spoken == [""] and speaker.beeps == ["wake", "cancel"]  # as "basta": no "error"
+    (row,) = assistant.history
+    assert row["outcome"] == "stopped" and row["command"] == "stop"
+
+
+async def test_a_stop_at_the_end_is_still_a_refusal_at_confirmi(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    r = responder(matcher, rec)
+    await say(r, "chiudi la finestra")
+    assert await say(r, "Claudio, stop.") == "Va bene, non lo faccio."
+    assert rec.combos == [] and r.last_route["route"] == "refused"
+    await say(r, "chiudi la finestra")
+    assert await say(r, SAID_ON_01_11) == "Va bene, non lo faccio."
+    assert rec.combos == [] and r.last_route["route"] == "refused"
+
+
+async def test_a_stop_at_the_end_still_answers_hai_detto(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    r = responder(matcher, rec)
+    r.propose("chiudi la finestra", "it")
+    assert await say(r, "Claudio, stop.") == "Va bene, lascio stare."
+    assert r.last_route["route"] == "guess_refused"
+    r.propose("chiudi la finestra", "it")
+    assert await say(r, SAID_ON_01_11) == "Va bene, lascio stare."
+    assert rec.combos == [] and r.last_route["route"] == "guess_refused"
+
+
+async def test_off_and_paused_come_before_a_stop_at_the_end(matcher: CommandMatcher) -> None:
+    r = responder(matcher, Recorder())
+    system = r.actions.system
+    system.apply("pause")
+    assert await say(r, SAID_ON_01_11) == ""
+    assert r.last_route == {"route": "paused"}
+    system.apply("resume")
+    system.apply("off")
+    assert await say(r, SAID_ON_01_11) == ""
+    assert r.last_route == {"route": "off"} and not r.understands(SAID_ON_01_11)
+
+
+async def test_a_memory_request_ending_in_a_stop_word_stays_the_memorys(
+    matcher: CommandMatcher, tmp_path
+) -> None:
+    """Before a command, as "ricordati che la pausa pranzo è alle 13" is no "pausa"."""
+    from claudio.memory.store import MemoryStore
+    from claudio.memory.voice import MemoryVoice
+
+    r = responder(matcher, Recorder())
+    r.memory = MemoryVoice(MemoryStore(tmp_path / "memory.db"))
+    await say(r, "Claudio, ricordati che la parola d'ordine è, stop.")
+    assert r.last_route["route"] == "memory"
+
+
+@pytest.mark.parametrize(
+    ("text", "stop"),
+    [
+        (SAID_ON_01_11, True),  # also over a reply: it stops at once, with no second pass
+        ("no claudio non parlare claudio stop", True),
+        ("Non parlare.", True),
+        ("Claudio, come si dice stop in inglese?", False),
+        ("Claudio, dimmi solo il totale e basta", False),  # may be a request: judged whole
+    ],
+)
+def test_is_stop_sees_a_stop_at_the_end_too(matcher: CommandMatcher, text: str, stop: bool) -> None:
+    assert responder(matcher, Recorder()).is_stop(text) is stop
+
+
 def test_conversation_settings_are_shipped() -> None:
     s = load_settings()
     assert s.conversation.window_s == 6.0
@@ -431,6 +607,26 @@ async def test_basta_while_speaking_interrupts(
     assert row["outcome"] == "interrupted" and row["barge_in"] == "Basta!"
     assert len(assistant.history) == 1  # "basta" also closes the conversation
     assert assistant.state is State.IDLE
+
+
+async def test_a_stop_ending_a_phrase_while_speaking_interrupts_with_no_call_to_claude(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    fallback, asked = brain()
+    speaker = LongSpeaker()
+    assistant, _, _, r = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono"],
+        speaker=speaker,
+        barge_in=barge(vad_settings, [SAID_ON_01_11]),
+    )
+    r.fallback = fallback
+    await speak_over(assistant, make_frames, speaker)
+    assert speaker.cut and asked == []
+    (row,) = assistant.history  # no second request: the conversation is over
+    assert row["outcome"] == "interrupted" and row["barge_in"] == SAID_ON_01_11
 
 
 async def test_own_voice_while_speaking_does_not_interrupt(

@@ -230,8 +230,8 @@ reply_en = ""
 
 [[command]]
 id = "stop"
-phrases = ["basta", "basta cosi", "stop", "zitto", "stai zitto", "fermati", "silenzio", "smettila", "ho finito", "lascia stare", "niente"]
-phrases_en = ["stop", "enough", "that's enough", "shut up", "be quiet", "quiet", "never mind", "i'm done", "nothing"]
+phrases = ["basta", "basta cosi", "stop", "zitto", "stai zitto", "fermati", "silenzio", "smettila", "ho finito", "lascia stare", "niente", "non parlare"]
+phrases_en = ["stop", "enough", "that's enough", "shut up", "be quiet", "quiet", "never mind", "i'm done", "nothing", "don't talk"]
 action = "stop"
 exact = true
 reply = ""
