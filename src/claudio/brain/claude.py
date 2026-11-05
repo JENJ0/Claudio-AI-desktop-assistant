@@ -26,7 +26,7 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -84,6 +84,11 @@ RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soo
 # What the history keeps of a reply cut short (read by Claude, never said aloud).
 CUT_NOTE = "[cut off: JenJo interrupted here]"
 CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
+# How each note opens. Only the code may write them (`_read_outside` reads them, a safety level
+# depends on it), yet the model imitates them (01/11 23:32, with no tool called): _NoteFilter.
+_NOTE_OPENINGS = tuple(
+    note[: note.index(": ") + 2].lower() for note in (ACTIONS_NOTE, CUT_NOTE, CUT_BEFORE_NOTE)
+)
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # not strftime: Windows' locale
 
 
@@ -759,14 +764,14 @@ class ClaudeBrain:
             client: Any = self.client  # not None: ask() answered already without a key
             async with client.messages.stream(**params) as stream:
                 timing["ttft_ms"] = _ms_since(sent, self.clock())
-                async for chunk in stream.text_stream:
-                    clean = _MARKDOWN.sub("", chunk)
-                    if clean.strip() and "word_ms" not in timing:
-                        timing["word_ms"] = _ms_since(sent, self.clock())
-                    if first_key not in self.last_call and clean.strip():
-                        self.last_call[first_key] = round((self.clock() - start) * 1000)
-                    leg.parts.append(clean)
-                    if clean:
+                # aclosing: a "basta" at the yield closes this first, then the API stream.
+                async with contextlib.aclosing(_said_text(stream.text_stream)) as words:
+                    async for clean in words:
+                        if clean.strip() and "word_ms" not in timing:
+                            timing["word_ms"] = _ms_since(sent, self.clock())
+                        if first_key not in self.last_call and clean.strip():
+                            self.last_call[first_key] = round((self.clock() - start) * 1000)
+                        leg.parts.append(clean)
                         yield clean
                 final = await stream.get_final_message()
         except anthropic.AuthenticationError:
@@ -947,6 +952,54 @@ class _Action:
         self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
         self.handoff = False  # Haiku also asked for Sonnet: Claude goes on after the calls
+
+
+class _NoteFilter:
+    """Takes out of the model's text the notes only the code may write, chunk by chunk: feed()
+    returns what may be said now, flush() what is left at the end. Text flows through at once;
+    only a "[" that can still become a note's opening waits."""
+
+    def __init__(self) -> None:
+        self._held = ""  # from that "[" on
+        self._in_note = False  # the opening matched: dropped up to the closing "]"
+
+    def feed(self, chunk: str) -> str:
+        said = ""
+        rest, self._held = self._held + chunk, ""
+        while rest:
+            if self._in_note:
+                _, closed, rest = rest.partition("]")
+                self._in_note = not closed
+                continue
+            before, bracket, after = rest.partition("[")
+            said += before
+            rest = bracket + after
+            lowered = rest.lower()
+            if lowered.startswith(_NOTE_OPENINGS):
+                self._in_note = True
+            elif bracket and any(opening.startswith(lowered) for opening in _NOTE_OPENINGS):
+                self._held = rest
+                break
+            else:  # no "[", or not a note after all: "[1]", "[nota]"
+                said += bracket
+                rest = after
+        return said
+
+    def flush(self) -> str:
+        """The reply is over: a note's whole opening was dropped by feed(), so what still waits
+        is a part of one ("[Cla"), and that is text."""
+        return self._held
+
+
+async def _said_text(chunks: AsyncIterable[str]) -> AsyncGenerator[str, None]:
+    """The model's text as the voice and the history get it: no markdown, no note. Compared
+    without markdown, as it would be said ("[**Claudio ran**: ..."). Never an empty chunk."""
+    notes = _NoteFilter()
+    async for chunk in chunks:
+        if said := notes.feed(_MARKDOWN.sub("", chunk)):
+            yield said
+    if held := notes.flush():
+        yield held
 
 
 def _new_request(text: str, level: int) -> bool:

@@ -693,6 +693,33 @@ async def test_a_cut_reply_still_counts_what_it_read(
         tools.close()
 
 
+async def test_a_note_written_by_the_model_asks_no_yes_for_the_next_memory(
+    pricing: Pricing, store: MemoryStore
+) -> None:
+    """The model imitates the note (01/11): nothing was read, so nothing needs a yes."""
+    tools = PcTools(FakeDesktop(), PcSettings(), memory=MemoryTools(store))
+    try:
+        client = ScriptedClient(
+            (["Fatto, socio. [Claudio ran: read_window ok]"], "end_turn", []),
+            ([], "tool_use", [use("remember", text="preferisco il tè")]),
+            (["Segnato."], "end_turn", []),
+        )
+        b = ClaudeBrain(
+            client,
+            tracker(pricing, 1.0),
+            ClaudeSettings(tell_time=False),
+            clock=Monotonic(),
+            tools=tools,
+        )
+        await ask(b, "dimmi una cosa")
+        assert list(b._history) == [("[it] dimmi una cosa", "Fatto, socio.")]
+        assert not b._read_outside()
+        assert await ask(b, "segnatelo") == "Segnato."
+        assert not b.awaiting and [m.text for m in store.items()] == ["preferisco il tè"]
+    finally:
+        tools.close()
+
+
 def test_one_forget_per_reply(store: MemoryStore) -> None:
     """review: forget(1..20), forget(21..40)... in one reply, then one "sì" wiped it all."""
     from claudio.pc.tools import ToolCall

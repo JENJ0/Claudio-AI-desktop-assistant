@@ -134,6 +134,20 @@ async def test_garbled_request_runs_the_command_and_says_its_reply(
     }
 
 
+async def test_a_note_before_the_command_leaves_only_its_reply(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    note = "[Claudio ran: open_app ok]"
+    client = ScriptedClient(
+        ([note], "tool_use", [text(note), use(NAME, command="volume_up", last=True)])
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "Audio alsa il volu") == "Volume alzato."
+    assert list(b._history) == [
+        ("[it] Audio alsa il volu", "Volume alzato. [Claudio ran: claudio_command ok]")
+    ]
+
+
 async def test_what_haiku_said_comes_first_and_a_media_key_stays_silent(
     pricing: Pricing, tools: PcTools, rec: Recorder
 ) -> None:
