@@ -175,6 +175,26 @@ def test_metrics_rows_reach_the_conversation(tmp_path: Path, session: Path) -> N
     assert "**JenJo:** che ore sono" in (session / CONVERSATION_FILE).read_text(encoding="utf-8")
 
 
+def test_a_near_miss_stays_in_the_metrics_and_out_of_the_conversation(
+    tmp_path: Path, session: Path
+) -> None:
+    writer = MetricsWriter(tmp_path / "metrics.jsonl", ConversationLog(session))
+    near = Interaction(info={"wake_word": "claudio", "wake_score": 0.31, "outcome": "near_miss"})
+    writer.write(near)
+    assert '"outcome": "near_miss"' in (tmp_path / "metrics.jsonl").read_text(encoding="utf-8")
+    assert "near_miss" not in (session / CONVERSATION_FILE).read_text(encoding="utf-8")
+
+
+def test_a_false_wake_still_reaches_the_conversation(tmp_path: Path, session: Path) -> None:
+    writer = MetricsWriter(tmp_path / "metrics.jsonl", ConversationLog(session))
+    false_wake = Interaction(
+        info={"wake_word": "claudio", "outcome": "false_wake", "text": "Hey, ciao, come stai?"}
+    )
+    writer.write(false_wake)
+    written = (session / CONVERSATION_FILE).read_text(encoding="utf-8")
+    assert "false_wake" in written and "Hey, ciao, come stai?" in written
+
+
 def test_a_row_that_cannot_be_rendered_does_not_stop_the_metrics_write(
     tmp_path: Path, session: Path
 ) -> None:
