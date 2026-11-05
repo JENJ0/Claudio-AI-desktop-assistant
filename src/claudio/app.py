@@ -59,7 +59,7 @@ from claudio.resume import (
 )
 from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
 from claudio.stt.recovery import CommandRecovery
-from claudio.system import SystemControl
+from claudio.system import HIDDEN, SystemControl
 from claudio.wakeword.verifier import clipped_name, unclear
 
 log = logging.getLogger(__name__)
@@ -200,6 +200,7 @@ class Assistant:
         self.audio_sink = audio_sink  # saves what was heard; returns the file name
         self.level = level  # automatic microphone gain; None = only warn when it is too quiet
         self.system = system or SystemControl()  # pause and "spegniti", shared with the router
+        transcriber.hides_text = lambda: self.system.off  # Whisper's own logs: see _kept()
         # Hears the last 1.5 s after a near miss (a score just under the threshold): if the
         # text has the wake word, CLAUDIO wakes anyway. None: near misses are only logged.
         self.second_chance = second_chance
@@ -526,6 +527,7 @@ class Assistant:
         return text, voice, info
 
     async def _hear_second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
+        off = self.system.off  # the state when it was heard, not after Whisper's pass
         text, voice, info = await self._hear_name(heard)
         # A weak detection said fast often loses the name ("apri cancolatrice"): a command
         # counts. Off, the only command understood is "accenditi".
@@ -534,13 +536,16 @@ class Assistant:
         if self.state is State.IDLE and text and not (heard_wake_word(text) or weak):
             found = await self._turns_on(heard, text, language)
             if found is not None:
-                log.info("Da spento, lista chiusa: %r -> %r", text, found)
-                info["second_chance_from"] = text
+                log.info("Da spento, lista chiusa: %r -> %r", HIDDEN, found)
+                info["second_chance_from"] = HIDDEN
                 text, weak = found, True
-        if self.state is not State.IDLE:
-            # The model itself woke CLAUDIO meanwhile: a row for the record, no WAV (it was
-            # not rejected, and it is no negative to retrain the wake word on).
-            self._log_near_miss(name, score, heard, second_chance=text, superseded=True, **info)
+        if self.state is not State.IDLE or self.system.off is not off:
+            # The model itself woke CLAUDIO meanwhile, or the tray switched it: a row for the
+            # record, no WAV (it was not rejected, and it is no negative to retrain the wake
+            # word on).
+            self._log_near_miss(
+                name, score, heard, off=off, second_chance=text, superseded=True, **info
+            )
             return
         if voice is not None and voice < self.wake_min_voice_ms:
             log.info("Seconda possibilità: nessuna voce (%d ms), niente da fare", voice)
@@ -548,9 +553,11 @@ class Assistant:
             return
         if heard_wake_word(text) or weak:
             log.info(
-                "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo", text, score
+                "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo",
+                self._kept(text),
+                score,
             )
-            self._on_wake(name, score, second_chance=text, **info)
+            self._on_wake(name, score, second_chance=self._kept(text), **info)
             if (
                 not self.endpointer.started
                 and not only_wake_words(text)
@@ -568,7 +575,7 @@ class Assistant:
             log.info("Whisper non ha capito %r (punteggio %.2f): ascolto e verifico", text, score)
             self._on_wake(name, score, wake_unclear=text, **info)
             return
-        log.info("Seconda possibilità: Whisper ha sentito %r: niente da fare", text)
+        log.info("Seconda possibilità: Whisper ha sentito %r: niente da fare", self._kept(text))
         self._log_near_miss(name, score, heard, second_chance=text, rejected="no_name", **info)
 
     async def _turns_on(self, heard: np.ndarray, text: str, language: str) -> str | None:
@@ -586,14 +593,18 @@ class Assistant:
         understands = self.responder.understands
         return next((c for c in candidates if understands(c, language)), None)
 
-    def _log_near_miss(self, name: str, score: float, heard: np.ndarray, **info: Any) -> None:
+    def _log_near_miss(
+        self, name: str, score: float, heard: np.ndarray, off: bool | None = None, **info: Any
+    ) -> None:
         """An attempt that did not wake CLAUDIO: its audio, apart from the requests when there
         is a place for it (rejected_sink), and a metrics row. A noisy model (always_confirm)
-        leaves only the audio: a row for each of its misfires would fill the session log."""
+        leaves only the audio: a row for each of its misfires would fill the session log.
+        Heard while `off` (default: now): no audio, and none of its words in the row."""
+        off = self.system.off if off is None else off
         noisy = name in self.always_confirm
         sink, kind = self.audio_sink, "near_miss"
-        if info.get("superseded"):
-            sink = None  # the wake's own WAV has this audio: no copy, and no negative
+        if off or info.get("superseded"):
+            sink = None  # superseded: the wake's own WAV has this audio: no copy, no negative
         elif self.rejected_sink is not None:  # named after why: no_voice, no_name
             sink, kind = self.rejected_sink, str(info.get("rejected", kind))
         elif noisy:
@@ -609,6 +620,7 @@ class Assistant:
         inter = Interaction(
             clock=self.clock,
             info={"wake_word": name, "wake_score": round(score, 3), "outcome": "near_miss", **info},
+            off=off,
         )
         if sink is not None:
             inter.info["audio_file"] = audio_file
@@ -628,6 +640,8 @@ class Assistant:
         if not self.endpointer.started:
             self._listened += len(frame)
         event = self.endpointer.process(frame)
+        # The state while it is heard, before the router: "spegniti" is said while on.
+        self._interaction.off = self.system.off
         if event is EndpointEvent.START:
             self._interaction.mark("speech_start")
             self._join_deaf(self._interaction)
@@ -783,7 +797,7 @@ class Assistant:
         inter.mark("stt_done")
         inter.info["text"] = text
         inter.info["stt_language"] = heard
-        log.info("Trascritto (%s): %r", heard, text)
+        log.info("Trascritto (%s): %r", heard, self._kept(text))
         if "retried_from" in inter.info or "closed_list_from" in inter.info:
             segments = []  # a known command now: the first pass's doubts no longer apply
         return text, heard, segments
@@ -867,11 +881,11 @@ class Assistant:
             decision = self.intake.decide(text, language, heard, self.responder)
         echo = self._window_echo(text, decision, heard, info)
         if echo and not decision.dropped:
-            log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", text)
+            log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", self._kept(text))
             return Decision(Kind.NOT_REQUEST, text, "echo")
         if decision.reason and not decision.dropped and decision.kind is not Kind.CONTINUE:
             info["intake"] = decision.reason  # e.g. quiet_answer: the "sì" was not counted
-            log.info("Risposta troppo lontana dal microfono, non la conto: %r", text)
+            log.info("Risposta troppo lontana dal microfono, non la conto: %r", self._kept(text))
         if not echo and self._may_recover(decision, heard, language):
             recovered = await self._recover_command(audio, decision.text, language, inter)
             if recovered is not None:
@@ -1002,7 +1016,7 @@ class Assistant:
         return _distinct(text, self._candidates or (), OTHER_HEARINGS)
 
     def _log_drop(self, decision: Decision, inter: Interaction) -> None:
-        text = decision.text
+        text = self._kept(decision.text)
         if decision.kind is Kind.FALSE_WAKE:
             log.info("Wake word non confermata da Whisper, ignoro: %r", text)
         elif decision.kind is Kind.NOT_REQUEST:
@@ -1054,8 +1068,8 @@ class Assistant:
         found = next((c for c in candidates if c != text and understands(c, heard)), None)
         if found is None:
             return text
-        log.info("Lista chiusa: %r -> %r", text, found)
-        inter.info["closed_list_from"] = text
+        log.info("Lista chiusa: %r -> %r", self._kept(text), found)
+        inter.info["closed_list_from"] = self._kept(text)
         return found
 
     async def _tell_hearing(
@@ -1254,7 +1268,7 @@ class Assistant:
                 self._take_over(np.concatenate((audio, now)), text, rest=[])
                 self._restart_barge(ep)
             else:
-                log.info("Sentito mentre parlo, non è per me: %r", text)
+                log.info("Sentito mentre parlo, non è per me: %r", self._kept(text))
         except Exception:
             log.exception("Ascolto durante la risposta non riuscito")
 
@@ -1347,13 +1361,13 @@ class Assistant:
         """ "basta" was heard over the reply: it stops, and the conversation with it.
         `with_echo`: "stop" said over the reply, written together with the reply's echo."""
         if with_echo:
-            log.info("Interrotto a voce (insieme alla mia eco): %r", text)
+            log.info("Interrotto a voce (insieme alla mia eco): %r", self._kept(text))
         else:
-            log.info("Interrotto a voce: %r", text)
+            log.info("Interrotto a voce: %r", self._kept(text))
         self._interrupted = True
         self._barge_slices = []
         if self._interaction is not None:
-            self._interaction.info["barge_in"] = text
+            self._interaction.info["barge_in"] = self._kept(text)
         self.speaker.interrupt()
         self.speaker.duck(None)
 
@@ -1372,7 +1386,7 @@ class Assistant:
                 # lower the reply.
                 echo = self._before_gain(dbfs)
                 self._echo_dbfs = max(self._echo_dbfs or echo, echo)
-            log.info("Sentito mentre parlo, non è per me: %r", text)
+            log.info("Sentito mentre parlo, non è per me: %r", self._kept(text))
             if text and (saved := self._save_rejected(audio, "barge_ignored")):
                 log.info("Salvato in %s (%.0f dBFS)", saved, dbfs if dbfs is not None else 0)
             self.speaker.duck(None)
@@ -1386,7 +1400,7 @@ class Assistant:
             return False
         if self._is_echo(text):
             self._heard_echo = True
-            log.info("La mia voce nel microfono, la ignoro: %r", text)
+            log.info("La mia voce nel microfono, la ignoro: %r", self._kept(text))
             return False
         named = heard_wake_word(text)
         # A memory request over the reply needs the name: the TV's "da ora in poi..." is no
@@ -1395,7 +1409,7 @@ class Assistant:
         if not (content_words(text) >= 2 or named or command):
             return False
         if self.barge_in is not None and self.barge_in.needs_name and not (named or command):
-            log.info("Sentito mentre parlo, senza il mio nome: lo ignoro: %r", text)
+            log.info("Sentito mentre parlo, senza il mio nome: lo ignoro: %r", self._kept(text))
             return False
         return True
 
@@ -1426,13 +1440,13 @@ class Assistant:
     ) -> None:
         """Stop the reply: what was said over it (`audio`, then `rest`, by default the frames
         heard while Whisper listened) is the start of the next request."""
-        log.info("Interrotto da una nuova richiesta: %r", text)
+        log.info("Interrotto da una nuova richiesta: %r", self._kept(text))
         self._takeover = (audio, list(self._since_check) if rest is None else rest)
         self._since_check.clear()
         self._barge_slices = []
         self._interrupted = True
         assert self._interaction is not None
-        self._interaction.info["barge_in"] = text or "voice"
+        self._interaction.info["barge_in"] = self._kept(text) or "voice"
         self.speaker.interrupt()
         self.speaker.duck(None)
 
@@ -1476,10 +1490,10 @@ class Assistant:
             return text, heard
         inter.info["retry_ms"] = round((self.clock() - start) * 1000)
         if again and understands(again, first):
-            log.info("Riprovato in %s: %r -> %r", first, text, again)
-            inter.info["retried_from"] = text
+            log.info("Riprovato in %s: %r -> %r", first, self._kept(text), again)
+            inter.info["retried_from"] = self._kept(text)
             return again, first
-        log.info("Riprovato in %s, non capito neanche così: %r", first, again)
+        log.info("Riprovato in %s, non capito neanche così: %r", first, self._kept(again))
         return text, heard
 
     def _relisten(self, inter: Interaction) -> None:
@@ -1496,8 +1510,8 @@ class Assistant:
     def _continue(self, inter: Interaction, audio: np.ndarray, text: str) -> None:
         """The phrase was left halfway ("apri Chrome e cerca..."): keep listening up to
         continue_s for its end; then both parts are transcribed together, as one phrase."""
-        log.info("Frase lasciata a metà, ascolto il resto: %r", text)
-        inter.info["continued_from"] = text
+        log.info("Frase lasciata a metà, ascolto il resto: %r", self._kept(text))
+        inter.info["continued_from"] = self._kept(text)
         self._continued = text
         for stage in ("speech_end", "endpoint", "stt_done"):
             inter.marks.pop(stage, None)
@@ -1682,6 +1696,7 @@ class Assistant:
         if inter is not None:
             inter.mark("done")
             inter.info["outcome"] = outcome
+            inter.off = inter.off and self.system.off  # on again: it was the turn-on, kept
             stats = self.endpointer.stats()
             inter.info.update(stats)
             if self.level is not None:
@@ -1702,7 +1717,7 @@ class Assistant:
                     # raised the gain, the next request saturated). And only on the
                     # microphone that heard it.
                     self.level.observe(stats)
-            if self.audio_sink is not None:
+            if self.audio_sink is not None and not inter.off:
                 heard = np.concatenate((self._prewake, self.endpointer.listened()))
                 try:
                     inter.info["audio_file"] = self.audio_sink(heard, outcome)
@@ -1742,14 +1757,24 @@ class Assistant:
         return dbfs - self._gain_db()
 
     def _save_rejected(self, audio: np.ndarray, kind: str) -> str | None:
-        """Audio CLAUDIO heard and left alone, apart from the requests (None: not saved)."""
-        if self.rejected_sink is None:
+        """Audio CLAUDIO heard and left alone, apart from the requests (None: not saved). Off
+        (a phrase over "Mi spengo"): nothing heard stays."""
+        if self.rejected_sink is None or self.system.off:
             return None
         try:
             return self.rejected_sink(audio, kind)
         except Exception:
             log.exception("Impossibile salvare l'audio scartato")
             return None
+
+    def _kept(self, text: str) -> str:
+        """What may stay on disk of a phrase just heard, in a log or a field. While off only
+        the turn-on: its words are a command's and nothing else, and they are known here,
+        once the phrase is transcribed; all the rest is hidden. The row of a request is
+        cleaned as a whole: Interaction.off."""
+        if not text or not self.system.off or self.responder.understands(text):
+            return text
+        return HIDDEN
 
     def _check_level(self, speech_dbfs: float) -> None:
         if speech_dbfs < QUIET_SPEECH_DBFS and not self._warned_quiet:

@@ -20,6 +20,7 @@ from claudio.i18n import tr
 from claudio.intake import Segment
 from claudio.router.normalizer import normalize, only_wake_words
 from claudio.stt.recovery import NO_FIT, Fit, SecondHearing
+from claudio.system import HIDDEN
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +145,9 @@ def pick_language(
 class WhisperTranscriber:
     # language -> the names on the PC for the prompt ("Cartelle: Tesi, PSS."); None: none.
     vocabulary: Callable[[str], str] | None = None
+    # While it says so (CLAUDIO is off) what is dropped here is logged hidden. This is never the
+    # turn-on: that one is what gets through. None: always logged.
+    hides_text: Callable[[], bool] | None = None
 
     def __init__(self, settings: SttSettings, download_root: Path) -> None:
         self.settings = settings
@@ -232,6 +236,9 @@ class WhisperTranscriber:
         log.debug("Lingua: %s (%.2f)", self.language, self.language_confidence)
         return self.language
 
+    def _logged(self, text: str) -> str:
+        return HIDDEN if self.hides_text is not None and self.hides_text() else text
+
     def prompt(self, language: str) -> str:
         """The names on the PC, then the shipped sentences: Whisper keeps the end of a long
         prompt, and the sentences say how JenJo talks."""
@@ -274,12 +281,15 @@ class WhisperTranscriber:
         if text and prompt and is_prompt_echo(text, prompt):
             # Whisper repeats its prompt on unclear audio, but "alza il volume" is also a
             # request: asked again without the prompt, Whisper says what was really there.
-            log.info("Trascrizione uguale a un pezzo del prompt, la rifaccio senza: %r", text)
+            log.info(
+                "Trascrizione uguale a un pezzo del prompt, la rifaccio senza: %r",
+                self._logged(text),
+            )
             text, kept = self._decode(audio, language, "", quick)
         if not quick:  # the second chance must not overwrite the request's own figures
             self.last_segments = kept
         if text and is_hallucination(text):
-            log.info("Trascrizione scartata (allucinazione nota): %r", text)
+            log.info("Trascrizione scartata (allucinazione nota): %r", self._logged(text))
             return ""
         if text and not quick and not only_wake_words(text):
             self.last_language = language
@@ -314,11 +324,11 @@ class WhisperTranscriber:
                         "Trascrizione scartata (sembra silenzio, no_speech %.2f, logprob %.2f): %r",
                         seg.no_speech_prob,
                         seg.avg_logprob,
-                        seg.text[:80],
+                        self._logged(seg.text[:80]),
                     )
                     continue
                 if seg.compression_ratio > LOOP_RATIO:
-                    log.info("Trascrizione scartata (ripetizione): %r", seg.text[:80])
+                    log.info("Trascrizione scartata (ripetizione): %r", self._logged(seg.text[:80]))
                     continue
                 parts.append(seg.text.strip())
                 kept.append(Segment(float(seg.no_speech_prob), float(seg.avg_logprob)))
@@ -377,7 +387,7 @@ class WhisperTranscriber:
         self._encoded = (window, encoded)  # _decode() uses it instead of encoding again
         text, _ = self._decode(audio, language, prompt, quick=False)
         if text and is_hallucination(text):
-            log.info("Seconda trascrizione scartata (allucinazione nota): %r", text)
+            log.info("Seconda trascrizione scartata (allucinazione nota): %r", self._logged(text))
             text = ""
         return SecondHearing(text, functools.partial(self._fit, encoded, language))
 
