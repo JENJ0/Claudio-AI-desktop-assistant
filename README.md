@@ -11,7 +11,7 @@ Microphone ─► openWakeWord ("Hey Claudio", "Claudio") ─► beep
            └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router or Claude ─► Jack's voice (Qwen3-TTS, sentence by sentence; Kokoro if it fails)
 ```
 
-Status: **v0.4.0** (30/10/2026): Phases 1-3 (local commands, Claude, PC control) and the voice
+Status: **v0.4.1** (05/11/2026, IT-2 step 0: fixes, see the changelog). v0.4.0 (30/10/2026): Phases 1-3 (local commands, Claude, PC control) and the voice
 commands to pause, turn off ("spegniti"), turn on ("accenditi") and close ("chiuditi"); the
 reliability iteration IT-0 is closed. Since then (IT-1, branch `it-1`, being tested): long-term
 memory (Phase 4), one CLAUDIO at a time, restarted after a crash, an icon in the system tray,
@@ -79,14 +79,14 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "che ore sono", "che giorno è oggi" | answers aloud |
 | "vai in pausa", "vai a dormire" | pause: until "svegliati" CLAUDIO answers nothing else |
 | "svegliati" | back from the pause |
-| "spegniti" | off: no beeps, no replies, nothing goes to Whisper twice or to Claude; only the wake word listens (`[wakeword] off_threshold_boost` stricter) for "Claudio, accenditi" |
+| "spegniti" | off: no beeps, no replies, nothing goes to Whisper twice or to Claude; only the wake word listens (`[wakeword] off_threshold_boost` stricter) for "Claudio, accenditi"; what is said while off stays off the disk, except the turn-on |
 | "accenditi" | back from off (or from the pause) |
 | "chiuditi" | closes CLAUDIO |
 | "quanto ho speso oggi" | today's Claude spending and the share of the daily budget |
 | "chiudi la finestra" | closes the window in front, after "Confermi?" and a "sì" |
 | "metti in pausa la musica", "canzone successiva", "canzone precedente" | media keys: play/pause, next, previous (Spotify, YouTube...) |
 | "ripeti", "non ho capito" | says the last reply again |
-| "basta", "stop" | ends the conversation; said while CLAUDIO speaks, cuts it short |
+| "basta", "stop", "non parlare" | ends the conversation; said while CLAUDIO speaks, cuts it short; also at the end of a phrase that names Claudio ("No, Claudio, non parlare. Claudio, stop."), with no API call |
 
 Every command works in English too: "open Chrome", "open my downloads", "turn up the volume by
 10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Whisper
@@ -99,7 +99,7 @@ ancora fare" or "I can't do that yet"; in Phase 2 they will go to Claude Haiku.
 
 Actions have a safety level (`level` in `commands.toml`). Level 1 runs at once. Level 2 asks
 "Confermi?" and CLAUDIO listens for the answer right away, without the wake word: "sì", "ok",
-"va bene" (or "yes") run it, anything else (a "no", silence, a word it does not get) cancels.
+"va bene" (or "yes") run it, anything else (a "no", silence, a word it does not get) cancels. A yes holds nothing else: "sì, grazie mille" counts, "si chiama Anna", "sì, ma dopo" and "Sì?" do not. At a "Confermi?" asked by Claude, repeating Claudio's own command ("Claudio, spegni") also counts.
 Level 3 reads a summary of what will happen and only "confermo" / "I confirm" runs it. Every
 question and answer goes to the log.
 
@@ -130,7 +130,7 @@ off, `barge_in = false` the listening while speaking, `barge_in_mode` how it rea
 
 Local commands always come first and cost nothing; Claude answers the rest, streamed sentence by
 sentence. Each call is logged with its tokens (cache included) and cost in `data/spend.db`;
-`[cost] daily_budget` (1 USD) is announced at 80 % and blocks Claude at 100 %. In the
+`[cost] daily_budget` (0.335 USD, about 0.30 EUR) is announced at 80 % and blocks Claude at 100 %. In the
 conversation window (no wake word) a phrase goes to Claude only when it sounds addressed to it
 (a question, "dimmi...", "spiegami...", or the name), so the TV costs nothing. "basta" stops a
 reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
@@ -207,7 +207,7 @@ are never opened as files. Password managers are never read. Every action is log
 (`metrics.jsonl` field `tools`, "Azioni" in `conversazione.md`). An action with one tool costs
 about 0.0003-0.0007 USD.
 
-Since v0.3.2: typing in Notepad needs no yes (`free_typing`), long text is pasted (one Ctrl+V,
+Since v0.3.2: typing in Notepad needs no yes (`free_typing`, by the window's process, not its title), long text is pasted (one Ctrl+V,
 your clipboard is put back), and a folder said by name ("apri la cartella Progetti") is found on
 the Desktop, in Documents or Downloads. Before a slow action Claudio says "Ci guardo".
 
@@ -323,7 +323,7 @@ by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`.
 `guad` columns of `benchmark_latency.py --log` show the level and gain of every request.
 
 Spending (ready for Phase 2, when Claude answers): `[cost]` sets the daily budget (`daily_budget`,
-in dollars, 1.0 by default). Every Claude call will be written to `data/spend.db` (SQLite) with
+in dollars: 0.335 in the shipped config, 1.0 if the line is missing). Every Claude call will be written to `data/spend.db` (SQLite) with
 its model, input and output tokens, cache writes and reads (`cache_creation_input_tokens`,
 `cache_read_input_tokens`) and TTL, and its cost from [config/pricing.toml](config/pricing.toml),
 where the prices and cache multipliers live (never in the code). At 80 % CLAUDIO says so once a
@@ -402,13 +402,16 @@ Every request ends up in `logs/metrics.jsonl` with:
 - **M1** = end of speech → first sound of the reply (target ≤ 1 s);
 - **M2** = wake word → first sound.
 
+Every line also has `gpu_free_mb` and `gpu_busy_pct`, read in the background at most every 5 s
+(None on the first line, or with no NVIDIA card).
+
 To tune listening, every line also has `input_dbfs` (average microphone level after the beep)
 and `vad_max` (how sure Silero was of hearing a voice, 0-1). `logs/audio/` keeps the last 50
 WAVs of what CLAUDIO heard (1.5 s before the wake word, then everything else), named by outcome
 (`ok`, `timeout`, `empty`, `error`). They stay on the PC; `[logging] save_audio = false` turns
 them off.
 
-Attempts where the wake word did not fire are logged too, as `near_miss` with the highest score
+Attempts where the wake word did not fire are logged too (here, not in `conversazione.md`), as `near_miss` with the highest score
 reached: `benchmark_latency.py --log` lists them, to see how far to lower the threshold.
 
 A near miss also gets a second chance (`wakeword.second_chance`): Whisper listens to the last

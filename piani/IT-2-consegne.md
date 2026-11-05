@@ -20,7 +20,7 @@ Un thread fa **un solo passo**.
 
 | Passo | Contenuto | Versione | API nei test (stima) | Stato |
 |---|---|---|---|---|
-| 0 | Correzioni | v0.4.1 | 0 $ | da fare |
+| 0 | Correzioni | v0.4.1 | 0 $ | fatto |
 | 1 | Web vero con Haiku | v0.5.0 | ≤ 0,15 $ | da fare |
 | 2 | Risorse, cronometro, Opus, schermo | v0.5.1 | ≤ 0,10 $ | da fare |
 | 3 | Modalità gioco, frasi non rivolte a Claudio, avvio a freddo | v0.6.0 | ≤ 0,05 $ | da fare |
@@ -33,7 +33,20 @@ sono poche, tutto il resto gira con il client finto.
 
 ### Stato lasciato dal passo
 
-Nessun passo ancora iniziato.
+Passo 0 chiuso il 05/11/2026 (v0.4.1). Tutti i punti di **Fatto quando** hanno un test, tranne
+uno: **la latenza che non peggiora** resta da misurare con `benchmark_latency.py --log` su almeno 20
+richieste dal vivo di JenJo (`tts_first_ms`, `m1_ms`), insieme al test manuale.
+
+Fatto oltre il passo, su richiesta di JenJo: refactoring delle funzioni sopra C901 12 e correzione dei
+bug trovati dall'audit e dalle revisioni. Dettaglio in `CHANGELOG.md`; il report completo è
+`piani/IT-2-passo-0-report.md`, solo in locale (fuori da git: cita i log).
+
+**Da fare dopo, deciso da JenJo: la voce di Jack non parte all'avvio del PC.** Su 14 avvii a freddo tra
+il 31/10 e il 05/11 Jack è fallito 11 volte (`worker Jack: nessuna risposta in 90 s`), gli ultimi 6 di
+fila, con Whisper a 112 s in parallelo. Non nasce da questo passo: c'era già prima del primo commit.
+
+Per i prossimi passi: un `ActionContext()` preme tasti veri, `tests/conftest.py` lo blocca nei test ma
+non negli script di prova, che devono usare `Recorder().ctx()`.
 
 ## Architettura e decisioni di fondo
 
