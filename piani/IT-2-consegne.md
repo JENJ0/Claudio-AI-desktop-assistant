@@ -1,7 +1,7 @@
 # IT-2 – Piano completo e consegna per i prossimi thread
 
 Piano deciso con JenJo il 04/11/2026, dopo la lettura dei log e una ricerca verificata. Parte da
-`main` = `3b55347` (v0.4.0): i numeri di riga valgono per quel commit, le funzioni restano il
+`main` = `110d023` (v0.4.0): i numeri di riga valgono per quel commit, le funzioni restano il
 riferimento se il codice si è spostato.
 
 ## Come lavorare
