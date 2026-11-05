@@ -390,6 +390,8 @@ EN: dict[str, str] = {
     "Conversazione non salvata": "Conversation not saved",
     "Rotazione di %s non riuscita": "Rotation of %s failed",
     "Metriche non salvate": "Metrics not saved",
+    "Lettura della GPU non avviata": "GPU reading not started",
+    "Lettura della GPU non riuscita": "GPU reading failed",
     "Nuova scansione dei dispositivi non riuscita": "Device re-scan failed",
     "Audio bloccato: %d nuove scansioni fallite di seguito (%s), mi riavvio": (
         "Audio stuck: %d device re-scans failed in a row (%s), restarting"

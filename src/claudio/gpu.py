@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -69,3 +71,52 @@ def has_room(need_mb: int, read: Callable[[], GpuMemory | None] = read_gpu) -> b
     """At least `need_mb` free, or nothing to tell (no NVIDIA card: no reason to wait)."""
     gpu = read()
     return gpu is None or gpu.free_mb >= need_mb
+
+
+class GpuSampler:
+    """The last reading of the card for the metrics rows. read_gpu() starts a process (~0.1 s,
+    up to TIMEOUT_S when the driver hangs): it never runs on the reply path. latest() returns
+    what is there at once, and when that is older than `max_age_s` starts one refresh in a
+    daemon thread (closing the program does not wait for it). The first row may get None."""
+
+    def __init__(
+        self,
+        read: Callable[[], GpuMemory | None] = read_gpu,
+        max_age_s: float = 5.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._read, self._max_age_s, self._clock = read, max_age_s, clock
+        self._lock = threading.Lock()
+        self._reading: GpuMemory | None = None
+        self._tried_at: float | None = None  # when the last refresh started, failed or not
+        self._in_flight = False
+        self.thread: threading.Thread | None = None  # the last refresh started
+
+    def latest(self) -> GpuMemory | None:
+        with self._lock:
+            now = self._clock()
+            stale = self._tried_at is None or now - self._tried_at >= self._max_age_s
+            if stale and not self._in_flight:
+                self._start_refresh(now)
+            return self._reading
+
+    def _start_refresh(self, now: float) -> None:
+        """Called with the lock held."""
+        self._in_flight, self._tried_at = True, now
+        try:
+            self.thread = threading.Thread(target=self._refresh, name="gpu-sampler", daemon=True)
+            self.thread.start()
+        except RuntimeError:  # no thread to be had: try again in max_age_s
+            self._in_flight = False
+            log.warning("Lettura della GPU non avviata", exc_info=True)
+
+    def _refresh(self) -> None:
+        try:
+            reading = self._read()
+            with self._lock:
+                self._reading = reading  # None: no NVIDIA card or driver
+        except Exception:
+            log.warning("Lettura della GPU non riuscita", exc_info=True)
+        finally:
+            with self._lock:
+                self._in_flight = False
