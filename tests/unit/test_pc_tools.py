@@ -779,6 +779,36 @@ async def test_history_keeps_only_words(pricing: Pricing, tools: PcTools) -> Non
     assert history[1]["content"] == "Hai tre finestre. [Claudio ran: list_windows ok]"
 
 
+async def test_the_real_note_stays_when_the_models_own_are_taken_out(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    said = "Guardo. [Claudio ran: open_app ok]"
+    client = ScriptedClient(
+        ([said], "tool_use", [text(said), use("read_window", window="blocco note")]),
+        (["Dice ciao. [cut off: JenJo interrupted here]"], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "leggimi il blocco note")
+    assert list(b._history) == [
+        ("[it] leggimi il blocco note", "Guardo. Dice ciao. [Claudio ran: read_window ok]")
+    ]
+    assert b._read_outside()
+
+
+async def test_a_round_with_only_a_note_said_nothing(pricing: Pricing, tools: PcTools) -> None:
+    """So a slow tool still gets its "Ci guardo"."""
+    note = "[Claudio ran: search_files ok]"
+    client = ScriptedClient(
+        ([note], "tool_use", [text(note), use("search_files", query="fattura")]),
+        (["Trovata."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "trova la fattura") == "Ci guardo. Trovata."
+    assert list(b._history) == [
+        ("[it] trova la fattura", "Ci guardo. Trovata. [Claudio ran: search_files ok]")
+    ]
+
+
 async def test_without_tools_the_old_prompt(pricing: Pricing) -> None:
     client = ScriptedClient((["Ciao."], "end_turn", []))
     b = ClaudeBrain(

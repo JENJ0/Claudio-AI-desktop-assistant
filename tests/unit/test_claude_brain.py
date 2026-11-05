@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -1275,3 +1276,255 @@ async def test_a_yes_said_over_the_offer_is_a_takeover_and_reaches_sonnet(
     first, second = list(assistant.history)[:2]
     assert first["outcome"] == "interrupted" and second["wake_word"] == "barge_in"
     assert sonnet_calls(client) == 1
+
+
+# --- the notes only the code may write: the model imitates them ------------------------------
+
+
+ASKED_01_11 = (
+    "No, devi cercarmi tu e dirmi... non devi farmi vedere niente, devi cercarmi e rispondermi "
+    "e dirmi dove la posso trovare."
+)
+SAID_01_11 = "Va bene, socio, lo cerco per te. Dai, un attimo di pazienza da genio. "
+REPLY_01_11 = SAID_01_11 + "[Claudio ran: web_search ok]"  # 23:32:42, and no tool was called
+
+
+@pytest.mark.parametrize("split", range(1, len(REPLY_01_11)))
+async def test_a_note_split_anywhere_reaches_neither_the_voice_nor_the_history(
+    pricing: Pricing, split: int
+) -> None:
+    b = brain(pricing, FakeClient([REPLY_01_11[:split], REPLY_01_11[split:]]))
+    assert await ask(b, ASKED_01_11) == SAID_01_11
+    assert list(b._history) == [
+        (
+            f"[it] {ASKED_01_11}",
+            "Va bene, socio, lo cerco per te. Dai, un attimo di pazienza da genio.",
+        )
+    ]
+
+
+async def test_the_voice_says_only_the_sentences_around_a_note(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(list(REPLY_01_11)))
+    assert [s async for s in split_stream(b.ask(ASKED_01_11, "it"))] == [
+        "Va bene, socio, lo cerco per te.",
+        "Dai, un attimo di pazienza da genio.",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("chunks", "said"),
+    [
+        (  # several notes in one reply, of each kind
+            ["Cerco. [Claudio ran: search_files ok] Ecco. [cut off: JenJo interrupted here]"],
+            "Cerco.  Ecco. ",
+        ),
+        (["[no answer: JenJo interrupted before it started] Eccomi."], " Eccomi."),
+        (["Vedi [1] e [nota]. [Claudio ran: open_app ok]"], "Vedi [1] e [nota]. "),  # a real "["
+        (["[Claudio ran: set_style ok] Eccomi."], " Eccomi."),  # nothing said before it
+        (["[claudio ran: web_search ok]Fatto. [CUT OFF: JenJo]"], "Fatto. "),  # not exact
+        (["[", "Clau", "dio r", "an", ": ", "web_", "sea", "rch", " ok", "]", "Poi."], "Poi."),
+        (["Ecco. [Claudio ran: web"], "Ecco. "),  # the end, with the opening whole: a note
+        (["Ecco [Cla"], "Ecco [Cla"),  # the end, with only a part of it: text
+        (["Ecco ["], "Ecco ["),
+        (["[Claudio disse] ciao"], "[Claudio disse] ciao"),  # it stops matching: text
+        (["[Cla", "ra] e [no", "ta]"], "[Clara] e [nota]"),
+        # What is compared is what would be said: without markdown.
+        (["**[Claudio ran: web_search ok]** Fatto."], " Fatto."),
+        (["[**Claudio ran**: web_search ok]Fatto."], "Fatto."),
+        (["[`Claudio", " ran`: ", "web_search ok]Fatto."], "Fatto."),
+        (["Uso web_search [1]."], "Uso web_search [1]."),  # the underscore is no markdown
+    ],
+)
+async def test_only_the_notes_are_taken_out_of_a_reply(
+    pricing: Pricing, chunks: list[str], said: str
+) -> None:
+    b = brain(pricing, FakeClient(chunks))
+    assert await ask(b, "dimmi una cosa") == said
+    assert list(b._history) == [("[it] dimmi una cosa", said.strip())]
+
+
+class WatchedStream(FakeStream):
+    """Knows when the HTTP stream was closed."""
+
+    closed = False
+
+    async def __aexit__(self, *exc: Any) -> None:
+        self.closed = True
+
+
+class WatchedClient(FakeClient):
+    """Keeps the stream it opened: how far the reply was read, and whether it was closed."""
+
+    opened: WatchedStream
+
+    def stream(self, **params: Any) -> WatchedStream:
+        self.opened = WatchedStream(self.chunks, self.usage, self.stop, self.error)
+        return self.opened
+
+
+async def test_normal_text_is_said_the_moment_it_arrives(pricing: Pricing) -> None:
+    """The first word's latency: only a "[" that may still become a note waits, one chunk."""
+    client = WatchedClient(["Prima ", "[1", "] vedi", " [", "nota] poi", " fine"])
+    b = brain(pricing, client)
+    seen = [(chunk, client.opened.sent) async for chunk in b.ask("dimmi una cosa", "it")]
+    assert seen == [
+        ("Prima ", 1),
+        ("[1", 2),  # no note opens like this: no waiting for its "]"
+        ("] vedi", 3),
+        (" ", 4),
+        ("[nota] poi", 5),
+        (" fine", 6),
+    ]
+
+
+@pytest.mark.parametrize(
+    "chunks",
+    [["[Claudio ran: read_window ok]"], ["[Claudio ran: read_win", "dow ok]", " "]],
+)
+async def test_a_reply_that_is_only_a_note_is_no_reply(
+    matcher: CommandMatcher, pricing: Pricing, chunks: list[str]
+) -> None:
+    b = brain(pricing, FakeClient(chunks))
+    r = hybrid(matcher, b)
+    assert (await say(r, "qual è la capitale d'Italia")).strip() == ""
+    assert not b._history and not b._read_outside()
+    assert "claude_first_ms" not in b.last_call
+    assert "word_ms" not in b.last_call["claude_calls"][0]
+    assert not r.asked_question
+
+
+class SteppedStream(FakeStream):
+    """Each chunk comes `step_s` after the one before, on a fake clock."""
+
+    def __init__(self, clock: Monotonic, chunks: list[str], step_s: float):
+        super().__init__(chunks, USAGE, "end_turn", None)
+        self.clock, self.step_s = clock, step_s
+
+    @property
+    def text_stream(self) -> AsyncIterator[str]:
+        async def gen() -> AsyncIterator[str]:
+            for chunk in self.chunks:
+                self.clock.t += self.step_s
+                yield chunk
+
+        return gen()
+
+
+async def test_the_first_word_is_timed_on_what_is_really_said(pricing: Pricing) -> None:
+    client = ScriptedClient()
+    b = brain(pricing, client)
+    clock = b.clock
+    assert isinstance(clock, Monotonic)
+    chunks = ["[Claudio ran: open_app ok]", " ", "Fatto."]
+    client.stream = lambda **params: SteppedStream(clock, chunks, 0.1)  # type: ignore[method-assign]
+    assert await ask(b, "dimmi una cosa") == " Fatto."
+    assert b.last_call["claude_calls"][0]["word_ms"] == 300
+    assert b.last_call["claude_first_ms"] == 300
+
+
+async def test_a_note_is_taken_out_of_sonnets_reply_too(pricing: Pricing) -> None:
+    b = brain(pricing, ScriptedClient((["Fa 391. [Claudio ran: read_window ok]"], "end_turn", [])))
+    assert await ask(b, "Pensaci bene: 17 per 23?") == "Fa 391. "
+    assert list(b._history) == [("[it] Pensaci bene: 17 per 23?", "Fa 391.")]
+
+
+async def test_a_cut_closes_every_generator_and_the_stream_at_once(pricing: Pricing) -> None:
+    """ "basta" closes the reply all the time: nothing is left to the garbage collector, and
+    the HTTP stream is closed by the time aclose() returns."""
+    client = WatchedClient(["Prima frase. ", "Seconda frase."])
+    b = brain(pricing, client)
+    started: list[Any] = []
+    hooks = sys.get_asyncgen_hooks()
+
+    def first_iteration(generator: Any) -> None:
+        started.append(generator)
+        hooks.firstiter(generator)
+
+    sys.set_asyncgen_hooks(firstiter=first_iteration)
+    try:
+        stream = b.ask("raccontami una storia", "it")
+        assert await anext(stream) == "Prima frase. "
+        assert not client.opened.closed
+        await stream.aclose()
+    finally:
+        sys.set_asyncgen_hooks(*hooks)
+    assert client.opened.closed
+    source = ClaudeBrain.ask.__code__.co_filename
+    ours = [g for g in started if g.ag_code.co_filename == source]
+    assert len(ours) >= 3  # ask, its answer and the stream: the hook did see them
+    assert [g.__qualname__ for g in ours if g.ag_frame is not None] == []
+
+
+class WatchedBody(httpx2.AsyncByteStream):
+    """An HTTP body streamed event by event, which knows when it was closed."""
+
+    closed = False
+
+    def __init__(self, events: list[bytes]) -> None:
+        self.events = events
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for event in self.events:
+            yield event
+            await asyncio.sleep(0)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_a_cut_through_the_real_sdk_closes_the_http_body_at_once(pricing: Pricing) -> None:
+    usage = {"input_tokens": 400, "output_tokens": 1}
+    message = {"id": "m", "type": "message", "role": "assistant", "content": [], "usage": usage}
+    body = WatchedBody(
+        [
+            sse("message_start", message={**message, "model": "claude-haiku-5-5"}),
+            sse("content_block_start", index=0, content_block={"type": "text", "text": ""}),
+            *[
+                sse("content_block_delta", index=0, delta={"type": "text_delta", "text": text})
+                for text in ("Prima frase. ", "[Claudio ran: read_window ok]", "Seconda.")
+            ],
+        ]
+    )
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, stream=body)
+
+    http = anthropic.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(answer))
+    client = anthropic.AsyncAnthropic(api_key="not-a-key", max_retries=0, http_client=http)
+    b = brain(pricing, client)
+    stream = b.ask("raccontami una storia", "it")
+    assert await anext(stream) == "Prima frase. "
+    assert not body.closed
+    await stream.aclose()
+    assert body.closed
+    assert list(b._history) == [("[it] raccontami una storia", f"Prima frase. {CUT_NOTE}")]
+    assert b.last_call["input_tokens"] == 400
+
+
+async def test_a_cut_while_a_bracket_waits_says_and_keeps_only_what_was_said(
+    pricing: Pricing,
+) -> None:
+    client = BreakingClient(asyncio.CancelledError(), (["Prima frase. [Cla"], "end_turn", []))
+    b = brain(pricing, client)
+    chunks = []
+    with pytest.raises(asyncio.CancelledError):
+        async for chunk in b.ask("raccontami una storia", "it"):
+            chunks.append(chunk)
+    assert chunks == ["Prima frase. "]  # nothing is said on the way out of a cut
+    assert list(b._history) == [("[it] raccontami una storia", f"Prima frase. {CUT_NOTE}")]
+
+
+async def test_a_connection_lost_while_a_bracket_waits_drops_it(pricing: Pricing) -> None:
+    error = httpx2.RemoteProtocolError("peer closed")
+    b = brain(pricing, BreakingClient(error, (["Prima frase. [Cla"], "end_turn", [])))
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert chunks[0] == "Prima frase. " and chunks[1] is CUT_SHORT
+    assert chunks[2:] == [NETWORK_SAID]
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase.")]
+
+
+async def test_the_cut_marker_still_follows_a_note_at_the_token_limit(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(["C'era un re. Attra", "[Claudio ran: web"], stop="max_tokens"))
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert chunks[0] == "C'era un re. Attra" and chunks[1] is CUT_SHORT
+    assert chunks[2:] == [CLOSING]
