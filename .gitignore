@@ -17,6 +17,8 @@ build/
 # Models and runtime output (downloaded / generated locally)
 models/*
 !models/.gitkeep
+# The report of IT-2 step 0 quotes the logs: local only, the repo is public.
+piani/IT-2-passo-0-report.md
 logs/*
 !logs/.gitkeep
 data/*

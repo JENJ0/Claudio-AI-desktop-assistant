@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.4.1] - 2026-11-05 - IT-2 step 0: fixes
+
+No API call was spent on this work: every test uses a fake client.
+
+### Fixed: a wrong yes
+- A yes holds only yes words, whole yes phrases, courtesy and the name, in one place
+  (`parse_answer`). "si chiama Anna" deleted a memory, "sì ma dopo" switched Claudio off at "Hai
+  detto: spegniti?", "ok ci penso" pressed Alt+F4. The word caps are gone. "sì, chiudila" no longer
+  confirms: the action is dropped and the phrase must be said again.
+- Level 3 too: "ti confermo che ci vediamo domani" wiped all memories after "dimentica tutto".
+- A refusal counts before the name is stripped ("no Claudio, va bene"), a question is not a yes
+  ("Sì?"), and a refusal never runs what it refuses ("non spegnerti adesso" switched Claudio off).
+- "sì, chiudi la finestra" at "Hai detto: chiudi la finestra?" answers it: nothing happened before.
+- A named answer to "Quale dimentico?" holds only the memory's words: "dimmi se abita a Torino"
+  and "che moto ha Luca" deleted what they asked about.
+- Switched off from the tray with "Confermi?" waiting, a "sì" ran the action. The question is now
+  dropped. A story cut by "spegniti" no longer goes on with "Dicevo: ..." while off.
+- `free_typing` goes by the window's process: a Chrome tab titled "notepad online" typed without
+  asking.
+
+### Fixed: it stays alive
+- A metrics write that fails (the file held by another program, a row JSON cannot encode) or a
+  conversation row that cannot be rendered no longer leave Claudio stuck.
+- A failing closed list or retry keeps the first transcription, instead of losing the request.
+- A failing re-scan of the microphone no longer ends the capture; `_initialize` runs even when
+  `_terminate` fails. After about 30 failed `_initialize` in a row the error leaves `frames()`, so
+  the supervisor starts a clean process.
+
+### Fixed: Claude
+- A connection lost, an API or decoding error during a reply says the error once and keeps the
+  turn and the notes of the tools that ran. So does a request refused after a tool round.
+- A cut reply keeps the note of the actions that ran, which decides the level of a later
+  `remember`.
+- "basta" drops the Sonnet offer: a later "sì" no longer starts Sonnet.
+- A note written by the model (`[Claudio ran: web_search ok]`, even split across chunks) reaches
+  neither the voice nor the history: those notes come only from the code.
+- Repeating the waiting system command counts as a yes ("Claudio, spegni" at "Confermi?"), never at
+  level 3.
+
+### Added
+- "non parlare" ("don't talk") stops Claudio, and so does a stop at the end of a phrase that names
+  it ("No, Claudio, non parlare. Claudio, stop."), with no API call.
+- Every row of `metrics.jsonl` has `gpu_free_mb` and `gpu_busy_pct`, read in the background at most
+  every 5 s and never on the reply path.
+
+### Changed
+- While off, nothing said around Claudio stays on disk, except the turn-on: no text in the rows,
+  logs or chat, no `*_off.wav`. The turn-on's WAV leaves out the seconds before its wake word.
+- A row takes the route, tools and cost only of its own request: false wakes copied the previous
+  one.
+- `near_miss` rows stay in `metrics.jsonl` and leave `conversazione.md`.
+- `daily_budget` is 0.335 USD, 0.30 EUR at the ECB rate of 2026-11-03.
+- `httpx2` is a direct dependency, pinned: `make_client` already imported it, and its errors reach
+  `_stream` raw during a reply.
+
+### Refactor and tests
+- The 16 functions over C901 12 are split by job, behavior unchanged. Two stay over on purpose:
+  `_dispatch` (15) and `group_stream` (21).
+- `tests/conftest.py` blocks `keybd_event`, the key presses of `ActionContext()`'s real defaults.
+  `pywinauto`'s `send_keys` and `os.startfile` are not blocked: a probe uses `Recorder().ctx()`.
+
 ## [Unreleased] - IT-1
 
 Iteration 1: seven threads merged locally on the `it-1` branch (31/10): memory, misheard
