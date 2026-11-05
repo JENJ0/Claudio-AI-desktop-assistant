@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import sys
 from collections.abc import Callable
 
 import numpy as np
@@ -24,6 +26,20 @@ class FakeVad:
 
     def reset(self) -> None:
         self.resets += 1
+
+
+@pytest.fixture(autouse=True)
+def no_real_key_presses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ActionContext()` presses real keys by default: a test saying "chiudi la finestra" would
+    send a real Alt+F4 to the window in front (05/11: a probe closed the editor this way). Use
+    `Recorder().ctx()`."""
+    if sys.platform != "win32":
+        return
+
+    def refuse(*args: object) -> None:
+        raise AssertionError("a test pressed a real key")
+
+    monkeypatch.setattr(ctypes.windll.user32, "keybd_event", refuse)
 
 
 @pytest.fixture(autouse=True)

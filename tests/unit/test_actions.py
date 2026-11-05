@@ -3,9 +3,17 @@ from pathlib import Path
 
 import pytest
 
-from claudio.router.actions import ActionContext, ActionRunner, say_date, say_time
+from claudio.router.actions import (
+    ActionContext,
+    ActionRunner,
+    _press_combo,
+    say_date,
+    say_time,
+)
 from claudio.router.matcher import Command, CommandMatcher, Match
 from claudio.system import SystemControl
+
+VK_F24 = 0x87
 
 
 class Recorder:
@@ -238,3 +246,8 @@ def test_chat_without_launcher_says_so(matcher, rec) -> None:
     match = matcher.match("apri la chat")
     assert match is not None
     assert ActionRunner(rec.ctx()).execute(match) == "Qui la chat non si può aprire."
+
+
+def test_no_test_can_press_a_real_key() -> None:
+    with pytest.raises(AssertionError, match="real key"):
+        _press_combo((VK_F24,))  # no effect on any window, should this guard ever go
