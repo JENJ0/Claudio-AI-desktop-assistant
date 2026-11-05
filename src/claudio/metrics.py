@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from claudio.gpu import GpuSampler
+
 log = logging.getLogger(__name__)
 
 
@@ -54,6 +56,7 @@ class MetricsWriter:
         path: Path,
         conversation: Any = None,
         chat: Any = None,
+        gpu: GpuSampler | None = None,
         max_bytes: int = 5_000_000,
         backups: int = 3,
     ) -> None:
@@ -62,6 +65,7 @@ class MetricsWriter:
         self.backups = backups
         self.conversation = conversation  # session_log.ConversationLog: the readable copy
         self.chat = chat  # chat.store.ChatStore: what the chat window shows
+        self.gpu = gpu  # the card's load and free memory in every row, as last read
         path.parent.mkdir(parents=True, exist_ok=True)
 
     def _rotate(self) -> None:
@@ -79,6 +83,10 @@ class MetricsWriter:
 
     def write(self, interaction: Interaction) -> dict[str, Any]:
         row = {"ts": time.time(), **interaction.summary()}
+        if self.gpu is not None:  # never waits: the last reading, None before the first
+            reading = self.gpu.latest()
+            row["gpu_free_mb"] = reading.free_mb if reading else None
+            row["gpu_busy_pct"] = reading.busy_pct if reading else None
         self._rotate()
         try:
             with self.path.open("a", encoding="utf-8") as fh:

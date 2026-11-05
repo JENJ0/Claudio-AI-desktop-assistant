@@ -3,9 +3,11 @@ answer in 90 s; meanwhile every piece of a reply waited up to 30 s for it."""
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -14,7 +16,8 @@ import pytest
 
 from claudio.__main__ import jack_wait_s, startup_notices
 from claudio.config import load_settings
-from claudio.gpu import GpuMemory, has_room, read_gpu
+from claudio.gpu import GpuMemory, GpuSampler, has_room, read_gpu
+from claudio.metrics import Interaction, MetricsWriter
 from claudio.tts.jack import JackSynth, WorkerError, WorkerTimeout
 from tests.unit.test_jack import FakeFallback, make, started_in_background
 
@@ -211,3 +214,120 @@ def test_a_broken_install_is_still_not_retried(tmp_path, synths) -> None:
     assert synth.wait_started(10)
     assert isinstance(done[0], WorkerError) and not isinstance(done[0], WorkerTimeout)
     assert synth._restart_at == float("inf")
+
+
+# --- the graphics card in every metrics row (Passo 0): read in the background ------------------
+
+
+CARD = GpuMemory(4096, 12288, 37)
+
+
+class Reader:
+    """A fake nvidia-smi: counts the calls, can block on an event or raise."""
+
+    def __init__(self, reading: GpuMemory | None = CARD) -> None:
+        self.reading, self.calls = reading, 0
+        self.gate: threading.Event | None = None
+        self.error: Exception | None = None
+
+    def __call__(self) -> GpuMemory | None:
+        self.calls += 1
+        if self.gate is not None:
+            self.gate.wait(5)
+        if self.error is not None:
+            raise self.error
+        return self.reading
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def settle(sampler: GpuSampler) -> None:
+    """Wait for the refresh the last latest() started."""
+    if sampler.thread is not None:
+        sampler.thread.join(5)
+        assert not sampler.thread.is_alive()
+
+
+def test_the_first_reading_is_empty_and_starts_one_refresh() -> None:
+    reader, clock = Reader(), Clock()
+    sampler = GpuSampler(reader, clock=clock)
+    assert sampler.latest() is None  # a row never waits for the card
+    settle(sampler)
+    assert reader.calls == 1
+    assert sampler.latest() == GpuMemory(4096, 12288, 37)
+
+
+def test_a_reading_older_than_5_s_starts_one_thread_and_a_younger_one_none() -> None:
+    reader, clock = Reader(), Clock()
+    sampler = GpuSampler(reader, clock=clock)
+    sampler.latest()
+    settle(sampler)
+    clock.t += 4.9
+    sampler.latest()
+    settle(sampler)
+    assert reader.calls == 1  # a near miss within 5 s starts nothing
+    clock.t += 0.2
+    sampler.latest()
+    settle(sampler)
+    assert reader.calls == 2
+
+
+def test_a_row_never_waits_for_a_stuck_reader_and_none_piles_up() -> None:
+    reader, clock = Reader(), Clock()
+    reader.gate = threading.Event()
+    sampler = GpuSampler(reader, clock=clock)
+    started = time.perf_counter()
+    for _ in range(3):
+        sampler.latest()
+        clock.t += 6  # stale each time, yet one refresh is already in flight
+    assert time.perf_counter() - started < 1
+    assert sampler.thread is not None and sampler.thread.daemon
+    reader.gate.set()
+    settle(sampler)
+    assert reader.calls == 1
+
+
+def test_a_failing_reader_is_logged_and_tried_again_later(caplog: pytest.LogCaptureFixture) -> None:
+    reader, clock = Reader(), Clock()
+    reader.error = RuntimeError("driver gone")
+    sampler = GpuSampler(reader, clock=clock)
+    with caplog.at_level(logging.WARNING, logger="claudio.gpu"):
+        assert sampler.latest() is None
+        settle(sampler)
+    assert "driver gone" in caplog.text or any(r.exc_info for r in caplog.records)
+    clock.t += 1
+    sampler.latest()
+    settle(sampler)
+    assert reader.calls == 1  # not at once: the 5 s count from the attempt
+    clock.t += 5
+    reader.error = None
+    sampler.latest()
+    settle(sampler)
+    assert reader.calls == 2 and sampler.latest() == GpuMemory(4096, 12288, 37)  # the flag was free
+
+
+def test_without_a_card_the_fields_stay_none(tmp_path: Path) -> None:
+    sampler = GpuSampler(Reader(None), clock=Clock())
+    writer = MetricsWriter(tmp_path / "metrics.jsonl", gpu=sampler)
+    row = writer.write(Interaction(info={"outcome": "near_miss"}))
+    settle(sampler)
+    assert row["gpu_free_mb"] is None and row["gpu_busy_pct"] is None
+    assert sampler.latest() is None
+
+
+def test_a_row_takes_the_reading_that_is_there(tmp_path: Path) -> None:
+    sampler = GpuSampler(Reader(), clock=Clock())
+    writer = MetricsWriter(tmp_path / "metrics.jsonl", gpu=sampler)
+    first = writer.write(Interaction(info={"outcome": "near_miss"}))
+    settle(sampler)
+    second = writer.write(Interaction(info={"outcome": "near_miss"}))
+    assert first["gpu_free_mb"] is None and first["gpu_busy_pct"] is None
+    assert second["gpu_free_mb"] == 4096 and second["gpu_busy_pct"] == 37
+    saved = (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    assert '"gpu_free_mb": 4096' in saved[1]

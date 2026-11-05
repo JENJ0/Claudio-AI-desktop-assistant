@@ -21,7 +21,7 @@ from claudio.config import (
     configured_language,
     load_settings,
 )
-from claudio.gpu import GpuMemory, has_room, read_gpu
+from claudio.gpu import GpuMemory, GpuSampler, has_room, read_gpu
 from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
@@ -636,7 +636,9 @@ async def run_assistant(
         transcriber=transcriber,
         responder=responder,
         speaker=speaker,
-        metrics=MetricsWriter(logs / "metrics.jsonl", ConversationLog(session), chat),
+        metrics=MetricsWriter(
+            logs / "metrics.jsonl", ConversationLog(session), chat, gpu=GpuSampler()
+        ),
         audio_sink=recorder,
         level=level,
         system=system,
