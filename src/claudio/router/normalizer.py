@@ -157,6 +157,8 @@ LANGUAGES: dict[str, Language] = {
 DEFAULT = "it"
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 _FILLERS = frozenset().union(*(rules.fillers for rules in LANGUAGES.values()))
+# What ends a clause as Whisper writes it. Not ":": "scrivi: basta" says what to write.
+_CLAUSE_END = re.compile(r"[.,;!?…]+")
 
 
 def language(code: str) -> Language:
@@ -227,6 +229,23 @@ def heard_wake_word(text: str) -> bool:
     claudio che ore sono"); a lone greeting or "audio" is not it."""
     words = normalize(text, drop_fillers=False).split()
     return any(w not in GREETINGS and is_wake_word(w) for w in words)
+
+
+def last_clauses(text: str, lang: str = DEFAULT) -> list[str]:
+    """How the end of a phrase said to Claudio may read, whatever punctuation Whisper wrote ("No,
+    Claudio, non parlare. Claudio, stop.", "no claudio non parlare claudio stop"): what follows
+    the last mention of the name, or the last punctuation. None for a question, without the name,
+    or when nothing is said after it ("stop alla musica, Claudio"). "e basta" and "e poi basta"
+    are how a request ends, and stay part of it."""
+    if text.rstrip().endswith("?"):
+        return []
+    words = normalize(text, drop_fillers=False).split()
+    named = [i for i, w in enumerate(words) if w not in GREETINGS and is_wake_word(w)]
+    said = " ".join(words[named[-1] + 1 :]) if named else ""
+    if not normalize(said, lang=lang):
+        return []
+    pieces = [piece for piece in _CLAUSE_END.split(text) if normalize(piece, lang=lang)]
+    return [said, *pieces[-1:]]
 
 
 def extract_number(norm_text: str, lang: str = DEFAULT) -> tuple[str, int | None]:
