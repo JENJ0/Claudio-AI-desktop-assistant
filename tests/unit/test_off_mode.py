@@ -1138,3 +1138,26 @@ async def test_a_story_cut_by_spegniti_does_not_go_on_while_off(
     await speak_over(assistant, make_frames, speaker)
     assert responder.actions.system.off
     assert speaker.spoken[-1].startswith("Mi spengo")  # no "Dicevo: ..." after it
+
+
+async def test_the_turn_ons_wav_leaves_out_what_was_said_before_its_wake_word(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    saved: list[np.ndarray] = []
+    system = SystemControl()
+    assistant = Assistant(
+        FakeWake({15}),  # 1.2 s of voice before the wake word, said while off
+        Endpointer(fake_vad, vad_settings),
+        FakeStt("Claudio, accenditi."),
+        LocalResponder(matcher, ActionRunner(Recorder().ctx(), system)),
+        FakeSpeaker(),
+        clock=AudioClock(),
+        system=system,
+        audio_sink=lambda audio, kind: saved.append(audio) or f"{kind}.wav",
+    )
+    system.apply("off")
+    frames = make_frames("speech", 1200) + make_frames("speech", 400) + make_frames("silence", 800)
+    await run_frames(assistant, frames)
+    row = assistant.history[-1]
+    assert not system.off and row["text"] == "Claudio, accenditi." and row["prewake_ms"] > 0
+    assert len(saved) == 1 and len(saved[0]) / 16000 < 1.3  # the phrase alone

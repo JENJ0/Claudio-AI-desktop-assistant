@@ -1700,6 +1700,7 @@ class Assistant:
         if inter is not None:
             inter.mark("done")
             inter.info["outcome"] = outcome
+            before_the_name = self._prewake[:0] if inter.off else self._prewake  # said while off
             inter.off = inter.off and self.system.off  # on again: it was the turn-on, kept
             stats = self.endpointer.stats()
             inter.info.update(stats)
@@ -1722,7 +1723,7 @@ class Assistant:
                     # microphone that heard it.
                     self.level.observe(stats)
             if self.audio_sink is not None and not inter.off:
-                heard = np.concatenate((self._prewake, self.endpointer.listened()))
+                heard = np.concatenate((before_the_name, self.endpointer.listened()))
                 try:
                     inter.info["audio_file"] = self.audio_sink(heard, outcome)
                 except Exception:
