@@ -980,22 +980,21 @@ async def test_what_whisper_heard_before_the_tray_turned_claudio_on_does_not_sta
 async def test_a_question_armed_before_the_tray_switched_off_leaves_nothing_on_disk(
     disk, fake_vad, vad_settings, make_frames, matcher, options
 ) -> None:
-    """Such a question is answered ahead of the off gate: its words, and a reply that quotes
-    them, stay off the disk all the same."""
-    armed = [True]
+    """Such a question is dropped: Claude never hears the answer, and its words stay off the
+    disk."""
+    asked: list[str] = []
 
     async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
-        armed.clear()
+        asked.append(text)
         yield f"Hai detto {WORD}."
 
     assistant = on_disk(disk, fake_vad, vad_settings, matcher, [f"Sì, lo {WORD}."], **options)
     responder = assistant.responder
-    responder.fallback, responder.fallback_awaiting = claude, lambda: bool(armed)
+    responder.fallback, responder.fallback_awaiting = claude, lambda: True
     assistant.system.apply("off")
     await run_requests(assistant, make_frames, 1)
-    assert not armed  # it did get there
+    assert asked == []
     assert holding(WORD, disk) == set() and wavs(disk) == set()
-    assert "Risposta alla conferma di Claude: '<hidden: off>'" in in_the_console(disk)
 
 
 @pytest.mark.parametrize(
@@ -1076,3 +1075,38 @@ def test_whispers_logs_are_as_ever_when_nobody_says_it_is_off(caplog) -> None:
     with caplog.at_level("INFO"):
         assert stt.transcribe(speech) == ""
     assert WORD in caplog.text
+
+
+@pytest.mark.parametrize("asked_by", ["a command", "a guess", "claude"])
+async def test_while_off_an_open_question_is_dropped_not_answered(
+    matcher: CommandMatcher, asked_by: str
+) -> None:
+    """The tray switched Claudio off with "Confermi?" waiting: a "sì" runs nothing, not even
+    after "accenditi" (05/11: a probe saying just this pressed a real Alt+F4 and closed VS Code)."""
+    system, rec = SystemControl(), Recorder()
+    armed = [True] if asked_by == "claude" else []
+    asked: list[str] = []
+
+    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+        asked.append(text)
+        yield "Ok."
+
+    r = LocalResponder(
+        matcher,
+        ActionRunner(rec.ctx(), system),
+        fallback=claude,
+        fallback_awaiting=lambda: bool(armed),
+        fallback_cancel=lambda cut: armed.clear(),
+    )
+    if asked_by == "a command":
+        await say(r, "chiudi la finestra")
+    elif asked_by == "a guess":
+        r.propose("chiudi la finestra", "it")
+    assert r.awaiting
+    system.apply("off")
+    assert await say(r, "sì") == ""
+    assert r.last_route == {"route": "off"}
+    assert rec.combos == [] and asked == [] and not r.awaiting
+    assert (await say(r, "accenditi")).startswith("Eccomi") and not system.off
+    await say(r, "sì")  # now an ordinary request: the question is gone
+    assert rec.combos == []

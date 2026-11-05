@@ -387,7 +387,11 @@ class LocalResponder:
             yield chunk
 
     def _open_question(self, text: str, language: str) -> AsyncIterator[str] | None:
-        """The answer to a question waiting for one, not started yet (None: no question)."""
+        """The answer to a question waiting for one, not started yet (None: no question). Off
+        (the tray, with "Confermi?" still waiting), a question is over: "sì" runs nothing."""
+        if self.actions.system.off:
+            self.cancel_pending()
+            return None
         if self._pending is not None:
             return self._answer(text)
         if self._proposal is not None:
@@ -395,18 +399,9 @@ class LocalResponder:
         if self._fallback_waits():
             # The answer to Claude's "Confermi?" goes to Claude, never to a local command, and
             # is answered in the language (and voice) of the question.
-            log.info(
-                "Risposta alla conferma di Claude: %r",
-                self._logged(text),
-                extra={"route": "claude"},
-            )
+            log.info("Risposta alla conferma di Claude: %r", text, extra={"route": "claude"})
             return self._ask_fallback(text)
         return None
-
-    def _logged(self, text: str) -> str:
-        """`text` for the logs: a question armed before Claudio went off (the tray) is answered
-        here, ahead of the off gate, and while off only "accenditi" stays on disk."""
-        return HIDDEN if self.actions.system.off and not self.understands(text) else text
 
     def _memory_reply(self, text: str, match: Match | None, addressed: bool) -> str | None:
         """What the memory says to `text`: None when it is not the memory's, "" when it was
@@ -479,7 +474,7 @@ class LocalResponder:
         if answer is Answer.UNCLEAR and word_share(text, proposal.question) >= WORD_SHARE:
             # The question's own echo ("...detto spegniti"), never a yes: JenJo says "sì".
             self.last_route = {"route": "guess_echo", "guess": proposal.text}
-            log.info("La mia domanda nel microfono, non è una risposta: %r", self._logged(text))
+            log.info("La mia domanda nel microfono, non è una risposta: %r", text)
             return
         if answer is Answer.YES:
             log.info("Sì: rispondo a %r", proposal.text, extra={"route": "guess"})
@@ -489,7 +484,7 @@ class LocalResponder:
         rest = _after_no(words) if answer is Answer.NO else words
         if len(rest) >= 2 or (rest and answer is Answer.UNCLEAR):
             again = " ".join(rest) if answer is Answer.NO else text
-            log.info("Non era %r: nuova richiesta %r", proposal.text, self._logged(again))
+            log.info("Non era %r: nuova richiesta %r", proposal.text, again)
             async for chunk in self._respond(again, language):
                 yield chunk
             return
