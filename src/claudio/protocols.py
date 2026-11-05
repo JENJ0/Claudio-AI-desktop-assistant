@@ -42,6 +42,8 @@ class SpeechProbability(Protocol):
 
 class Transcriber(Protocol):
     language: str  # of the last transcription
+    # True while no transcribed word may be logged (CLAUDIO is off); the Assistant sets it.
+    hides_text: Callable[[], bool] | None
 
     def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
         """Transcribe 16 kHz float32 mono audio; returns "" when nothing was said.
@@ -83,7 +85,8 @@ class Responder(Protocol):
         ...
 
     def is_stop(self, text: str) -> bool:
-        """`text` is only "basta" / "stop": said while CLAUDIO speaks, it interrupts."""
+        """`text` is only "basta" / "stop", or ends a phrase to Claudio with it: said while
+        CLAUDIO speaks, it interrupts."""
         ...
 
     def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:

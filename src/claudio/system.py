@@ -17,6 +17,8 @@ from claudio.i18n import tr
 log = logging.getLogger(__name__)
 
 PAUSE, RESUME, SHUTDOWN, OFF, ON = "pause", "resume", "shutdown", "off", "on"
+# In the logs and the rows, in place of a phrase heard while off: one was heard, and it is gone.
+HIDDEN = "<hidden: off>"
 
 
 class SystemControl:

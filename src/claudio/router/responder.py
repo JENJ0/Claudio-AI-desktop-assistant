@@ -44,7 +44,7 @@ from claudio.safety.confirmation import (
     parse_answer,
     question,
 )
-from claudio.system import ON
+from claudio.system import HIDDEN, ON
 from claudio.tts.sentence_splitter import joined_reply
 from claudio.wakeword.verifier import after_clipped_name
 
@@ -360,7 +360,7 @@ class LocalResponder:
             self.language = self._reply_language(language, bool(self.unknown_reply.get(language)))
         if self.actions.system.off and not _turns_on(match):
             self.last_route = {"route": "off"}
-            log.info("Spento, ignoro: %r", text, extra={"route": "off"})
+            log.info("Spento, ignoro: %r", HIDDEN, extra={"route": "off"})
             return  # off: not even a beep, only "accenditi" is answered
         if self.actions.system.paused and not _is_system(match):
             self.last_route = {"route": "paused"}
@@ -395,9 +395,18 @@ class LocalResponder:
         if self._fallback_waits():
             # The answer to Claude's "Confermi?" goes to Claude, never to a local command, and
             # is answered in the language (and voice) of the question.
-            log.info("Risposta alla conferma di Claude: %r", text, extra={"route": "claude"})
+            log.info(
+                "Risposta alla conferma di Claude: %r",
+                self._logged(text),
+                extra={"route": "claude"},
+            )
             return self._ask_fallback(text)
         return None
+
+    def _logged(self, text: str) -> str:
+        """`text` for the logs: a question armed before Claudio went off (the tray) is answered
+        here, ahead of the off gate, and while off only "accenditi" stays on disk."""
+        return HIDDEN if self.actions.system.off and not self.understands(text) else text
 
     def _memory_reply(self, text: str, match: Match | None, addressed: bool) -> str | None:
         """What the memory says to `text`: None when it is not the memory's, "" when it was
@@ -470,7 +479,7 @@ class LocalResponder:
         if answer is Answer.UNCLEAR and word_share(text, proposal.question) >= WORD_SHARE:
             # The question's own echo ("...detto spegniti"), never a yes: JenJo says "sì".
             self.last_route = {"route": "guess_echo", "guess": proposal.text}
-            log.info("La mia domanda nel microfono, non è una risposta: %r", text)
+            log.info("La mia domanda nel microfono, non è una risposta: %r", self._logged(text))
             return
         if answer is Answer.YES:
             log.info("Sì: rispondo a %r", proposal.text, extra={"route": "guess"})
@@ -480,7 +489,7 @@ class LocalResponder:
         rest = _after_no(words) if answer is Answer.NO else words
         if len(rest) >= 2 or (rest and answer is Answer.UNCLEAR):
             again = " ".join(rest) if answer is Answer.NO else text
-            log.info("Non era %r: nuova richiesta %r", proposal.text, again)
+            log.info("Non era %r: nuova richiesta %r", proposal.text, self._logged(again))
             async for chunk in self._respond(again, language):
                 yield chunk
             return

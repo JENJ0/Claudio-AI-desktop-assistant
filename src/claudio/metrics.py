@@ -18,12 +18,21 @@ from claudio.gpu import GpuSampler
 
 log = logging.getLogger(__name__)
 
+# The fields of a row that hold what was said, or may quote it (a reply, a tool's arguments). The
+# figures around them say nothing of it.
+SAID_FIELDS = frozenset(
+    {"text", "second_chance", "second_chance_from", "wake_unclear", "wake_check", "relisten"}
+    | {"continued_from", "closed_list_from", "retried_from", "recovered_from", "guessed_from"}
+    | {"barge_in", "recovery", "guess", "stt_alternatives", "reply", "tools", "shown"}
+)
+
 
 @dataclass
 class Interaction:
     clock: Any = time.perf_counter
     marks: dict[str, float] = field(default_factory=dict)
     info: dict[str, Any] = field(default_factory=dict)
+    off: bool = False  # heard while CLAUDIO was off: what was said is not in the row
 
     def mark(self, stage: str) -> None:
         # Only the first occurrence counts (e.g. first audio chunk).
@@ -36,6 +45,11 @@ class Interaction:
         return None
 
     def summary(self) -> dict[str, Any]:
+        """The row: every file and the history get this. `info` stays as it is, the decisions
+        read it."""
+        info = self.info
+        if self.off:
+            info = {key: value for key, value in info.items() if key not in SAID_FIELDS}
         return {
             "m1_ms": self.ms("speech_end", "first_audio"),
             "m2_ms": self.ms("wake", "first_audio"),
@@ -44,7 +58,7 @@ class Interaction:
             "route_ms": self.ms("stt_done", "first_text"),
             "tts_first_ms": self.ms("first_text", "first_audio"),
             "speech_ms": self.ms("speech_start", "speech_end"),
-            **self.info,
+            **info,
         }
 
 
