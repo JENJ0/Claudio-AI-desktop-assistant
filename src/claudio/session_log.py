@@ -87,6 +87,8 @@ class ConversationLog:
         self.path = folder / CONVERSATION_FILE
 
     def add(self, row: dict[str, Any]) -> None:
+        if row.get("outcome") == "near_miss":  # 9 in 10 rows, nothing was said: metrics only
+            return
         try:
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(format_row(row))
