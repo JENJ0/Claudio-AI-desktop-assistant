@@ -55,6 +55,7 @@ from claudio.protocols import CUT_SHORT
 from claudio.router.normalizer import normalize, strip_wake_words
 from claudio.safety.confirmation import (
     CANCELLED,
+    LEVEL_EXPLICIT,
     LEVEL_SAFE,
     NOT_UNDERSTOOD,
     Answer,
@@ -288,13 +289,29 @@ class ClaudeBrain:
     def _pending_action(self, text: str) -> _Action | None:
         """The action `text` answers: None when none waits or `text` is another request."""
         action = self._take_action()
-        if action is not None and _new_request(text, action.level):
+        if (
+            action is not None
+            and not self._repeats(action, text)
+            and _new_request(text, action.level)
+        ):
             # Not an answer but another request (said with the wake word after the window
             # closed): the action is dropped and the request answered.
             log.info("Nuova richiesta al posto della conferma: azione annullata")
             self._note_tools(action.calls, "refused")
             return None
         return action
+
+    def _repeats(self, action: _Action, text: str) -> bool:
+        """The waiting system command said again ("Claudio, spegni", 02/11: 4 phrases and ~25 s
+        to switch off): a yes, where a plain yes is enough (level 3 wants its "confermo"). A
+        refusal stays one ("non spegnerti"), a question is no yes ("spegniti?")."""
+        assert self.tools is not None
+        return (
+            action.level < LEVEL_EXPLICIT
+            and parse_answer(text, action.level) is Answer.UNCLEAR
+            and not text.rstrip().endswith("?")
+            and self.tools.repeats(action.calls, text, action.language)
+        )
 
     def _answered_offer(self, text: str) -> tuple[list[dict[str, Any]], str, Answer] | None:
         """The offer `text` answers (its messages and language) and the answer: None when none
@@ -458,7 +475,7 @@ class ClaudeBrain:
     async def _confirm(self, action: _Action, text: str, start: float) -> AsyncGenerator[str, None]:
         """The answer to "Confermi?": yes runs the calls and Haiku goes on; anything else
         cancels (a TV in the background never confirms an action)."""
-        answer = parse_answer(text, action.level)
+        answer = Answer.YES if self._repeats(action, text) else parse_answer(text, action.level)
         self.last_call["confirm"] = answer.value
         if answer is not Answer.YES:
             reply = CANCELLED if answer is Answer.NO else NOT_UNDERSTOOD

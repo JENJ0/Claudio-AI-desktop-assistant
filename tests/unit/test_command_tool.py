@@ -3,18 +3,22 @@ Claude, which could guess the chat window but had no tool to open it."""
 
 from __future__ import annotations
 
+import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from claudio.__main__ import build_responder
 from claudio.brain.claude import CUT_NOTE
-from claudio.config import PcSettings
+from claudio.config import PcSettings, load_settings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.pc.tools import PcTools
 from claudio.router.actions import MEDIA_KEYS, ActionRunner
 from claudio.router.command_tool import NAME, CommandTool
-from claudio.router.matcher import load_commands
+from claudio.router.matcher import CommandMatcher, load_commands
+from claudio.router.responder import LocalResponder
 from claudio.system import SystemControl
 from tests.conftest import COMMANDS_FILE
 from tests.unit.test_actions import Recorder
@@ -253,3 +257,248 @@ async def test_a_silent_command_stays_silent_after_the_yes(
         "[it] togli l'audio",
         "Confermi? [Claudio ran: claudio_command ok]",
     )
+
+
+# --- the waiting command said again counts as yes ---------------------------------------------
+
+
+OFF_REPLY = "Mi spengo. Per riaccendermi di' Claudio, accenditi."
+OFF_REPLY_EN = "Turning off. To turn me back on, say Claudio, turn on."
+ASKED_02_11 = (
+    "Spegnermi? Va bene, socio, ma il mondo perderà il suo unico vero eroe. Confermi che mi spengo?"
+)
+NOT_UNDERSTOOD_IT = "Non ho capito: non lo faccio."
+NOT_UNDERSTOOD_EN = "I didn't catch that: not doing it."
+
+
+def waiting(*calls: SimpleNamespace) -> ScriptedClient:
+    """A reply that calls these tools, without a word."""
+    return ScriptedClient(([], "tool_use", list(calls)))
+
+
+async def test_the_sequence_of_02_11_switches_off_at_the_repeat(
+    pricing: Pricing, tools: PcTools, system: SystemControl
+) -> None:
+    """16:23:52: "Claudio, spegni." got "Non ho capito": 4 phrases and ~25 s to switch off."""
+    client = ScriptedClient(
+        ([ASKED_02_11], "tool_use", [text(ASKED_02_11), use(NAME, command="off", last=True)])
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "Ehi Claudio, spenitri.") == f"{ASKED_02_11} Confermi?"
+    assert not system.off and b.awaiting
+    assert await ask(b, "Claudio, spegni.") == OFF_REPLY
+    assert system.off and not b.awaiting
+    assert len(client.calls) == 1  # what a yes costs: no call after it
+    assert b.last_call["confirm"] == "yes"
+    assert b.last_call["tools"] == ["claudio_command(command=off, last=True) ok"]
+
+
+async def test_the_repeat_reaches_the_brain_through_the_router(
+    matcher: CommandMatcher, pricing: Pricing, tools: PcTools, system: SystemControl
+) -> None:
+    client = waiting(use(NAME, command="off", last=True))
+    b = acting_brain(pricing, client, tools)
+    r = LocalResponder(
+        matcher,
+        ActionRunner(Recorder().ctx(), system=system),
+        fallback=b.ask,
+        fallback_info=lambda: b.last_call,
+        fallback_awaiting=lambda: b.awaiting,
+    )
+    assert "".join([c async for c in r.respond("Ehi Claudio, spenitri.", "it")]) == "Confermi?"
+    assert "".join([c async for c in r.respond("Claudio, spegni.", "it")]) == OFF_REPLY
+    assert system.off and len(client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("command", "said", "state"),
+    [
+        ("off", "spegniti", "off"),
+        ("off", "Claudio, spegni ti", "off"),
+        ("off", "Ehi Claudio, spegniti per favore", "off"),
+        ("off", "puoi spegnerti", "off"),
+        ("off", "sì, spegniti", "off"),  # 84.2 with its "sì": the yes word is not compared
+        ("off", "ok, spegniti", "off"),
+        ("off", "Claudio, certo, spegni", "off"),
+        # Longer than any answer: a new request, were it not the very command that waits.
+        ("off", "Claudio, smetti di ascoltare per favore adesso", "off"),
+        ("shutdown", "Claudio, chiuditi.", "stopping"),
+        ("pause", "vai in pausa", "paused"),
+    ],
+)
+async def test_the_waiting_command_said_again_is_a_yes(
+    pricing: Pricing,
+    tools: PcTools,
+    system: SystemControl,
+    command: str,
+    said: str,
+    state: str,
+) -> None:
+    client = waiting(use(NAME, command=command, last=True))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "parole confuse")
+    assert not getattr(system, state)
+    await ask(b, said)
+    assert getattr(system, state)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("asked_in", "said", "reply", "runs"),
+    [
+        ("en", "Switch yourself off.", OFF_REPLY_EN, True),
+        ("en", "Sure, go silent.", OFF_REPLY_EN, True),
+        ("it", "Claudio, spegni.", OFF_REPLY, True),
+        ("it", "Switch yourself off.", NOT_UNDERSTOOD_IT, False),
+        ("en", "Claudio, spegni.", NOT_UNDERSTOOD_EN, False),
+    ],
+)
+async def test_a_repeat_counts_only_in_the_language_of_the_question(
+    pricing: Pricing,
+    tools: PcTools,
+    system: SystemControl,
+    asked_in: str,
+    said: str,
+    reply: str,
+    runs: bool,
+) -> None:
+    b = acting_brain(pricing, waiting(use(NAME, command="off", last=True)), tools)
+    [_ async for _ in b.ask("garbled words", asked_in)]
+    assert "".join([c async for c in b.ask(said, asked_in)]) == reply
+    assert system.off is runs
+
+
+async def test_a_word_close_to_a_phrase_of_another_language_closes_nothing(
+    pricing: Pricing, tools: PcTools, system: SystemControl
+) -> None:
+    """ "qui" is 85.7 from the English "quit": over an Italian question it is only "qui"."""
+    b = acting_brain(pricing, waiting(use(NAME, command="shutdown", last=True)), tools)
+    await ask(b, "parole confuse")
+    assert await ask(b, "qui") == NOT_UNDERSTOOD_IT
+    assert not system.stopping
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "non spegnerti",
+        "no spegniti",
+        "no, spegniti",
+        "spegniti no",
+        "Claudio, non spegnerti",
+        "sì, non spegnerti",
+        "stop listening",
+    ],
+)
+async def test_a_refusal_wins_over_a_repeat(
+    pricing: Pricing, tools: PcTools, system: SystemControl, said: str
+) -> None:
+    b = acting_brain(pricing, waiting(use(NAME, command="off", last=True)), tools)
+    await ask(b, "parole confuse")
+    assert await ask(b, said) == "Va bene, non lo faccio."
+    assert not system.off
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "spegni la luce",
+        "sì, spegni la luce",
+        "accenditi",
+        "apri chrome",
+        "vai in pausa",  # a command too, but not the one that waits
+        "Ti prendo i niti.",  # 02/11 16:23:57
+        "Spegniti?",  # a question is no yes
+        "Claudio.",
+    ],
+)
+async def test_what_is_not_the_waiting_command_is_no_yes(
+    pricing: Pricing, tools: PcTools, system: SystemControl, said: str
+) -> None:
+    client = waiting(use(NAME, command="off", last=True))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "parole confuse")
+    assert await ask(b, said) == NOT_UNDERSTOOD_IT
+    assert not system.off and not system.paused
+    assert len(client.calls) == 1
+
+
+async def test_a_longer_request_still_replaces_the_waiting_command(
+    pricing: Pricing, tools: PcTools, system: SystemControl
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use(NAME, command="off", last=True)]),
+        (["Qui non ho luci."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "parole confuse")
+    assert await ask(b, "spegni la luce della cucina per favore") == "Qui non ho luci."
+    assert not system.off and len(client.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "calls",
+    [
+        [use(NAME, command="off", last=True), use("open_app", name="spotify")],
+        [use(NAME, command="off"), use(NAME, command="shutdown")],
+        [use(NAME, command="off", last=True), use(NAME, command="off", last=True)],
+    ],
+)
+async def test_an_action_of_several_calls_is_never_a_repeat(
+    pricing: Pricing, tools: PcTools, system: SystemControl, calls: list[SimpleNamespace]
+) -> None:
+    b = acting_brain(pricing, waiting(*calls), tools)
+    await ask(b, "parole confuse")
+    assert await ask(b, "spegniti") == NOT_UNDERSTOOD_IT
+    assert not system.off and not system.stopping
+
+
+async def test_saying_another_tool_again_is_no_yes(pricing: Pricing, tools: PcTools) -> None:
+    b = acting_brain(pricing, waiting(use("close_window", window="chrome")), tools)
+    await ask(b, "chiudi chrome")
+    assert await ask(b, "chiudi chrome") == NOT_UNDERSTOOD_IT
+    assert not [d for d in tools.desktop.done if d[0] == "close"]
+    # Not even a tool whose argument is called "command" too and names one of ours.
+    assert not tools.repeats([call("run_command", command="off")], "spegniti", "it")
+
+
+async def test_a_repeat_never_stands_in_for_the_explicit_confirmation(
+    pricing: Pricing, rec: Recorder, system: SystemControl, tmp_path: Path
+) -> None:
+    """No command Claude may call sits at level 3 in commands.toml today: this one does."""
+    commands = [replace(c, level=3) if c.id == "off" else c for c in load_commands(COMMANDS_FILE)]
+    tool = CommandTool(commands, ActionRunner(rec.ctx(), system=system))
+    tools = PcTools(FakeDesktop(), PcSettings(), home=tmp_path, commands=tool)
+    try:
+        call_off = ([], "tool_use", [use(NAME, command="off", last=True)])
+        b = acting_brain(pricing, ScriptedClient(call_off, call_off), tools)
+        await ask(b, "parole confuse")
+        assert await ask(b, "spegniti") == NOT_UNDERSTOOD_IT
+        assert not system.off
+        await ask(b, "parole confuse")
+        assert await ask(b, "confermo") == OFF_REPLY  # it did wait for the explicit word
+        assert system.off
+    finally:
+        tools.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the PC tools are built only on Windows")
+@pytest.mark.parametrize(("threshold", "repeats"), [(85, True), (90, False)])
+def test_a_repeat_is_as_close_as_the_matcher_asks(
+    tmp_path: Path, threshold: int, repeats: bool
+) -> None:
+    """ "spegni" is 85.7 from "spegniti": `fuzzy_threshold` in the settings decides."""
+    settings = load_settings()
+    settings = settings.model_copy(
+        update={
+            "cost": settings.cost.model_copy(update={"db_file": tmp_path / "spend.db"}),
+            "memory": settings.memory.model_copy(update={"enabled": False}),
+            "router": settings.router.model_copy(update={"fuzzy_threshold": threshold}),
+        }
+    )
+    brain = build_responder(settings).fallback.__self__  # type: ignore[union-attr]
+    try:
+        off = [call(NAME, command="off")]
+        assert brain.tools.repeats(off, "Claudio, spegni.", "it") is repeats
+    finally:
+        brain.tools.close()
