@@ -38,7 +38,14 @@ from tests.unit.test_app import (
     run_frames,
     run_requests,
 )
-from tests.unit.test_conversation import LongSpeaker, barge, speak_over, talk
+from tests.unit.test_conversation import (
+    STORY,
+    LongSpeaker,
+    barge,
+    claude_says,
+    speak_over,
+    talk,
+)
 from tests.unit.test_listening_it1 import CueSpeaker, say_over_the_reply, slicing_barge
 
 # --- the words: Whisper's spellings of the same sounds ------------------------------------
@@ -1110,3 +1117,24 @@ async def test_while_off_an_open_question_is_dropped_not_answered(
     assert (await say(r, "accenditi")).startswith("Eccomi") and not system.off
     await say(r, "sì")  # now an ordinary request: the question is gone
     assert rec.combos == []
+
+
+async def test_a_story_cut_by_spegniti_does_not_go_on_while_off(
+    fake_vad, vad_settings, make_frames, matcher: CommandMatcher
+) -> None:
+    speaker = LongSpeaker()
+    responder = LocalResponder(matcher, ActionRunner(Recorder().ctx()))
+    claude_says(responder, STORY)
+    assistant = Assistant(
+        FakeWake({3}),
+        Endpointer(fake_vad, vad_settings),
+        FakeStt(["raccontami una storia", "Claudio, spegniti."]),
+        responder,
+        speaker,
+        clock=AudioClock(),
+        system=responder.actions.system,
+        barge_in=barge(vad_settings, ["Claudio, spegniti."]),
+    )
+    await speak_over(assistant, make_frames, speaker)
+    assert responder.actions.system.off
+    assert speaker.spoken[-1].startswith("Mi spengo")  # no "Dicevo: ..." after it
