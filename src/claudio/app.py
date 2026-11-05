@@ -1628,8 +1628,12 @@ class Assistant:
     async def _resume_reply(self, cut: CutReply, request: str, inter: Interaction) -> None:
         """After answering the request that cut a reply: "Dicevo: ..." and the rest of it."""
         assert self.barge_in is not None
-        if ends_the_reply(request) or self.clock() - cut.at > self.barge_in.resume_s:
-            return
+        if (
+            self.system.off
+            or ends_the_reply(request)
+            or self.clock() - cut.at > self.barge_in.resume_s
+        ):
+            return  # off ("spegniti" cut it): nothing more is said
         rest, language = cut.rest, cut.language
         log.info("Riprendo la risposta interrotta: %r", rest[:60])
         inter.info["resumed"] = True
