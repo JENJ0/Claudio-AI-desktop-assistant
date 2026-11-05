@@ -1264,3 +1264,98 @@ async def test_continuing_is_off_with_zero(fake_vad, vad_settings, make_frames) 
     frames = make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800)
     await run_frames(assistant, frames)
     assert responder.seen == ["Dimmi..."]
+
+
+# --- a row takes the route only of its own request -------------------------------------
+
+CLAUDE_ROUTE = {
+    "route": "claude",
+    "model": "claude-haiku",
+    "tools": ["web_search ok"],
+    "cost": 0.0018,
+    "input_tokens": 900,
+}
+
+
+def after_a_claude_reply(fake_vad, vad_settings, text: str, verify_wake: bool = False):
+    """A request that never reaches the router, right after a Claude reply left its route."""
+    assistant, *_ = build_continuing(fake_vad, vad_settings, FakeStt(text))
+    assistant.verify_wake = verify_wake
+    previous = dict(CLAUDE_ROUTE)
+    assistant.responder.last_route = previous
+    return assistant, previous
+
+
+def phrase(make_frames) -> list[np.ndarray]:
+    return make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800)
+
+
+async def test_a_false_wake_row_does_not_copy_the_route_of_the_reply_before(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    assistant, previous = after_a_claude_reply(
+        fake_vad, vad_settings, "Hey, ciao, come stai?", verify_wake=True
+    )
+    await run_frames(assistant, phrase(make_frames))
+    row = assistant.history[-1]
+    assert row["outcome"] == "false_wake"
+    assert not {"route", "tools", "cost", "model", "input_tokens"} & row.keys()
+    # Claude's question to the next turn is still there for asked_question to read.
+    assert assistant.responder.last_route is previous
+
+
+async def test_a_dropped_noise_row_does_not_copy_the_route_of_the_reply_before(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    assistant, previous = after_a_claude_reply(fake_vad, vad_settings, "")
+    await run_frames(assistant, phrase(make_frames))
+    row = assistant.history[-1]
+    assert row["outcome"] == "empty"
+    assert not {"route", "tools", "cost", "model", "input_tokens"} & row.keys()
+    assert assistant.responder.last_route is previous
+
+
+async def test_a_real_request_row_has_its_own_route_not_the_one_before(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    assistant, _ = after_a_claude_reply(fake_vad, vad_settings, "prenota un volo")
+    await run_frames(assistant, phrase(make_frames))
+    row = assistant.history[-1]
+    assert row["outcome"] == "ok" and row["route"] == "unknown"
+    assert not {"tools", "cost", "model"} & row.keys()
+
+
+async def test_a_request_said_in_two_phrases_keeps_its_route(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    stt = FakeStt(text=["Prenota un volo...", "Prenota un volo per Roma."], delay=0.1)
+    assistant, _ = after_a_claude_reply(fake_vad, vad_settings, "")
+    assistant.transcriber = stt
+    frames = (
+        make_frames("silence", 80)
+        + make_frames("speech", 800)
+        + make_frames("silence", 1200)
+        + make_frames("speech", 640)
+        + make_frames("silence", 1200)
+    )
+    await run_frames(assistant, frames)
+    (row,) = assistant.history
+    assert row["continued_from"] == "Prenota un volo..." and row["route"] == "unknown"
+    assert "tools" not in row
+
+
+async def test_a_typed_message_that_never_reaches_the_router_has_no_route(
+    fake_vad, vad_settings, tmp_path
+) -> None:
+    assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt(), set(), tmp_path)
+    responder.last_route = dict(CLAUDE_ROUTE)
+
+    async def broken(text: str, language: str = "it") -> AsyncIterator[str]:
+        raise RuntimeError("boom")
+        yield ""
+
+    responder.respond = broken  # type: ignore[method-assign]
+    await assistant.handle_typed("apri chrome", "it")
+    row = assistant.history[-1]
+    assert row["outcome"] == "error"
+    assert not {"route", "tools", "cost"} & row.keys()

@@ -705,6 +705,9 @@ class Assistant:
         follow_up = False
         self._interrupted = False
         self._takeover = None
+        # Not reset (asked_question reads it): a row takes the route only if this request
+        # assigned a new one.
+        route_before = self.responder.last_route
         # The reply before: the conversation window may be hearing its echo.
         self._said, self._reply_parts = "".join(self._reply_parts), []
         cut, self._cut = self._cut, None
@@ -750,7 +753,7 @@ class Assistant:
             if cut is not None:  # the request was dropped: the cut reply is not resumed
                 cut.stream.cancel()
             if outcome not in (Kind.RELISTEN.value, Kind.CONTINUE.value):
-                await self._close_request(inter, outcome, follow_up)
+                await self._close_request(inter, outcome, follow_up, route_before)
 
     async def _hear_phrase(
         self, audio: np.ndarray, inter: Interaction
@@ -812,13 +815,15 @@ class Assistant:
             return "stopped"  # "basta": the conversation is over
         return "interrupted" if self._interrupted else outcome
 
-    async def _close_request(self, inter: Interaction, outcome: str, follow_up: bool) -> None:
+    async def _close_request(
+        self, inter: Interaction, outcome: str, follow_up: bool, route_before: dict[str, Any]
+    ) -> None:
         """The request's row, then what listens next. It also runs on a cancel. Nothing may wait
         between _finish and _listen_*: for that moment CLAUDIO looks IDLE to announce,
         handle_typed and close_when_idle."""
         await self._judge_stranded()
         route = self.responder.last_route
-        if route:
+        if route and route is not route_before:  # else it never reached the router
             inter.info.update(route)
         if not follow_up:
             # An error or silence never leaves an action armed; a real cut also drops the offer.
@@ -1520,6 +1525,7 @@ class Assistant:
         inter = Interaction(clock=self.clock, info={"wake_word": "typed", "text": text})
         inter.mark("stt_done")
         outcome = "ok"
+        route_before = self.responder.last_route
         log.info("Scritto nella finestra: %r", text)
         try:
             if self.on_heard is not None:
@@ -1545,7 +1551,8 @@ class Assistant:
                 note = in_language(TYPED_NEEDS_VOICE, self.responder.language)
                 inter.info["reply"] = note
                 outcome = "needs_voice"
-            inter.info.update(self.responder.last_route)
+            if self.responder.last_route is not route_before:  # else it never reached the router
+                inter.info.update(self.responder.last_route)
             inter.mark("done")
             inter.info["outcome"] = outcome
             row = self.metrics.write(inter) if self.metrics else inter.summary()
