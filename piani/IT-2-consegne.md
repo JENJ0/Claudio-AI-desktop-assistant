@@ -35,8 +35,9 @@ sono poche, tutto il resto gira con il client finto.
 ### Stato lasciato dal passo
 
 Passo 0 chiuso il 05/11/2026 (v0.4.1). Tutti i punti di **Fatto quando** hanno un test, tranne
-uno: **la latenza che non peggiora** resta da misurare con `benchmark_latency.py --log` su almeno 20
-richieste dal vivo di JenJo (`tts_first_ms`, `m1_ms`), insieme al test manuale.
+uno, misurato a parte: **la latenza non è peggiorata** (`benchmark_latency.py --log`, 44 richieste
+dal vivo: M1 su Claude da 4947 a 3062 ms, locale da 1326 a 1004 ms). Il confronto non è alla pari:
+il periodo precedente aveva sessioni in gioco.
 
 Fatto oltre il passo, su richiesta di JenJo: refactoring delle funzioni sopra C901 12 e correzione dei
 bug trovati dall'audit e dalle revisioni. Dettaglio in `CHANGELOG.md`; il report completo è
@@ -46,8 +47,8 @@ bug trovati dall'audit e dalle revisioni. Dettaglio in `CHANGELOG.md`; il report
 il 31/10 e il 05/11 Jack è fallito 11 volte (`worker Jack: nessuna risposta in 90 s`), gli ultimi 6 di
 fila, con Whisper a 112 s in parallelo. Non nasce da questo passo: c'era già prima del primo commit.
 
-Per i prossimi passi: un `ActionContext()` preme tasti veri, `tests/conftest.py` lo blocca nei test ma
-non negli script di prova, che devono usare `Recorder().ctx()`.
+Per i prossimi passi: un `ActionContext()` di default rifiuta le azioni, ma non protegge `PcTools`:
+gli script di prova usano `Recorder().ctx()` e il `FakeDesktop` del gate.
 
 ## Architettura e decisioni di fondo
 
@@ -66,7 +67,7 @@ Queste scelte sono chiuse: si riaprono solo su richiesta di JenJo o con un dato 
 | MCP non per i tool interni; da riprendere per i servizi esterni (fase 7) | Un solo client nello stesso processo: aggiungerebbe un processo e un protocollo. Ragionamento, non un fatto verificato dalla ricerca |
 | Terminator solo come fonte di idee | Binding Python parziali e fermi a ottobre 2025, ultimo codice di aprile 2026, server MCP con `npx @latest`, segnalazione di sicurezza #479 senza risposte |
 | Nessun LLM locale, tool search o programmatic tool calling | Il primo aggiunge carico sulla GPU contesa; gli altri due rendono poco con 1-2 chiamate per richiesta |
-| Budget 0,30 €/giorno per ora | Da alzare quando JenJo vede i crediti Max nel Billing: è solo una riga di configurazione |
+| Budget 2,58 $/giorno, al massimo 80 $ al mese | Alzato il 05/11/2026, arrivati i crediti Max: 100 $ al mese, JenJo ne permette 80 per ora |
 | I livelli di sicurezza li decide il codice | Vale per ogni tool nuovo. Una regola nel prompt è accettabile solo dove un errore non ha conseguenze di sicurezza |
 
 ## Passo 0: correzioni

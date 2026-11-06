@@ -15,8 +15,8 @@ def test_project_config_loads() -> None:
     assert s.wakeword.models[0].threshold == 0.30
 
 
-def test_shipped_daily_budget_is_30_cents_of_a_euro_in_dollars() -> None:
-    assert load_settings(DEFAULT_CONFIG).cost.daily_budget == 0.335
+def test_shipped_daily_budget_stays_within_80_dollars_a_month() -> None:
+    assert load_settings(DEFAULT_CONFIG).cost.daily_budget * 31 <= 80
 
 
 def test_defaults_when_sections_missing(tmp_path: Path) -> None:
