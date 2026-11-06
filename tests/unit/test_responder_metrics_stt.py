@@ -489,3 +489,33 @@ def test_the_names_on_the_pc_come_before_the_sentences() -> None:
     assert stt._model.kwargs["initial_prompt"] == "Ehi Claudio, che ore sono?"
     stt.vocabulary = None
     assert stt.prompt("it") == "Ehi Claudio, che ore sono?"
+
+
+def test_from_log_groups_latency_by_path(tmp_path, capsys) -> None:
+    import sys
+
+    from claudio.config import PROJECT_ROOT
+
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    import benchmark_latency
+
+    def row(route: str, audible: float | None, m1: float) -> dict:
+        return {"outcome": "ok", "route": route, "audible_ms": audible, "m1_ms": m1}
+
+    rows = [
+        row("local", 300.0, 250.0),
+        row("confirmed", 500.0, 450.0),
+        row("claude", 1200.0, 1100.0),
+        row("claude", None, 900.0),  # written before audible_ms existed
+    ]
+    log = tmp_path / "metrics.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    benchmark_latency.from_log(log)
+    out = capsys.readouterr().out
+    audible = {line.split()[0]: line for line in out.splitlines() if " audible_ms " in line}
+    assert "300.0" in audible["locale"]
+    assert "500.0" in audible["conferma"]
+    assert "n=1" in audible["Claude"] and "1200.0" in audible["Claude"]  # the old row is skipped
+    assert any(
+        line.split()[:2] == ["Claude", "m1_ms"] and "n=2" in line for line in out.splitlines()
+    )

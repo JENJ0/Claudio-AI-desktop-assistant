@@ -1,7 +1,8 @@
-"""Per-interaction timestamps and the two latency metrics.
+"""Per-interaction timestamps and the latency metrics.
 
-M1: end of speech -> first sound of the reply (what we optimise).
-M2: wake word -> first sound of the reply (the CLAUDE.md metric).
+audible_ms: end of speech -> first audible sample (what we optimise), per path.
+M1: end of speech -> first audio handed to the player (kept for continuity).
+M2: wake word -> first sound of the reply (kept for continuity).
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ class Interaction:
         return {
             "m1_ms": self.ms("speech_end", "first_audio"),
             "m2_ms": self.ms("wake", "first_audio"),
+            "audible_ms": self.ms("speech_end", "first_audible"),
             "vad_wait_ms": self.ms("speech_end", "endpoint"),
             "stt_ms": self.ms("endpoint", "stt_done"),
             "route_ms": self.ms("stt_done", "first_text"),
@@ -118,7 +120,8 @@ class MetricsWriter:
             log.debug("Metriche: %s", row.get("outcome"), extra={"metrics": row})
             return row
         log.info(
-            "Latenza M1=%s ms M2=%s ms (STT %s ms, TTS prima frase %s ms)",
+            "Latenza udibile=%s ms M1=%s ms M2=%s ms (STT %s ms, TTS prima frase %s ms)",
+            row["audible_ms"],
             row["m1_ms"],
             row["m2_ms"],
             row["stt_ms"],
@@ -138,7 +141,7 @@ def percentile(values: list[float], pct: float) -> float:
 
 
 def summarize(
-    rows: list[dict[str, Any]], keys: tuple[str, ...] = ("m1_ms", "m2_ms", "stt_ms")
+    rows: list[dict[str, Any]], keys: tuple[str, ...] = ("m1_ms", "m2_ms", "audible_ms", "stt_ms")
 ) -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
     for key in keys:

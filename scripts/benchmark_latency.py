@@ -39,6 +39,27 @@ def print_summary(title: str, rows: list[dict], keys: tuple[str, ...]) -> None:
         )
 
 
+PATHS = {
+    "locale": {"local", "memory", "unknown"},
+    "conferma": {"confirm", "confirmed", "refused", "confirm_timeout"},
+    "Claude": {"claude"},
+}
+
+
+def print_by_path(rows: list[dict]) -> None:
+    """The primary metric (end of speech -> first audible sample), then m1_ms, per path."""
+    print("\n== per percorso: fine parlato -> primo campione udibile (audible_ms), m1_ms")
+    known = set().union(*PATHS.values())
+    groups = {name: [r for r in rows if r.get("route") in routes] for name, routes in PATHS.items()}
+    groups["altro"] = [r for r in rows if r.get("route") not in known]
+    for name, group in groups.items():
+        for key, stats in summarize(group, ("audible_ms", "m1_ms")).items():
+            print(
+                f"  {name:<9} {key:<10} n={stats['n']:<3} mediana={stats['median']:>7.1f} ms   "
+                f"p90={stats['p90']:>7.1f} ms"
+            )
+
+
 def from_log(path: Path) -> None:
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
     misses = [r for r in rows if r.get("outcome") == "near_miss"]
@@ -49,6 +70,7 @@ def from_log(path: Path) -> None:
         peaks = ", ".join(f"{r['wake_score']:.2f}" for r in misses[-20:])
         print(f"{len(misses)} wake word sotto soglia (ultimi picchi: {peaks})")
     print_summary("dal vivo", ok, ("m1_ms", "m2_ms", "vad_wait_ms", "stt_ms", "tts_first_ms"))
+    print_by_path(ok)
     print("\n== ultime richieste: esito, wake word, voce (picco), guadagno, VAD, testo, audio")
     for r in rows[-20:]:
         level, gain = r.get("speech_dbfs"), r.get("gain_db")

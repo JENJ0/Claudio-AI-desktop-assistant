@@ -99,7 +99,12 @@ class ConversationLog:
 def _details(row: dict[str, Any]) -> list[str]:
     """The figures of a row (latencies, cost, flags), in the order they are written."""
     details = []
-    for key, label in (("m1_ms", "M1"), ("m2_ms", "M2"), ("stt_ms", "STT")):
+    for key, label in (
+        ("audible_ms", "Udibile"),
+        ("m1_ms", "M1"),
+        ("m2_ms", "M2"),
+        ("stt_ms", "STT"),
+    ):
         if row.get(key) is not None:
             details.append(f"{label} {row[key]:.0f} ms")
     if row.get("claude_first_ms") is not None:

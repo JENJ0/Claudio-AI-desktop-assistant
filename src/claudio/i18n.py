@@ -180,8 +180,8 @@ EN: dict[str, str] = {
     "{path}: TOML non valido ({error})": "{path}: invalid TOML ({error})",
     "{path}: valori non validi -> {problems}": "{path}: invalid values -> {problems}",
     # metrics
-    "Latenza M1=%s ms M2=%s ms (STT %s ms, TTS prima frase %s ms)": (
-        "Latency M1=%s ms M2=%s ms (STT %s ms, TTS first sentence %s ms)"
+    "Latenza udibile=%s ms M1=%s ms M2=%s ms (STT %s ms, TTS prima frase %s ms)": (
+        "Latency audible=%s ms M1=%s ms M2=%s ms (STT %s ms, TTS first sentence %s ms)"
     ),
     "Metriche: %s": "Metrics: %s",
     # router

@@ -36,6 +36,17 @@ def voice_path(piper_dir: Path, voice: str) -> Path:
     return path
 
 
+# -40 dBFS on int16: below it a sample is silence to the ear.
+AUDIBLE_LEVEL = 328
+
+
+def leading_silence_s(audio: np.ndarray, rate: int) -> float:
+    """Seconds before the first audible sample; all silence: the piece's length."""
+    # shortcut: only the first chunk is scanned, upgrade if audible_ms outliers need it
+    loud = np.flatnonzero(np.abs(audio.astype(np.int32)) > AUDIBLE_LEVEL)
+    return float(loud[0] if loud.size else len(audio)) / rate
+
+
 class PiperSynth:
     def __init__(self, model_path: Path, settings: TtsSettings) -> None:
         from piper import PiperVoice, SynthesisConfig
@@ -91,6 +102,9 @@ class StreamingSpeaker:
         # The sentences of the current reply that started playing; the last one may have been
         # cut short. Where an interrupted reply resumes.
         self.played: list[str] = []
+        # Seconds from "first audio" to the first audible sample (queue, device, the piece's
+        # silence): set just before on_first_audio fires.
+        self.first_sound_delay_s = 0.0
 
     def interrupt(self) -> None:
         """Stop the reply being spoken ("basta" heard while speaking)."""
@@ -195,6 +209,7 @@ class StreamingSpeaker:
         # fade (a fade-in would only swallow the first syllable).
         self.duck(None)
         self.played = []
+        self.first_sound_delay_s = 0.0
         for synth in (self.synth, *self.voices.values()):
             if begin := getattr(synth, "begin_reply", None):  # Jack: one voice per reply
                 begin()
@@ -234,10 +249,13 @@ class StreamingSpeaker:
         # "basta" while waiting for a piece, or while it was made: nothing more plays,
         # and it is not counted as played (the resume and the echo filter read that).
         while (item := await queue.get()) is not None and not self._cancel.is_set():
+            audio, rate, sentence = item
             if first and on_first_audio is not None:
+                self.first_sound_delay_s = self.player.starts_in_s() + leading_silence_s(
+                    audio, rate
+                )
                 on_first_audio()
             first = False
-            audio, rate, sentence = item
             if sentence is not None:
                 self.played.append(sentence)
             done = await asyncio.to_thread(self.player.write, audio, rate, self._cancel)
