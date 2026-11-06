@@ -113,6 +113,12 @@ class FakeSpeaker:
         self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
         self._wake: Callable[[], None] | None = None  # wakes speak() waiting for text
 
+    async def _before_first_sound(self) -> None:
+        """Hook: time before the first sentence is audible (a subclass makes it last)."""
+
+    async def _during_sentence(self) -> None:
+        """Hook: time a sentence lasts once it started (a subclass makes it last)."""
+
     def queued_s(self) -> float:
         return self.queued
 
@@ -161,10 +167,15 @@ class FakeSpeaker:
         try:
             while (sentence := await queue.get()) is not None and not self._cancel.is_set():
                 lang = language() if callable(language) else language
-                if first and on_first_audio:
-                    on_first_audio()
+                if first:
+                    await self._before_first_sound()
+                    if self._cancel.is_set():
+                        break
+                    if on_first_audio:
+                        on_first_audio()
                 first = False
                 self.played.append(sentence)
+                await self._during_sentence()
         finally:
             self._wake = None
             producer.cancel()
