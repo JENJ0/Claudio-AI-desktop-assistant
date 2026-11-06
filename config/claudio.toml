@@ -221,7 +221,7 @@ answer_min_dbfs = -35.0    # a "sì" to "Confermi?" quieter than this is the TV:
 [cost]
 pricing_file = "config/pricing.toml"  # prices per model and cache multipliers (never in the code)
 db_file = "data/spend.db"             # SQLite ledger of every Claude call (tokens, cache, cost)
-daily_budget = 0.335                  # USD per day = 0.30 EUR at the ECB rate of 2026-11-03 (1 EUR = 1.1179 USD); update by hand if the rate moves much. Warning at warn_at, Claude blocked at 100 %
+daily_budget = 2.58                   # USD per day: at most 80 $ in a 31-day month, out of the 100 $ of Max API credits. Warning at warn_at, Claude blocked at 100 %
 warn_at = 0.8                         # local commands keep working when the budget is spent
 
 # Claude answers what no local command understands. The key goes in .env (ANTHROPIC_API_KEY),
