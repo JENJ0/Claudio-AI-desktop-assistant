@@ -26,21 +26,28 @@ from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 
 if TYPE_CHECKING:
-    from claudio.app import BargeIn
+    from claudio.app import Assistant, BargeIn
+    from claudio.audio.level import AutoGain
+    from claudio.audio.recorder import UtteranceRecorder
+    from claudio.audio.vad import SileroVad
     from claudio.brain.claude import ClaudeBrain
     from claudio.chat.launcher import ChatLauncher
     from claudio.cost.tracker import CostTracker
     from claudio.memory.store import MemoryStore
     from claudio.memory.tools import MemoryTools
-    from claudio.pc.tools import PcTools
+    from claudio.metrics import MetricsWriter
+    from claudio.pc.tools import Desktop, PcTools
+    from claudio.protocols import Speaker
     from claudio.router.actions import ActionContext
     from claudio.router.command_tool import CommandTool
     from claudio.router.matcher import CommandMatcher
     from claudio.router.responder import LocalResponder
     from claudio.stt.recovery import CommandRecovery, Rescorer
+    from claudio.stt.transcriber import WhisperTranscriber
     from claudio.system import SystemControl
     from claudio.tts.jack import JackSynth
     from claudio.tts.speaker import StreamingSpeaker
+    from claudio.wakeword.detector import OpenWakeWordDetector
 
 log = logging.getLogger("claudio")
 
@@ -63,9 +70,12 @@ def build_tracker(settings: Settings) -> CostTracker:
     )
 
 
-def build_memory(settings: Settings) -> MemoryStore | None:
+def build_memory(
+    settings: Settings, clock: Callable[[], float] | None = None
+) -> MemoryStore | None:
     """The long-term memory; None when it is off or its database cannot be opened (Claudio
-    then works as before, without memories)."""
+    then works as before, without memories). `clock`: the store's wall clock (the replay gate
+    fixes it: a memory's date reaches Claude's prompt)."""
     import sqlite3
 
     from claudio.memory.store import MemoryStore
@@ -76,7 +86,9 @@ def build_memory(settings: Settings) -> MemoryStore | None:
         return None
     path = settings.resolve(memory.db_file)
     try:
-        store = MemoryStore(path, memory.max_items, memory.max_chars)
+        store = MemoryStore(
+            path, memory.max_items, memory.max_chars, **({} if clock is None else {"clock": clock})
+        )
     except (OSError, sqlite3.Error) as exc:
         log.error("Memoria non disponibile (%s): %s", path, exc)
         return None
@@ -90,9 +102,15 @@ def build_responder(
     system: SystemControl | None = None,
     chat: ChatLauncher | None = None,
     tracker: CostTracker | None = None,
+    client: Any | None = None,
+    desktop: Desktop | None = None,
+    home: Path | None = None,
+    memory_clock: Callable[[], float] | None = None,
 ) -> LocalResponder:
     """`tracker`: open it on the thread that runs the requests (its SQLite connection only
-    works there) when this runs in a loader thread."""
+    works there) when this runs in a loader thread. `client`, `desktop`, `home` and
+    `memory_clock` are the replay gate's edges (a cassette client, a fake desktop, a fake home,
+    a fixed clock); None: as in production."""
     from claudio.memory.voice import MemoryVoice
     from claudio.router.actions import ActionRunner
     from claudio.router.command_tool import CommandTool
@@ -104,12 +122,14 @@ def build_responder(
     log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
     if tracker is None:
         tracker = build_tracker(settings)
-    store = build_memory(settings)
+    store = build_memory(settings, memory_clock)
     memory = MemoryVoice(store) if store is not None else None
     actions = ActionRunner(ctx, system=system, tracker=tracker, chat=chat, memory=memory)
     # Claude runs the commands it recognises in garbled words through the same actions.
     own_commands = CommandTool(commands, actions, matcher.threshold)
-    brain = build_brain(settings, tracker, chat, own_commands, store)
+    brain = build_brain(
+        settings, tracker, chat, own_commands, store, client=client, desktop=desktop, home=home
+    )
     guesser = None
     if brain is not None and settings.guess.enabled:
         from claudio.brain.guess import Guesser
@@ -138,10 +158,13 @@ def build_pc_tools(
     settings: Settings,
     commands: CommandTool | None = None,
     memory: MemoryTools | None = None,
+    desktop: Desktop | None = None,
+    home: Path | None = None,
 ) -> PcTools | None:
     """The tools Claude acts on the PC with: Windows only, and only with [pc] enabled.
     `commands`: Claudio's own commands (volume, chat, pause...) as one more tool; `memory`:
-    "remember" and "forget"."""
+    "remember" and "forget". `desktop` and `home`: a fake desktop and home (the replay gate);
+    None: Windows and the user's folder."""
     if not settings.pc.enabled:
         log.info("Azioni sul PC spente ([pc] enabled = false)")
         return None
@@ -149,9 +172,12 @@ def build_pc_tools(
         log.info("Azioni sul PC: solo su Windows")
         return None
     from claudio.pc.tools import PcTools
-    from claudio.pc.windows import WindowsDesktop
 
-    tools = PcTools(WindowsDesktop(), settings.pc, commands=commands, memory=memory)
+    if desktop is None:
+        from claudio.pc.windows import WindowsDesktop
+
+        desktop = WindowsDesktop()
+    tools = PcTools(desktop, settings.pc, home=home, commands=commands, memory=memory)
     log.info(
         "Azioni sul PC: %d strumenti, cartelle %s, %d tasti senza conferma",
         len(tools.definitions()),
@@ -167,10 +193,14 @@ def build_brain(
     chat: ChatLauncher | None = None,
     commands: CommandTool | None = None,
     memory: MemoryStore | None = None,
+    client: Any | None = None,
+    desktop: Desktop | None = None,
+    home: Path | None = None,
 ) -> ClaudeBrain | None:
     """Claude for what no command understands; None when it is switched off. A missing key
     still builds it: Claudio then says where the key goes instead of "I can't do that".
-    With a `memory`, Claude sees the memories and may save and forget them."""
+    With a `memory`, Claude sees the memories and may save and forget them. `client`,
+    `desktop`, `home`: the replay gate's edges (None: the real ones)."""
     from claudio.brain.claude import ClaudeBrain, make_client
     from claudio.brain.personality import load_personality
     from claudio.cost.pricing import PricingError
@@ -187,9 +217,10 @@ def build_brain(
         log.error("Claude spento: %s", exc)
         return None
     key = settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else ""
-    if not key.strip():
+    if not key.strip() and client is None:
         log.warning("ANTHROPIC_API_KEY mancante nel file .env: Claude non risponderà")
-    client = make_client(key.strip(), claude.timeout_s, claude.keepalive_s) if key.strip() else None
+    if client is None and key.strip():
+        client = make_client(key.strip(), claude.timeout_s, claude.keepalive_s)
     personality = load_personality(
         settings.resolve(claude.personality_file), claude.personality_max_chars
     )
@@ -202,6 +233,8 @@ def build_brain(
             settings,
             commands,
             MemoryTools(memory, remember.learn) if memory is not None and remember.tools else None,
+            desktop=desktop,
+            home=home,
         ),
         pc=settings.pc,
         personality=personality,
@@ -525,15 +558,92 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
     )
 
 
+def build_assistant(
+    settings: Settings,
+    *,
+    wake: OpenWakeWordDetector,
+    vad: SileroVad,
+    wake_vad: SileroVad,
+    transcriber: WhisperTranscriber,
+    responder: LocalResponder,
+    speaker: Speaker,
+    system: SystemControl,
+    level: AutoGain | None = None,
+    metrics: MetricsWriter | None = None,
+    audio_sink: UtteranceRecorder | None = None,
+    rejected_sink: UtteranceRecorder | None = None,
+    clock: Callable[[], float] | None = None,
+) -> Assistant:
+    """The Assistant exactly as production wires it from the settings (run_assistant) and as
+    the replay gate does (scripts/replay_gate.py): only what the caller owns is passed in.
+    `clock=None` leaves the Assistant its own."""
+    from claudio.app import Assistant
+    from claudio.audio.vad import Endpointer, VoiceMeter
+
+    return Assistant(
+        wake=wake,
+        endpointer=Endpointer(vad, settings.vad, settings.audio.sample_rate),
+        transcriber=transcriber,
+        responder=responder,
+        speaker=speaker,
+        metrics=metrics,
+        audio_sink=audio_sink,
+        level=level,
+        system=system,
+        second_chance=(
+            (lambda audio: transcriber.transcribe(audio, quick=True))
+            if settings.wakeword.second_chance
+            else None
+        ),
+        retry_language=(
+            settings.stt.languages[0]
+            if settings.stt.retry_in_first_language and len(settings.stt.languages) > 1
+            else None
+        ),
+        conversation_s=settings.conversation.window_s,
+        barge_in=build_barge_in(settings, transcriber) if settings.conversation.barge_in else None,
+        verify_wake=settings.wakeword.verify,
+        closed_list=(
+            (lambda audio, language: transcriber.candidates(audio, language=language))
+            if settings.stt.closed_list
+            else None
+        ),
+        closed_list_max_words=settings.stt.closed_list_max_words,
+        claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
+        only_addressed=settings.conversation.only_addressed,
+        noise=settings.noise,
+        confirm_below=settings.wakeword.confirm_below,
+        always_confirm=wake.confirmed,
+        unclear_min=settings.wakeword.unclear_min,
+        stt_segments=lambda: transcriber.last_segments,
+        unsure_logprob=settings.stt.unsure_logprob if responder.fallback else None,
+        alternatives=settings.stt.alternatives if settings.stt.closed_list else 0,
+        on_heard=responder.heard,
+        continue_s=settings.vad.continue_s,
+        echo_tail_ms=settings.conversation.echo_tail_ms,
+        guess=responder.guess if responder.fallback_guess else None,
+        command_recovery=build_recovery(settings, transcriber, responder.matcher),
+        # At the endpointer's "not silence" level: a name clipped by the headset's gate
+        # stays above [vad] threshold for 64 ms only (30/10: 128 ms or more at this level,
+        # clicks and the gate 0).
+        voice_meter=VoiceMeter(
+            wake_vad, max(settings.vad.threshold - 0.15, 0.01), settings.audio.sample_rate
+        ),
+        wake_min_voice_ms=settings.wakeword.min_voice_ms,
+        rejected_sink=rejected_sink,
+        input_gain_db=settings.audio.input_gain_db,
+        **({} if clock is None else {"clock": clock}),
+    )
+
+
 async def run_assistant(
     settings: Settings, session: Path, chat_window: ChatLauncher | None = None
 ) -> None:
-    from claudio.app import Assistant
     from claudio.audio.capture import AudioCapture
     from claudio.audio.devices import resolve_device
     from claudio.audio.level import AutoGain
     from claudio.audio.recorder import UtteranceRecorder
-    from claudio.audio.vad import Endpointer, SileroVad, VoiceMeter
+    from claudio.audio.vad import SileroVad
     from claudio.chat.store import ChatStore
     from claudio.metrics import MetricsWriter
     from claudio.router.actions import ActionContext
@@ -638,60 +748,21 @@ async def run_assistant(
         else None
     )
     wake_vad = SileroVad(models / "vad" / "silero_vad.onnx", settings.audio.sample_rate)
-    assistant = Assistant(
+    assistant = build_assistant(
+        settings,
         wake=wake,
-        endpointer=Endpointer(vad, settings.vad, settings.audio.sample_rate),
+        vad=vad,
+        wake_vad=wake_vad,
         transcriber=transcriber,
         responder=responder,
         speaker=speaker,
+        system=system,
+        level=level,
         metrics=MetricsWriter(
             logs / "metrics.jsonl", ConversationLog(session), chat, gpu=GpuSampler()
         ),
         audio_sink=recorder,
-        level=level,
-        system=system,
-        second_chance=(
-            (lambda audio: transcriber.transcribe(audio, quick=True))
-            if settings.wakeword.second_chance
-            else None
-        ),
-        retry_language=(
-            settings.stt.languages[0]
-            if settings.stt.retry_in_first_language and len(settings.stt.languages) > 1
-            else None
-        ),
-        conversation_s=settings.conversation.window_s,
-        barge_in=build_barge_in(settings, transcriber) if settings.conversation.barge_in else None,
-        verify_wake=settings.wakeword.verify,
-        closed_list=(
-            (lambda audio, language: transcriber.candidates(audio, language=language))
-            if settings.stt.closed_list
-            else None
-        ),
-        closed_list_max_words=settings.stt.closed_list_max_words,
-        claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
-        only_addressed=settings.conversation.only_addressed,
-        noise=settings.noise,
-        confirm_below=settings.wakeword.confirm_below,
-        always_confirm=wake.confirmed,
-        unclear_min=settings.wakeword.unclear_min,
-        stt_segments=lambda: transcriber.last_segments,
-        unsure_logprob=settings.stt.unsure_logprob if responder.fallback else None,
-        alternatives=settings.stt.alternatives if settings.stt.closed_list else 0,
-        on_heard=responder.heard,
-        continue_s=settings.vad.continue_s,
-        echo_tail_ms=settings.conversation.echo_tail_ms,
-        guess=responder.guess if responder.fallback_guess else None,
-        command_recovery=build_recovery(settings, transcriber, responder.matcher),
-        # At the endpointer's "not silence" level: a name clipped by the headset's gate
-        # stays above [vad] threshold for 64 ms only (30/10: 128 ms or more at this level,
-        # clicks and the gate 0).
-        voice_meter=VoiceMeter(
-            wake_vad, max(settings.vad.threshold - 0.15, 0.01), settings.audio.sample_rate
-        ),
-        wake_min_voice_ms=settings.wakeword.min_voice_ms,
         rejected_sink=rejected,
-        input_gain_db=settings.audio.input_gain_db,
     )
     if tray is not None:
         tray.set_ready()
