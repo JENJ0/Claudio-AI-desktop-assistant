@@ -1,0 +1,11 @@
+# Never in the graph: private runtime data and heavy binaries. The repo is public.
+.env
+logs/
+data/
+voices/
+models/
+samples/
+piani/
+research_notes/
+reports/
+.venv/
