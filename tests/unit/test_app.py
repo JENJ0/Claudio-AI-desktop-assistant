@@ -15,6 +15,7 @@ from claudio.app import Assistant, State
 from claudio.audio.vad import Endpointer
 from claudio.metrics import MetricsWriter
 from claudio.system import SystemControl
+from claudio.tts.sentence_splitter import split_stream
 
 
 class FakeWake:
@@ -109,12 +110,16 @@ class FakeSpeaker:
         self.played: list[str] = []
         self.queued = 0.0  # seconds still coming out of the speakers after a sound
         self.first_sound_delay_s = 0.0
+        self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
+        self._wake: Callable[[], None] | None = None  # wakes speak() waiting for text
 
     def queued_s(self) -> float:
         return self.queued
 
     def interrupt(self) -> None:
-        pass
+        self._cancel.set()
+        if (wake := self._wake) is not None:
+            wake()  # may come from another thread, as the real one's
 
     def duck(self, volume: float | None) -> None:
         self.ducks.append(volume)
@@ -128,11 +133,49 @@ class FakeSpeaker:
         on_first_audio: Callable[[], None] | None = None,
         language: str | Callable[[], str] = "it",
     ) -> None:
-        text = "".join([c async for c in text_stream])
-        if on_first_audio:
-            on_first_audio()
-        self.spoken.append(text)
-        self.languages.append(language() if callable(language) else language)
+        """Like the real speaker: sentence by sentence, first audio at the first one, and
+        interrupt() stops it, also while it waits for text. `spoken` is what it read."""
+        self._cancel.clear()
+        self.played = []
+        read: list[str] = []
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def produce() -> None:
+            try:
+                async for sentence in split_stream(chunks()):
+                    queue.put_nowait(sentence)
+                    await asyncio.sleep(0)  # speak() acts before more text is read
+            finally:
+                queue.put_nowait(None)
+
+        async def chunks() -> AsyncIterator[str]:
+            async for chunk in text_stream:
+                read.append(chunk)
+                yield chunk
+
+        loop = asyncio.get_running_loop()
+        self._wake = lambda: loop.call_soon_threadsafe(queue.put_nowait, None)
+        producer = asyncio.create_task(produce())
+        lang: str | None = None
+        first = True
+        try:
+            while (sentence := await queue.get()) is not None and not self._cancel.is_set():
+                lang = language() if callable(language) else language
+                if first and on_first_audio:
+                    on_first_audio()
+                first = False
+                self.played.append(sentence)
+        finally:
+            self._wake = None
+            producer.cancel()
+            (result,) = await asyncio.gather(producer, return_exceptions=True)
+            self.spoken.append("".join(read))
+            if lang is None and not callable(language):
+                lang = language  # no text: a callable is never read, as the real one's
+            if lang is not None:
+                self.languages.append(lang)
+        if isinstance(result, Exception):
+            raise result
 
 
 class AudioClock:

@@ -348,7 +348,12 @@ def window_assistant(fake_vad, vad_settings, matcher, stt: EchoStt, **kwargs):
 
 
 def listening_again(assistant: Assistant, speaker) -> Callable[[], bool]:
-    return lambda: assistant.state is State.LISTENING and len(speaker.beeps) >= 2
+    # own_sound.ended() runs in the beep task's done callback, a loop turn after the beep
+    return lambda: (
+        assistant.state is State.LISTENING
+        and len(speaker.beeps) >= 2
+        and not assistant.own_sound.playing
+    )
 
 
 async def test_a_phrase_begun_while_the_window_was_deaf_keeps_its_start(
