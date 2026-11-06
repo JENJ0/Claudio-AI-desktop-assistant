@@ -84,19 +84,20 @@ Etichette salvate finora:
 
 **Fatta il 06/11/2026, e il test fallisce:** 6 negativi su 64 diventano un sì, 24 sì su 44 capiti. È il guasto che la prova doveva trovare, e lo corregge G2. **Non rifarla adesso:** in G2 il registratore cambia, e registrerai 145 riprese nuove, circa 20-25 minuti.
 
-**Da fare ora, 5 minuti:** riascolta queste 6 riprese e scrivimi cosa senti. Per esempio, in PowerShell:
-```
-Start-Process samples\safety\unclear\s__0.wav
-```
+**Riascolto fatto il 06/11/2026:** voce distorta in tutte le riprese controllate.
 
-| File in `samples/safety/` | Cosa ascoltare |
+| File in `samples/safety/` | Cosa hai sentito |
 |---|---|
-| `unclear/s__0.wav` | il tono sale davvero? |
-| `no/non_va_bene__1.wav` | il «non» si sente? |
-| `unclear/si_fa_tardi__1.wav` | sembra «sì, va bene»? |
-| `no/certo_che_no__1.wav` | «che no» è chiaro? |
-| `no/va_bene_ma_non_adesso__0.wav` | «non adesso» è chiaro? |
-| `unclear/si_fa_tardi__0.wav` | sembra «sì, va bene»? |
+| `unclear/s__0.wav` | distorta e quasi tagliata |
+| `no/non_va_bene__1.wav` | come la prima, anche peggio |
+| `unclear/si_fa_tardi__1.wav` | distorta, ma la «r» si sente chiaramente |
+| `no/certo_che_no__1.wav` | chiara, ma distorta |
+| `no/va_bene_ma_non_adesso__0.wav` e `unclear/si_fa_tardi__0.wav` | chiare, ma distorte |
+
+**Per G2, prima di registrare (2 minuti):** ascolta 3 WAV dal vivo e dimmi se suonano distorti come queste riprese. Per aprirne uno, in PowerShell:
+```
+Get-ChildItem samples\corpus\2026-11-06_12-48\audio -Filter *_ok.wav | Select-Object -First 3 | ForEach-Object { Start-Process $_.FullName }
+```
 
 Quello che segue è la prova come l'hai fatta.
 
