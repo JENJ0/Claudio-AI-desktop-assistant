@@ -79,6 +79,7 @@ EN: dict[str, str] = {
     ),
     "Impossibile riprodurre il segnale di errore": "Could not play the error sound",
     "Impossibile salvare l'audio della richiesta": "Could not save the audio of the request",
+    "Impossibile salvare la nota accanto al WAV %s": "Could not save the note beside the WAV %s",
     # audio
     "Stato audio in ingresso: %s": "Audio input status: %s",
     "Microfono: %s%s": "Microphone: %s%s",

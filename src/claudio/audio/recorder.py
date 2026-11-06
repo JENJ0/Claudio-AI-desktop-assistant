@@ -3,8 +3,10 @@ to tune VAD and STT on real audio."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -26,4 +28,10 @@ class UtteranceRecorder:
         sf.write(self.directory / name, pcm, self.sample_rate)
         for old in sorted(self.directory.glob("*.wav"))[: -self.keep]:
             old.unlink(missing_ok=True)
+            old.with_suffix(".json").unlink(missing_ok=True)
         return name
+
+    def note(self, name: str, meta: dict[str, Any]) -> None:
+        """What replaying `name` faithfully needs (Whisper's prompt, the gain), beside the WAV."""
+        note = (self.directory / name).with_suffix(".json")
+        note.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")

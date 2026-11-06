@@ -531,17 +531,23 @@ def disk(tmp_path: Path) -> Iterator[Path]:
 
 
 def holding(word: str, disk: Path) -> set[str]:
-    """The files under `disk` with `word` in their bytes, whatever they are (SQLite too)."""
+    """The files under `disk` with `word` in their bytes, whatever they are (SQLite too). Not
+    the WAV notes: they hold the configured Whisper prompt, never what was said; `notes()`
+    checks that none is left from a phrase heard while off."""
     needle = word.encode()
     return {
         path.relative_to(disk).as_posix().removesuffix("-wal")
         for path in disk.rglob("*")
-        if path.is_file() and needle in path.read_bytes().lower()
+        if path.is_file() and path.suffix != ".json" and needle in path.read_bytes().lower()
     }
 
 
 def wavs(disk: Path) -> set[str]:
     return {path.name for path in disk.rglob("*.wav")}
+
+
+def notes(disk: Path) -> set[str]:
+    return {path.stem for path in disk.rglob("*.json") if path.parent.name in ("audio", "rejected")}
 
 
 def in_the_console(disk: Path) -> str:
@@ -599,11 +605,13 @@ async def the_whole_story(assistant: Assistant, make_frames, disk: Path, while_o
     assert system.off
     kept = wavs(disk)
     assert len(kept) == 1 and rows(disk)[-1]["text"] == "Claudio, spegniti."
+    assert notes(disk) == {Path(name).stem for name in kept}
 
     await run_requests(assistant, make_frames, while_off)
     assert system.off
     assert holding(WORD, disk) == set()
     assert wavs(disk) == kept  # no *_off.wav, no *_timeout.wav, no near miss
+    assert notes(disk) == {Path(name).stem for name in kept}  # and no note of what was said
     for row in rows(disk)[1:]:
         assert not SAID_FIELDS & set(row), row
         assert "audio_file" not in row
@@ -613,6 +621,7 @@ async def the_whole_story(assistant: Assistant, make_frames, disk: Path, while_o
     assert rows(disk)[-1]["text"] == "Claudio, accenditi."
     assert len(wavs(disk)) == 2 and any(name.endswith("_ok.wav") for name in wavs(disk) - kept)
     assert "'Claudio, accenditi.'" in in_the_console(disk)
+    assert notes(disk) == {Path(name).stem for name in wavs(disk)}  # the turn-on's is kept
     assert holding(WORD, disk) == set()
 
     await run_requests(assistant, make_frames, 1)

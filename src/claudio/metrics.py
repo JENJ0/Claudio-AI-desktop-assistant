@@ -33,6 +33,8 @@ class Interaction:
     marks: dict[str, float] = field(default_factory=dict)
     info: dict[str, Any] = field(default_factory=dict)
     off: bool = False  # heard while CLAUDIO was off: what was said is not in the row
+    # Whisper's prompt for the pass whose text was kept: never in a row (folder names).
+    whisper_prompt: str = ""
 
     def mark(self, stage: str) -> None:
         # Only the first occurrence counts (e.g. first audio chunk).

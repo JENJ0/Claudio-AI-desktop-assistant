@@ -206,6 +206,27 @@ def test_a_piece_of_the_prompt_is_transcribed_again_without_it() -> None:
     assert stt.transcribe(speech) == ""  # the second pass is filtered too
 
 
+def test_last_prompt_is_the_request_prompt_not_the_quick_one() -> None:
+    import numpy as np
+
+    from claudio.config import SttSettings
+
+    stt = make_stt()
+    stt.vocabulary = lambda language: "Cartelle: Tesi."
+    stt.settings = SttSettings(prompts={"it": "Apri Chrome."})
+    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
+    stt._model.text = " Chiudi il blocco note."  # not a piece of the prompt: one pass
+    stt.transcribe(speech)
+    assert stt.last_prompt == "Cartelle: Tesi. Apri Chrome."
+    stt.transcribe(speech, quick=True)  # the wake word's second look must not replace it
+    assert stt.last_prompt == "Cartelle: Tesi. Apri Chrome."
+    stt.transcribe(np.zeros(16000, dtype=np.float32))  # silence: no pass at all
+    assert stt.last_prompt == ""
+    stt._model.text = " Apri Chrome."  # Whisper echoed the prompt: the real pass had none
+    stt.transcribe(speech)
+    assert stt.last_prompt == ""
+
+
 def test_an_ordinary_request_takes_one_pass() -> None:
     import numpy as np
 
@@ -239,7 +260,7 @@ def make_stt():
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings()
     stt.language, stt.language_confidence, stt._encoded, stt._reused = "it", 1.0, None, 0
-    stt.last_language = "it"
+    stt.last_language, stt.last_prompt = "it", ""
     stt._model = FakeWhisper()
     return stt
 

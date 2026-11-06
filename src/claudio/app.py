@@ -613,6 +613,7 @@ class Assistant:
         if sink is not None:
             try:
                 audio_file = sink(heard, kind)
+                self._note_wav(sink, audio_file, gain_db=self._gain_db())
             except Exception:
                 log.exception("Impossibile salvare l'audio della wake word mancata")
         if noisy:
@@ -786,6 +787,7 @@ class Assistant:
             else:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
                 heard = self.transcriber.language
+                inter.whisper_prompt = getattr(self.transcriber, "last_prompt", "")
                 # Whisper's confidence in the first pass: a retry only replaces it when
                 # understood.
                 segments = list(self.stt_segments()) if self.stt_segments is not None else []
@@ -1491,6 +1493,7 @@ class Assistant:
         inter.info["retry_ms"] = round((self.clock() - start) * 1000)
         if again and understands(again, first):
             log.info("Riprovato in %s: %r -> %r", first, self._kept(text), again)
+            inter.whisper_prompt = getattr(self.transcriber, "last_prompt", "")
             inter.info["retried_from"] = self._kept(text)
             return again, first
         log.info("Riprovato in %s, non capito neanche così: %r", first, self._kept(again))
@@ -1728,11 +1731,34 @@ class Assistant:
                     inter.info["audio_file"] = self.audio_sink(heard, outcome)
                 except Exception:
                     log.exception("Impossibile salvare l'audio della richiesta")
+                else:
+                    self._note_request_wav(inter)
             row = self.metrics.write(inter) if self.metrics else inter.summary()
             self.history.append(row)
         self._interaction = None
         self.wake.reset()
         self._set_state(State.IDLE)
+
+    def _note_request_wav(self, inter: Interaction) -> None:
+        """Beside the request's WAV: Whisper's prompt and the gain it was captured with (read
+        from inter.info: AutoGain has already moved on, for the next request)."""
+        self._note_wav(
+            self.audio_sink,
+            inter.info.get("audio_file"),
+            whisper_prompt=inter.whisper_prompt,
+            language=inter.info.get("stt_language"),
+            gain_db=inter.info.get("gain_db", self.input_gain_db),
+        )
+
+    def _note_wav(self, sink: object, name: str | None, **meta: Any) -> None:
+        """A note beside a saved WAV, if the sink writes them. Never stops the request."""
+        note = getattr(sink, "note", None)
+        if note is None or name is None:
+            return
+        try:
+            note(name, meta)
+        except Exception:
+            log.exception("Impossibile salvare la nota accanto al WAV %s", name)
 
     def _measure_deaf(self, inter: Interaction) -> None:
         """How much voice the window's deaf start held (deaf_speech_ms): a "sì" said over the
@@ -1767,7 +1793,9 @@ class Assistant:
         if self.rejected_sink is None or self.system.off:
             return None
         try:
-            return self.rejected_sink(audio, kind)
+            saved = self.rejected_sink(audio, kind)
+            self._note_wav(self.rejected_sink, saved, gain_db=self._gain_db())
+            return saved
         except Exception:
             log.exception("Impossibile salvare l'audio scartato")
             return None

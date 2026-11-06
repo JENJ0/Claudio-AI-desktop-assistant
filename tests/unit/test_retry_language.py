@@ -146,3 +146,26 @@ async def test_italian_and_disabled_retry_cost_nothing(
     assistant2, *_ = build(fake_vad, vad_settings, matcher, stt2, retry=False)
     await run_frames(assistant2, request(make_frames))
     assert stt.calls == [None] and stt2.calls == [None]
+
+
+async def test_a_retry_not_understood_leaves_the_first_pass_prompt_in_the_note(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    from tests.unit.test_app import NotingSink
+
+    class PromptedStt(TwoLanguageStt):
+        last_prompt = ""
+
+        def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
+            self.last_prompt = "Italian prompt" if language else "English prompt"
+            return super().transcribe(audio, language=language)
+
+    stt = PromptedStt("Hey Claudio, cue the calculator.", "en", "Hey Claudio, blah blah blah.")
+    assistant, *_ = build(fake_vad, vad_settings, matcher, stt, retry=True)
+    assistant.audio_sink = sink = NotingSink()
+    await run_frames(assistant, request(make_frames))
+    assert stt.calls == [None, "it"]
+    assert assistant.history[-1]["stt_language"] == "en"
+    (_, meta), *_ = sink.notes
+    assert (meta["language"], meta["whisper_prompt"]) == ("en", "English prompt")
+    assert "whisper_prompt" not in assistant.history[-1]  # folder names stay out of the rows
