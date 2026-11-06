@@ -8,7 +8,7 @@ import pytest
 from claudio.audio.earcons import make_earcons
 from claudio.audio.player import resample
 from claudio.protocols import CUT_SHORT
-from claudio.tts.speaker import StreamingSpeaker
+from claudio.tts.speaker import StreamingSpeaker, leading_silence_s
 
 
 class FakeSynth:
@@ -37,6 +37,9 @@ class FakePlayer:
         with self.lock:
             self.played.append((int(audio[0]), time.perf_counter()))
         time.sleep(0.05)
+
+    def starts_in_s(self) -> float:
+        return 0.0
 
 
 async def stream(*chunks: str):
@@ -429,3 +432,30 @@ async def test_the_language_is_read_at_every_sentence_as_it_comes() -> None:
     await speaker.speak(text(), language=lambda: language)
     assert [t for t, _ in english.calls] == ["Opening."]
     assert [t for t, _ in italian.calls] == ["Apro."]
+
+
+def test_leading_silence_finds_the_first_audible_sample() -> None:
+    audio = np.concatenate([np.zeros(800, np.int16), np.array([1000], np.int16)])
+    assert leading_silence_s(audio, 16000) == pytest.approx(0.05)
+    assert leading_silence_s(np.zeros(1600, np.int16), 16000) == pytest.approx(0.1)
+    assert leading_silence_s(np.array([1000, 0], np.int16), 16000) == 0.0
+
+
+class QueuedPlayer(FakePlayer):
+    def starts_in_s(self) -> float:
+        return 0.25  # what is queued plus the device
+
+
+async def test_first_sound_delay_is_ready_when_first_audio_fires() -> None:
+    class QuietStart(FakeSynth):
+        def synthesize(self, text: str) -> np.ndarray:
+            return np.concatenate([np.zeros(2205, np.int16), np.full(100, 1000, np.int16)])
+
+    speaker = StreamingSpeaker(QuietStart(), QueuedPlayer())
+    seen: list[float] = []
+    await speaker.speak(
+        stream("Uno."), on_first_audio=lambda: seen.append(speaker.first_sound_delay_s)
+    )
+    assert seen == [pytest.approx(0.35)]  # 0.25 s ahead, then 0.1 s of silence
+    await speaker.speak(stream(""))
+    assert speaker.first_sound_delay_s == 0.0  # a new reply starts from zero

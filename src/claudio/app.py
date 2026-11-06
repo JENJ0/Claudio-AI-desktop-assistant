@@ -1552,7 +1552,7 @@ class Assistant:
                 await self._sound(
                     self.speaker.speak(
                         stream,
-                        on_first_audio=lambda: inter.mark("first_audio"),
+                        on_first_audio=lambda: self._mark_first_audio(inter),
                         language=lambda: self.responder.language,
                     )
                 )
@@ -1689,8 +1689,13 @@ class Assistant:
             if parts:  # what was said, also when "basta" cut it short (session log, metrics)
                 inter.info["reply"] = "".join(parts).strip()
 
-    def _on_first_audio(self, inter: Interaction) -> None:
+    def _mark_first_audio(self, inter: Interaction) -> None:
         inter.mark("first_audio")
+        # Written straight in: mark() keeps the first occurrence, and so must this.
+        inter.marks.setdefault("first_audible", inter.clock() + self.speaker.first_sound_delay_s)
+
+    def _on_first_audio(self, inter: Interaction) -> None:
+        self._mark_first_audio(inter)
         self._barge_pending = None
         if self.barge_in is not None:
             self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)

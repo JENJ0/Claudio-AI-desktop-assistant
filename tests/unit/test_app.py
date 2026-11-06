@@ -108,6 +108,7 @@ class FakeSpeaker:
         self.ducks: list[float | None] = []
         self.played: list[str] = []
         self.queued = 0.0  # seconds still coming out of the speakers after a sound
+        self.first_sound_delay_s = 0.0
 
     def queued_s(self) -> float:
         return self.queued
@@ -202,6 +203,19 @@ async def test_normal_path(fake_vad, vad_settings, make_frames, tmp_path) -> Non
     assert row["wake_word"] == "hey_claudio"
     assert row["m1_ms"] is not None and row["m2_ms"] >= row["m1_ms"] >= 0
     assert (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").count("\n") == 1
+
+
+async def test_audible_ms_adds_the_delay_to_m1(fake_vad, vad_settings, make_frames) -> None:
+    assistant, _wake, speaker, _ = build(fake_vad, vad_settings, FakeStt(), {3})
+    speaker.first_sound_delay_s = 0.125
+    frames = make_frames("silence", 640) + make_frames("speech", 1000) + make_frames("silence", 800)
+    await run_frames(assistant, frames)
+    row = assistant.history[-1]
+    assert row["audible_ms"] == pytest.approx(row["m1_ms"] + 125, abs=0.2)
+
+    quiet, _wake, _speaker, _ = build(fake_vad, vad_settings, FakeStt(), {1})
+    await run_frames(quiet, make_frames("silence", 3600))
+    assert quiet.history[-1]["audible_ms"] is None  # nothing was said back
 
 
 async def test_timeout_without_speech(fake_vad, vad_settings, make_frames) -> None:

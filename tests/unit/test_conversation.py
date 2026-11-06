@@ -352,6 +352,9 @@ class SlowPlayer:
         self.played += 1
         return True
 
+    def starts_in_s(self) -> float:
+        return 0.0
+
 
 class Synth:
     sample_rate = 22050
@@ -1271,12 +1274,12 @@ class WrittenSynth(Synth):
 async def test_a_story_cut_with_the_real_speaker_goes_on_from_the_sentence_it_was_saying(
     fake_vad, vad_settings, make_frames, matcher
 ) -> None:
-    """FakeSpeaker reads the whole reply before it "plays" it. The real one starts on the first
-    sentence with the rest still arriving: this reply cannot end before it is cut, so reaching
-    the cut means the barge-in listened from the first audio on. Its last words arrive once the
-    next phrase is transcribed: the router waits for them, or they would write in the next
-    request's route. No assertion on the first row's "reply": a cut reply can lose it (known
-    bug, the speaker does not close its stream)."""
+    """The speaker starts on the first sentence with the rest still arriving, the fake as the
+    real one: this reply cannot end before it is cut, so reaching the cut means the barge-in
+    listened from the first audio on. Its last
+    words arrive once the next phrase is transcribed: the router waits for them, or they
+    would write in the next request's route. No assertion on the first row's "reply": a cut
+    reply can lose it (known bug, the speaker does not close its stream)."""
     first = "C'era una volta un drago che viveva sulla montagna più alta della valle."
     second = (
         "Al mattino volava sopra il lago e contava le barche dei pescatori, una per una,"

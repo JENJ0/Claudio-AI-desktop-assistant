@@ -180,6 +180,10 @@ class AudioPlayer:
         returns once it is queued, and the device adds its own delay (HDMI, Bluetooth)."""
         return max(self._ends_at + self._latency_s - self.clock(), 0.0)
 
+    def starts_in_s(self) -> float:
+        """Seconds until a sound written now is heard: what is queued, then the device."""
+        return max(self._ends_at - self.clock(), 0.0) + self._latency_s
+
     def _write(self, data: np.ndarray) -> None:
         try:
             self._stream.write(data)

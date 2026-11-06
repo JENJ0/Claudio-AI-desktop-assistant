@@ -438,3 +438,21 @@ async def test_the_replys_end_written_as_a_command_is_still_its_echo(
     assert [row["outcome"] for row in rows][:2] == ["ok", "conversation_end"]
     assert rows[1]["listened_ms"] <= 300 and rows[1]["voice_ms"] <= 1000
     assert speaker.spoken == ["Apro Chrome."] and len(rec.ran) == 1
+
+
+def test_starts_in_counts_what_is_queued_and_the_device(monkeypatch) -> None:
+    import sounddevice as sd
+
+    import claudio.audio.player as player_module
+
+    monkeypatch.setattr(sd, "OutputStream", Stream)
+    monkeypatch.setattr(player_module, "describe_device", lambda index, kind: "Odyssey")
+    monkeypatch.setattr(player_module, "stream_settings", lambda index: None)
+    now = [100.0]
+    p = player_module.AudioPlayer(10000, device=0, clock=lambda: now[0])
+    p.start()
+    assert p.starts_in_s() == pytest.approx(0.05)  # only the device delay
+    p.write(np.zeros(3000, np.int16))
+    assert p.starts_in_s() == pytest.approx(0.35)  # 0.3 s queued, then the device
+    now[0] += 1.0
+    assert p.starts_in_s() == pytest.approx(0.05)

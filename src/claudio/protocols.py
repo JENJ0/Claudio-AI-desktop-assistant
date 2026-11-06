@@ -129,6 +129,8 @@ CUT_SHORT = _Marker()
 class Speaker(Protocol):
     # The sentences of the last reply that started playing (the last one may be cut short).
     played: list[str]
+    # Seconds from the first audio being handed over to the first audible sample.
+    first_sound_delay_s: float
 
     async def speak(
         self,

@@ -80,6 +80,7 @@ def test_metrics_writer_feeds_the_chat(tmp_path, store) -> None:
                 "reply": "Ciao!",
                 "m2_ms": 500,
                 "m1_ms": 400,
+                "audible_ms": 450,
                 "stt_ms": 90,
                 "tts_first_ms": 80,
             }
