@@ -129,7 +129,7 @@ le cuffie va meglio. Tutto sta in `[conversation]` (`window_s = 0` spegne la fin
 
 I comandi locali vengono sempre prima e non costano nulla; Claude risponde al resto, frase per
 frase. Ogni chiamata è registrata con token (cache inclusa) e costo in `data/spend.db`;
-`[cost] daily_budget` (1 USD) avvisa all'80 % e blocca Claude al 100 %. Nella finestra di
+`[cost] daily_budget` (2,58 USD) avvisa all'80 % e blocca Claude al 100 %. Nella finestra di
 conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a lui (una domanda,
 "dimmi...", "spiegami...", o il nome): la TV non costa nulla. "basta" ferma la risposta e chiude
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
@@ -223,7 +223,7 @@ La finestra mostra le conversazioni: scegli una sessione a sinistra,
 cerca in tutte dalla barra in alto, vedi quanto è costata ogni risposta. Legge `data/claudio.db`,
 quindi funziona con Claudio acceso (si aggiorna da sola) o spento. I messaggi più vecchi di
 `logging.retention_days` (30) vengono cancellati all'avvio di Claudio, insieme ai log delle
-sessioni più vecchi (`logs/sessions/`), alle registrazioni in `logs/audio/` (anche le wake word
+sessioni più vecchi (`logs/sessions/`), alle registrazioni in `logs/audio/` con le loro note (anche le wake word
 mancate) e ai vecchi `logs/metrics.jsonl.*`.
 
 ## Log delle sessioni
@@ -259,7 +259,7 @@ partenza. Il livello del microfono in Windows non viene toccato. Per regolarlo a
 di `benchmark_latency.py --log` mostrano livello e guadagno di ogni richiesta.
 
 Spesa (pronta per la Fase 2, quando risponderà Claude): `[cost]` imposta il budget giornaliero
-(`daily_budget`, in dollari, 1,0 di base). Ogni chiamata a Claude verrà scritta in `data/spend.db`
+(`daily_budget`, in dollari: 2,58 nella configurazione fornita, 1,0 se la riga manca). Ogni chiamata a Claude verrà scritta in `data/spend.db`
 (SQLite) con modello, token in ingresso e in uscita, scritture e letture della cache
 (`cache_creation_input_tokens`, `cache_read_input_tokens`) e TTL, e il costo calcolato da
 [config/pricing.toml](config/pricing.toml), dove stanno prezzi e moltiplicatori della cache (mai
@@ -327,8 +327,12 @@ Ogni richiesta finisce in `logs/metrics.jsonl` con:
 
 Per tarare l'ascolto ogni riga ha anche `input_dbfs` (volume medio del microfono dopo il bip) e
 `vad_max` (quanto Silero era sicuro di sentire voce, 0-1). In `logs/audio/` restano gli ultimi
-50 WAV di quello che Claudio ha sentito (1,5 s prima della wake word, poi tutto il resto), con il
-nome dell'esito (`ok`, `timeout`, `empty`, `error`). Restano sul PC; si spengono con
+8000 WAV (`[logging] keep_audio`, circa 940 MB) di quello che Claudio ha sentito (1,5 s prima della
+wake word, poi tutto il resto), con il nome dell'esito (`ok`, `timeout`, `empty`, `error`,
+`interrupted` e altri), e fino a 4000 altri in `logs/audio/rejected/` (`keep_rejected`, circa 300 MB).
+Accanto al WAV di ogni richiesta c'è una piccola nota (`.json`) con il prompt dato a Whisper, la
+lingua e il guadagno d'ingresso; quel prompt elenca i nomi delle tue cartelle, dei programmi e delle
+finestre aperte. Restano sul PC e non finiscono mai su Git; si spengono con
 `[logging] save_audio = false`.
 
 Anche i tentativi in cui la wake word non è scattata finiscono nel log come `near_miss`, con il

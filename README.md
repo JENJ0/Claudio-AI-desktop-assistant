@@ -130,7 +130,7 @@ off, `barge_in = false` the listening while speaking, `barge_in_mode` how it rea
 
 Local commands always come first and cost nothing; Claude answers the rest, streamed sentence by
 sentence. Each call is logged with its tokens (cache included) and cost in `data/spend.db`;
-`[cost] daily_budget` (0.335 USD, about 0.30 EUR) is announced at 80 % and blocks Claude at 100 %. In the
+`[cost] daily_budget` (2.58 USD) is announced at 80 % and blocks Claude at 100 %. In the
 conversation window (no wake word) a phrase goes to Claude only when it sounds addressed to it
 (a question, "dimmi...", "spiegami...", or the name), so the TV costs nothing. "basta" stops a
 reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
@@ -281,7 +281,7 @@ The window shows the conversations: pick a session on the left, search
 all of them at the top, see what each answer cost. It reads `data/claudio.db`, so it works with
 Claudio running (it updates by itself) or not. Messages older than `logging.retention_days`
 (30) are deleted when Claudio starts, and so are the older session logs (`logs/sessions/`), the
-recordings in `logs/audio/` (missed wake words too) and the rotated `logs/metrics.jsonl.*`.
+recordings in `logs/audio/` with their notes (missed wake words too) and the rotated `logs/metrics.jsonl.*`.
 
 You can also **write to Claudio** in the box at the bottom (Enter sends): with Claudio running,
 it answers in the chat, in silence (`[chat] speak_typed = true` to hear it too). Commands work
@@ -323,7 +323,7 @@ by hand: `CLAUDIO_AUDIO__AUTO_GAIN=false` and `CLAUDIO_AUDIO__INPUT_GAIN_DB=12`.
 `guad` columns of `benchmark_latency.py --log` show the level and gain of every request.
 
 Spending (ready for Phase 2, when Claude answers): `[cost]` sets the daily budget (`daily_budget`,
-in dollars: 0.335 in the shipped config, 1.0 if the line is missing). Every Claude call will be written to `data/spend.db` (SQLite) with
+in dollars: 2.58 in the shipped config, 1.0 if the line is missing). Every Claude call will be written to `data/spend.db` (SQLite) with
 its model, input and output tokens, cache writes and reads (`cache_creation_input_tokens`,
 `cache_read_input_tokens`) and TTL, and its cost from [config/pricing.toml](config/pricing.toml),
 where the prices and cache multipliers live (never in the code). At 80 % CLAUDIO says so once a
@@ -406,10 +406,13 @@ Every line also has `gpu_free_mb` and `gpu_busy_pct`, read in the background at 
 (None on the first line, or with no NVIDIA card).
 
 To tune listening, every line also has `input_dbfs` (average microphone level after the beep)
-and `vad_max` (how sure Silero was of hearing a voice, 0-1). `logs/audio/` keeps the last 50
-WAVs of what CLAUDIO heard (1.5 s before the wake word, then everything else), named by outcome
-(`ok`, `timeout`, `empty`, `error`). They stay on the PC; `[logging] save_audio = false` turns
-them off.
+and `vad_max` (how sure Silero was of hearing a voice, 0-1). `logs/audio/` keeps the last 8000
+WAVs (`[logging] keep_audio`, about 940 MB) of what CLAUDIO heard (1.5 s before the wake word, then
+everything else), named by outcome (`ok`, `timeout`, `empty`, `error`, `interrupted` and others), and
+up to 4000 more in `logs/audio/rejected/` (`keep_rejected`, about 300 MB). Beside each request's WAV
+there is a small note (`.json`) with the prompt given to Whisper, the language and the input gain;
+that prompt lists the names of your folders, programs and open windows. They stay on the PC and are
+never committed; `[logging] save_audio = false` turns them off.
 
 Attempts where the wake word did not fire are logged too (here, not in `conversazione.md`), as `near_miss` with the highest score
 reached: `benchmark_latency.py --log` lists them, to see how far to lower the threshold.
