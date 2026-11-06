@@ -76,8 +76,9 @@ async def main() -> int:
         return 0
 
     from claudio.__main__ import build_responder
+    from claudio.router.actions import ActionContext
 
-    responder: LocalResponder = build_responder(settings)
+    responder: LocalResponder = build_responder(settings, ActionContext())
     floor = settings.guess.near_floor
     spent = 0.0
     for row in rows:

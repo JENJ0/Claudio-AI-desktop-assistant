@@ -56,12 +56,50 @@ def test_spend_counter_works_after_a_threaded_load(tmp_path) -> None:
     request ("SQLite objects created in a thread can only be used in that same thread")."""
     from claudio.__main__ import build_responder, build_tracker
     from claudio.config import load_settings
+    from tests.unit.test_actions import Recorder
 
     settings = load_settings()
     settings = settings.model_copy(
-        update={"cost": settings.cost.model_copy(update={"db_file": tmp_path / "spesa.db"})}
+        update={
+            "cost": settings.cost.model_copy(update={"db_file": tmp_path / "spesa.db"}),
+            "memory": settings.memory.model_copy(update={"enabled": False}),  # not JenJo's own
+        }
     )
     tracker = build_tracker(settings)  # on this thread, as run_assistant does
-    loaded = load_all({"claude": lambda: build_responder(settings, tracker=tracker)})
+    loaded = load_all(
+        {"claude": lambda: build_responder(settings, Recorder().ctx(), tracker=tracker)}
+    )
     assert loaded["claude"] is not None
     tracker.check()  # raised sqlite3.ProgrammingError when opened in the loader thread
+
+
+async def test_run_text_acts_for_real(tmp_path, monkeypatch) -> None:
+    """`run_text` is a place where Claudio really acts: it builds the real context."""
+    from claudio import __main__ as entry
+    from claudio.config import load_settings
+    from claudio.router import actions
+
+    class FakeSpeaker:
+        def __init__(self) -> None:
+            self.voices: dict = {}
+            self.player = type("P", (), {"close": lambda self: None})()
+
+        async def speak(self, replies, on_first_audio=None, language=None) -> None:
+            async for _ in replies:
+                pass
+
+    ran: list[list[str]] = []
+    monkeypatch.setattr(actions, "_run", ran.append)
+    monkeypatch.setattr(entry, "build_speaker", lambda settings: FakeSpeaker())
+    settings = load_settings()
+    settings = settings.model_copy(
+        update={
+            "data_dir": tmp_path,
+            "logs_dir": tmp_path,
+            "claude": settings.claude.model_copy(update={"enabled": False}),
+            "memory": settings.memory.model_copy(update={"enabled": False}),
+            "cost": settings.cost.model_copy(update={"db_file": tmp_path / "spend.db"}),
+        }
+    )
+    await entry.run_text(settings, "apri il blocco note")
+    assert ran

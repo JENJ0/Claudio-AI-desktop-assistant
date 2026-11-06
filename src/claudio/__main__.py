@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from claudio.memory.store import MemoryStore
     from claudio.memory.tools import MemoryTools
     from claudio.pc.tools import PcTools
+    from claudio.router.actions import ActionContext
     from claudio.router.command_tool import CommandTool
     from claudio.router.matcher import CommandMatcher
     from claudio.router.responder import LocalResponder
@@ -85,6 +86,7 @@ def build_memory(settings: Settings) -> MemoryStore | None:
 
 def build_responder(
     settings: Settings,
+    ctx: ActionContext,
     system: SystemControl | None = None,
     chat: ChatLauncher | None = None,
     tracker: CostTracker | None = None,
@@ -104,7 +106,7 @@ def build_responder(
         tracker = build_tracker(settings)
     store = build_memory(settings)
     memory = MemoryVoice(store) if store is not None else None
-    actions = ActionRunner(system=system, tracker=tracker, chat=chat, memory=memory)
+    actions = ActionRunner(ctx, system=system, tracker=tracker, chat=chat, memory=memory)
     # Claude runs the commands it recognises in garbled words through the same actions.
     own_commands = CommandTool(commands, actions, matcher.threshold)
     brain = build_brain(settings, tracker, chat, own_commands, store)
@@ -426,7 +428,9 @@ def load_all(tasks: dict[str, Callable[[], Any]], parallel: bool = True) -> dict
 
 async def run_text(settings: Settings, text: str) -> None:
     """Router + TTS on typed text: tests the reply path without microphone or STT."""
-    responder = build_responder(settings)
+    from claudio.router.actions import ActionContext
+
+    responder = build_responder(settings, ActionContext.real())
     speaker = build_speaker(settings)
     responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}
     start = time.perf_counter()
@@ -532,6 +536,7 @@ async def run_assistant(
     from claudio.audio.vad import Endpointer, SileroVad, VoiceMeter
     from claudio.chat.store import ChatStore
     from claudio.metrics import MetricsWriter
+    from claudio.router.actions import ActionContext
     from claudio.session_log import ConversationLog, purge_old_logs
     from claudio.stt.transcriber import WhisperTranscriber
     from claudio.system import SystemControl
@@ -566,7 +571,9 @@ async def run_assistant(
                 ),
             ),
             "voce": lambda: build_speaker(settings, jack, start_player=False),
-            "claude": lambda: build_responder(settings, system, chat_window, tracker),
+            "claude": lambda: build_responder(
+                settings, ActionContext.real(), system, chat_window, tracker
+            ),
         },
         parallel=settings.startup.parallel,
     )

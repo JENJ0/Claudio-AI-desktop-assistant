@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from claudio.router import actions
 from claudio.router.actions import (
+    KNOWN_FOLDERS,
     ActionContext,
     ActionRunner,
     _press_combo,
@@ -251,3 +253,33 @@ def test_chat_without_launcher_says_so(matcher, rec) -> None:
 def test_no_test_can_press_a_real_key() -> None:
     with pytest.raises(AssertionError, match="real key"):
         _press_combo((VK_F24,))  # no effect on any window, should this guard ever go
+
+
+@pytest.mark.parametrize(
+    ("field", "arg"),
+    [("run", ["x"]), ("open_path", "x"), ("press_key", 1), ("press_combo", (1, 2))],
+)
+def test_default_context_refuses_every_real_action(field: str, arg: object) -> None:
+    with pytest.raises(RuntimeError, match=r"ActionContext\.real\(\)"):
+        getattr(ActionContext(), field)(arg)
+
+
+def test_default_context_still_reads_clock_and_folders() -> None:
+    ctx = ActionContext()
+    assert isinstance(ctx.now(), datetime)
+    assert isinstance(ctx.home, Path)
+    ctx.folder_lookup(KNOWN_FOLDERS["downloads"])  # reads only: must not raise
+
+
+def test_real_context_uses_the_real_functions(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran: list[list[str]] = []
+    monkeypatch.setattr(actions, "_run", ran.append)
+    ActionContext.real().run(["notepad"])
+    assert ran == [["notepad"]]
+
+
+def test_runner_without_context_refuses_alt_f4(matcher) -> None:
+    match = matcher.match("chiudi la finestra")
+    assert match is not None
+    with pytest.raises(RuntimeError, match=r"ActionContext\.real\(\)"):
+        ActionRunner().execute(match)  # the 05/11 accident; conftest fails if a key goes out

@@ -496,7 +496,7 @@ def test_a_repeat_is_as_close_as_the_matcher_asks(
             "router": settings.router.model_copy(update={"fuzzy_threshold": threshold}),
         }
     )
-    brain = build_responder(settings).fallback.__self__  # type: ignore[union-attr]
+    brain = build_responder(settings, Recorder().ctx()).fallback.__self__  # type: ignore[union-attr]
     try:
         off = [call(NAME, command="off")]
         assert brain.tools.repeats(off, "Claudio, spegni.", "it") is repeats
