@@ -63,6 +63,7 @@ def from_log(path: Path) -> None:
 def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
     from claudio.__main__ import build_responder
     from claudio.audio.vad import Endpointer, EndpointEvent, SileroVad
+    from claudio.router.actions import ActionContext
     from claudio.stt.transcriber import WhisperTranscriber
     from claudio.tts.speaker import PiperSynth, voice_path
 
@@ -71,7 +72,7 @@ def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
     wavs = sorted(wav_dir.glob("*.wav"))
     if not wavs:
         raise SystemExit(f"Nessun WAV in {wav_dir}: registra con scripts/record_samples.py")
-    responder = build_responder(settings)
+    responder = build_responder(settings, ActionContext())
     vad = SileroVad(models / "vad" / "silero_vad.onnx")
     endpointer = Endpointer(vad, settings.vad)
     try:
@@ -168,6 +169,7 @@ def replay(
     import claudio.app as app
     from claudio.__main__ import build_responder
     from claudio.audio.vad import Endpointer, SileroVad
+    from claudio.router.actions import ActionContext
     from claudio.stt.transcriber import WhisperTranscriber
 
     settings = load_settings()
@@ -190,7 +192,7 @@ def replay(
     stt_settings = settings.stt.model_copy(update=update)
     stt = WhisperTranscriber(stt_settings, models / "whisper")
     vad = SileroVad(models / "vad" / "silero_vad.onnx")
-    matcher = build_responder(settings).matcher
+    matcher = build_responder(settings, ActionContext()).matcher
 
     class DryResponder:  # routes, never executes
         def __init__(self) -> None:

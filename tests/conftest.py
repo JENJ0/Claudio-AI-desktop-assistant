@@ -30,9 +30,9 @@ class FakeVad:
 
 @pytest.fixture(autouse=True)
 def no_real_key_presses(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`ActionContext()` presses real keys by default: a test saying "chiudi la finestra" would
-    send a real Alt+F4 to the window in front (05/11: a probe closed the editor this way). Use
-    `Recorder().ctx()`."""
+    """Second defence: `ActionContext()` now refuses real actions, but a test that builds
+    `ActionContext.real()` and says "chiudi la finestra" would send a real Alt+F4 to the window
+    in front (05/11: a probe closed the editor this way). Use `Recorder().ctx()`."""
     if sys.platform != "win32":
         return
 

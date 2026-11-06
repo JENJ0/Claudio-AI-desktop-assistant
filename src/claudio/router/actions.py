@@ -124,15 +124,26 @@ def _press_combo(vks: tuple[int, ...]) -> None:
         user32.keybd_event(vk, 0, 2, 0)
 
 
+def _refuse(*args: object) -> None:
+    raise RuntimeError("a real action needs ActionContext.real()")
+
+
 @dataclass
 class ActionContext:
-    run: Callable[[list[str]], None] = _run
-    open_path: Callable[[str], None] = _open_path
-    press_key: Callable[[int], None] = _press_key
-    press_combo: Callable[[tuple[int, ...]], None] = _press_combo
+    """Refuses every real action by default (05/11: a probe's default context sent a real
+    Alt+F4); only `real()` acts. `now`, `folder_lookup` and `home` just read."""
+
+    run: Callable[[list[str]], None] = _refuse
+    open_path: Callable[[str], None] = _refuse
+    press_key: Callable[[int], None] = _refuse
+    press_combo: Callable[[tuple[int, ...]], None] = _refuse
     now: Callable[[], datetime] = datetime.now
     folder_lookup: Callable[[str], Path | None] = known_folder
     home: Path = field(default_factory=Path.home)
+
+    @classmethod
+    def real(cls) -> ActionContext:
+        return cls(run=_run, open_path=_open_path, press_key=_press_key, press_combo=_press_combo)
 
 
 EN_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
