@@ -21,6 +21,7 @@ Un thread fa **un solo passo**.
 | Passo | Contenuto | Versione | API nei test (stima) | Stato |
 |---|---|---|---|---|
 | 0 | Correzioni | v0.4.1 | 0 $ | fatto |
+| 0b | Affidabilità e residui: `piani/IT-2-passo-0b-consegne.md` | v0.4.2, v0.4.3 | ≤ 0,50 $ | da fare, **prima del Passo 1** |
 | 1 | Web vero con Haiku | v0.5.0 | ≤ 0,15 $ | da fare |
 | 2 | Risorse, cronometro, Opus, schermo | v0.5.1 | ≤ 0,10 $ | da fare |
 | 3 | Modalità gioco, frasi non rivolte a Claudio, avvio a freddo | v0.6.0 | ≤ 0,05 $ | da fare |
@@ -342,6 +343,8 @@ Ultime 10 sessioni (31/10 23:17 → 02/11 17:13), con le righe ereditate escluse
 
 ## Fuori da questo piano
 
+- **Presenza (JenJo, 05/11; riferimento: bluey-by-riley):** volto animato, occhi e cursore che indica, didascalie e stati nel tray. Fase futura, dopo gli altri passi. Le regole d'azione di Bluey entrano invece nel Passo 0b.
+- **Spostati nel Passo 0b:** dal Passo 3 il giudizio di Haiku sulle frasi non rivolte a Claudio e la misura dell'avvio a freddo.
 - **Procedure ricordate** (idea di Terminator: compito riuscito ripetuto a 0 $, con il modello solo se un
   passo fallisce): da riprendere quando i log mostrano compiti ripetuti.
 - **Commento continuo in gioco** (~0,05-0,10 $ l'ora, stima): dopo i crediti Max.
