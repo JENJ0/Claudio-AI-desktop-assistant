@@ -11,14 +11,17 @@ from claudio.protocols import Speaker
 from claudio.tts.speaker import StreamingSpeaker
 from tests.unit.test_app import FakeSpeaker
 from tests.unit.test_speaker import FakePlayer, FakeSynth
+from tests.unit.timeline import Ticks, TimedSpeaker
 
 TIMEOUT_S = 1.0
 
 
-@pytest.fixture(params=["fake", "streaming"])
+@pytest.fixture(params=["fake", "timed", "streaming"])
 def speaker(request: pytest.FixtureRequest) -> Speaker:
     if request.param == "fake":
         return FakeSpeaker()
+    if request.param == "timed":  # sentences that last, on frames that pass by themselves
+        return TimedSpeaker(Ticks(free_running=True), start_frames=2, sentence_frames=3)
     return StreamingSpeaker(FakeSynth(), FakePlayer())
 
 
