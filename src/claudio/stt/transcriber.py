@@ -162,6 +162,7 @@ class WhisperTranscriber:
         self._encoded: tuple[np.ndarray, Any] | None = None
         # Whisper's confidence in each segment of the last request (the noise filter).
         self.last_segments: list[Segment] = []
+        self.last_prompt = ""  # the request's real pass, for replaying its WAV
         self._reused = 0  # encoder passes saved, for the tests
         self._model = self._load()
         self.language, self.language_confidence = settings.languages[0], 1.0
@@ -269,7 +270,7 @@ class WhisperTranscriber:
         language Whisper guessed)."""
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             if not quick:
-                self.last_segments = []
+                self.last_segments, self.last_prompt = [], ""
             return ""  # silence: Whisper would invent something ("Buon appetito!")
         audio = audio.astype(np.float32, copy=False)
         if language is None:
@@ -285,9 +286,10 @@ class WhisperTranscriber:
                 "Trascrizione uguale a un pezzo del prompt, la rifaccio senza: %r",
                 self._logged(text),
             )
-            text, kept = self._decode(audio, language, "", quick)
+            prompt = ""  # the pass that produced the text
+            text, kept = self._decode(audio, language, prompt, quick)
         if not quick:  # the second chance must not overwrite the request's own figures
-            self.last_segments = kept
+            self.last_segments, self.last_prompt = kept, prompt
         if text and is_hallucination(text):
             log.info("Trascrizione scartata (allucinazione nota): %r", self._logged(text))
             return ""

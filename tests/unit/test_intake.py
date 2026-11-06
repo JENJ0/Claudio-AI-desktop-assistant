@@ -333,6 +333,18 @@ def test_old_logs_are_deleted(tmp_path) -> None:
     assert purge_old_logs(tmp_path / "missing", 30) == 0
 
 
+def test_purge_old_logs_removes_old_notes(tmp_path) -> None:
+    now = time.time()
+    audio = tmp_path / "audio"
+    (audio / "rejected").mkdir(parents=True)
+    old, new = audio / "a_ok.json", audio / "rejected" / "b_no_name.json"
+    for note in (old, new):
+        note.write_text("{}")
+    os.utime(old, (now - 40 * 86400,) * 2)
+    assert purge_old_logs(tmp_path, 30, now=now) == 1
+    assert not old.exists() and new.exists()
+
+
 def test_interjections_are_not_words() -> None:
     assert content_words("Mm-hmm.") == 0
     assert content_words("Ehm, che ore sono?") == 3

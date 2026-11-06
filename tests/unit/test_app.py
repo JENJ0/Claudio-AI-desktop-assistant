@@ -300,6 +300,140 @@ async def test_failing_audio_sink_does_not_break_the_request(
     assert assistant.state is State.IDLE
 
 
+class NotingSink:
+    """An audio sink with a note(), like UtteranceRecorder."""
+
+    def __init__(self, error: bool = False) -> None:
+        self.error, self.notes = error, []
+
+    def __call__(self, audio: np.ndarray, outcome: str) -> str:
+        return f"{outcome}.wav"
+
+    def note(self, name: str, meta: dict) -> None:
+        if self.error:
+            raise OSError("disk full")
+        self.notes.append((name, meta))
+
+
+async def test_finish_saves_the_gain_before_the_level_moves(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    class Level:
+        gain_db = 6.0
+
+        def observe(self, stats) -> None:
+            self.gain_db += 3  # the next request is heard with this one
+
+    stt = FakeStt()
+    stt.last_prompt = "Cartelle: Tesi."
+    sink = NotingSink()
+    assistant = Assistant(
+        FakeWake({1}),
+        Endpointer(fake_vad, vad_settings),
+        stt,
+        FakeResponder(),
+        FakeSpeaker(),
+        clock=AudioClock(),
+        level=Level(),
+        audio_sink=sink,
+    )
+    await run_frames(
+        assistant,
+        make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+    )
+    assert assistant.history[-1]["gain_db"] == 6.0
+    assert sink.notes == [
+        ("ok.wav", {"whisper_prompt": "Cartelle: Tesi.", "language": "it", "gain_db": 6.0})
+    ]
+
+
+async def test_a_timeout_note_has_no_prompt_of_an_earlier_request(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    stt = FakeStt()
+    stt.last_prompt = "Cartelle: Tesi."  # what the first request's pass left behind
+    sink = NotingSink()
+    assistant, *_ = build(fake_vad, vad_settings, stt, {3, 25}, audio_sink=sink)
+    frames = (
+        make_frames("silence", 400)
+        + make_frames("speech", 1000)
+        + make_frames("silence", 800)
+        + make_frames("silence", 5000)  # second wake after 1.8 s, then nothing said
+    )
+    await run_frames(assistant, frames)
+    assert [r["outcome"] for r in assistant.history] == ["ok", "timeout"]
+    assert [(n, m["whisper_prompt"]) for n, m in sink.notes] == [
+        ("ok.wav", "Cartelle: Tesi."),
+        ("timeout.wav", ""),
+    ]
+
+
+class PromptedStt(FakeStt):
+    """Each pass leaves the prompt `P<n>`, like the real transcriber's last_prompt."""
+
+    last_prompt = ""
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        text = super().transcribe(audio)
+        self.last_prompt = f"P{len(self.heard)}"
+        return text
+
+
+async def test_a_wake_word_alone_then_silence_keeps_the_pass_that_ran_in_the_note(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    sink = NotingSink()
+    stt = PromptedStt(text="Hey Claudio.")
+    assistant, *_ = build(fake_vad, vad_settings, stt, {1}, audio_sink=sink)
+    frames = (
+        make_frames("silence", 80)
+        + make_frames("speech", 400)
+        + make_frames("silence", 480)  # only the wake word, then nothing
+        + make_frames("silence", 5000)
+    )
+    await run_frames(assistant, frames)
+    (row,) = assistant.history
+    assert row["outcome"] == "timeout" and row["relisten"] == "Hey Claudio."
+    assert sink.notes == [
+        ("timeout.wav", {"whisper_prompt": "P1", "language": "it", "gain_db": 0.0})
+    ]  # the pass that ran, and the one a replay of this clip would run again
+
+
+async def test_a_request_after_the_wake_word_alone_ends_with_its_own_prompt(
+    fake_vad, vad_settings, make_frames
+) -> None:
+    sink = NotingSink()
+    stt = PromptedStt(text=["Hey Claudio.", "apri chrome"], delay=0.2)
+    assistant, *_ = build(fake_vad, vad_settings, stt, {1}, audio_sink=sink)
+    frames = (
+        make_frames("silence", 80)
+        + make_frames("speech", 400)
+        + make_frames("silence", 480)
+        + make_frames("speech", 800)
+        + make_frames("silence", 800)
+    )
+    await run_frames(assistant, frames)
+    assert assistant.history[-1]["relisten"] == "Hey Claudio."
+    assert [m["whisper_prompt"] for _, m in sink.notes] == ["P2"]
+
+
+async def test_a_note_that_cannot_be_written_does_not_stop_the_reply(
+    fake_vad, vad_settings, make_frames, caplog
+) -> None:
+    assistant, _, speaker, _ = build(
+        fake_vad, vad_settings, FakeStt(), {1}, audio_sink=NotingSink(error=True)
+    )
+    with caplog.at_level("ERROR"):
+        await run_frames(
+            assistant,
+            make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
+        )
+    row = assistant.history[-1]
+    assert speaker.spoken == ["Apro Chrome."]
+    assert row["outcome"] == "ok" and row["audio_file"] == "ok.wav"
+    assert "Impossibile salvare la nota" in caplog.text
+
+
 async def test_a_metrics_file_held_by_another_program_does_not_wedge_the_assistant(
     fake_vad, vad_settings, make_frames, tmp_path
 ) -> None:

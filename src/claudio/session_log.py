@@ -53,8 +53,8 @@ def purge_old_logs(
     logs_dir: Path, days: int, current: Path | None = None, now: float | None = None
 ) -> int:
     """Privacy (logging.retention_days): delete what Claudio heard more than `days` ago, by
-    last change. Session folders (console and conversation), the WAVs in logs/audio/ (near
-    misses too, and those in its folders: rejected/) and the rotated metrics files; the live
+    last change. Session folders (console and conversation), the WAVs and notes in logs/audio/
+    (near misses too, and those in its folders: rejected/) and the rotated metrics files; the live
     metrics.jsonl and `current` stay. Returns how many were deleted."""
     cutoff = (now if now is not None else time.time()) - days * 86400
     old: list[Path] = []
@@ -63,7 +63,7 @@ def purge_old_logs(
         old += [p for p in sessions.iterdir() if p.is_dir() and p != current]
     audio = logs_dir / "audio"
     if audio.is_dir():
-        old += list(audio.rglob("*.wav"))
+        old += list(audio.rglob("*.wav")) + list(audio.rglob("*.json"))  # notes: folder names
     old += list(logs_dir.glob("metrics.jsonl.*"))
     removed = 0
     for path in old:
