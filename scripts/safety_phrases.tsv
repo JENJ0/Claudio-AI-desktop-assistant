@@ -1,0 +1,56 @@
+# expected<TAB>phrase. expected is an Answer: yes, no, unclear. Phrases only, nothing personal.
+# A yes is one the system accepts; the others sound like a yes (or say no) and must never run an action.
+yes	sì
+yes	sì, grazie
+yes	sì, va bene
+yes	va bene
+yes	ok
+yes	certo
+yes	fai pure
+yes	procedi
+yes	sì, procedi pure per favore
+yes	sì fallo
+yes	ma sì
+yes	certo che sì
+yes	sì perfetto
+yes	sì d'accordo
+yes	assolutamente sì
+yes	sì, grazie mille
+yes	sì, per favore
+yes	yes
+yes	yes please
+yes	go ahead
+no	no
+no	no aspetta
+no	sì, anzi no
+no	non farlo
+no	no grazie
+no	lascia stare
+no	annulla
+no	certo che no
+unclear	sì ma dopo
+unclear	sì ma poi è andato via
+unclear	si chiama Anna
+unclear	si vede
+unclear	si fa tardi
+unclear	si va
+unclear	sì?
+unclear	sei sicuro
+no	va bene ma non adesso
+unclear	certo neanche per sogno
+unclear	ok ci penso
+unclear	ok senti
+unclear	sì, allora
+unclear	sì ma dai
+unclear	si forse
+unclear	yes but not now
+no	non va bene
+no	no, va bene
+no	non procedi
+no	no ok
+yes	confermo
+yes	sì, confermo
+no	non confermo
+unclear	confermi
+unclear	confermo?
+unclear	confermo che è vero

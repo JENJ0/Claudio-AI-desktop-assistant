@@ -11,6 +11,8 @@ The zip to upload to Colab (recordings + training scripts):
 Commands (the first phrase of every command, x2, for benchmark_latency.py), in Italian or English:
     uv run python scripts/record_samples.py commands --repeat 2
     uv run python scripts/record_samples.py commands --repeat 2 --language en
+Safety phrases (a yes and near-yes phrases, x2, for tests/integration/test_safety_audio.py):
+    uv run python scripts/record_samples.py safety --repeat 2
 
 Only some ways of speaking (a few takes of each, in a few minutes):
     uv run python scripts/record_samples.py wakeword --phrase "Claudio" --styles veloce,distratto
@@ -214,6 +216,7 @@ def session(
                 time.sleep(1)
             print()
         audio = record(seconds, device)
+        (out / f"{stem}.wav").parent.mkdir(parents=True, exist_ok=True)  # safety: yes/, no/
         sf.write(out / f"{stem}.wav", audio, SR, subtype="PCM_16")
         if labels and stem in labels:
             phrases.remember_text(out, stem, labels[stem])
@@ -240,6 +243,34 @@ def command_prompts(
     return prompts
 
 
+def load_safety_phrases(path: Path) -> list[tuple[str, str]]:
+    """(expected answer, phrase) per line of the TSV; blank lines and # comments are skipped."""
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        expected, _, phrase = line.partition("\t")
+        if expected not in ("yes", "no", "unclear") or not phrase.strip():
+            raise ValueError(f"{path.name}: riga non valida {line!r} (atteso: yes, no, unclear)")
+        rows.append((expected, phrase.strip()))
+    return rows
+
+
+def safety_prompts(
+    phrases_file: Path, repeat: int, seconds: float, out: Path
+) -> list[tuple[str, str, str, float]]:
+    """Every safety phrase up to `repeat` takes, the missing ones only; the take lands in
+    out/<expected>/, so the folder says what the answer must be."""
+    prompts = []
+    for expected, phrase in load_safety_phrases(phrases_file):
+        prefix = slug(phrase)
+        start = next_index(out / expected, f"{prefix}_")
+        for take in range(start, repeat):  # a rerun records only what is missing
+            stem = f"{expected}/{prefix}__{take}"
+            prompts.append(("frasi di sicurezza", f'di\': "{phrase}"', stem, seconds))
+    return prompts
+
+
 def main() -> None:
     from claudio.audio.devices import resolve_device
     from claudio.config import PROJECT_ROOT, load_settings
@@ -248,7 +279,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("mode", choices=["wakeword", "negatives", "noise", "commands", "pack"])
+    parser.add_argument(
+        "mode", choices=["wakeword", "negatives", "noise", "commands", "safety", "pack"]
+    )
     parser.add_argument("--phrase", default="Hey Claudio")
     parser.add_argument("--count", type=int, default=50)
     parser.add_argument(
@@ -290,6 +323,10 @@ def main() -> None:
     elif args.mode == "noise":
         out = args.out / "noise"
         prompts = noise_prompts(next_index(out, "noise"), args.seconds or 60.0)
+    elif args.mode == "safety":
+        out = args.out / "safety"
+        phrases_file = PROJECT_ROOT / "scripts" / "safety_phrases.tsv"
+        prompts = safety_prompts(phrases_file, args.repeat, args.seconds or 3.0, out)
     else:
         out = args.out / "commands"
         commands = load_commands(settings.resolve(settings.router.commands_file))

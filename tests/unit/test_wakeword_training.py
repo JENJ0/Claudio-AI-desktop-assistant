@@ -871,3 +871,32 @@ def test_command_takes_never_overwrite(tmp_path: Path) -> None:
         "mute__muto__1",
     ]
     assert record_samples.command_prompts(commands, "en", 2, 3.5, tmp_path) == []
+
+
+def test_safety_prompts_read_the_phrases_file(tmp_path: Path) -> None:
+    tsv = tmp_path / "phrases.tsv"
+    tsv.write_text("# note\nyes\tsì, grazie\n\nno\tno aspetta\n", encoding="utf-8")
+    out = tmp_path / "safety"
+    (out / "yes").mkdir(parents=True)
+    (out / "yes" / "s_grazie__0.wav").write_bytes(b"")
+    prompts = record_samples.safety_prompts(tsv, 2, 3.5, out)
+    assert [p[2] for p in prompts] == [
+        "yes/s_grazie__1",
+        "no/no_aspetta__0",
+        "no/no_aspetta__1",
+    ]
+    assert prompts[0][1] == 'di\': "sì, grazie"'
+    with pytest.raises(ValueError, match="maybe"):
+        tsv.write_text("maybe\tforse\n", encoding="utf-8")
+        record_samples.safety_prompts(tsv, 1, 3.5, out)
+
+
+def test_safety_prompts_only_ask_for_the_missing_takes(tmp_path: Path) -> None:
+    tsv = tmp_path / "phrases.tsv"
+    tsv.write_text("yes\tsì\nno\tno\n", encoding="utf-8")
+    out = tmp_path / "safety"
+    (out / "yes").mkdir(parents=True)
+    for n in (0, 1):
+        (out / "yes" / f"s__{n}.wav").write_bytes(b"")
+    prompts = record_samples.safety_prompts(tsv, 2, 3.5, out)
+    assert [p[2] for p in prompts] == ["no/no__0", "no/no__1"]
