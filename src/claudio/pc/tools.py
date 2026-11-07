@@ -513,20 +513,24 @@ class PcTools:
         name = name.casefold()
         return any(free.casefold() in name for free in self.settings.free_typing)
 
-    async def question(self, calls: Sequence[ToolCall], language: str) -> str:
+    async def question(
+        self, calls: Sequence[ToolCall], language: str, read_out: bool = False
+    ) -> str:
         """What Claudio says before running `calls` (those of level 2-3): what will happen,
         then "Confermi?" (or, at level 3, how to confirm). Brief: level 2 asks only "Confermi?",
-        except for a memory, which is always read out (JenJo must hear what is kept or lost)."""
+        except for a memory, which is always read out (JenJo must hear what is kept or lost).
+        `read_out`: nothing was said before, so the action is read out for this call too."""
         top = max((self.level(c) for c in calls), default=LEVEL_CONFIRM)
         memory = any(c.name in memory_tools.NAMES for c in calls)
-        if top <= LEVEL_CONFIRM and self.settings.confirm_brief and not memory:
+        if top <= LEVEL_CONFIRM and self.settings.confirm_brief and not memory and not read_out:
             return ASK_LEVEL_2.get(language) or ASK_LEVEL_2[DEFAULT_LANGUAGE]
         say = _SAY.get(language) or _SAY[DEFAULT_LANGUAGE]
         parts = [await self._describe(call, say, language) for call in calls]
         what = say["then"].join(p for p in parts if p)
         what = what[:1].upper() + what[1:]
         ask = ASK_LEVEL_3 if top > LEVEL_CONFIRM else ASK_LEVEL_2
-        return f"{what}. {ask.get(language) or ask[DEFAULT_LANGUAGE]}"
+        ask_text = ask.get(language) or ask[DEFAULT_LANGUAGE]
+        return f"{what}. {ask_text}" if what else ask_text  # a bad call describes as ""
 
     async def _describe(self, call: ToolCall, say: dict[str, str], language: str) -> str:
         a = call.args

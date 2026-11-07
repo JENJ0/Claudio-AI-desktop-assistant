@@ -187,7 +187,7 @@ async def test_tool_runs_once_and_claude_gets_its_result(make_scene, home: Path)
 
 async def test_slow_tool_keeps_the_first_sentence_said(make_scene, home: Path) -> None:
     desk = GatedDesktop()
-    said = "Ci guardo, socio."
+    said = "Ci guardo, socio. Apro Spotify. Un attimo."  # three sentences: not held (Task 10)
     scene = make_scene(
         ([said], "tool_use", [text(said), use("open_app", name="spotify")]),
         text_reply("Aperto."),
@@ -198,11 +198,12 @@ async def test_slow_tool_keeps_the_first_sentence_said(make_scene, home: Path) -
     await scene.say(ASK)
     await scene.until(desk.started.is_set, poll_s=0.002)
     await scene.advance(0.5)
-    assert scene.speaker.played == [said]  # said while the tool is still running
+    assert scene.speaker.played == ["Ci guardo, socio."]  # said while the tool is still running
     assert ("launch", "Spotify") not in desk.done
     desk.gate.set()
     await idle(scene, poll_s=0.002)
-    assert scene.speaker.played == [said, "Aperto."]
+    assert scene.speaker.played[0] == "Ci guardo, socio." and scene.speaker.played[-1] == "Aperto."
+    assert "".join(scene.speaker.played).count("Un attimo.") == 1
     assert desk.done.count(("launch", "Spotify")) == 1
 
 

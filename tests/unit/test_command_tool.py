@@ -152,7 +152,7 @@ async def test_a_note_before_the_command_leaves_only_its_reply(
     ]
 
 
-async def test_what_haiku_said_comes_first_and_a_media_key_stays_silent(
+async def test_a_media_key_stays_silent_whatever_haiku_said_before_it(
     pricing: Pricing, tools: PcTools, rec: Recorder
 ) -> None:
     said = "Metto in pausa, socio."
@@ -161,7 +161,7 @@ async def test_what_haiku_said_comes_first_and_a_media_key_stays_silent(
         ([], "tool_use", [use(NAME, command="mute", last=True)]),
     )
     b = acting_brain(pricing, client, tools)
-    assert await ask(b, "ferma la musica") == f"{said} "  # play/pause has no reply
+    assert await ask(b, "ferma la musica") == ""  # Task 10: the words before it are held, dropped
     assert await ask(b, "togli l'audio") == ""  # nothing said: silent, as with the router
     assert len(client.calls) == 2 and len(rec.keys) == 2
 
@@ -250,12 +250,13 @@ async def test_a_silent_command_stays_silent_after_the_yes(
     monkeypatch.setattr(tools, "level", lambda c: 2)  # no silent command asks in commands.toml
     client = ScriptedClient(([], "tool_use", [use(NAME, command="mute", last=True)]))
     b = acting_brain(pricing, client, tools)
-    assert await ask(b, "togli l'audio") == "Confermi?"
+    # The model said nothing before the question: it reads the action out (Task 10 fix round 1).
+    assert await ask(b, "togli l'audio") == "Togli l audio. Confermi?"
     assert [c async for c in b.ask("sì", "it")] == []
     assert rec.keys == [MEDIA_KEYS["mute"]] and len(client.calls) == 1
     assert b._history[-1] == (
         "[it] togli l'audio",
-        "Confermi? [Claudio ran: claudio_command ok]",
+        "Togli l audio. Confermi? [Claudio ran: claudio_command ok]",
     )
 
 
@@ -305,7 +306,8 @@ async def test_the_repeat_reaches_the_brain_through_the_router(
         fallback_info=lambda: b.last_call,
         fallback_awaiting=lambda: b.awaiting,
     )
-    assert "".join([c async for c in r.respond("Ehi Claudio, spenitri.", "it")]) == "Confermi?"
+    asked = "".join([c async for c in r.respond("Ehi Claudio, spenitri.", "it")])
+    assert asked == "Spegniti. Confermi?"  # nothing said before it: the action is read out
     assert "".join([c async for c in r.respond("Claudio, spegni.", "it")]) == OFF_REPLY
     assert system.off and len(client.calls) == 1
 

@@ -176,11 +176,11 @@ async def test_sentences_of_two_steps_keep_a_space(pricing: Pricing, tools: PcTo
     """25/10: "La apro.Aperta la cartella" reached the voice without a pause."""
     (tools.policy.home / "Desktop" / "PROGETTI").mkdir(parents=True)
     client = ScriptedClient(
-        (["La apro."], "tool_use", [use("open_path", path="~\\Desktop\\PROGETTI")]),
+        (["Vado. Cerco. La apro."], "tool_use", [use("open_path", path="~\\Desktop\\PROGETTI")]),
         (["Aperta."], "end_turn", []),
     )
     b = acting_brain(pricing, client, tools)
-    assert await ask(b, "apri la cartella progetti") == "La apro. Aperta."
+    assert await ask(b, "apri la cartella progetti") == "Vado. Cerco. La apro. Aperta."
 
 
 def test_game_shortcuts_are_apps(tmp_path: Path) -> None:

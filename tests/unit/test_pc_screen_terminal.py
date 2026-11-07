@@ -243,8 +243,9 @@ async def test_a_cut_at_the_question_keeps_the_words_and_the_action(
     b = acting_brain(pricing, client, tools)
     b.on_show = lambda: opened.append(True)
     stream = b.ask("quali programmi usano più memoria?", "it")
-    assert await anext(stream) == "Controllo. "
-    assert (await anext(stream)).endswith("confermo.")
+    # Task 10: "Controllo. " was held, and goes out with the question
+    first = await anext(stream)
+    assert first.startswith("Controllo. Per vedere") and first.endswith("confermo.")
     # Ready by the time the voice says it: the command in the chat, the answer awaited.
     assert opened == [True] and b.awaiting
     await stream.aclose()
@@ -341,10 +342,25 @@ async def test_blocked_even_if_it_reaches_the_run(tools: PcTools, desk: FakeDesk
 
 async def test_no_bridge_when_haiku_already_spoke(pricing: Pricing, tools: PcTools) -> None:
     client = ScriptedClient(
-        (["Cerco. "], "tool_use", [text("Cerco. "), use("search_files", query="fattura")]),
+        (
+            ["Ok. Va bene. Cerco. "],  # three sentences: said, not held (Task 10)
+            "tool_use",
+            [text("Ok. Va bene. Cerco. "), use("search_files", query="fattura")],
+        ),
         (["Trovata."], "end_turn", []),
     )
-    assert await ask(acting_brain(pricing, client, tools), "trova la fattura") == "Cerco. Trovata."
+    reply = await ask(acting_brain(pricing, client, tools), "trova la fattura")
+    assert reply == "Ok. Va bene. Cerco. Trovata."
+
+
+async def test_a_narrated_slow_tool_gets_the_bridge(pricing: Pricing, tools: PcTools) -> None:
+    """The held "Cerco." is dropped before a free action: nothing was said, the bridge covers it."""
+    client = ScriptedClient(
+        (["Cerco."], "tool_use", [text("Cerco."), use("search_files", query="fattura")]),
+        (["Trovata."], "end_turn", []),
+    )
+    reply = await ask(acting_brain(pricing, client, tools), "trova la fattura")
+    assert reply == "Ci guardo. Trovata."
 
 
 async def test_no_bridge_for_quick_tools_or_when_off(pricing: Pricing, tools: PcTools) -> None:
