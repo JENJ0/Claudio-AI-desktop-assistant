@@ -87,6 +87,9 @@ class FakeResponder:
     def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:
         pass
 
+    def stop_acting(self) -> None:
+        pass
+
     async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
         self.seen.append(text)
         self.language = "en" if "open" in text else language  # the language of the phrase

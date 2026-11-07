@@ -1,4 +1,5 @@
-"""Does a reply promise a PC action in the first person? Used only to log it (G1 task 4)."""
+"""Does a reply promise a PC action in the first person? Used only to log it: plain patterns can
+be wrong, so the reply itself is never changed."""
 
 from __future__ import annotations
 

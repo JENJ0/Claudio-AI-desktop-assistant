@@ -26,7 +26,7 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterable, Sequence
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -85,6 +85,10 @@ ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
 ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: open_app ok]"
 # ... and for a call that never ran: "[Claudio did not run: type_text, cut at the token limit]"
 NOT_RUN_NOTE = "[Claudio did not run: "
+CUT_AT_LIMIT_WHY = "cut at the token limit"
+STOPPED_WHY = "a new request came first"
+# The result of a call that a new request stopped: every tool_use still needs one.
+STOPPED_RESULT = "Not run: JenJo said something else over the reply."
 NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
@@ -195,6 +199,7 @@ class ClaudeBrain:
         # the facts that match a request (None: no long-term memory).
         self.memory = memory
         self._memory_block = ""  # the memories as this request's rounds see them
+        self._stop_acting = False  # a new request cut this reply: its words go on, no action
 
     def reset(self) -> None:
         self._history.clear()
@@ -220,6 +225,12 @@ class ClaudeBrain:
         if cut and self._offer is not None:
             log.info("Offerta di Sonnet scaduta: interrotta", extra={"route": "tool"})
             self._offer = None
+
+    def stop_acting(self) -> None:
+        """A new request was said over this reply. Its stream is still read, for "Dicevo", but
+        from now on no call starts and no question is armed; a call already running finishes.
+        The next `ask` clears it: it never blocks the request after."""
+        self._stop_acting = True
 
     def warm_up(self) -> None:
         """JenJo is about to speak (wake word): open the HTTPS connection now, for free (a
@@ -274,6 +285,7 @@ class ClaudeBrain:
         """Claude's reply to `text`, in `language`, as it arrives. Problems become one short
         spoken sentence: Claudio never goes silent and never crashes because of the API."""
         self.last_call = {}
+        self._stop_acting = False
         self._asked_at = self.clock()
         rtt, self._rtt = self._rtt, None
         if rtt is not None and self._asked_at - rtt[2] <= RTT_FRESH_S:
@@ -413,9 +425,13 @@ class ClaudeBrain:
                         yield chunk
                 turn.parts.extend(leg.parts)
                 streaming = None
+                if self._stop_acting and (leg.calls or leg.cut_tools or leg.handoff):
+                    self._end_stopped(turn, leg)
+                    return
                 if leg.end is StreamEnd.CUT_CALL:
-                    # At once: a "basta" during the retry finds the right note.
-                    turn.not_run.extend(leg.cut_tools)
+                    # At once: a "basta" during the retry finds the right note. It stays until the
+                    # call really runs (`_Turn.ran`), also after a "no" or a "basta" before that.
+                    turn.note_not_run(leg.cut_tools)
                     cut, leg = leg, _Leg()
                     streaming = leg
                     async with contextlib.aclosing(
@@ -426,15 +442,13 @@ class ClaudeBrain:
                             yield chunk
                     turn.parts.extend(leg.parts)
                     streaming = None
+                    if self._stop_acting:
+                        self._end_stopped(turn, leg)
+                        return
                     if not leg.calls:
                         if said := self._end_not_run(turn, language):
                             yield said
                         return
-                    # shortcut: two cut calls of one tool lose one note if only one runs,
-                    # upgrade when a real session shows that note missing
-                    for call in leg.calls:  # the retry brought them: they are not "not run"
-                        if call.name in turn.not_run:
-                            turn.not_run.remove(call.name)
                 if reply := self._handed_over(leg, offer_from, turn, language, start):
                     async for chunk in reply:
                         yield chunk
@@ -450,9 +464,13 @@ class ClaudeBrain:
                 active = [c for c in leg.calls if c.id not in refused]
                 await self.tools.prepare(active)
                 confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
+                ask = await self.tools.question(confirm, language) if confirm else ""
+                if self._stop_acting:  # it came during those two waits
+                    self._end_stopped(turn, leg)
+                    return
                 if confirm:
-                    yield await self._ask_first(
-                        messages, leg, confirm, refused, turn, language, round_no
+                    yield self._ask_first(
+                        ask, messages, leg, confirm, refused, turn, language, round_no
                     )
                     return
                 if said := self._before_tools(turn, leg, active, said_here, language):
@@ -525,6 +543,26 @@ class ClaudeBrain:
         self._remember(turn)
         return said
 
+    def _end_stopped(self, turn: _Turn, leg: _Leg) -> None:
+        """`stop_acting` came: what `leg` called does not run, nothing is armed, the reply ends."""
+        self._not_started(turn, leg.calls, leg.cut_tools)
+        self._remember_cut(turn)
+
+    def _not_started(
+        self, turn: _Turn, calls: list[ToolCall], cut_tools: Sequence[str] = ()
+    ) -> None:
+        names = [*(c.name for c in calls), *cut_tools]
+        if not names:
+            return
+        turn.not_run_why = STOPPED_WHY
+        turn.note_not_run(names)
+        self._note_tools(calls, "not_run_stopped")
+        log.info(
+            "Nuova richiesta sopra la risposta: %s non eseguito",
+            ", ".join(names),
+            extra={"route": "tool"},
+        )
+
     def _handed_over(
         self,
         leg: _Leg,
@@ -549,8 +587,9 @@ class ClaudeBrain:
             return self._propose(offer_from, language, _space(turn))
         return None
 
-    async def _ask_first(
+    def _ask_first(
         self,
+        ask: str,
         messages: list[dict[str, Any]],
         leg: _Leg,
         confirm: list[ToolCall],
@@ -559,10 +598,9 @@ class ClaudeBrain:
         language: str,
         round_no: int,
     ) -> str:
-        """Level 2-3 calls wait for JenJo's yes: returns the question to say."""
+        """Level 2-3 calls wait for JenJo's yes: arms `ask` and returns what to say."""
         assert self.tools is not None
         level = max(self.tools.level(c) for c in confirm)
-        ask = await self.tools.question(confirm, language)
         self._action = _Action(messages, leg.calls, turn, language, level, round_no)
         self._action.refused = refused
         self._action.handoff = leg.handoff
@@ -620,9 +658,13 @@ class ClaudeBrain:
             action.turn.parts.append(_space(action.turn) + said)
             yield said
         alone = not action.turn.done and not action.handoff
-        results, own = await self._run_calls(
-            action.calls, action.language, action.refused, action.turn
-        )
+        try:
+            results, own = await self._run_calls(
+                action.calls, action.language, action.refused, action.turn
+            )
+        except asyncio.CancelledError:  # outside `_loop`: its note must not be lost
+            self._remember_cut(action.turn)
+            raise
         if own is not None and alone:  # "spegniti" confirmed: its reply, no call to Claude
             if said := self._end_with(action.turn, own, new_reply=True):
                 yield said
@@ -647,24 +689,25 @@ class ClaudeBrain:
             if call.id in refused:
                 own = None
                 self._note_tools([call], "refused")
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": call.id,
-                        "content": refused[call.id],
-                        "is_error": True,
-                    }
-                )
+                results.append(_failed_result(call, refused[call.id]))
                 continue
-            outcome = await self.tools.run(call, language)
+            if self._stop_acting:  # it came while the call before this one was running
+                own = None
+                self._not_started(turn, [call])
+                results.append(_failed_result(call, STOPPED_RESULT))
+                continue
+            try:
+                outcome = await self.tools.run(call, language)
+            except asyncio.CancelledError:  # its thread goes on: the action may well be done
+                self._note_tools([call], "interrupted")
+                turn.ran(call.name, "interrupted")
+                raise
             if outcome.error or outcome.spoken is None:
                 own = None
             elif own is not None:
                 own.append(outcome.spoken)
             self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
-            turn.done.append(f"{call.name} {'failed' if outcome.error else 'ok'}")
-            if call.name in turn.not_run:  # it ran after all: no false "did not run"
-                turn.not_run.remove(call.name)
+            turn.ran(call.name, "failed" if outcome.error else "ok")
             block: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": call.id,
@@ -931,7 +974,13 @@ class ClaudeBrain:
             yield in_language(BAD_KEY, language)
             return
         # Also timeouts. DecodingError: the body arrived corrupted, the reply is just as lost.
-        except (anthropic.APIConnectionError, httpx2.TransportError, httpx2.DecodingError) as exc:
+        # OSError: a raw socket error, not wrapped (ssl.SSLError: 5 of 240 calls, A/B of 07/11).
+        except (
+            anthropic.APIConnectionError,
+            httpx2.TransportError,
+            httpx2.DecodingError,
+            OSError,
+        ) as exc:
             log.error("Claude non raggiungibile: %s", exc)
             self.last_call["claude_error"] = "network"
             leg.end = StreamEnd.ERROR
@@ -979,7 +1028,7 @@ class ClaudeBrain:
             final,
             tools_offered=offered,
             said="".join(leg.parts),
-            ran=bool(self.last_call.get("tools")),
+            ran=any(t.endswith(" ok") for t in self.last_call.get("tools", [])),
         )
         if end is StreamEnd.REFUSED:
             log.info("Claude ha rifiutato la richiesta")
@@ -1117,7 +1166,19 @@ class _Turn:
         self.parts = list(parts or [])
         self.complete = complete
         self.done: list[str] = []  # tools that ran in this request, for the history note
-        self.not_run: list[str] = []  # tools cut at the token limit and never run
+        self.not_run: list[str] = []  # tools that never ran, for the history note
+        self.not_run_why = CUT_AT_LIMIT_WHY  # one reason for the whole note
+
+    def note_not_run(self, names: Iterable[str]) -> None:
+        # shortcut: two calls of one tool share one note, lost when one of them runs; upgrade when
+        # a real session shows that note missing.
+        self.not_run.extend(n for n in dict.fromkeys(names) if n not in self.not_run)
+
+    def ran(self, name: str, how: str) -> None:
+        """A tool started: in the note of what ran, out of the note of what never did."""
+        self.done.append(f"{name} {how}")
+        if name in self.not_run:
+            self.not_run.remove(name)
 
 
 class _Action:
@@ -1211,10 +1272,15 @@ def _notes(turn: _Turn) -> str:
     """The history notes of what the code did: what never ran first, then what ran."""
     notes = []
     if turn.not_run:
-        notes.append(f"{NOT_RUN_NOTE}{', '.join(turn.not_run)}, cut at the token limit]")
+        notes.append(f"{NOT_RUN_NOTE}{', '.join(turn.not_run)}, {turn.not_run_why}]")
     if turn.done:
         notes.append(f"{ACTIONS_NOTE}{', '.join(turn.done)}]")
     return " ".join(notes)
+
+
+def _failed_result(call: ToolCall, why: str) -> dict[str, Any]:
+    """The tool_result of a call that did not run."""
+    return {"type": "tool_result", "tool_use_id": call.id, "content": why, "is_error": True}
 
 
 def _ms_since(start: float, now: float) -> int:

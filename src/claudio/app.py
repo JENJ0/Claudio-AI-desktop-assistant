@@ -1598,6 +1598,7 @@ class Assistant:
             )
         finally:
             if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
+                self.responder.stop_acting()  # kept for its words: no action may follow from it
                 language_now = lang() if callable(lang) else lang
                 played, now = list(self.speaker.played), self.clock()
                 unsure = bool(inter.info.get("stt_unsure"))

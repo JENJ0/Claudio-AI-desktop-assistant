@@ -221,6 +221,115 @@ async def test_tool_without_a_reply_goes_back_to_idle(make_scene, home: Path) ->
     assert scene.speaker.played == []  # nothing to say, and nobody waits for it
 
 
+# --- a new request said over a reply that was about to act -------------------------------
+
+WRITE = "scrivi il piano di domani su chrome"
+PLAN = "Il piano di domani comincia presto. " * 90
+INTO_CHROME = {"window": "chrome"}  # level 2: it asks "Confermi?" first
+SAY_THEN_CALL = (
+    STORY,
+    "tool_use",
+    [text("".join(STORY)), use("type_text", text=PLAN, **INTO_CHROME)],
+)
+# The first leg is cut at the token limit; the retry's own words come slowly and are never said.
+SAY_THEN_CUT = (
+    STORY[:1],
+    "max_tokens",
+    [text(STORY[0]), use("type_text", text="Il", **INTO_CHROME)],
+)
+SLOW_RETRY = (list("abcdefgh"), "tool_use", [use("type_text", text=PLAN, **INTO_CHROME)])
+OVER_THE_LEG = pytest.param((SAY_THEN_CALL,), id="the-call-comes-after-the-request")
+OVER_THE_RETRY = pytest.param((SAY_THEN_CUT, SLOW_RETRY), id="during-the-retry")
+
+
+def typed_anything(desk: FakeDesktop) -> bool:
+    return any(done[0] in ("keys", "paste") for done in desk.done)
+
+
+@pytest.mark.parametrize("replies", [OVER_THE_LEG, OVER_THE_RETRY])
+async def test_a_thanks_over_the_reply_is_no_yes_to_a_question_nobody_heard(
+    make_scene, home: Path, replies: tuple[Any, ...]
+) -> None:
+    """The stream is kept for "Dicevo", so the old reply still reached "Confermi?": then "ok,
+    grazie", meant for something else, was the yes and 3240 characters went into Chrome."""
+    desk = FakeDesktop()
+    scene = make_scene(
+        *replies,
+        text_reply("Prego."),
+        sentence_frames=PLAY,
+        chunk_wait=9,
+        desk=desk,
+        home=home,
+    )
+    await scene.say(WRITE)
+    await scene.until_speaking()
+    await scene.say_over("Claudio, ok grazie")
+    await idle(scene, poll_s=0.002)
+    assert scene.row(0)["outcome"] == "interrupted"
+    assert not typed_anything(desk) and not scene.brain.awaiting
+    assert "[Claudio did not run: type_text" in scene.remembered[0][1]
+
+
+@pytest.mark.parametrize("replies", [OVER_THE_LEG, OVER_THE_RETRY])
+async def test_a_request_over_the_reply_gets_its_own_answer(
+    make_scene, home: Path, replies: tuple[Any, ...]
+) -> None:
+    """An armed "Confermi?" took the new request for its answer: "Non ho capito: non lo faccio"
+    instead of the time."""
+    desk = FakeDesktop()
+    scene = make_scene(*replies, sentence_frames=PLAY, chunk_wait=9, desk=desk, home=home)
+    await scene.say(WRITE)
+    await scene.until_speaking()
+    await scene.say_over("che ore sono")
+    await idle(scene, poll_s=0.002)
+    assert "Sono le 14 e 5." in scene.speaker.spoken
+    assert not typed_anything(desk) and not scene.brain.awaiting
+    assert not any("Confermi" in said for said in scene.speaker.spoken)
+
+
+async def test_the_words_of_the_cut_reply_still_come_back(make_scene, home: Path) -> None:
+    """Only the action is stopped: the story it told before the call is resumed, as always."""
+    desk = FakeDesktop()
+    scene = make_scene(SAY_THEN_CALL, sentence_frames=PLAY, chunk_wait=9, desk=desk, home=home)
+    await scene.say(WRITE)
+    await scene.until_speaking()
+    await scene.say_over("che ore sono")
+    await idle(scene, poll_s=0.002)
+    assert resumed(scene)
+    assert not typed_anything(desk) and not scene.brain.awaiting
+
+
+async def test_basta_over_the_reply_runs_nothing_either(make_scene, home: Path) -> None:
+    desk = FakeDesktop()
+    scene = make_scene(SAY_THEN_CALL, sentence_frames=PLAY, chunk_wait=9, desk=desk, home=home)
+    await scene.say(WRITE)
+    await scene.until_speaking()
+    await scene.say_over("basta")
+    await idle(scene, poll_s=0.002)
+    assert not typed_anything(desk) and not scene.brain.awaiting
+    assert not resumed(scene)
+
+
+async def test_the_next_request_acts_again(make_scene, home: Path) -> None:
+    """The stop belongs to the reply that was cut: it never blocks the request after it."""
+    desk = FakeDesktop()
+    scene = make_scene(
+        SAY_THEN_CALL,
+        ([], "tool_use", [use("open_app", name="spotify")]),
+        text_reply("Aperto."),
+        sentence_frames=PLAY,
+        chunk_wait=9,
+        desk=desk,
+        home=home,
+    )
+    await scene.say(WRITE)
+    await scene.until_speaking()
+    await scene.say_over(ASK)
+    await idle(scene, poll_s=0.002)
+    assert desk.done.count(("launch", "Spotify")) == 1
+    assert not typed_anything(desk)
+
+
 # --- the person talks to CLAUDIO in several ways ----------------------------------------
 
 
