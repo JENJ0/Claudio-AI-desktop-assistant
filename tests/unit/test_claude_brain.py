@@ -14,7 +14,7 @@ import httpx2
 import pytest
 
 from claudio.app import Assistant, addressed_to_claudio
-from claudio.brain.claude import CUT_NOTE, ClaudeBrain
+from claudio.brain.claude import CUT_NOTE, ClaudeBrain, StreamEnd, stream_end
 from claudio.brain.prompts import ASK_SONNET_TOOL, OFFER, SYSTEM_PROMPT
 from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
@@ -1614,3 +1614,26 @@ async def test_the_cut_marker_still_follows_a_note_at_the_token_limit(pricing: P
     chunks = [c async for c in b.ask("raccontami una storia", "it")]
     assert chunks[0] == "C'era un re. Attra" and chunks[1] is CUT_SHORT
     assert chunks[2:] == [CLOSING]
+
+
+# --- G1: stream_end flags a promise without a call ---
+
+
+def _final(reason: str, *blocks: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        stop_reason=reason, content=[SimpleNamespace(type=t, name="open_app") for t in blocks]
+    )
+
+
+def test_stream_end_promised_only_with_tools_offered_and_no_call() -> None:
+    said = "Ora scrivo il piano."
+    end = _final("end_turn", "text")
+    assert stream_end(end, tools_offered=True, said=said) is StreamEnd.PROMISED
+    assert stream_end(end, tools_offered=False, said=said) is StreamEnd.DONE
+    assert stream_end(end, tools_offered=True, said="Fatto.") is StreamEnd.DONE
+    assert stream_end(_final("tool_use", "text", "tool_use"), tools_offered=True, said=said) is (
+        StreamEnd.DONE
+    )
+    assert stream_end(_final("end_turn", "text", "tool_use"), tools_offered=True, said=said) is (
+        StreamEnd.DONE
+    )

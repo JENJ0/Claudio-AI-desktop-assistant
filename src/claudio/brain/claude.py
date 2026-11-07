@@ -31,6 +31,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from claudio.brain.promises import promises_action
 from claudio.brain.prompts import (
     API_ERROR,
     ASK_SONNET_TOOL,
@@ -109,17 +110,29 @@ class StreamEnd(Enum):
     CUT_WORDS = "cut_words"  # max_tokens inside the words (or only an ask_sonnet call)
     CUT_CALL = "cut_call"  # max_tokens with a tool_use block: its arguments may be half
     REFUSED = "refused"
+    PROMISED = "promised"  # end_turn with tools offered, no call, and words that promise one
     ERROR = "error"  # the request or the stream failed: a fixed sentence was said
 
 
-def stream_end(final: Any) -> StreamEnd:
-    """The end of a finished message. `final` may be None (nothing to read): DONE."""
+def stream_end(
+    final: Any, *, tools_offered: bool = False, said: str = "", ran: bool = False
+) -> StreamEnd:
+    """The end of a finished message. `final` may be None (nothing to read): DONE.
+    `said`: the words Claudio spoke; with `tools_offered` they may be a promise without a call
+    (`ran`: a tool already ran in this request)."""
     reason = getattr(final, "stop_reason", None)
     if reason == "refusal":
         return StreamEnd.REFUSED
     if reason == "max_tokens":
         return StreamEnd.CUT_CALL if _called_tools(final) else StreamEnd.CUT_WORDS
+    if tools_offered and reason == "end_turn" and not _has_tool_use(final):
+        return StreamEnd.PROMISED if promises_action(said, ran) else StreamEnd.DONE
     return StreamEnd.DONE
+
+
+def _has_tool_use(final: Any) -> bool:
+    blocks = getattr(final, "content", None) or []
+    return any(getattr(block, "type", None) == "tool_use" for block in blocks)
 
 
 def _called_tools(final: Any) -> list[str]:
@@ -955,7 +968,19 @@ class ClaudeBrain:
             if stream is not None:
                 timing["total_ms"] = _ms_since(sent, self.clock())
                 self._record(model, final, stream, leg.parts, timing)
-        leg.end = end = stream_end(final)
+        # No PC tools, no tools in the call (Sonnet) or tool_choice none (last round): no action
+        # can be promised.
+        offered = (
+            self.tools is not None
+            and "tools" in params
+            and params.get("tool_choice") != {"type": "none"}
+        )
+        leg.end = end = stream_end(
+            final,
+            tools_offered=offered,
+            said="".join(leg.parts),
+            ran=bool(self.last_call.get("tools")),
+        )
         if end is StreamEnd.REFUSED:
             log.info("Claude ha rifiutato la richiesta")
             if not "".join(leg.parts).strip():
@@ -966,6 +991,10 @@ class ClaudeBrain:
             # No closing sentence: the loop retries the call or says it did not run.
             log.warning("Claude: chiamata tagliata al limite di %d token", params["max_tokens"])
             self.last_call["cut"] = "tool_use"
+        elif end is StreamEnd.PROMISED:
+            # 17:04:15 on 05/11: "dovrei aprire la cartella AMD", no call. Only logged, no text.
+            log.info("Promessa senza azione", extra={"route": "tool"})
+            self.last_call["promised"] = True
         elif end is StreamEnd.CUT_WORDS and not silent:
             # 30/10: a story stopped inside "Attraverso" and the voice said "Attra". The
             # marker drops the unfinished sentence; the closing one stays in the history too,
