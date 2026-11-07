@@ -299,10 +299,11 @@ retry_timeout_s = 60           # a long tool input can arrive in one block
 retry_models = ["claude-haiku-5-5"]   # only these accept a forced tool_choice
 read_chars = 1500              # window text sent to Claude (~500 tokens)
 read_timeout_s = 2.0
+observe_wait_s = 1.0           # how long a tool waits to see its effect (window opened, text typed)
 search_limit = 8
 web_search_url = "https://www.google.com/search?q={query}"   # web_search (no confirmation): results page
 folders_refresh_s = 900        # folder names listed in the background, read again every 15 min (0 = off)
-private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password"]
+private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password", ".env", ".pem", ".key", ".ssh", "id_rsa", "id_ed25519", "id_ecdsa", "credentials"]
 screenshot_side = 1024         # last-resort screenshot to Haiku: long side in pixels (~1000 tokens)
 commands = true                # PowerShell commands: always "confermo" said aloud, never as admin
 command_timeout_s = 30

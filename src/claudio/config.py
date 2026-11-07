@@ -519,6 +519,8 @@ class PcSettings(BaseModel):
     retry_models: list[str] = Field(default_factory=lambda: ["claude-haiku-5-5"])
     read_chars: int = Field(1500, ge=100, le=10000)  # window text sent to Claude
     read_timeout_s: float = Field(2.0, gt=0, le=30)  # slow apps (Electron) stop here
+    # How long a tool waits to see what it did (a window opening, typed text showing up).
+    observe_wait_s: float = Field(1.0, ge=0, le=5)
     search_limit: int = Field(8, ge=1, le=50)
     search_timeout_s: float = Field(3.0, gt=0, le=30)  # folder walk without the Windows index
     # web_search (level 1): the results page; {query} is replaced by the encoded words.
@@ -537,12 +539,17 @@ class PcSettings(BaseModel):
     command_timeout_s: float = Field(30.0, gt=0, le=120)
     command_output_chars: int = Field(2000, ge=200, le=10000)  # output sent back to Claude
     bridge: bool = True  # "Ci guardo" before a slow action when Claude said nothing yet
-    # Typing in these windows (title or program, any case) needs no yes (JenJo, 23/10).
+    # Typing into these programs (their process name, any case) needs no yes (JenJo, 23/10).
+    # "blocco note" is the app's name, which only predicts it: the process lets the keys through.
     free_typing: list[str] = Field(default_factory=lambda: ["blocco note", "notepad"])
     paste_min_chars: int = Field(40, ge=0)  # longer text (or with new lines) is pasted: faster
-    # Windows never read (title or program): password managers.
+    # Windows never read (title or program): password managers and secret files, whose text
+    # would otherwise reach Anthropic.
     private_windows: list[str] = Field(
-        default_factory=lambda: ["keepass", "bitwarden", "1password", "lastpass", "password"]
+        default_factory=lambda: [
+            *("keepass", "bitwarden", "1password", "lastpass", "password"),
+            *(".env", ".pem", ".key", ".ssh", "id_rsa", "id_ed25519", "id_ecdsa", "credentials"),
+        ]
     )
 
     @field_validator("web_search_url")
@@ -550,6 +557,13 @@ class PcSettings(BaseModel):
     def _search_url(cls, value: str) -> str:
         if not value.startswith("https://") or value.count("{query}") != 1:
             raise ValueError("web_search_url: un indirizzo https:// con {query} una volta")
+        return value
+
+    @field_validator("free_typing")
+    @classmethod
+    def _free_typing(cls, value: list[str]) -> list[str]:
+        if any(not name.strip() for name in value):
+            raise ValueError("free_typing: un nome vuoto renderebbe libero ogni programma")
         return value
 
 

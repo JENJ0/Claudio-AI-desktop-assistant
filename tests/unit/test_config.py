@@ -1,8 +1,16 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from claudio.config import DEFAULT_CONFIG, ConfigError, load_settings
+from claudio.config import DEFAULT_CONFIG, ConfigError, PcSettings, load_settings
+
+
+@pytest.mark.parametrize("names", [[""], ["notepad", "  "]])
+def test_free_typing_refuses_a_blank_name(names: list[str]) -> None:
+    """An empty name is contained in every program's name: everything would need no yes."""
+    with pytest.raises(ValidationError, match="free_typing"):
+        PcSettings(free_typing=names)
 
 
 def test_project_config_loads() -> None:
