@@ -22,6 +22,7 @@ import pytest
 import soundfile as sf
 
 from claudio.config import PROJECT_ROOT, Settings, load_settings
+from claudio.pc.tools import App
 from tests.conftest import FakeVad
 from tests.unit.test_app import FakeStt
 from tests.unit.test_claude_brain import (
@@ -695,6 +696,28 @@ def test_real_tools_are_never_built_in_the_gate(
     assert brain.client is harness.client and brain.settings.tell_time is False
     assert brain._tag("it") == "[it]"  # no clock in the request
     assert tools.policy.home == harness.home.resolve()
+
+
+def test_a_launched_app_shows_an_empty_window_in_the_gate() -> None:
+    """A fresh app shows an empty document: the fixed text reads as an old one, and Haiku then
+    refuses to write."""
+    desktop = rg.GateDesktop()
+    window = desktop.open_windows[0]
+    assert desktop.read_window(window, 100, 1.0) == "Riga uno\nRiga due"
+    desktop.launch(App("Blocco note", "notepad"))
+    assert desktop.read_window(window, 100, 1.0) == ""
+
+
+def test_a_new_scene_gets_its_window_text_back(settings: Settings, tmp_path: Path) -> None:
+    harness = gate_harness(settings, tmp_path)
+    desktop = harness.desktop
+    window = desktop.open_windows[0]
+    desktop.launch(App("Blocco note", "notepad"))
+    desktop.paste("scritto")
+    assert "scritto" in desktop.read_window(window, 100, 1.0)
+    harness.fresh()
+    assert desktop.read_window(window, 100, 1.0) == "Riga uno\nRiga due"
+    assert desktop.typed == ""
 
 
 def claude_script(*uses: SimpleNamespace) -> ScriptedClient:

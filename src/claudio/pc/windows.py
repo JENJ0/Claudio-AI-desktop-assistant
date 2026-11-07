@@ -438,6 +438,8 @@ def _element_text(info: Any) -> tuple[str, bool]:
             return str(value).strip(), True
         # The TextPattern, where Notepad on Windows 11 may keep its text. Without that pattern
         # rich_text gives the name back, which says nothing about the content.
+        # shortcut: GetText(-1) has no cap, so a huge document overruns the read's time limit;
+        # upgrade to DocumentRange.GetText(max_chars) when a live session shows it.
         rich = str(info.rich_text or "").strip()
         return rich or name, bool(rich) and rich != name
     except Exception:
