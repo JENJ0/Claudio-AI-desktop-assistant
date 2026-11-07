@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
 import sys
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
@@ -904,6 +905,7 @@ class RefusingClient(ScriptedClient):
         httpx2.ReadError("reset"),
         httpx2.ReadTimeout("stalled"),
         httpx2.DecodingError("bad gzip"),
+        ssl.SSLError("bad record"),  # not wrapped by httpx: 5 of 240 calls in the A/B of 07/11
     ],
     ids=lambda e: type(e).__name__,
 )

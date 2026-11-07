@@ -34,6 +34,12 @@ def test_bad_keys_are_refused(bad: str) -> None:
         canonical(bad)
 
 
+@pytest.mark.parametrize("keys", [[1], [None], ["win", 1]], ids=repr)
+def test_keys_from_claude_that_are_not_text_are_refused(keys: list[object]) -> None:
+    with pytest.raises(BadKey):
+        parse_combos(keys)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("combo", "sent"),
     [

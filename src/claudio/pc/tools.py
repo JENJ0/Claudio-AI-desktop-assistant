@@ -56,9 +56,9 @@ WINDOW_POLL_S = 0.2
 WINDOW_SETTLE_S = 0.4  # a window that just appeared: its text field takes the focus a bit later
 OBSERVE_READ_MIN_S = 0.2  # a tool that looks at its effect always leaves this much to the read
 KEYS_MAX_CHARS = 500  # key by key at 20 ms a key: 6000 characters would take 2 minutes, unstoppable
-# These return before the front has moved (Popen, startfile): it can move after `_type` has looked.
-FRONT_LATER_TOOLS = frozenset({"open_path", "open_website", "web_search"})
-FRONT_LATER_KEYS = frozenset({"alt+tab", "win"})
+# These return before the front has moved (Popen, startfile, a key that Windows acts on later): it
+# can move after `_type` has looked.
+FRONT_LATER_TOOLS = frozenset({"open_path", "open_website", "web_search", "press_keys"})
 READ_CUT = "[...]"  # the last line of a window read that stopped before the end (pc/windows.py)
 READ_BACK_MIN_CHARS = 12  # a shorter text is found in any window: it proves nothing
 CHECK_CHARS = 40  # the start and the end of a typed text, looked for in the window afterwards
@@ -472,19 +472,19 @@ class PcTools:
         and it can be wrong: `_type` checks the real window before any key."""
         self._free.clear()  # only this reply's calls
         for i, call in enumerate(calls):
-            if call.name != "type_text" or not self.settings.free_typing:
+            if call.name != "type_text":
                 continue
             where = await self._expected_target(str(call.args.get("window") or ""), calls[:i])
-            if where is not None and self._names_free(where):
+            if self._names_free(where):
                 self._free.add(call.id)
 
-    async def _expected_target(self, query: str, earlier: Sequence[ToolCall]) -> str | None:
-        """The name a type_text is judged by. None, never free: an earlier call of this reply
+    async def _expected_target(self, query: str, earlier: Sequence[ToolCall]) -> str:
+        """The name a type_text is judged by. Empty, never free: an earlier call of this reply
         lets a program take the front later, which the check in `_type` cannot see. With no
         window named: the last open_app or focus_window before it, else the app started earlier
         in this request, else the window in front now."""
         if any(self._front_moves_later(call) for call in earlier):
-            return None
+            return ""
         if not query:
             for call in reversed(earlier):
                 if call.name == "open_app":
@@ -500,21 +500,16 @@ class PcTools:
         return window.process  # not the title: a tab "notepad online" is Chrome
 
     def _front_moves_later(self, call: ToolCall) -> bool:
-        if call.name in FRONT_LATER_TOOLS:
-            return True
         if call.name == "open_app":
-            return not self._names_free(str(call.args.get("name") or ""))
-        if call.name != "press_keys":
-            return False
-        try:
-            combos = keys.parse_combos(list(call.args.get("keys") or []))
-        except (keys.BadKey, TypeError):
-            return False  # nothing will be pressed
-        return not FRONT_LATER_KEYS.isdisjoint(combos)
+            # Exact: "Windows PowerShell notepad" names a console that takes the front later.
+            name = str(call.args.get("name") or "").strip().casefold()
+            return name not in {free.casefold() for free in self.settings.free_typing}
+        return call.name in FRONT_LATER_TOOLS
 
     def _names_free(self, name: str) -> bool:
-        # shortcut: "contains", so notepad++.exe and any file name holding notepad count as free.
-        # Exact match stays out: Notepad++ only risks an unsaved buffer.
+        # shortcut: "contains", so notepad++.exe and any file name holding notepad count as free
+        # (Notepad++ only risks an unsaved buffer). Upgrade to the exact process name when a real
+        # program with such a name gets keys it should not.
         name = name.casefold()
         return any(free.casefold() in name for free in self.settings.free_typing)
 
@@ -664,8 +659,7 @@ class PcTools:
             return self._read(str(a.get("window") or ""))
         if call.name == "focus_window":
             window = self._find_window(str(a.get("window", "")))
-            self.desktop.focus(window)
-            if not self._comes_to_front(window):
+            if not self._brought_to_front(window):
                 raise ToolFailed(f'"{window.title}" did not come to the front.')
             return f'"{window.title}" is now in front.'
         if call.name == "press_keys":
@@ -754,14 +748,17 @@ class PcTools:
         program's name) showed up within `observe_wait_s` (the read leaves at least
         OBSERVE_READ_MIN_S more), and its text.
         shortcut: the match is a substring, so a short name can match another window, and a name
-        found in neither reads as "no window seen yet"."""
+        found in neither reads as "no window seen yet". Upgrade (the launched process, not its
+        name) when a live session reads the wrong window or misses one that opened."""
         deadline = self.clock() + self.settings.observe_wait_s
         while (window := self._titled(query, by_process)) is None and self.clock() < deadline:
             self._poll(deadline)
         if window is None:
             return f"{did}, no window seen yet: it may still be starting."
         timeout = max(OBSERVE_READ_MIN_S, deadline - self.clock())
-        return f"{did}. Its window is open." + self._window_text_after(window, timeout)
+        text = self._read_public(window, self.settings.read_chars, timeout)
+        shown = "" if text is None else "\n" + self._as_data(window, text)
+        return f"{did}. Its window is open.{shown}"
 
     def _poll(self, deadline: float) -> None:
         """Wait one poll, never past `deadline` and never a negative time."""
@@ -794,19 +791,17 @@ class PcTools:
         current = self._current(window)
         return current is not None and not self._private(current)
 
-    def _window_text_after(self, window: Window, timeout_s: float) -> str:
-        """The window's text as data, on a new line, for the result of a tool that acted on it.
-        Empty for a private window (never read) and when the read fails."""
+    def _read_public(self, window: Window, max_chars: int, timeout_s: float) -> str | None:
+        """The window's text after a tool acted on it. None: private (never read), turned private
+        or closed during the read, or the read failed."""
         if self._private(window):
-            return ""
+            return None
         try:
-            text = self.desktop.read_window(window, self.settings.read_chars, timeout_s)
-            if not self._still_public(window):
-                return ""
+            text = self.desktop.read_window(window, max_chars, timeout_s)
+            return text if self._still_public(window) else None
         except Exception:
             log.exception("Lettura di %r fallita dopo l'azione", window.title)
-            return ""
-        return "\n" + self._as_data(window, text)
+            return None
 
     def _app_list(self) -> list[App]:
         """The Start menu, read again every `apps_refresh_s` (a new install shows up)."""
@@ -1045,9 +1040,9 @@ class PcTools:
                 "Write a shorter one."
             )
         window = self._typing_target(query)
-        # shortcut: the check is one instant; a program that takes the front later, in a later
-        # round or from JenJo's own alt+tab, still gets the keys.
-        # Upgrade if a live session shows it.
+        # shortcut: the check is one instant; a program that takes the front later still gets the
+        # keys: after a close_window of the same reply, from a call of an earlier round, or from
+        # JenJo's own alt+tab. Upgrade if a live session shows it.
         if free and (window is None or not self._names_free(window.process)):
             raise ToolFailed(
                 "Not typed: that window needs JenJo's yes. Call type_text again naming the window."
@@ -1074,16 +1069,17 @@ class PcTools:
                 ) from exc
         else:
             return next((w for w in self.desktop.windows() if w.active), None)
-        try:
-            self.desktop.focus(window)
-        except Exception as exc:  # Windows may refuse the foreground: the checks decide
-            log.warning("Focus su %r non riuscito (%s)", window.title, exc)
-        if not self._comes_to_front(window):
+        if not self._brought_to_front(window):
             raise ToolFailed("Not typed: the window did not come to the front.")
         return window
 
-    def _comes_to_front(self, window: Window) -> bool:
-        """Two looks, WINDOW_POLL_S apart: the front can take a moment to move."""
+    def _brought_to_front(self, window: Window) -> bool:
+        """Ask for the focus, then two looks, WINDOW_POLL_S apart: the front can take a moment to
+        move, and Windows may refuse the foreground, so the looks decide."""
+        try:
+            self.desktop.focus(window)
+        except Exception as exc:
+            log.warning("Focus su %r non riuscito (%s)", window.title, exc)
         if self._in_front(window):
             return True
         self.sleep(WINDOW_POLL_S)
@@ -1113,19 +1109,15 @@ class PcTools:
         is looked for (start and end) for up to `observe_wait_s`. Only a read without the
         READ_CUT mark on its last line is whole, so only that one can say the text is absent."""
         want = _squashed(text)
-        if window is None or len(want) < READ_BACK_MIN_CHARS or self._private(window):
+        if window is None or len(want) < READ_BACK_MIN_CHARS:
             return READ_BACK_NO
         max_chars = len(text) + self.settings.read_chars
         deadline = self.clock() + self.settings.observe_wait_s
         ends = (want[:CHECK_CHARS], want[-CHECK_CHARS:])
         while True:
             timeout = max(OBSERVE_READ_MIN_S, deadline - self.clock())
-            try:
-                seen = self.desktop.read_window(window, max_chars, timeout)
-                if not self._still_public(window):
-                    return READ_BACK_NO
-            except Exception:
-                log.exception("Rilettura di %r fallita dopo la scrittura", window.title)
+            seen = self._read_public(window, max_chars, timeout)
+            if seen is None:
                 return READ_BACK_NO
             squashed = _squashed(seen)
             if all(end in squashed for end in ends):

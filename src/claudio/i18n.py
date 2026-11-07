@@ -234,6 +234,7 @@ EN: dict[str, str] = {
         "Confirmation unclear (level %d): %s not run"
     ),
     "Conferma scaduta: %s non eseguito": "Confirmation expired: %s not run",
+    "Nuova richiesta sopra la risposta: %s non eseguito": "New request over the reply: %s not run",
     "Offerta di Sonnet scaduta: interrotta": "Sonnet offer expired: interrupted",
     "Basta: fine della conversazione": "Stop: end of the conversation",
     "Ripeto: %r": "Repeating: %r",
@@ -531,7 +532,6 @@ EN: dict[str, str] = {
     "App nel menu Start: %d": "Apps in the Start menu: %d",
     "Lettura di %r interrotta dopo %.1f s": "Reading %r stopped after %.1f s",
     "Lettura di %r fallita dopo l'azione": "Reading %r failed after the action",
-    "Rilettura di %r fallita dopo la scrittura": "Reading %r back failed after typing",
     "Appunti: formato %s non ripristinato": "Clipboard: format %s not restored",
     "Appunti non ripristinati": "Clipboard not restored",
     "Focus su %r non riuscito (%s)": "Focus on %r failed (%s)",

@@ -63,6 +63,8 @@ class BadKey(ValueError):
 
 def canonical(combo: str) -> str:
     """ "Shift+Ctrl+T" -> "ctrl+shift+t"; "ctrl++" -> "ctrl+plus". Raises BadKey."""
+    if not isinstance(combo, str):  # Claude's arguments are only JSON: [1] reaches here
+        raise BadKey(f"not a key: {combo!r}")
     raw = re.sub(r"\s*\+\s*", "+", combo.strip().lower()).replace(" ", "_")
     if not raw:
         raise BadKey("empty key")

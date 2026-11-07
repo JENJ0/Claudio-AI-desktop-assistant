@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import ssl
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -26,6 +28,7 @@ from claudio.pc.keys import parse_combos, to_send_keys
 from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import DEFINITIONS, LEVELS, App, PcTools, ToolCall, Window
 from claudio.protocols import CUT_SHORT
+from claudio.resume import DrainedStream
 from claudio.router.matcher import CommandMatcher
 from tests.unit.test_claude_brain import (
     API_SAID,
@@ -38,6 +41,7 @@ from tests.unit.test_claude_brain import (
     Monotonic,
     RefusingClient,
     ScriptedClient,
+    ScriptedStream,
     hybrid,
     say,
     settled,
@@ -400,9 +404,55 @@ async def test_unknown_tool_and_crash_become_errors(tools: PcTools, desk: FakeDe
     def boom(window: Window) -> None:
         raise RuntimeError("UIA timeout")
 
-    desk.focus = boom  # type: ignore[method-assign]
-    out = await tools.run(call("focus_window", window="chrome"))
+    desk.close = boom  # type: ignore[method-assign]
+    out = await tools.run(call("close_window", window="chrome"))
     assert out.error and "UIA timeout" in out.text
+
+
+def refuse_focus(window: Window) -> None:
+    raise RuntimeError("SetForegroundWindow refused")
+
+
+async def test_a_refused_focus_says_the_window_stayed_behind(
+    desk: FakeDesktop, home: Path, ticker: Ticker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Windows may refuse the foreground: no raw "failed: ...", no traceback, and the two looks
+    decide, as for the typing."""
+    desk.focus = refuse_focus  # type: ignore[method-assign]
+    t = ticking_tools(desk, home, ticker)
+    out = await t.run(call("focus_window", window="chrome"))
+    in_front = await t.run(call("focus_window", window="blocco note"))
+    t.close()
+    assert out.error and out.text == '"YouTube - Google Chrome" did not come to the front.'
+    assert not any(record.exc_info for record in caplog.records)
+    assert not in_front.error  # refused, but it already was in front
+
+
+class LateFocusDesktop(FakeDesktop):
+    """The focus works, but the first look after it still sees the old front."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.moving: int | None = None
+
+    def focus(self, window: Window) -> None:
+        self.moving = window.handle
+
+    def windows(self) -> list[Window]:
+        seen = self.open_windows
+        if self.moving is not None:
+            self.open_windows = [replace(w, active=w.handle == self.moving) for w in seen]
+            self.moving = None
+        return seen
+
+
+async def test_focus_window_looks_twice(home: Path, ticker: Ticker) -> None:
+    t = ticking_tools(LateFocusDesktop(), home, ticker)
+    start = ticker.now
+    out = await t.run(call("focus_window", window="chrome"))
+    t.close()
+    assert not out.error and out.text == '"YouTube - Google Chrome" is now in front.'
+    assert ticker.now == pytest.approx(start + 0.2)  # WINDOW_POLL_S, between the two looks
 
 
 async def test_everything_runs_on_one_thread(tools: PcTools, desk: FakeDesktop) -> None:
@@ -653,10 +703,11 @@ async def test_a_cut_before_the_tools_run_keeps_the_words_and_runs_nothing(
 
 
 @pytest.mark.parametrize(
-    ("method", "tool"),
+    ("method", "tool", "note"),
     [
-        ("run", use("open_app", name="spotify")),
-        ("question", use("close_window", window="chrome")),  # no answer is awaited yet
+        # Its thread goes on after the cancel, so the action may be done: the history says so.
+        ("run", use("open_app", name="spotify"), f" {ACTIONS_NOTE}open_app interrupted]"),
+        ("question", use("close_window", window="chrome"), ""),  # no answer is awaited yet
     ],
 )
 async def test_a_cancel_while_nothing_streams_keeps_the_words_and_awaits_no_answer(
@@ -665,6 +716,7 @@ async def test_a_cancel_while_nothing_streams_keeps_the_words_and_awaits_no_answ
     monkeypatch: pytest.MonkeyPatch,
     method: str,
     tool: SimpleNamespace,
+    note: str,
 ) -> None:
     async def hang(*args: Any) -> None:
         await asyncio.Event().wait()
@@ -677,8 +729,99 @@ async def test_a_cancel_while_nothing_streams_keeps_the_words_and_awaits_no_answ
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert list(b._history) == [("[it] fallo", f"Un attimo. {CUT_NOTE}")]
+    assert list(b._history) == [("[it] fallo", f"Un attimo. {CUT_NOTE}{note}")]
     assert not b.awaiting
+
+
+async def hang_in_run(tools: PcTools, monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """`tools.run` starts and never returns: the event is set once it started."""
+    started = asyncio.Event()
+
+    async def hang(*args: Any) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(tools, "run", hang)
+    return started
+
+
+async def test_a_typing_cancelled_while_running_stays_in_the_history(
+    pricing: Pricing, tools: PcTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec: a tool already run stays in the history, so it is not repeated. It also counts as
+    outside text: the next request must not save a memory unasked."""
+    started = await hang_in_run(tools, monkeypatch)
+    client = ScriptedClient(([], "tool_use", [use("type_text", text="ciao a tutti quanti")]))
+    b = acting_brain(pricing, client, tools)
+    task = asyncio.create_task(ask(b, "scrivi"))
+    await asyncio.wait_for(started.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(b._history) == [
+        ("[it] scrivi", f"{CUT_BEFORE_NOTE} {ACTIONS_NOTE}type_text interrupted]")
+    ]
+    assert b._read_outside()
+    assert "type_text(" in b.last_call["tools"][0]
+    assert b.last_call["tools"][0].endswith(" interrupted")
+
+
+async def test_a_retried_call_cancelled_while_running_is_not_said_to_have_never_run(
+    pricing: Pricing, tools: PcTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = await hang_in_run(tools, monkeypatch)
+    cut = ([], "max_tokens", [use("type_text", text="Pia", window="blocco note")])
+    whole = ([], "tool_use", [use("type_text", text=PLAN, window="blocco note")])
+    b = acting_brain(pricing, ScriptedClient(cut, whole), tools)
+    task = asyncio.create_task(ask(b, "scrivi nel blocco note"))
+    await asyncio.wait_for(started.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    answer = b._history[-1][1]
+    assert answer.endswith(f"{ACTIONS_NOTE}type_text interrupted]") and "did not run" not in answer
+
+
+async def test_a_confirmed_call_cancelled_while_running_stays_in_the_history(
+    pricing: Pricing, tools: PcTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the yes the calls run outside `_loop`: the level 2-3 ones must not vanish either."""
+    client = ScriptedClient(([], "tool_use", [use("type_text", text=PLAN, window="chrome")]))
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "scrivi su chrome")).endswith("Confermi?")
+    started = await hang_in_run(tools, monkeypatch)
+    task = asyncio.create_task(ask(b, "sì"))
+    await asyncio.wait_for(started.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(b._history) == [
+        ("[it] scrivi su chrome", f"Confermi? {CUT_NOTE} {ACTIONS_NOTE}type_text interrupted]")
+    ]
+    assert not b.awaiting
+
+
+@pytest.mark.parametrize(
+    "error",
+    [ssl.SSLError("bad record"), ConnectionResetError("reset")],
+    ids=lambda e: type(e).__name__,
+)
+async def test_a_raw_socket_error_after_a_typing_is_said_and_keeps_what_ran(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, error: Exception
+) -> None:
+    """A/B of 07/11: it raised out of `ask()`, the history stayed empty and the next request could
+    type the same text again."""
+    client = BreakingClient(
+        error,
+        ([], "tool_use", [use("type_text", text="ciao a tutti quanti", window="blocco note")]),
+        (["Ho scri"], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    said = await ask(b, "scrivi")
+    assert said.endswith(NETWORK_SAID) and b.last_call["claude_error"] == "network"
+    assert typed_anything(desk)
+    assert list(b._history) == [("[it] scrivi", f"Ho scri {ACTIONS_NOTE}type_text ok]")]
+    assert b._read_outside()
 
 
 async def test_a_cut_after_the_yes_is_recorded_at_once(
@@ -1009,6 +1152,18 @@ async def test_a_retried_call_still_asks_for_the_yes(
     assert (("keys", "ciao") in desk.done) is typed
 
 
+async def test_a_retried_call_refused_at_the_yes_stays_not_run(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """The note goes only when the call really runs: the retry bringing it is not enough."""
+    cut = (["Ok. "], "max_tokens", [text("Ok. "), use("type_text", text="ci", window="chrome")])
+    client = ScriptedClient(cut, ([], "tool_use", [use("type_text", text="ciao", window="chrome")]))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao su chrome")
+    await ask(b, "no")
+    assert b._history[-1][1].endswith(NOT_RUN_TYPE)
+
+
 async def test_the_retry_never_speaks_its_own_text(
     pricing: Pricing, tools: PcTools, desk: FakeDesktop
 ) -> None:
@@ -1090,6 +1245,276 @@ async def test_basta_during_the_retry_runs_nothing(
         )
     ]
     assert not [d for d in desk.done if d[0] in ("paste", "keys")]
+
+
+# --- a new request said over the reply: its stream goes on for "Dicevo", no action starts from it
+# (the speaker's side of it is in test_timeline.py) ------------------------------------------------
+
+STOPPED_TYPE = "[Claudio did not run: type_text, a new request came first]"
+TYPE_INTO_CHROME = use("type_text", text=PLAN, window="chrome")
+
+
+class HeldStream(ScriptedStream):
+    """A scripted reply whose first word waits for `go`."""
+
+    def __init__(self, go: asyncio.Event, *args: Any) -> None:
+        super().__init__(*args)
+        self.go = go
+
+    @property
+    def text_stream(self) -> Any:
+        words = super().text_stream
+
+        async def gen() -> Any:
+            await self.go.wait()
+            async for chunk in words:
+                yield chunk
+
+        return gen()
+
+
+class HeldCall(ScriptedClient):
+    """Its request number `held` (from 0) answers only after `go`."""
+
+    def __init__(self, held: int, *replies: tuple[list[str], str, list[Any]]) -> None:
+        super().__init__(*replies)
+        self.held, self.reached, self.go = held, asyncio.Event(), asyncio.Event()
+
+    def stream(self, **params: Any) -> Any:
+        number = len(self.calls)
+        reply = super().stream(**params)
+        if number != self.held:
+            return reply
+        self.reached.set()
+        return HeldStream(self.go, reply.chunks, reply.stop, reply.content, reply.usage)
+
+
+async def cut_by_a_new_request(
+    b: ClaudeBrain, client: HeldCall, said: str = SCENE
+) -> DrainedStream:
+    """The reply read as `_speak_reply` reads it, a new request during the held call, and the wait
+    of `_unsaid` for what is left of it."""
+    drained = DrainedStream(b.ask(said, "it"))
+    await asyncio.wait_for(client.reached.wait(), 5)
+    b.stop_acting()
+    client.go.set()
+    await drained.finish(5.0)
+    return drained
+
+
+def typed_anything(desk: FakeDesktop) -> bool:
+    return any(d[0] in ("paste", "keys") for d in desk.done)
+
+
+@pytest.mark.parametrize("window", ["blocco note", "chrome"], ids=["level-1", "level-2"])
+async def test_a_new_request_during_the_retry_runs_nothing(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, window: str
+) -> None:
+    cut = (
+        [SAID_BEFORE],
+        "max_tokens",
+        [text(SAID_BEFORE), use("type_text", text="Pia", window=window)],
+    )
+    whole = ([], "tool_use", [use("type_text", text=PLAN, window=window)])
+    client = HeldCall(2, OPEN_NOTEPAD, cut, whole)
+    b = acting_brain(pricing, client, tools)
+    drained = await cut_by_a_new_request(b, client)
+    assert not typed_anything(desk) and not b.awaiting
+    assert SAID_BEFORE in drained.text and "Confermi" not in drained.text
+    assert list(b._history) == [
+        (f"[it] {SCENE}", f"{SAID_BEFORE} {CUT_NOTE} {STOPPED_TYPE} {ACTIONS_NOTE}open_app ok]")
+    ]
+
+
+async def test_a_new_request_during_a_retry_with_no_call_says_nothing_more(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = HeldCall(2, OPEN_NOTEPAD, CUT_TYPE, CUT_TYPE)
+    b = acting_brain(pricing, client, tools)
+    drained = await cut_by_a_new_request(b, client)
+    assert NOT_RUN_SAID not in drained.text  # nobody is listening: no sentence for "Dicevo"
+    assert list(b._history) == [
+        (f"[it] {SCENE}", f"{SAID_BEFORE} {CUT_NOTE} {STOPPED_TYPE} {ACTIONS_NOTE}open_app ok]")
+    ]
+
+
+async def test_a_question_nobody_heard_is_never_armed(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """The review's probe: "ok, grazie" was the yes and the text went into Chrome."""
+    client = HeldCall(
+        0,
+        (["Ok. "], "tool_use", [text("Ok. "), TYPE_INTO_CHROME]),
+        (["Prego."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    drained = await cut_by_a_new_request(b, client, "scrivi il piano su chrome")
+    assert not b.awaiting and "Confermi" not in drained.text
+    assert await ask(b, "ok, grazie") == "Prego."
+    assert not typed_anything(desk)
+
+
+async def test_a_call_cut_after_a_new_request_is_not_retried(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = HeldCall(0, CUT_TYPE)
+    b = acting_brain(pricing, client, tools)
+    drained = await cut_by_a_new_request(b, client)
+    assert len(client.calls) == 1
+    assert drained.text == SAID_BEFORE
+    assert list(b._history) == [(f"[it] {SCENE}", f"{SAID_BEFORE} {CUT_NOTE} {STOPPED_TYPE}")]
+
+
+@pytest.mark.parametrize(
+    ("method", "tool"),
+    [
+        ("prepare", use("open_app", name="spotify")),
+        ("question", use("close_window", window="chrome")),
+    ],
+    ids=["prepare", "question"],
+)
+async def test_a_new_request_in_the_last_waits_before_acting_stops_it(
+    pricing: Pricing,
+    tools: PcTools,
+    desk: FakeDesktop,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    tool: SimpleNamespace,
+) -> None:
+    reached, go = asyncio.Event(), asyncio.Event()
+
+    async def held(*args: Any) -> str:
+        reached.set()
+        await go.wait()
+        return "Confermi?"
+
+    monkeypatch.setattr(tools, method, held)
+    b = acting_brain(pricing, ScriptedClient(([], "tool_use", [tool])), tools)
+    drained = DrainedStream(b.ask("fallo", "it"))
+    await asyncio.wait_for(reached.wait(), 5)
+    b.stop_acting()
+    go.set()
+    await drained.finish(5.0)
+    assert not b.awaiting and not drained.text
+    assert not [d for d in desk.done if d[0] in ("launch", "close")]
+    assert b._history[-1][1].endswith(
+        f"[Claudio did not run: {tool.name}, a new request came first]"
+    )
+
+
+async def test_the_words_of_a_reply_with_no_call_are_kept_as_always(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = HeldCall(0, (["C'era una volta. ", "Fine."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    drained = await cut_by_a_new_request(b, client)
+    assert drained.text == "C'era una volta. Fine."
+    assert list(b._history) == [(f"[it] {SCENE}", "C'era una volta. Fine.")]
+
+
+async def test_sonnet_is_not_offered_by_a_reply_nobody_hears(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = HeldCall(0, ([], "tool_use", [use("ask_sonnet")]), (["Prego."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    drained = await cut_by_a_new_request(b, client, "spiegami la fotosintesi")
+    assert "Sonnet" not in drained.text and b.last_call.get("escalated") != "offered"
+    assert await ask(b, "sì") == "Prego."  # a new request, not the yes to an offer nobody heard
+    assert client.calls[-1]["model"] != "claude-sonnet-5-5"
+
+
+async def test_a_tool_that_ran_before_a_new_request_keeps_its_note(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    said = "Ora scrivo."
+    next_round = ([said], "tool_use", [text(said), use("type_text", text=PLAN)])
+    client = HeldCall(1, OPEN_NOTEPAD, next_round)
+    b = acting_brain(pricing, client, tools)
+    await cut_by_a_new_request(b, client)
+    assert ("launch", "Blocco note") in desk.done and not typed_anything(desk)
+    assert list(b._history) == [
+        (f"[it] {SCENE}", f"{said} {CUT_NOTE} {STOPPED_TYPE} {ACTIONS_NOTE}open_app ok]")
+    ]
+    assert b._read_outside()  # the window it opened may have been read
+
+
+async def test_a_call_running_finishes_and_the_next_one_never_starts(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started, gate = threading.Event(), threading.Event()
+    launch = desk.launch
+
+    def slow_launch(app: App) -> None:
+        started.set()
+        gate.wait(5)
+        launch(app)
+
+    monkeypatch.setattr(desk, "launch", slow_launch)
+    calls = [use("open_app", name="blocco note"), use("type_text", text=PLAN)]
+    client = ScriptedClient(([], "tool_use", calls), (["Mi fermo."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    drained = DrainedStream(b.ask(SCENE, "it"))
+    assert await asyncio.to_thread(started.wait, 5)
+    b.stop_acting()
+    gate.set()
+    await drained.finish(5.0)
+    assert ("launch", "Blocco note") in desk.done and not typed_anything(desk)
+    results = client.calls[1]["messages"][-1]["content"]
+    assert [r["tool_use_id"] for r in results] == ["tu_open_app", "tu_type_text"]  # one per call
+    assert "is_error" not in results[0] and results[1]["is_error"] is True
+    assert b._history[-1][1] == f"Mi fermo. {STOPPED_TYPE} {ACTIONS_NOTE}open_app ok]"
+
+
+async def test_a_new_request_after_the_yes_stops_the_next_round(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = HeldCall(
+        1,
+        ([], "tool_use", [use("close_window", window="chrome")]),
+        ([], "tool_use", [use("type_text", text=PLAN, window="chrome")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "chiudi chrome e scrivi")).endswith("Confermi?")
+    await cut_by_a_new_request(b, client, "sì")
+    assert ("close", "YouTube - Google Chrome") in desk.done
+    assert not typed_anything(desk) and not b.awaiting
+    assert b._history[-1][1].endswith(f"{STOPPED_TYPE} {ACTIONS_NOTE}close_window ok]")
+
+
+async def test_the_stop_never_reaches_the_next_request(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use("open_app", name="spotify")]), (["Aperto."], "end_turn", [])
+    )
+    b = acting_brain(pricing, client, tools)
+    b.stop_acting()  # the reply it was meant for is over
+    assert await ask(b, "apri spotify") == "Aperto."
+    assert ("launch", "Spotify") in desk.done
+
+
+def test_the_stop_is_wired_where_claudio_is_built(tmp_path: Path, desk: FakeDesktop) -> None:
+    """`Scene` wires the responder by hand: without `fallback_stop` here nothing would say so."""
+    from claudio.__main__ import build_responder
+    from claudio.config import load_settings
+    from tests.unit.test_actions import Recorder
+
+    settings = load_settings()
+    settings = settings.model_copy(
+        update={
+            "cost": settings.cost.model_copy(update={"db_file": tmp_path / "spend.db"}),
+            "memory": settings.memory.model_copy(update={"enabled": False}),
+        }
+    )
+    responder = build_responder(
+        settings, Recorder().ctx(), client=ScriptedClient(), desktop=desk, home=tmp_path
+    )
+    brain = responder.fallback.__self__  # type: ignore[union-attr]
+    try:
+        responder.stop_acting()
+        assert brain._stop_acting
+    finally:
+        brain.tools.close()
 
 
 async def test_an_api_error_during_the_retry_keeps_the_note(
@@ -1235,7 +1660,7 @@ async def test_a_refused_retry_says_so_and_keeps_the_note(pricing: Pricing, tool
     assert b._history[-1][1].endswith(f"{NOT_RUN_TYPE} {ACTIONS_NOTE}open_app ok]")
 
 
-# --- what the tools observe (G1 task 3) -------------------------------------------------------
+# --- what the tools observe -------------------------------------------------------------------
 
 BLOCK = re.compile(r"<<<\n(.*)\n>>>", re.S)
 
@@ -1503,7 +1928,7 @@ def test_both_outside_text_lists_agree() -> None:
     assert not {"open_app", "open_path", "type_text"} & pc_tools.SLOW  # no "Ci guardo"
 
 
-# --- the clipboard comes back as it was (G1 task 3, rule 8) --------------------------------------
+# --- the clipboard comes back as it was: JenJo's copy is never lost -------------------------------
 
 CF_DIB, CF_HDROP, CF_UNICODETEXT = 8, 15, 13
 HTML, RTF = 49000, 49001
@@ -1833,6 +2258,70 @@ def test_the_character_cap_marks_the_cut(monkeypatch: pytest.MonkeyPatch) -> Non
 
     text = read_tree(monkeypatch, Node("Win", [Node("aaaa"), Node("bbbb")]), max_chars=3)
     assert text == f"aaaa\n{READ_CUT}"
+
+
+class Field(Node):
+    """A text field: `value` is its UIA Value, `rich` what pywinauto's rich_text gives (the
+    TextPattern's text, or the name again when the field has no such pattern)."""
+
+    control_type = "Document"
+
+    def __init__(self, name: str, value: str = "", rich: str = "") -> None:
+        super().__init__(name)
+        self.element = SimpleNamespace(GetCurrentPropertyValue=lambda _: value)
+        self.rich_text = rich
+
+
+TYPED_TEXT = "ciao a tutti quanti"
+
+
+@pytest.mark.parametrize(
+    ("field", "read"),
+    [
+        (Field("Editor", value=TYPED_TEXT, rich="altro"), TYPED_TEXT),  # Value first, as before
+        (Field("Editor", rich=TYPED_TEXT), TYPED_TEXT),  # Notepad on Windows 11, maybe
+    ],
+    ids=["value", "text-pattern"],
+)
+def test_a_text_field_is_read_whole(
+    monkeypatch: pytest.MonkeyPatch, field: Field, read: str
+) -> None:
+    assert read_tree(monkeypatch, Node("Win", [field])) == read
+
+
+@pytest.mark.parametrize(
+    "field",
+    [Field("Editor"), Field("Editor", rich="Editor")],
+    ids=["nothing", "only-its-name-again"],
+)
+def test_a_text_field_with_no_readable_text_marks_the_cut(
+    monkeypatch: pytest.MonkeyPatch, field: Field
+) -> None:
+    from claudio.pc.tools import READ_CUT
+
+    text = read_tree(monkeypatch, Node("Win", [Node("uno"), field]))
+    assert text.endswith(READ_CUT)
+
+
+def test_a_failing_text_field_marks_the_cut(monkeypatch: pytest.MonkeyPatch) -> None:
+    from claudio.pc.tools import READ_CUT
+
+    field = Field("Editor")
+    field.element = None  # the element is gone: its Value raises
+    assert read_tree(monkeypatch, Node("Win", [Node("uno"), field])) == f"uno\n{READ_CUT}"
+
+
+async def test_typing_is_not_called_lost_when_the_field_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch, desk: FakeDesktop, home: Path, ticker: Ticker
+) -> None:
+    """The risk on Windows 11: typed correctly, the field shows nothing to UIA, "not found"."""
+    root = Node("Win", [Field("Editor", rich="Editor")])
+    monkeypatch.setattr(desk, "read_window", lambda *a: read_tree(monkeypatch, root))
+    t = ticking_tools(desk, home, ticker)
+    out = await t.run(call("type_text", text=TYPED_TEXT))
+    t.close()
+    assert "Read back not possible: say it is not verified." in out.text
+    assert "not found" not in out.text
 
 
 # --- the clipboard: busy, and any bytes ------------------------------------------------------
@@ -2322,6 +2811,19 @@ NEVER_INTO_ANOTHER_PROGRAM = {
     "free-word-in-another-app-name": Scene(
         CHROME_FRONT, [[do("open_app", name="spotify notepad"), TYPED]]
     ),
+    "free-word-in-another-app-name-window-named": Scene(
+        CHROME_FRONT, [[do("open_app", name="spotify notepad"), TYPED_INTO_NOTE]]
+    ),
+    "free-word-in-the-console-name-window-named": Scene(
+        CHROME_FRONT,
+        [
+            [
+                do("open_app", name="Windows PowerShell notepad"),
+                do("type_text", text="del x\n", window="blocco note"),
+            ]
+        ],
+        POWERSHELL,
+    ),
     "notepad-then-spotify": Scene(CHROME_FRONT, [[OPEN_NOTE, OPEN_SPOTIFY, TYPED]]),
     "focus-notepad-then-spotify": Scene(CHROME_FRONT, [[FOCUS_NOTE, OPEN_SPOTIFY, TYPED]]),
     "spotify-earlier-then-focus-notepad": Scene(
@@ -2419,6 +2921,13 @@ async def test_typing_into_notepad_keeps_working_at_level_1(
     assert seen == [(1, ["notepad.exe"])]
 
 
+@pytest.mark.parametrize("keys", [["alt+tab"], ["ctrl+s"], ["hyper+x"], [1]], ids=repr)
+async def test_any_key_before_the_typing_makes_it_ask(tools: PcTools, keys: list[Any]) -> None:
+    """Whatever the keys do, the front may move after the look: one rule, no list to keep."""
+    await tools.prepare([do("press_keys", keys=keys), TYPED_INTO_NOTE])
+    assert tools.level(TYPED_INTO_NOTE) == 2
+
+
 @pytest.mark.parametrize("first", [OPEN_SPOTIFY, WEBSITE, OPEN_FOLDER], ids=lambda c: c.name)
 async def test_a_program_that_takes_the_front_later_asks_in_any_order(
     tools: PcTools, first: ToolCall
@@ -2426,6 +2935,15 @@ async def test_a_program_that_takes_the_front_later_asks_in_any_order(
     """Which of the two gets the front is up to Windows, so the fake cannot show it: the level."""
     await tools.prepare([first, OPEN_NOTE, TYPED])
     assert tools.level(TYPED) == 2
+
+
+async def test_a_free_word_inside_another_app_name_is_not_free(tools: PcTools) -> None:
+    """Exact only: "contains" would predict Notepad and the keys would land in PowerShell."""
+    typed = do("type_text", text="del x\n", window="blocco note")
+    await tools.prepare([do("open_app", name="Windows PowerShell notepad"), typed])
+    assert tools.level(typed) == 2
+    await tools.prepare([do("open_app", name=" Blocco Note "), typed])
+    assert tools.level(typed) == 1  # the same name, however it is written
 
 
 async def test_notepad_is_free_with_the_capital_windows_gives_it(
@@ -2544,6 +3062,21 @@ async def test_an_opened_folder_is_not_matched_by_a_program_name(
     assert ("read", "Artist - Track") not in desk.done
 
 
+@pytest.mark.parametrize("keys", [[1], [None], ["win", 1]], ids=repr)
+async def test_keys_that_are_not_text_end_as_a_tool_error(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, keys: list[Any]
+) -> None:
+    """They raised out of `ask()`, through `prepare`, `level` and `run`'s log line."""
+    client = ScriptedClient(
+        ([], "tool_use", [use("press_keys", keys=keys)]), (["Non ho premuto."], "end_turn", [])
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "premi") == "Non ho premuto."
+    assert client.calls[1]["messages"][-1]["content"][0]["is_error"] is True
+    assert not typed_anything(desk)
+    await tools.prepare([do("press_keys", keys=keys), TYPED])
+
+
 # --- G1: a promise without a call is only logged ---
 
 PROMISE = "Ora scrivo il piano, socio."
@@ -2568,6 +3101,35 @@ async def test_a_promise_with_a_call_is_not_flagged(pricing: Pricing, tools: PcT
         ([PROMISE], "tool_use", [text(PROMISE), use("open_app", name="blocco note")]),
         (["Ho aperto il Blocco note."], "end_turn", [text("Ho aperto il Blocco note.")]),
     )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, SCENE)
+    assert "promised" not in b.last_call
+
+
+async def test_a_done_sentence_after_a_tool_that_failed_is_flagged(
+    pricing: Pricing, desk: FakeDesktop, home: Path, ticker: Ticker
+) -> None:
+    """The guard refused the typing: "Ho scritto il testo." claims something that never ran."""
+    desk.focus_works = False
+    said = "Ho scritto il testo."
+    calls = [use("focus_window", window="blocco note"), use("type_text", text=WORDS)]
+    desk.open_windows = CHROME_FRONT
+    t = ticking_tools(desk, home, ticker)
+    b = acting_brain(
+        pricing, ScriptedClient(([], "tool_use", calls), ([said], "end_turn", [text(said)])), t
+    )
+    await ask(b, SCENE)
+    t.close()
+    assert not typed_anything(desk)
+    assert [row.rsplit(" ", 1)[1] for row in b.last_call["tools"]] == ["error", "error"]
+    assert b.last_call["promised"] is True
+
+
+async def test_a_done_sentence_after_a_tool_that_ran_is_not_flagged(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    said = "Ho aperto il Blocco note."
+    client = ScriptedClient(OPEN_NOTEPAD, ([said], "end_turn", [text(said)]))
     b = acting_brain(pricing, client, tools)
     await ask(b, SCENE)
     assert "promised" not in b.last_call

@@ -194,14 +194,15 @@ class WindowsDesktop:
         total = 0
         queue: deque[Any] = deque([root])
         visited = 0
-        cut = False  # a branch failed: the text is not whole
+        cut = False  # a branch failed or a field gave nothing: the text is not whole
         while queue and total < max_chars and visited < READ_MAX_NODES:
             if time.monotonic() >= deadline:
                 log.info("Lettura di %r interrotta dopo %.1f s", window.title, timeout_s)
                 break
             info = queue.popleft()
             visited += 1
-            text = _element_text(info)
+            text, known = _element_text(info)
+            cut = cut or not known
             if text and (not lines or lines[-1] != text) and text != window.title:
                 lines.append(text)
                 total += len(text) + 1
@@ -425,12 +426,19 @@ def _window_box(hwnd: int) -> tuple[int, int, int, int] | None:
     return left, top, right, bottom
 
 
-def _element_text(info: Any) -> str:
+def _element_text(info: Any) -> tuple[str, bool]:
+    """The element's text, and False when what it holds stays unknown (a text field that gives
+    nothing, or a failure): such a read can never say that a text is not in the window."""
     try:
-        if info.control_type in TEXT_TYPES:
-            value = info.element.GetCurrentPropertyValue(UIA_VALUE_PROPERTY)
-            if value:
-                return str(value).strip()
-        return str(info.name or "").strip()
+        name = str(info.name or "").strip()
+        if info.control_type not in TEXT_TYPES:
+            return name, True
+        value = info.element.GetCurrentPropertyValue(UIA_VALUE_PROPERTY)
+        if value:
+            return str(value).strip(), True
+        # The TextPattern, where Notepad on Windows 11 may keep its text. Without that pattern
+        # rich_text gives the name back, which says nothing about the content.
+        rich = str(info.rich_text or "").strip()
+        return rich or name, bool(rich) and rich != name
     except Exception:
-        return ""
+        return "", False

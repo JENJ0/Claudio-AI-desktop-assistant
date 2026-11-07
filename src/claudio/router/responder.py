@@ -91,6 +91,7 @@ class LocalResponder:
         on_prepare: Callable[[], None] | None = None,
         fallback_awaiting: Callable[[], bool] | None = None,
         fallback_cancel: Callable[[bool], None] | None = None,
+        fallback_stop: Callable[[], None] | None = None,
         fallback_heard: Callable[[Hearing], None] | None = None,
         fallback_guess: GuessCall | None = None,
         fallback_guess_info: Callable[[], dict[str, Any]] | None = None,
@@ -109,6 +110,7 @@ class LocalResponder:
         # Claude asked "Confermi?" before a PC action: the next phrase is its answer.
         self.fallback_awaiting = fallback_awaiting
         self.fallback_cancel = fallback_cancel
+        self.fallback_stop = fallback_stop  # a new request cut Claude's reply: it no longer acts
         self.fallback_heard = fallback_heard  # how sure Whisper was, for Claude's next request
         # A phrase about to be dropped that sounds like a command: Claude guesses what JenJo
         # said (None: dropped as always). `guess` holds the thresholds.
@@ -320,6 +322,12 @@ class LocalResponder:
             # "Quale dimentico?" without an answer, even after mere silence: nothing is
             # forgotten, and a phrase much later is never taken for the answer.
             self.memory.cancel()
+
+    def stop_acting(self) -> None:
+        """A new request was said over the reply: Claude's stream goes on, for "Dicevo", but
+        it runs nothing more and asks nothing."""
+        if self.fallback_stop is not None:
+            self.fallback_stop()
 
     def _reply_language(self, language: str, has_text: bool) -> str:
         """`language` when there is a reply and a voice for it, else Italian: the text and

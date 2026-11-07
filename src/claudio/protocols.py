@@ -93,6 +93,10 @@ class Responder(Protocol):
         """Drop an armed level 2-3 action (nothing was answered); `cut`: the reply was stopped."""
         ...
 
+    def stop_acting(self) -> None:
+        """A new request cut the reply: the rest of it may still be read, it starts nothing."""
+        ...
+
     def propose(self, text: str, language: str) -> str:
         """A request worked out from a misheard phrase: the question to ask first ("Hai
         detto: ...?"); the next phrase is its answer (awaiting)."""

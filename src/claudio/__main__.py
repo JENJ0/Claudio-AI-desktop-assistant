@@ -146,6 +146,7 @@ def build_responder(
         on_prepare=brain.warm_up if brain else None,
         fallback_awaiting=(lambda: brain.awaiting) if brain else None,
         fallback_cancel=brain.cancel_pending if brain else None,
+        fallback_stop=brain.stop_acting if brain else None,
         fallback_heard=brain.heard if brain else None,
         fallback_guess=guesser,
         fallback_guess_info=(lambda: guesser.last_call) if guesser else None,
