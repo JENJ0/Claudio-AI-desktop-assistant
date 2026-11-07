@@ -1765,7 +1765,7 @@ def recording(
         (CONNECTION, True, "network"),
         (SERVER, False, "500"),
         (BAD_KEY, False, "auth"),
-        (OVERLOADED_MID_REPLY, True, "200"),
+        (OVERLOADED_MID_REPLY, True, "overloaded_error"),
     ],
 )
 def test_a_claude_error_fails_its_clip_and_says_what_it_was(

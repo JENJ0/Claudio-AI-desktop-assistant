@@ -980,7 +980,7 @@ OVERLOADED_MID_REPLY = anthropic.APIStatusError(
 @pytest.mark.parametrize(
     ("error", "status"),
     [
-        (OVERLOADED_MID_REPLY, 200),
+        (OVERLOADED_MID_REPLY, "overloaded_error"),
         (
             anthropic.InternalServerError(
                 "overloaded", response=httpx2.Response(529, request=REQUEST), body=None
@@ -991,7 +991,7 @@ OVERLOADED_MID_REPLY = anthropic.APIStatusError(
     ids=["sse_event", "status_class"],
 )
 async def test_a_status_error_during_a_reply_is_said_once_and_keeps_the_words(
-    pricing: Pricing, error: Exception, status: int
+    pricing: Pricing, error: Exception, status: int | str
 ) -> None:
     """ "Seconda fraClaude non ha risposto": glued to the fragment, and the turn was lost."""
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
@@ -1029,10 +1029,19 @@ def sse(event: str, **data: Any) -> bytes:
     return f"event: {event}\ndata: {json.dumps({'type': event, **data})}\n\n".encode()
 
 
-async def test_an_error_event_through_the_real_sdk_is_a_status_error_of_200(
-    pricing: Pricing,
-) -> None:
-    """The SDK's own way of raising it (anthropic 1.15): the response status, not the overload."""
+async def test_an_overload_inside_the_stream_is_named(pricing: Pricing) -> None:
+    """The SDK raises an error event as a status error of 200 (anthropic 1.15): the kind of
+    error is in its body, so that is what is logged."""
+    b = real_sdk_brain(
+        pricing, sse("error", error={"type": "overloaded_error", "message": "Overloaded"})
+    )
+    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {API_SAID}"
+    assert b.last_call["claude_error"] == "overloaded_error"
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+
+
+def real_sdk_brain(pricing: Pricing, *events: bytes) -> ClaudeBrain:
+    """A brain on the real SDK whose HTTP answer is a 200 stream of `events`."""
     usage = {"input_tokens": 400, "output_tokens": 1}
     message = {"id": "m", "type": "message", "role": "assistant", "content": [], "usage": usage}
     body = b"".join(
@@ -1044,7 +1053,7 @@ async def test_an_error_event_through_the_real_sdk_is_a_status_error_of_200(
                 index=0,
                 delta={"type": "text_delta", "text": "Prima frase. Seconda fra"},
             ),
-            sse("error", error={"type": "overloaded_error", "message": "Overloaded"}),
+            *events,
         ]
     )
 
@@ -1053,9 +1062,37 @@ async def test_an_error_event_through_the_real_sdk_is_a_status_error_of_200(
 
     http = anthropic.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(answer))
     client = anthropic.AsyncAnthropic(api_key="not-a-key", max_retries=0, http_client=http)
-    b = brain(pricing, client)
-    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {API_SAID}"
-    assert b.last_call["claude_error"] == 200
+    return brain(pricing, client)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        pytest.param(b"event: content_block_delta\ndata: {not json\n\n", id="json"),
+        pytest.param(b"event: content_block_delta\ndata: \xff\xfe\n\n", id="utf8"),
+    ],
+)
+async def test_a_broken_event_mid_stream_is_a_spoken_error(pricing: Pricing, event: bytes) -> None:
+    """The reply was lost with ValueError out of ask(): an error beep and a lost turn."""
+    b = real_sdk_brain(pricing, event)
+    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {NETWORK_SAID}"
+    assert b.last_call["claude_error"] == "bad_stream"
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+
+
+async def test_invalid_json_mid_stream_is_a_spoken_error(pricing: Pricing) -> None:
+    error = json.JSONDecodeError("Expecting value", "{", 1)
+    b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert chunks == ["Prima frase. ", "Seconda fra", "", f" {NETWORK_SAID}"]
+    assert b.last_call["claude_error"] == "bad_stream"
+
+
+async def test_invalid_utf8_mid_stream_is_a_spoken_error(pricing: Pricing) -> None:
+    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
+    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {NETWORK_SAID}"
+    assert b.last_call["claude_error"] == "bad_stream"
     assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
 
 
@@ -1341,6 +1378,48 @@ async def test_only_the_notes_are_taken_out_of_a_reply(
     b = brain(pricing, FakeClient(chunks))
     assert await ask(b, "dimmi una cosa") == said
     assert list(b._history) == [("[it] dimmi una cosa", said.strip())]
+
+
+async def test_an_unclosed_note_loses_only_itself(pricing: Pricing) -> None:
+    """Its "]" never came: the rest of the reply was thrown away with it."""
+    for chunks, said in [
+        (["Cerco. [Claudio ran: web_search ok\nPoi vado."], "Cerco. Poi vado."),
+        (["Cerco. [Claudio ran: web_search ok. Poi vado."], "Cerco.  Poi vado."),
+        (["Cerco. [Claudio ran: web_search ok", "! Poi vado"], "Cerco.  Poi vado"),
+        (["Cerco. [Claudio ran: web_search ok? Poi vado"], "Cerco.  Poi vado"),
+        (["Cerco. [Claudio ran: web_search ok"], "Cerco. "),  # never closed: dropped
+    ]:
+        b = brain(pricing, FakeClient(chunks))
+        assert await ask(b, "dimmi una cosa") == said
+
+
+async def test_a_note_without_a_space_is_still_a_note(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(["[Claudio ran:web_search ok] Fatto. [cut off:JenJo] Ecco."]))
+    assert await ask(b, "dimmi una cosa") == " Fatto.  Ecco."
+    assert "Claudio" not in b._history[-1][1] and "cut off" not in b._history[-1][1]
+
+
+@pytest.mark.parametrize(
+    ("chunks", "said"),
+    [
+        (["[Claudio ran: open_file report.pdf ok] Fatto."], " Fatto."),
+        (['[Claudio ran: web_search "meteo a Milano?"] Domani piove.'], " Domani piove."),
+        (["[cut off: JenJo interrupted here.] Dicevo."], " Dicevo."),
+        (["[Claudio ran: report.", "pdf ok] Fatto."], " Fatto."),
+    ],
+)
+async def test_a_dot_inside_a_note_that_closes_does_not_end_it(
+    pricing: Pricing, chunks: list[str], said: str
+) -> None:
+    b = brain(pricing, FakeClient(chunks))
+    assert await ask(b, "dimmi una cosa") == said
+
+
+@pytest.mark.parametrize("split", range(1, len("[Claudio ran:x] Fatto.")))
+async def test_a_note_split_across_chunks_is_still_dropped(pricing: Pricing, split: int) -> None:
+    text = "[Claudio ran:x] Fatto."
+    b = brain(pricing, FakeClient([text[:split], text[split:]]))
+    assert await ask(b, "dimmi una cosa") == " Fatto."
 
 
 class WatchedStream(FakeStream):

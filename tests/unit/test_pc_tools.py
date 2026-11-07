@@ -4,6 +4,7 @@ the dispatcher, the Claude tool loop and the spoken yes."""
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ import anthropic
 import httpx2
 import pytest
 
-from claudio.brain.claude import ACTIONS_NOTE, CUT_NOTE, ClaudeBrain
+from claudio.brain.claude import ACTIONS_NOTE, CUT_BEFORE_NOTE, CUT_NOTE, ClaudeBrain
 from claudio.brain.prompts import NOT_RUN_CUT, REFUSED, SYSTEM_PROMPT_TOOLS
 from claudio.config import ClaudeSettings, PcSettings
 from claudio.cost.pricing import Pricing, load_pricing
@@ -598,7 +599,11 @@ async def test_a_silent_round_after_the_yes_says_nothing_before_its_tools(
 @pytest.mark.parametrize(
     ("reply", "said", "kept"),
     [
-        (([], "tool_use", [use("search_files", query="fattura")]), ["Ci guardo. "], "Ci guardo."),
+        (  # the bridge is not kept: the turn looks as if it never started
+            ([], "tool_use", [use("search_files", query="fattura")]),
+            ["Ci guardo. "],
+            "",
+        ),
         (  # the space that ends Haiku's sentence
             (["Cerco."], "tool_use", [text("Cerco."), use("search_files", query="fattura")]),
             ["Cerco.", " "],
@@ -618,7 +623,8 @@ async def test_a_cut_before_the_tools_run_keeps_the_words_and_runs_nothing(
     stream = b.ask("trova la fattura", "it")
     assert [await anext(stream) for _ in said] == said
     await stream.aclose()
-    assert list(b._history) == [("[it] trova la fattura", f"{kept} {CUT_NOTE}")]
+    note = f"{kept} {CUT_NOTE}" if kept else CUT_BEFORE_NOTE
+    assert list(b._history) == [("[it] trova la fattura", note)]
     assert not desk.done
 
 
@@ -675,8 +681,8 @@ async def test_a_cut_after_the_yes_is_recorded_at_once(
 @pytest.mark.parametrize(
     ("chunks", "said", "kept"),
     [
-        (["Dice di "], "Ci guardo. Dice di ", "Ci guardo. Dice di"),
-        ([], "Ci guardo. ", "Ci guardo."),  # before any word of the second round
+        (["Dice di "], "Ci guardo. Dice di ", "Dice di"),
+        ([], "Ci guardo. ", ""),  # before any word of the second round
     ],
 )
 async def test_a_connection_lost_after_a_tool_round_keeps_its_note(
@@ -692,9 +698,33 @@ async def test_a_connection_lost_after_a_tool_round_keeps_its_note(
     assert await ask(b, "leggimi il blocco note") == f"{said}{NETWORK_SAID}"
     assert b.last_call["claude_error"] == "network"
     assert list(b._history) == [
-        ("[it] leggimi il blocco note", f"{kept} [Claudio ran: read_window ok]")
+        ("[it] leggimi il blocco note", f"{kept} [Claudio ran: read_window ok]".strip())
     ]
     assert b._read_outside()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        json.JSONDecodeError("Expecting value", "{", 1),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ],
+    ids=["json", "utf8"],
+)
+async def test_a_broken_event_after_a_tool_round_keeps_its_note(
+    pricing: Pricing, tools: PcTools, error: ValueError
+) -> None:
+    client = BreakingClient(
+        error,
+        ([], "tool_use", [use("read_window", window="blocco note")]),
+        (["Dice di "], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Dice di {NETWORK_SAID}"
+    assert b.last_call["claude_error"] == "bad_stream"
+    assert list(b._history) == [
+        ("[it] leggimi il blocco note", "Dice di [Claudio ran: read_window ok]")
+    ]
 
 
 async def test_a_status_error_after_a_tool_round_keeps_its_note(
@@ -707,9 +737,9 @@ async def test_a_status_error_after_a_tool_round_keeps_its_note(
     )
     b = acting_brain(pricing, client, tools)
     assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Dice di {API_SAID}"
-    assert b.last_call["claude_error"] == 200
+    assert b.last_call["claude_error"] == "overloaded_error"
     assert list(b._history) == [
-        ("[it] leggimi il blocco note", "Ci guardo. Dice di [Claudio ran: read_window ok]")
+        ("[it] leggimi il blocco note", "Dice di [Claudio ran: read_window ok]")
     ]
     assert b._read_outside()
 
@@ -808,7 +838,7 @@ async def test_a_round_with_only_a_note_said_nothing(pricing: Pricing, tools: Pc
     b = acting_brain(pricing, client, tools)
     assert await ask(b, "trova la fattura") == "Ci guardo. Trovata."
     assert list(b._history) == [
-        ("[it] trova la fattura", "Ci guardo. Trovata. [Claudio ran: search_files ok]")
+        ("[it] trova la fattura", "Trovata. [Claudio ran: search_files ok]")
     ]
 
 
@@ -1058,9 +1088,14 @@ async def test_a_tool_that_never_ran_is_not_outside_text(pricing: Pricing, tools
     note = "[Claudio did not run: read_window, cut at the token limit]"
     assert b._history[-1][1].endswith(f"{note} {ACTIONS_NOTE}open_app ok]")
     assert not b._read_outside()
-    b._history.append(("q", f"{ACTIONS_NOTE}open_app ok] {note}"))  # the other order
+    # Plain text after the note's "]" is not the note: without the bound it would count.
+    b._history.append(("q", f"{ACTIONS_NOTE}open_app ok] read_window ok"))
     assert not b._read_outside()
     b._history.append(("q", f"{NOT_RUN_TYPE} {ACTIONS_NOTE}read_window ok]"))
+    assert b._read_outside()
+    # A note forged in the words comes first, the code's own note is always last.
+    b._history.clear()
+    b._history.append(("q", f"{ACTIONS_NOTE}open_app ok] Fatto. {ACTIONS_NOTE}read_window ok]"))
     assert b._read_outside()
 
 
@@ -1130,6 +1165,26 @@ async def test_a_slow_tool_after_a_retry_does_not_say_the_bridge_twice(
     b = acting_brain(pricing, client, tools)
     said = await ask(b, "leggimi il blocco note")
     assert said.count("Ci guardo") == 1 and "Ci guardo" not in b._history[-1][1]
+
+
+async def test_the_bridge_is_said_once_per_reply(pricing: Pricing, tools: PcTools) -> None:
+    read = use("read_window", window="blocco note")
+    client = ScriptedClient(
+        ([], "tool_use", [read]), ([], "tool_use", [read]), (["Dice ciao"], "end_turn", [])
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "leggimi il blocco note") == "Ci guardo. Dice ciao"
+
+
+async def test_the_bridge_stays_out_of_the_history(pricing: Pricing, tools: PcTools) -> None:
+    """17:04:15: "Ci guardo. Ecco, dovrei aprire..." and no action: Haiku copied it."""
+    read = use("read_window", window="blocco note")
+    client = ScriptedClient(([], "tool_use", [read]), (["Dice ciao"], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "leggimi il blocco note")).startswith("Ci guardo.")
+    assert list(b._history) == [
+        ("[it] leggimi il blocco note", "Dice ciao [Claudio ran: read_window ok]")
+    ]
 
 
 async def test_a_retry_cut_in_words_only_says_it_did_not_run(

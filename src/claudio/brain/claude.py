@@ -92,9 +92,12 @@ CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
 # How each note opens. Only the code may write them (`_read_outside` reads them, a safety level
 # depends on it), yet the model imitates them (01/11 23:32, with no tool called): _NoteFilter.
 _NOTE_OPENINGS = tuple(
-    note[: note.index(": ") + 2].lower()
+    note[: note.index(":") + 1].lower()
     for note in (ACTIONS_NOTE, NOT_RUN_NOTE, CUT_NOTE, CUT_BEFORE_NOTE)
 )
+# A note ends at "]", at a new line, or at a sentence end followed by a space or "]" (a "." inside
+# "report.pdf" is no end). A terminator at the end of a chunk stays undecided: the note goes on.
+_NOTE_END = re.compile(r"\]|[.!?]+(?:\]|(?=\s))|\n")
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # not strftime: Windows' locale
 
 
@@ -400,7 +403,6 @@ class ClaudeBrain:
                     # At once: a "basta" during the retry finds the right note.
                     turn.not_run.extend(leg.cut_tools)
                     cut, leg = leg, _Leg()
-                    leg.retried = True
                     streaming = leg
                     async with contextlib.aclosing(
                         self._retry_cut(params, cut, leg, turn, language, start, said_here)
@@ -414,6 +416,8 @@ class ClaudeBrain:
                         if said := self._end_not_run(turn, language):
                             yield said
                         return
+                    # shortcut: two cut calls of one tool lose one note if only one runs,
+                    # upgrade when a real session shows that note missing
                     for call in leg.calls:  # the retry brought them: they are not "not run"
                         if call.name in turn.not_run:
                             turn.not_run.remove(call.name)
@@ -567,15 +571,15 @@ class ClaudeBrain:
         """What to say before the tools run ("" = nothing): "Ci guardo" before a slow action
         when Haiku said nothing, else the end of the sentence it said."""
         slow = any(c.name in SLOW_TOOLS for c in active)
-        if self.pc.bridge and slow and not leg.retried and not "".join(leg.parts).strip():
-            # The trailing space ends the sentence: the voice says it now.
-            said = in_language(BRIDGE, language) + " "
-        else:
-            # The space ends the sentence: it is said while the tools run. Without it
-            # the splitter held "Ci guardo, socio." for the next round's text (30/10
-            # 14:07: the first word came 2.1 s later, after three calls), and 25/10:
-            # "La apro.Aperta" was read without a pause.
-            said = _space(turn) if said_here else ""
+        if self.pc.bridge and slow and not said_here:
+            # The trailing space ends the sentence: the voice says it now. Not in turn.parts:
+            # in the history Haiku copied it (05/11 17:04: "Ci guardo", and no action).
+            return in_language(BRIDGE, language) + " "
+        # The space ends the sentence: it is said while the tools run. Without it
+        # the splitter held "Ci guardo, socio." for the next round's text (30/10
+        # 14:07: the first word came 2.1 s later, after three calls), and 25/10:
+        # "La apro.Aperta" was read without a pause.
+        said = _space(turn) if said_here else ""
         turn.parts.append(said)
         return said
 
@@ -742,7 +746,7 @@ class ClaudeBrain:
         if not self.settings.history_turns:
             return False
         notes = (
-            a.split(ACTIONS_NOTE, 1)[1].split("]", 1)[0]
+            a.rsplit(ACTIONS_NOTE, 1)[1].split("]", 1)[0]  # the code's own note is last
             for _, a in self._history
             if ACTIONS_NOTE in a
         )
@@ -928,12 +932,21 @@ class ClaudeBrain:
             return
         except anthropic.APIStatusError as exc:
             log.error("Claude errore %s: %s", exc.status_code, exc.message)
-            self.last_call["claude_error"] = exc.status_code
+            # An error event inside a 200 stream: its kind is in the body, the status is a 200.
+            self.last_call["claude_error"] = _event_error(exc) or exc.status_code
             leg.end = StreamEnd.ERROR
             # Also an error event during a reply (an overloaded API): as a lost connection.
             leg.complete = True
             yield CUT_SHORT
             yield _space(leg) + in_language(API_ERROR, language)
+            return
+        except ValueError as exc:  # JSONDecodeError, UnicodeDecodeError and jiter's errors are ones
+            log.exception("Claude: evento illeggibile nello stream: %s", exc)
+            self.last_call["claude_error"] = "bad_stream"
+            leg.end = StreamEnd.ERROR
+            leg.complete = True  # as a lost connection: the words and the tools stay
+            yield CUT_SHORT
+            yield _space(leg) + in_language(NETWORK_ERROR, language)
             return
         finally:
             self._last_contact = self.clock()
@@ -1035,7 +1048,6 @@ class _Leg:
         self.calls: list[ToolCall] = []
         self.content: list[dict[str, Any]] = []
         self.end = StreamEnd.DONE
-        self.retried = False  # the retry of a cut call: its words were thrown away
         self.cut_tools: list[str] = []  # tool_use blocks cut at max_tokens (CUT_CALL), in order
 
     def read(self, final: Any) -> None:
@@ -1108,15 +1120,16 @@ class _NoteFilter:
 
     def __init__(self) -> None:
         self._held = ""  # from that "[" on
-        self._in_note = False  # the opening matched: dropped up to the closing "]"
+        self._in_note = False  # the opening matched: dropped up to its end
 
     def feed(self, chunk: str) -> str:
         said = ""
         rest, self._held = self._held + chunk, ""
         while rest:
             if self._in_note:
-                _, closed, rest = rest.partition("]")
-                self._in_note = not closed
+                end = _NOTE_END.search(rest)
+                self._in_note = end is None
+                rest = "" if end is None else rest[end.end() :]
                 continue
             before, bracket, after = rest.partition("[")
             said += before
@@ -1154,6 +1167,14 @@ def _new_request(text: str, level: int) -> bool:
     if parse_answer(text, level) is not Answer.UNCLEAR:
         return False
     return len(strip_wake_words(normalize(text, drop_fillers=False).split())) > NEW_REQUEST_WORDS
+
+
+def _event_error(exc: Any) -> str:
+    """The kind of an error event ("overloaded_error"), "" for any other status error."""
+    body = exc.body if exc.status_code == 200 else None
+    error = body.get("error") if isinstance(body, dict) else None
+    kind = error.get("type") if isinstance(error, dict) else None
+    return kind if isinstance(kind, str) else ""
 
 
 def _notes(turn: _Turn) -> str:
