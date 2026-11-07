@@ -19,6 +19,13 @@ def test_shipped_daily_budget_stays_within_80_dollars_a_month() -> None:
     assert load_settings(DEFAULT_CONFIG).cost.daily_budget * 31 <= 80
 
 
+def test_type_max_chars_fits_the_retry_tokens() -> None:
+    from claudio.brain.claude import CHARS_PER_TOKEN
+
+    pc = load_settings(DEFAULT_CONFIG).pc
+    assert pc.type_max_chars <= pc.retry_max_tokens * CHARS_PER_TOKEN
+
+
 def test_defaults_when_sections_missing(tmp_path: Path) -> None:
     f = tmp_path / "c.toml"
     f.write_text('[stt]\ndevice = "cpu"\n', encoding="utf-8")

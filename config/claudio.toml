@@ -293,7 +293,10 @@ max_rounds = 4                 # tool round trips per request
 max_tokens = 400
 confirm_brief = true           # level 2 asks only "Confermi?"; false: it reads the action out first
 roots = ["~"]                  # folders Claudio may search, open and move in ("~" = C:\Users\you)
-type_max_chars = 500
+type_max_chars = 6000          # longest text type_text accepts; must fit retry_max_tokens (3 chars a token)
+retry_max_tokens = 2048        # a tool call cut at max_tokens is asked again once, with this limit
+retry_timeout_s = 60           # a long tool input can arrive in one block
+retry_models = ["claude-haiku-5-5"]   # only these accept a forced tool_choice
 read_chars = 1500              # window text sent to Claude (~500 tokens)
 read_timeout_s = 2.0
 search_limit = 8

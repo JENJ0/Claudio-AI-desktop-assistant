@@ -511,7 +511,12 @@ class PcSettings(BaseModel):
             *("ctrl+plus", "ctrl+minus", "ctrl+0"),
         ]
     )  # level 1; every other combination asks first. [] = always ask
-    type_max_chars: int = Field(500, ge=1, le=5000)
+    type_max_chars: int = Field(6000, ge=1, le=10000)  # must fit retry_max_tokens (3 chars a token)
+    # A tool call cut at max_tokens is asked again once, with the first tool forced. Only models
+    # in retry_models take a forced tool_choice (Sonnet and Opus 5.5 answer 400).
+    retry_max_tokens: int = Field(2048, ge=64, le=8192)
+    retry_timeout_s: float = Field(60.0, gt=0, le=300)  # a long tool input can arrive in one block
+    retry_models: list[str] = Field(default_factory=lambda: ["claude-haiku-5-5"])
     read_chars: int = Field(1500, ge=100, le=10000)  # window text sent to Claude
     read_timeout_s: float = Field(2.0, gt=0, le=30)  # slow apps (Electron) stop here
     search_limit: int = Field(8, ge=1, le=50)

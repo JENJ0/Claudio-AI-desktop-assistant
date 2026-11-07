@@ -28,6 +28,7 @@ import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from claudio.brain.prompts import (
@@ -41,6 +42,7 @@ from claudio.brain.prompts import (
     CUT_AT_LIMIT,
     NETWORK_ERROR,
     NO_KEY,
+    NOT_RUN_CUT,
     OFFER,
     REFUSED,
     system_prompt,
@@ -79,6 +81,8 @@ _MARKDOWN = re.compile(r"[*#`]+")  # read aloud as "asterisco": never sent to th
 OFFER_TTL_S = 60.0  # "Vuoi che usi Sonnet?" waits this long for its answer
 ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
 ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: open_app ok]"
+# ... and for a call that never ran: "[Claudio did not run: type_text, cut at the token limit]"
+NOT_RUN_NOTE = "[Claudio did not run: "
 NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
@@ -88,9 +92,39 @@ CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
 # How each note opens. Only the code may write them (`_read_outside` reads them, a safety level
 # depends on it), yet the model imitates them (01/11 23:32, with no tool called): _NoteFilter.
 _NOTE_OPENINGS = tuple(
-    note[: note.index(": ") + 2].lower() for note in (ACTIONS_NOTE, CUT_NOTE, CUT_BEFORE_NOTE)
+    note[: note.index(": ") + 2].lower()
+    for note in (ACTIONS_NOTE, NOT_RUN_NOTE, CUT_NOTE, CUT_BEFORE_NOTE)
 )
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # not strftime: Windows' locale
+
+
+class StreamEnd(Enum):
+    """How one API call ended. `_stream` and `_loop` decide from this alone."""
+
+    DONE = "done"
+    CUT_WORDS = "cut_words"  # max_tokens inside the words (or only an ask_sonnet call)
+    CUT_CALL = "cut_call"  # max_tokens with a tool_use block: its arguments may be half
+    REFUSED = "refused"
+    ERROR = "error"  # the request or the stream failed: a fixed sentence was said
+
+
+def stream_end(final: Any) -> StreamEnd:
+    """The end of a finished message. `final` may be None (nothing to read): DONE."""
+    reason = getattr(final, "stop_reason", None)
+    if reason == "refusal":
+        return StreamEnd.REFUSED
+    if reason == "max_tokens":
+        return StreamEnd.CUT_CALL if _called_tools(final) else StreamEnd.CUT_WORDS
+    return StreamEnd.DONE
+
+
+def _called_tools(final: Any) -> list[str]:
+    """Names of the tool_use blocks of a message, in order, without ask_sonnet."""
+    return [
+        block.name
+        for block in getattr(final, "content", None) or []
+        if getattr(block, "type", None) == "tool_use" and block.name != ASK_SONNET_TOOL["name"]
+    ]
 
 
 class ClaudeBrain:
@@ -354,15 +388,35 @@ class ClaudeBrain:
         try:
             while True:
                 last = round_no >= self.pc.max_rounds - 1
+                params = self._params(messages, last_round=last)
                 leg = streaming = _Leg()
-                async with contextlib.aclosing(
-                    self._stream(self._params(messages, last_round=last), language, start, leg)
-                ) as haiku:
+                async with contextlib.aclosing(self._stream(params, language, start, leg)) as haiku:
                     async for chunk in haiku:
                         said_here = said_here or bool(chunk.strip())
                         yield chunk
                 turn.parts.extend(leg.parts)
                 streaming = None
+                if leg.end is StreamEnd.CUT_CALL:
+                    # At once: a "basta" during the retry finds the right note.
+                    turn.not_run.extend(leg.cut_tools)
+                    cut, leg = leg, _Leg()
+                    leg.retried = True
+                    streaming = leg
+                    async with contextlib.aclosing(
+                        self._retry_cut(params, cut, leg, turn, language, start, said_here)
+                    ) as retry:
+                        async for chunk in retry:
+                            said_here = said_here or bool(chunk.strip())
+                            yield chunk
+                    turn.parts.extend(leg.parts)
+                    streaming = None
+                    if not leg.calls:
+                        if said := self._end_not_run(turn, language):
+                            yield said
+                        return
+                    for call in leg.calls:  # the retry brought them: they are not "not run"
+                        if call.name in turn.not_run:
+                            turn.not_run.remove(call.name)
                 if reply := self._handed_over(leg, offer_from, turn, language, start):
                     async for chunk in reply:
                         yield chunk
@@ -399,6 +453,59 @@ class ClaudeBrain:
                 turn.parts.extend(streaming.parts)
             self._remember_cut(turn)  # "continua la storia" must know what was cut
             raise
+
+    async def _retry_cut(
+        self,
+        params: dict[str, Any],
+        cut: _Leg,
+        leg: _Leg,
+        turn: _Turn,
+        language: str,
+        start: float,
+        said_here: bool,
+    ) -> AsyncGenerator[str, None]:
+        """Ask again, once, for the first tool of the `cut` reply: same request, more
+        tokens, that tool forced, the model's own words thrown away. Fills `leg`; says
+        a sentence only to cover the wait or for an error (the caller says the rest)."""
+        if self.settings.model not in self.pc.retry_models:
+            self.last_call["cut_retry"] = "skipped"  # Sonnet and Opus answer 400 to tool_choice
+            return
+        if said_here:
+            gap = _space(turn)  # ends the sentence: it is said while the retry runs
+            turn.parts.append(gap)
+            if gap:
+                yield gap
+        elif self.pc.bridge:
+            yield in_language(BRIDGE, language) + " "  # not in turn.parts: Haiku would copy it
+        retry = {
+            **params,
+            "max_tokens": self.pc.retry_max_tokens,
+            "tool_choice": {"type": "tool", "name": cut.cut_tools[0]},
+            "timeout": self.pc.retry_timeout_s,
+        }
+        async with contextlib.aclosing(
+            self._stream(retry, language, start, leg, silent=True)
+        ) as stream:
+            async for chunk in stream:
+                yield chunk
+        if leg.end in (StreamEnd.ERROR, StreamEnd.REFUSED):
+            self.last_call["cut_retry"] = "error"
+        elif leg.calls:
+            self.last_call["cut_retry"] = "ok"
+        else:
+            self.last_call["cut_retry"] = "cut"
+
+    def _end_not_run(self, turn: _Turn, language: str) -> str:
+        """The retry gave no whole call: say so (an error already said its own sentence), keep
+        the note and end the reply."""
+        self.last_call.setdefault("tools", []).extend(f"{n}() not_run_cut" for n in turn.not_run)
+        said = ""
+        if self.last_call.get("cut_retry") != "error":
+            said = _space(turn) + in_language(NOT_RUN_CUT, language)
+            turn.parts.append(said)
+        turn.complete = True
+        self._remember(turn)
+        return said
 
     def _handed_over(
         self,
@@ -460,7 +567,7 @@ class ClaudeBrain:
         """What to say before the tools run ("" = nothing): "Ci guardo" before a slow action
         when Haiku said nothing, else the end of the sentence it said."""
         slow = any(c.name in SLOW_TOOLS for c in active)
-        if self.pc.bridge and slow and not "".join(leg.parts).strip():
+        if self.pc.bridge and slow and not leg.retried and not "".join(leg.parts).strip():
             # The trailing space ends the sentence: the voice says it now.
             said = in_language(BRIDGE, language) + " "
         else:
@@ -538,6 +645,8 @@ class ClaudeBrain:
                 own.append(outcome.spoken)
             self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
             turn.done.append(f"{call.name} {'failed' if outcome.error else 'ok'}")
+            if call.name in turn.not_run:  # it ran after all: no false "did not run"
+                turn.not_run.remove(call.name)
             block: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": call.id,
@@ -632,7 +741,11 @@ class ClaudeBrain:
         """The conversation sent with the next request ran a tool that read outside text."""
         if not self.settings.history_turns:
             return False
-        notes = (a.split(ACTIONS_NOTE, 1)[1] for _, a in self._history if ACTIONS_NOTE in a)
+        notes = (
+            a.split(ACTIONS_NOTE, 1)[1].split("]", 1)[0]
+            for _, a in self._history
+            if ACTIONS_NOTE in a
+        )
         return any(f"{name} " in note for note in notes for name in OUTSIDE_TEXT_TOOLS)
 
     def _remember(self, turn: _Turn) -> None:
@@ -640,9 +753,7 @@ class ClaudeBrain:
         (they cost tokens at every later turn, and the history is plain text). A short note of
         the actions that really ran is added: without it Haiku, reading only its own words,
         later "admitted" that a command it had run never ran (24/10)."""
-        answer = "".join(turn.parts).strip()
-        if turn.done:
-            answer = f"{answer} {ACTIONS_NOTE}{', '.join(turn.done)}]".strip()
+        answer = f"{''.join(turn.parts).strip()} {_notes(turn)}".strip()
         if turn.complete and answer:
             self._history.append((turn.question, answer))
             self._last_turn = self.clock()
@@ -653,9 +764,8 @@ class ClaudeBrain:
         sense to Claude (before, only finished replies were kept and the story was lost)."""
         said = "".join(turn.parts).strip()
         note = CUT_NOTE if said else CUT_BEFORE_NOTE
-        answer = f"{said} {note}".strip()
-        if turn.done:  # after the cut note: "interrupted here" stays right after the words
-            answer = f"{answer} {ACTIONS_NOTE}{', '.join(turn.done)}]"
+        # After the cut note: "interrupted here" stays right after the words.
+        answer = f"{said} {note} {_notes(turn)}".strip()
         self._history.append((turn.question, answer))
         self._last_turn = self.clock()
 
@@ -765,7 +875,10 @@ class ClaudeBrain:
         start: float,
         leg: _Leg,
         first_key: str = "claude_first_ms",
+        silent: bool = False,
     ) -> AsyncGenerator[str, None]:
+        """One API call. `silent`: the model's words are read but not said nor kept (the
+        retry of a cut call); the fixed error sentences are still said."""
         import anthropic
         import httpx2
 
@@ -784,6 +897,8 @@ class ClaudeBrain:
                 # aclosing: a "basta" at the yield closes this first, then the API stream.
                 async with contextlib.aclosing(_said_text(stream.text_stream)) as words:
                     async for clean in words:
+                        if silent:
+                            continue
                         if clean.strip() and "word_ms" not in timing:
                             timing["word_ms"] = _ms_since(sent, self.clock())
                         if first_key not in self.last_call and clean.strip():
@@ -794,12 +909,14 @@ class ClaudeBrain:
         except anthropic.AuthenticationError:
             log.error("Claude: chiave API non valida (401)")
             self.last_call["claude_error"] = "auth"
+            leg.end = StreamEnd.ERROR
             yield in_language(BAD_KEY, language)
             return
         # Also timeouts. DecodingError: the body arrived corrupted, the reply is just as lost.
         except (anthropic.APIConnectionError, httpx2.TransportError, httpx2.DecodingError) as exc:
             log.error("Claude non raggiungibile: %s", exc)
             self.last_call["claude_error"] = "network"
+            leg.end = StreamEnd.ERROR
             # The SDK wraps these only at request time; raw, they broke a reply under way. Its
             # words and the tools that ran stay in the history (no cut note: JenJo did not
             # interrupt), and the voice never says "Attra" before this sentence. Also when the
@@ -812,6 +929,7 @@ class ClaudeBrain:
         except anthropic.APIStatusError as exc:
             log.error("Claude errore %s: %s", exc.status_code, exc.message)
             self.last_call["claude_error"] = exc.status_code
+            leg.end = StreamEnd.ERROR
             # Also an error event during a reply (an overloaded API): as a lost connection.
             leg.complete = True
             yield CUT_SHORT
@@ -823,12 +941,18 @@ class ClaudeBrain:
             if stream is not None:
                 timing["total_ms"] = _ms_since(sent, self.clock())
                 self._record(model, final, stream, leg.parts, timing)
-        if final is not None and final.stop_reason == "refusal":
+        leg.end = end = stream_end(final)
+        if end is StreamEnd.REFUSED:
             log.info("Claude ha rifiutato la richiesta")
             if not "".join(leg.parts).strip():
                 yield in_language(REFUSED, language)
             return
-        if final is not None and final.stop_reason == "max_tokens":
+        if end is StreamEnd.CUT_CALL:
+            # 17:12:48 on 05/11: a long type_text was cut and Claudio said it had written it.
+            # No closing sentence: the loop retries the call or says it did not run.
+            log.warning("Claude: chiamata tagliata al limite di %d token", params["max_tokens"])
+            self.last_call["cut"] = "tool_use"
+        elif end is StreamEnd.CUT_WORDS and not silent:
             # 30/10: a story stopped inside "Attraverso" and the voice said "Attra". The
             # marker drops the unfinished sentence; the closing one stays in the history too,
             # so a later "continua" makes sense to Claude.
@@ -910,12 +1034,17 @@ class _Leg:
         self.handoff = False
         self.calls: list[ToolCall] = []
         self.content: list[dict[str, Any]] = []
+        self.end = StreamEnd.DONE
+        self.retried = False  # the retry of a cut call: its words were thrown away
+        self.cut_tools: list[str] = []  # tool_use blocks cut at max_tokens (CUT_CALL), in order
 
     def read(self, final: Any) -> None:
         """Calls are kept only when the reply stopped to call them: a reply cut by max_tokens
         may hold a call with half its arguments."""
         from claudio.pc.tools import ToolCall
 
+        if self.end is StreamEnd.CUT_CALL:
+            self.cut_tools = _called_tools(final)
         for block in getattr(final, "content", None) or []:
             kind = getattr(block, "type", None)
             if kind == "text":
@@ -946,6 +1075,7 @@ class _Turn:
         self.parts = list(parts or [])
         self.complete = complete
         self.done: list[str] = []  # tools that ran in this request, for the history note
+        self.not_run: list[str] = []  # tools cut at the token limit and never run
 
 
 class _Action:
@@ -1024,6 +1154,16 @@ def _new_request(text: str, level: int) -> bool:
     if parse_answer(text, level) is not Answer.UNCLEAR:
         return False
     return len(strip_wake_words(normalize(text, drop_fillers=False).split())) > NEW_REQUEST_WORDS
+
+
+def _notes(turn: _Turn) -> str:
+    """The history notes of what the code did: what never ran first, then what ran."""
+    notes = []
+    if turn.not_run:
+        notes.append(f"{NOT_RUN_NOTE}{', '.join(turn.not_run)}, cut at the token limit]")
+    if turn.done:
+        notes.append(f"{ACTIONS_NOTE}{', '.join(turn.done)}]")
+    return " ".join(notes)
 
 
 def _ms_since(start: float, now: float) -> int:

@@ -1428,6 +1428,13 @@ async def test_a_note_is_taken_out_of_sonnets_reply_too(pricing: Pricing) -> Non
     assert list(b._history) == [("[it] Pensaci bene: 17 per 23?", "Fa 391.")]
 
 
+async def test_the_model_cannot_write_a_not_run_note(pricing: Pricing) -> None:
+    note = "[Claudio did not run: type_text, cut at the token limit]"
+    b = brain(pricing, ScriptedClient((["Fatto. ", note, " Ecco."], "end_turn", [])))
+    assert await ask(b, "scrivi qualcosa") == "Fatto.  Ecco."
+    assert "did not run" not in b._history[-1][1]
+
+
 async def test_a_cut_closes_every_generator_and_the_stream_at_once(pricing: Pricing) -> None:
     """ "basta" closes the reply all the time: nothing is left to the garbage collector, and
     the HTTP stream is closed by the time aclose() returns."""
