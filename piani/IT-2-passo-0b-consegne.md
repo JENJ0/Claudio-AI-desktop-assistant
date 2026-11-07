@@ -28,16 +28,34 @@ Piano approvato da JenJo il 05/11/2026 dopo grilling e deep research. I numeri d
 
 | Rilascio | Gruppi | API nei test (stima) | Stato |
 |---|---|---|---|
-| v0.4.2 | G0-G6 | ≤ 0,30 $ | da fare |
+| v0.4.2 | G0-G6 | ≤ 0,30 $ | G0 e G1 fatti, G2 in corso |
 | v0.4.3 | G7-G10 | ≤ 0,20 $, cloud a parte | da fare |
 
 ### Stato lasciato
 
-**Aggiornato il 07/11/2026: G1 è scritto e rivisto, aspetta JenJo. Niente è committato.** Le modifiche stanno nel working tree del ramo. Mancano: la prova G di JenJo (`piani/IT-2-passo-0b-prove.md`), l'ok sul diff, i commit. Il registro è `.superpowers/sdd/IT-2-passo-0b-G1-task/progress.md` (fuori da git); le decisioni prese durante i task stanno anche in fondo a `piani/IT-2-passo-0b-G1-task.md`.
+**Aggiornato il 07/11/2026. G1 è chiuso: commit fino a `e3b7348`, nessun push.** Prova G di JenJo fatta; manca solo la breve «G bis» in `piani/IT-2-passo-0b-prove.md`. Registro di G1: `.superpowers/sdd/IT-2-passo-0b-G1-task/progress.md` (fuori da git). Il gate di replay dà 39 superate, 3 note, 0 fallite.
 
-Gate: 39 superate, 3 guasti noti, 0 fallite. Il retry vero, con Haiku che accetta il tool forzato, non è ancora passato dall'API: la registrazione del Blocco note è uscita senza taglio, quindi lo prova il passo 1 della prova G.
+**Adesso G2, corsia A. Piano approvato da JenJo il 07/11: `piani/IT-2-passo-0b-G2-task.md`.** Registro: `.superpowers/sdd/IT-2-passo-0b-G2-task/progress.md`. I task 2, 3 e 4 aspettano la prova H0, perché la distorsione può spostare la soglia; il task 1 e i task 5-9 non dipendono dalla catena audio. Budget API di G2: 0,05 $.
 
-**Da decidere con JenJo:** thinking di Haiku (A/B fatto, nessun cambio); cosa fare quando Haiku vede testo già presente nella finestra e non scrive più (visto registrando: «Non le tocco, socio»; dal vivo può capitare con un Blocco note che riapre vecchie schede).
+**Da guardare dalla prova G bis:** Haiku offre Sonnet solo a parole («dimmi solo se procedo»), senza un'offerta armata: in una scena 6 volte su 6 con la stessa cronologia, 3 su 4 con una nuova. Haiku può scrivere un ragionamento in inglese prima di un comando di livello 3, e viene detto con la domanda. Con Haiku muto Claudio dice «Spegniti. Confermi?». «Va bene. Confermi?» passa la regola senza nominare nulla. Candidati per G3.
+
+**Detto a JenJo, sul costo del Task 10:** trattenere le prime due frasi ritarda la prima parola di **circa 250-400 ms** sulle risposte brevi (dai log: fine messaggio meno prima parola, 250 ms a p50 fino a 60 token, 391 ms fino a 120). La mia motivazione «risposte quasi invariate» era sbagliata: è confrontabile con i circa 260 ms del thinking adattivo. Il vantaggio resta altrove: doppia frase azzerata per costruzione, nessuna impostazione, nessun blocco di thinking da rimandare. Opzione per G7: trattenere solo se la richiesta contiene un verbo d'azione, così le domande non aspettano.
+
+Budget di G1 approvato 0,10 $: spesi circa 0,09 $, più la sessione dal vivo.
+
+### Corsie, scelta di JenJo (07/11)
+
+| Corsia | Gruppi | Quando |
+|---|---|---|
+| A, in questo checkout | G2 → G3 → G6 | Subito dopo la chiusura di G1 |
+| B, in un worktree | G4 → G8 | **Solo quando le 145 riprese di G2 sono fatte**, per non chiedere a JenJo due prove insieme |
+| Poi, in fila | G5, infine G7 | G5 dopo G2: rifà in parte gli stessi esperimenti su Whisper. G7 per ultimo: misura il risultato di tutti |
+
+**Preparare la corsia B** (dopo l'ok di JenJo): `git worktree add ../Claudio-voce -b it2/passo-0b-voce it2/passo-0b`. In git non ci sono `.env`, `.venv`, `models/`, `samples/`: copia `.env`, fai `uv sync`, collega `models` e `samples` con una junction. La configurazione del repo è condivisa: controlla `git config user.email` lì dentro. **Regole tra corsie:** B non cambia prompt né tool, altrimenti le cassette saltano per A; un solo Claudio acceso e una sola prova di JenJo alla volta; nessuna misura di latenza mentre l'altra corsia usa la GPU; B si fonde in `it2/passo-0b` a fine gruppo, dopo un rebase. File contesi: `i18n.py`, `config.py`.
+
+**Decisioni di JenJo sulla prova G:** rumore fuori da log e disco (fatto; 270 clip salvate in `samples/corpus/negativi-rumore`, utili per riaddestrare il modello «claudio», debole: il rumore arriva a 0,96 e una richiesta vera parte da 0,25); per un'azione senza conferma resta solo la frase dopo; il thinking resta spento.
+
+**Da guardare dalla prova G:** il testo si incolla al cursore, quindi può finire in mezzo a un documento vecchio (16:54, G6); Claudio ha detto «nella scheda nuova» senza che un tool l'avesse aperta (17:03, promessa inventata); 4 promesse vere senza azione nella sessione (il rilevatore le ha viste); «lascia stare» non è stato provato davvero dal vivo: il testo era già scritto 2 s prima (da rifare in G2).
 
 **Metodo, lezione di G1:** i test verdi con i finti non bastavano. La verifica per mutazione e la revisione dell'intero gruppo hanno trovato ciò che le revisioni a lettura per singolo task non vedevano, compreso il guasto più serio. Nei gruppi con sicurezza vanno chieste entrambe. Un finto che sposta la finestra all'istante nasconde le corse tra un'azione e la successiva.
 
@@ -119,6 +137,8 @@ Budget: 2,58 $/giorno, al massimo 80 $ al mese, dai crediti Max. Le cassette del
 | Pubblicazione (06/11) | Push del ramo alla fine di v0.4.2, se non ci rallenta |
 | Testo delle finestre (07/11) | Dopo `type_text`, `open_app`, `open_path` a Claude arrivano il verdetto del codice **e** il testo della finestra, marcato come dati. Quei tool contano come testo esterno; le finestre private non si leggono mai. Riconfermato anche per `open_app`, sapendo che i ricordi oltre 80 caratteri vengono rifiutati finché la nota resta in cronologia e che un Blocco note che riapre vecchie schede ne manda il testo |
 | Attesa della finestra (07/11) | Dopo `open_app` e `open_path` fino a 1 s, solo sulle richieste passate da Claude. Da misurare dal vivo |
+| «Confermi?» senza frasi (07/11) | Se in quella risposta non è stata sentita nessuna frase, il codice legge l'azione. Il «Ci guardo.» del codice non conta come frase |
+| Frase mentre Claude pensa (07/11) | Come quando parla: «basta» ferma, una frase col nome prende il posto della richiesta, il resto si ignora |
 
 ## Attenzione ai casi limite
 

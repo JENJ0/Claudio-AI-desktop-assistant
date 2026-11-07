@@ -201,3 +201,81 @@ I task qui sopra sono il piano di partenza. Dove differiscono, vale quanto segue
 | Cassette: si registra di nuovo finché Haiku prende il ramo da provare, a tentativi limitati | Una cassetta è una prova di un percorso del codice, non una statistica di Haiku | Il gate sopravvaluta quanto spesso Claude propone un comando |
 | Il finto del gate svuota la finestra al lancio e la ripristina a ogni scena; il livello atteso di `171248` passa da 2 a 1 | Un'app appena aperta è vuota, e il Blocco note non chiede conferma | Il caso del testo vecchio lo copre la prova dal vivo |
 | Il gate si registra con un freno a 0,05 $, da una sonda locale | Il freno del gate è il budget giornaliero, 2,58 $, troppo oltre l'approvato | Nessuno: la configurazione non cambia |
+
+---
+
+## Correzioni dopo la prova G (07/11)
+
+La prova G è andata bene su retry vero, rilettura e `.env`. JenJo ha notato tre problemi. Dai log (`logs/sessions/2026-11-07_16-48/`):
+
+- **Rumore:** 76 «Wake word debole» in 23 minuti, tutte le 16 attivazioni vere erano richieste di JenJo. Non è un guasto di comportamento: JenJo l'ha visto nei log. Lo stesso ritmo c'è dal 05/11.
+- **Disconnessione:** un `[SSL] record layer failure` a metà risposta (17:01:12), come i 5 su 240 dell'A/B. Causa ignota.
+- **Narrazione:** 15 risposte su 24 iniziano con «Ci guardo», scritto da Haiku. Scelta di JenJo: per un'azione senza conferma resta solo la frase dopo l'azione.
+
+## Task 8: un retry quando lo stream si rompe
+
+**File:** `src/claudio/brain/claude.py`. Test: `tests/unit/test_claude_brain.py`, `tests/unit/test_pc_tools.py`.
+
+**Regole:**
+1. Un errore di trasporto **dopo** l'inizio della risposta (`OSError`, `httpx2.TransportError`, `httpx2.DecodingError`, `ValueError`: il ramo di rete e quello di `bad_stream`) riprova una volta la stessa chiamata. Prima della risposta riprova già l'SDK (`max_retries=1`), e un errore di stato non si riprova.
+2. Sicuro perché una chiamata parte solo a fine giro: `leg.read` non è ancora arrivato, quindi nessun tool del giro rotto è partito. Il test lo prova.
+3. La voce: `CUT_SHORT` per la frase a metà, poi il nuovo stream. Nessuna frase d'errore se il retry riesce. Le frasi già dette restano in `leg.parts`, e possono ripetersi: raro, meglio di una richiesta persa.
+4. Se fallisce anche il secondo tentativo: la frase d'errore di oggi, e `claude_error` come oggi. Nessun retry in un giro già `silent`, e nessuno dopo `stop_acting`.
+5. `last_call["stream_retry"] = True`, in `session_log.py` accanto a `cut_retry`. `log.warning` col messaggio dell'errore: è l'unico dato sulla causa. Entrambi i tentativi contano nella spesa.
+
+**Test che falliscono:**
+- [ ] `test_a_broken_stream_is_retried_once`: `ssl.SSLError` a metà, poi una risposta: voce senza frase d'errore, due richieste con gli stessi `messages`, `stream_retry` vero, nessun `claude_error`.
+- [ ] `test_a_second_break_says_the_error`: due rotture: tre richieste no, due sì; frase d'errore, `claude_error == "network"`.
+- [ ] `test_a_break_before_any_reply_is_not_retried_again`: errore prima della risposta, `APIConnectionError`: nessun retry nostro.
+- [ ] `test_a_status_error_is_not_retried`: `overloaded_error` dentro lo stream: come oggi.
+- [ ] `test_a_tool_runs_once_after_a_broken_stream`: il giro rotto conteneva un `tool_use` parziale, il secondo lo completa: il tool gira una volta sola.
+- [ ] `test_no_stream_retry_after_a_new_request_over_the_reply`.
+
+## Task 9: il rumore fuori dai log e dal disco
+
+**File:** `src/claudio/app.py`. Test: i test esistenti di `_on_near_miss` e `_log_near_miss`.
+
+**Regole:**
+1. A `log.debug`: «Wake word debole», «Wake word su silenzio», «Seconda possibilità: nessuna voce». Restano a `info` gli esiti in cui Whisper ha sentito qualcosa: è un dato utile, e sono pochi.
+2. Niente WAV per `rejected="no_voice"`: oggi 53 file in 23 minuti, senza una parola dentro. La riga delle metriche resta: il conteggio serve a G7. Gli altri scarti (`no_name`, `barge_ignored`) restano salvati.
+3. Nessun comportamento cambia: stesse soglie, stesse attivazioni.
+
+**Test che falliscono:**
+- [ ] `test_a_near_miss_with_no_voice_saves_no_wav`, `test_a_near_miss_with_voice_still_saves_its_wav`, `test_a_near_miss_with_no_voice_still_counts_in_the_metrics`.
+- [ ] `test_noise_writes_no_info_line` con `caplog` a `INFO`.
+
+## Task 10: una sola frase per azione
+
+Misura sulle scene vere (`research_notes/Effort e thinking Haiku/prove/ab_scenes.py`, 0,03 $, 52 corse su 81):
+
+| Azioni, n≈14 per braccio | Doppia frase | «Ci guardo» di Haiku | Prima parola p50 |
+|---|---|---|---|
+| Oggi | 100% | 38% | 558 ms |
+| Prompt senza la citazione | 100% | 0% | 551 ms |
+| Thinking adattivo | 0% | 0% | 2384 ms |
+
+Scelta di JenJo: **il codice trattiene**, con la citazione tolta dal prompt. Niente thinking. Per un'azione libera resta solo la frase dopo; chi chiede «Confermi?» dice ancora cosa sta per fare. Prima di una chiamata Haiku dice due frasi in 16 casi su 26, quindi se ne trattengono due.
+
+**File:** `src/claudio/brain/claude.py`, `src/claudio/brain/prompts.py`. Test: `tests/unit/test_pc_tools.py`, `tests/unit/test_claude_brain.py`.
+
+**Regole:**
+1. Prompt: «say nothing before a tool call (an action that needs a yes is the exception, see below)». La frase sui «Ci guardo» di Claudio sparisce.
+2. Si trattiene solo in un giro con i tool davvero offerti (non con `tool_choice: none`, non Sonnet, non `silent`). Negli altri casi il testo scorre come oggi.
+3. `HOLD_SENTENCES = 2`, `HOLD_MAX_CHARS = 200`: il testo resta fermo finché non comincia la terza frase o finché non supera i caratteri; da lì scorre tutto, senza più trattenere. Così una storia non aspetta.
+4. A fine giro, in `stream_end`:
+   - nessuna chiamata (`DONE`, `PROMISED`, `CUT_WORDS`, `REFUSED`): si dice ciò che è fermo, nell'ordine, prima di quello che segue oggi;
+   - una chiamata o `CUT_CALL`: non si dice, resta in `leg.held`;
+   - `ask_sonnet`: non si dice, perché la proposta lo dice già;
+   - `ERROR`: non si dice, e il retry di rete riparte senza quelle parole.
+5. `_ask_first`: se l'azione chiede un sì, dice `leg.held` e poi la domanda. Un'azione libera butta `leg.held`. `_before_tools` non cambia: «Ci guardo» del codice resta sui tool lenti.
+6. `leg.parts` e la cronologia tengono solo ciò che è stato detto. `leg.content` tiene il testo del modello, perché torna all'API. Il rilevatore di promesse legge anche il testo fermo. `word_ms` e `first_key` si misurano quando il testo esce, non quando arriva.
+7. Un «basta» o una richiesta nuova mentre il testo è fermo: quel testo non è stato sentito e non va in cronologia.
+
+**Test che falliscono:**
+- [ ] `test_a_sentence_before_a_free_action_is_not_said`, `test_two_sentences_before_a_free_action_are_not_said`: la voce dice solo la frase dopo.
+- [ ] `test_the_sentences_before_a_question_are_said`: «Chiudo Chrome. Confermi?», e con un «no» niente frase di chiusura doppia.
+- [ ] `test_a_reply_with_no_call_says_every_word_in_order`, `test_a_long_reply_starts_before_it_ends` (`SteppedStream`: la prima frase esce quando arriva la terza), `test_a_reply_past_the_char_limit_flows`.
+- [ ] `test_no_hold_when_tools_are_not_offered`: Sonnet, ultimo giro, nessun tool.
+- [ ] `test_the_model_text_still_goes_back_to_the_api`, `test_a_promise_still_reads_the_held_words`.
+- [ ] `test_a_stop_during_held_words_keeps_them_out_of_the_history`, `test_a_broken_stream_drops_the_held_words`.
+- [ ] Verifica: suite intera, ruff, mypy. Il coordinatore registra di nuovo le cassette: il prompt cambia.

@@ -94,10 +94,7 @@ Etichette salvate finora:
 | `no/certo_che_no__1.wav` | chiara, ma distorta |
 | `no/va_bene_ma_non_adesso__0.wav` e `unclear/si_fa_tardi__0.wav` | chiare, ma distorte |
 
-**Per G2, prima di registrare (2 minuti):** ascolta 3 WAV dal vivo e dimmi se suonano distorti come queste riprese. Per aprirne uno, in PowerShell:
-```
-Get-ChildItem samples\corpus\2026-11-06_12-48\audio -Filter *_ok.wav | Select-Object -First 3 | ForEach-Object { Start-Process $_.FullName }
-```
+**Per G2, prima di registrare:** la prova H0 più sotto.
 
 Quello che segue è la prova come l'hai fatta.
 
@@ -211,6 +208,52 @@ Get-Content logs\metrics.jsonl -Tail 1 | ConvertFrom-Json | Select-Object cut, c
     Copiami la tabella per percorso.
 
 **Scrivimi:** G, i passi che non tornano, cosa hai sentito ai passi 1 e 7, e la tabella del passo 14.
+
+### G bis. Una frase per azione (3 minuti, meno di 1 centesimo)
+
+**Perché:** Claudio ora trattiene le prime due frasi finché non sa se segue un'azione. Va sentito dal vivo, con il costo di latenza. **Claudio acceso, versione nuova**, Chrome aperto.
+
+1. «Claudio, porta avanti Chrome». Atteso: Chrome davanti e **una frase sola**, dopo l'azione.
+2. Con Chrome ancora davanti: «Claudio, chiudi la finestra». Atteso: **senti quale finestra** e poi «Confermi?». Rispondi «no»: non si chiude.
+3. «Claudio, quanto fa 15 per 18?». Atteso: risponde. Dimmi se la prima parola ti sembra lenta.
+4. «Claudio, preparami un piano di dieta per sette giorni». Atteso: propone il modello più potente chiedendo «Lo uso?», oppure risponde. **Se dice «dimmi solo se procedo», è il caso che cerco:** è una promessa a parole, senza un'offerta vera. Rispondi «no» in ogni caso, così Sonnet non parte.
+5. A fine prova:
+   ```
+   $env:PYTHONIOENCODING='utf-8'; uv run python scripts/benchmark_latency.py --log
+   ```
+   Il riferimento è la sessione `2026-11-07_16-48`: Claude 2681 ms di mediana, locale 824. Trattenere le frasi costa **circa 250-400 ms** sulle risposte brevi.
+
+**Scrivimi:** G bis, i passi che non tornano, la frase del passo 4 e la tabella del passo 5.
+
+---
+
+## Adesso: G2
+
+### H0. La distorsione, prima di ogni soglia (5 minuti)
+
+**Perché:** nel riascolto del 06/11 le riprese suonavano distorte. Se la distorsione nasce prima di Claudio, la soglia di confidenza scelta su quelle riprese vale poco. **Claudio chiuso.**
+
+1. Ascolta 3 WAV dal vivo:
+   ```
+   Get-ChildItem samples\corpus\2026-11-06_12-48\audio -Filter *_ok.wav | Select-Object -First 3 | ForEach-Object { Start-Process $_.FullName }
+   ```
+   Dimmi: suonano distorti come le riprese di `samples\safety\`, meno, o puliti?
+2. Ascolta la risposta persa nella prova del 06/11:
+   ```
+   Get-ChildItem samples,logs -Recurse -Filter 20261106-125111-875_ok.wav | Select-Object -First 1 | ForEach-Object { Start-Process $_.FullName }
+   ```
+   Dimmi cosa avevi detto e se si sente anche l'inizio. Se non si apre nulla, il file è già ruotato via: dimmelo.
+3. Guarda il microfono che usi con Claudio: Impostazioni, Sistema, Audio, il dispositivo di ingresso. Se c'è **Miglioramenti audio**, dimmi se è attivo, senza cambiarlo. Il nome può variare con il driver.
+
+**Scrivimi:** H0 e le tre risposte. I passi dopo (effetti spenti, altro microfono sulle stesse 10 frasi) li preparo solo se servono.
+
+### H1. Le 145 riprese nuove (circa 25 minuti, una volta sola)
+
+Si prepara con il task 4: comando e passi arrivano qui. Da quel momento parte la corsia B.
+
+### H2. Interruzioni e conferme
+
+Si prepara a fine gruppo, dalla riga G2 della tabella qui sotto. Comprende il «lascia stare» da rifare dal vivo.
 
 ---
 
