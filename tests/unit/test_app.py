@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
@@ -640,7 +641,7 @@ def second_chance_with(
 
 async def test_no_voice_no_whisper(fake_vad, vad_settings, make_frames, tmp_path) -> None:
     """A click, a key, the headset's gate opening: Silero hears no voice, Whisper is not even
-    asked, and the audio is kept apart, named after why it was rejected."""
+    asked, and no audio is kept: the row alone counts it."""
     saved: list[str] = []
     check = SecondChance("Claudio.")
     assistant, speaker = second_chance_with(
@@ -654,10 +655,108 @@ async def test_no_voice_no_whisper(fake_vad, vad_settings, make_frames, tmp_path
     )
     await run_frames(assistant, make_frames("silence", 2400))
     assert check.heard == [] and speaker.beeps == [] and assistant.state is State.IDLE
-    assert saved == ["no_voice"]
+    assert saved == []  # no voice, nothing worth keeping: only the row stays
     row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
     assert row["outcome"] == "near_miss" and row["rejected"] == "no_voice"
-    assert row["wake_voice_ms"] == 32 and row["audio_file"] == "rejected/no_voice.wav"
+    assert row["wake_voice_ms"] == 32 and "audio_file" not in row
+
+
+def no_voice_click(fake_vad, vad_settings, tmp_path, saved: list[str], **options):
+    """A weak "hey_claudio" on a click: the voice meter hears 32 ms; sinks record what is saved."""
+    options.setdefault(
+        "rejected_sink", lambda audio, kind: saved.append(kind) or f"rejected/{kind}.wav"
+    )
+    return second_chance_with(
+        fake_vad,
+        vad_settings,
+        SecondChance("Claudio."),
+        tmp_path,
+        voice_meter=lambda audio: 32,
+        wake_min_voice_ms=96,
+        audio_sink=lambda audio, kind: saved.append(kind) or f"{kind}.wav",
+        **options,
+    )
+
+
+async def test_a_near_miss_with_no_voice_saves_no_wav(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    saved: list[str] = []
+    assistant, _ = no_voice_click(fake_vad, vad_settings, tmp_path, saved)
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert saved == []
+
+
+async def test_a_near_miss_with_voice_still_saves_its_wav(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    saved: list[str] = []
+    assistant, _ = second_chance_with(
+        fake_vad,
+        vad_settings,
+        SecondChance("il gatto dorme sul divano"),
+        tmp_path,
+        voice_meter=lambda audio: 480,
+        wake_min_voice_ms=96,
+        rejected_sink=lambda audio, kind: saved.append(kind) or f"rejected/{kind}.wav",
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert saved == ["no_name"]
+    row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
+    assert row["audio_file"] == "rejected/no_name.wav"
+
+
+async def test_a_near_miss_with_no_voice_still_counts_in_the_metrics(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    notes: list[str] = []
+
+    def sink(audio: np.ndarray, kind: str) -> str:
+        return f"rejected/{kind}.wav"
+
+    sink.note = lambda name, meta: notes.append(name)  # type: ignore[attr-defined]
+    assistant, _ = no_voice_click(fake_vad, vad_settings, tmp_path, [], rejected_sink=sink)
+    await run_frames(assistant, make_frames("silence", 2400))
+    rows = (tmp_path / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+    row = json.loads(rows[0])
+    assert row["outcome"] == "near_miss" and row["rejected"] == "no_voice"
+    assert "audio_file" not in row
+    assert notes == []  # nothing was noted for a file that was not written
+
+
+async def test_noise_writes_no_info_line(
+    fake_vad, vad_settings, make_frames, tmp_path, caplog
+) -> None:
+    """A click (weak wake, then no voice) and a clear wake on silence: debug lines only."""
+    caplog.set_level(logging.INFO, logger="claudio")
+    assistant, _ = no_voice_click(fake_vad, vad_settings, tmp_path, [], confirm_below=0.95)
+    assistant.wake.fire_on = {20}  # a real weak detection: reaches "Wake word debole"
+    await run_frames(assistant, make_frames("silence", 2400))
+    quiet, _ = strong_wake_with(
+        fake_vad,
+        vad_settings,
+        tmp_path,
+        voice_meter=lambda audio: 0,
+        wake_min_voice_ms=96,
+        rejected_sink=lambda audio, kind: f"rejected/{kind}.wav",
+    )
+    await run_frames(quiet, make_frames("silence", 2400))
+    noise = [r.getMessage() for r in caplog.records if r.name.startswith("claudio.app")]
+    noise = [m for m in noise if not m.startswith("Pronto")]  # the start-up line, not noise
+    assert noise == []
+
+
+async def test_a_noisy_model_with_no_voice_leaves_no_wav_and_no_row(
+    fake_vad, vad_settings, make_frames, tmp_path
+) -> None:
+    saved: list[str] = []
+    assistant, _ = no_voice_click(
+        fake_vad, vad_settings, tmp_path, saved, always_confirm=frozenset({"hey_claudio"})
+    )
+    await run_frames(assistant, make_frames("silence", 2400))
+    assert saved == []
+    assert not (tmp_path / "metrics.jsonl").exists()
 
 
 def strong_wake_with(fake_vad, vad_settings, tmp_path, **options):
@@ -694,7 +793,7 @@ async def test_a_clear_wake_on_silence_is_no_wake(
     assistant.wake.fire_on = {20, 21, 22}
     await run_frames(assistant, make_frames("silence", 2400))
     assert speaker.beeps == [] and assistant.state is State.IDLE
-    assert saved == ["no_voice"]
+    assert saved == []
     row = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
     assert row["outcome"] == "near_miss" and row["rejected"] == "no_voice"
     assert row["wake_score"] == 0.9 and row["wake_voice_ms"] == 0
