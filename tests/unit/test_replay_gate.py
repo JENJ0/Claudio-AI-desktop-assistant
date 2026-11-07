@@ -913,6 +913,82 @@ async def test_the_real_sdk_message_survives_record_and_replay(tmp_path: Path) -
     assert "api_key" not in saved_text.lower() and "x-api" not in saved_text.lower()
 
 
+async def test_a_forced_retry_has_its_own_cassette(tmp_path: Path) -> None:
+    forced = {**PARAMS, "tool_choice": {"type": "tool", "name": "type_text"}}
+    assert rg.cassette_key(forced) != rg.cassette_key(PARAMS)
+    loose = {**forced, "timeout": 10.0, "max_tokens": 2048}
+    assert rg.cassette_key(loose) == rg.cassette_key(forced)
+    cut = SimpleNamespace(type="text", text="Scrivo.")
+    real = ScriptedClient((["Scrivo."], "max_tokens", [cut]))
+    await drain(rg.CassetteClient(tmp_path, real=real).stream(**PARAMS))
+    replay = rg.CassetteClient(tmp_path)
+    with pytest.raises(rg.CassetteMiss):
+        replay.stream(**forced)  # the retry is not answered with the cut again
+    _, again = await drain(rg.CassetteClient(tmp_path).stream(**PARAMS, timeout=10.0))
+    assert again.stop_reason == "max_tokens"  # `timeout=` is accepted and left out of the key
+
+
+async def test_a_call_cut_at_max_tokens_survives_record_and_replay(tmp_path: Path) -> None:
+    from anthropic.types import Message, TextBlock, ToolUseBlock
+    from anthropic.types import Usage as ApiUsage
+
+    message = Message(
+        id="msg_cut",
+        content=[
+            TextBlock(type="text", text="Scrivo."),
+            ToolUseBlock(type="tool_use", id="toolu_c", name="type_text", input={"text": "Pia"}),
+        ],
+        model="claude-haiku-5-5",
+        role="assistant",
+        stop_reason="max_tokens",
+        stop_sequence=None,
+        type="message",
+        usage=ApiUsage(input_tokens=11, output_tokens=2048),
+    )
+    await drain(rg.CassetteClient(tmp_path, real=SdkClient(message)).stream(**PARAMS))
+    _, saved = await drain(rg.CassetteClient(tmp_path).stream(**PARAMS))
+    assert saved.stop_reason == "max_tokens"
+    assert [(b.type, getattr(b, "name", None)) for b in saved.content] == [
+        ("text", None),
+        ("tool_use", "type_text"),
+    ]
+    assert saved.content[1].input == {"text": "Pia"}  # the partial block is still there
+
+
+def test_a_cut_then_a_retry_records_and_replays_only_what_ran(
+    settings: Settings, tmp_path: Path
+) -> None:
+    expect = {"route": "claude", "tools": ["open_app"], "args": [["open_app", {"name": "Chrome"}]]}
+    say = SimpleNamespace(type="text", text="Apro.")
+    script = ScriptedClient(
+        (["Apro."], "max_tokens", [say, use("open_app", name="Chr")]),
+        ([], "tool_use", [use("open_app", name="Chrome")]),
+        (["Fatto."], "end_turn", [SimpleNamespace(type="text", text="Fatto.")]),
+    )
+    recorded, harness = claude_gate(settings, tmp_path, expect, script)
+    assert recorded.passed and not recorded.failed, recorded.reasons
+    assert rg.read_outcome(harness).args == ('open_app {"name": "Chrome"}',)
+    assert len(list((tmp_path / "cassettes").glob("*.json"))) == 3
+    replay, again = claude_gate(settings, tmp_path, expect, None, "w2")
+    assert replay.passed and not replay.failed and replay.misses == [], replay.reasons
+    row = rg.request_row(list(again.assistant.history))
+    assert row["cut_retry"] == "ok"  # the brain saw a CUT_CALL through the cassette
+
+
+def test_a_tool_that_never_ran_is_not_counted_as_run() -> None:
+    row = {"tools": ["open_app(Chrome) ok", "type_text() not_run_cut", "run_command(x) error"]}
+    harness = SimpleNamespace(
+        assistant=SimpleNamespace(history=[row], _interaction=None),
+        recorder=SimpleNamespace(ran=[], opened=[], keys=[], combos=[]),
+        client=None,
+        levels=[],
+        command_levels={},
+    )
+    outcome = rg.read_outcome(harness, until=rg.Mark(rows=1))  # type: ignore[arg-type]
+    assert outcome.tools == ("open_app", "run_command")
+    assert outcome.tool_errors == ("run_command",)
+
+
 def test_the_tripwire_blocks_the_rest(monkeypatch: pytest.MonkeyPatch) -> None:
     import win32gui
 
