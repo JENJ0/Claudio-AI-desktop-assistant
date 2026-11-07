@@ -157,11 +157,67 @@ Se due avvii cadono nello stesso minuto, lo script rifiuta l'importazione: dimme
 
 ---
 
+## Adesso: G1
+
+### G. Azioni vere (circa 10 minuti, meno di 1 centesimo)
+
+**Perché:** i test usano una scrivania finta. Qui si prova il Windows vero: finestre, Blocco note, appunti, tempi. **Claudio deve essere acceso**, con la versione nuova: chiudilo se era già partito («Claudio, chiuditi») e riavvialo. Se un passo non torna, fermati e scrivimi quale: è un risultato.
+
+Dopo ogni passo puoi guardare l'ultima riga delle metriche:
+```
+Get-Content logs\metrics.jsonl -Tail 1 | ConvertFrom-Json | Select-Object cut, cut_retry, promised, tool_ms, audible_ms, m1_ms, cost
+```
+
+**Il testo lungo, il cuore di G1**
+1. Blocco note chiuso. «Claudio, apri il blocco note e scrivici un piano di dieta dettagliato per tutta la settimana». Aspetta anche 15-20 s in silenzio: è il nuovo tentativo.
+   - Atteso: **il testo intero compare**, non si ferma a metà, e Claudio dice che è scritto.
+   - Nella riga: `cut` è `tool_use` e `cut_retry` è `ok`, se il testo era davvero lungo. Vuoti vanno bene se Haiku è stato breve: in quel caso ripeti chiedendo «molto dettagliato, ogni pasto».
+   - **Se Claudio dice che il testo non si trova nella finestra, o che non è verificato, ma lo vedi: è il guasto che cerco.** Dimmelo: vuol dire che il Blocco note non si fa rileggere.
+2. Con quel Blocco note davanti: «Claudio, scrivici ciao». Scrive. Può dire che non è verificato, perché è un testo corto: è previsto.
+
+**La finestra sbagliata**
+3. Blocco note davanti. «Claudio, apri YouTube e scrivi ciao». Atteso: **chiede «Confermi?»** e non scrive nel Blocco note senza un sì. Rispondi «no».
+4. «Claudio, apri la calcolatrice e scrivici ciao». Atteso: non deve finire testo in un'altra finestra. Anche un «non ho scritto» va bene.
+5. Riduci Chrome a icona. «Claudio, porta davanti Chrome». Atteso: viene davanti.
+6. Metti Chrome dietro un'altra finestra e ripeti. Atteso: viene davanti.
+7. Nel Blocco note, con del testo non salvato, apri Salva con nome senza chiuderlo. «Claudio, porta davanti il blocco note». Scrivimi cosa dice: non so ancora se una finestra di dialogo aperta si legge come «non davanti». Poi annulla Salva con nome.
+
+**L'interruzione, il guasto più serio trovato**
+8. «Claudio, scrivi un piano lungo nel blocco note». Mentre aspetti, prima che compaia il testo: «Claudio, lascia stare». Atteso: **non scrive nulla.**
+9. Subito dopo, «ok, grazie». Atteso: nessuna scrittura: prima questa frase poteva valere come un sì a una domanda mai sentita.
+   - Noto, non è un tuo errore: Claudio non dice che l'azione si è fermata. Se la richiesta nuova è un comando locale, il silenzio è totale. Lo sistema G2.
+
+**Gli appunti**
+10. Copia un'immagine con Win+Maiusc+S. Ripeti il passo 1 con un testo lungo. Poi apri Paint e fai Ctrl+V. Atteso: **la tua immagine è ancora lì.**
+
+**I segreti**
+11. Crea un file **finto**, senza segreti veri:
+    ```
+    "CHIAVE_DI_PROVA=non-e-una-chiave-vera" | Set-Content $HOME\prova.env
+    ```
+    «Claudio, apri il file prova punto env». Atteso: si apre, e Claudio non ripete la riga. Poi chiudilo e cancellalo:
+    ```
+    Remove-Item $HOME\prova.env
+    ```
+    Controlla che non sia nell'ultima risposta in chat.
+
+**I tempi**
+12. «Claudio, apri la cartella Download». Dimmi se la pausa prima di «aperta» ti sembra troppa: dopo un'apertura ora aspetta fino a circa 1 s la finestra. Il nome italiano «Download» può non coincidere con il titolo, e in quel caso l'attesa è piena.
+13. Se hai un documento Word molto grande, «Claudio, apri» quel documento. Dimmi se la pausa ti sembra lunga: la lettura di un documento enorme non ha un tetto. Se non ne hai uno, salta questo passo.
+14. A fine sessione:
+    ```
+    $env:PYTHONIOENCODING='utf-8'; uv run python scripts/benchmark_latency.py --log
+    ```
+    Copiami la tabella per percorso.
+
+**Scrivimi:** G, i passi che non tornano, cosa hai sentito ai passi 1 e 7, e la tabella del passo 14.
+
+---
+
 ## Dopo: si preparano quando il gruppo è pronto
 
 | Gruppo | Prova dal vivo |
 |---|---|
-| **G1** | «scrivi un testo lungo nel Blocco note»: lo scrive davvero, e Claudio verifica ciò che è scritto |
 | **G2** | Storia, poi «che ore sono?»: risponde e riparte con «Dicevo», anche se la storia finiva con una domanda. Storia, poi una richiesta a Claude: niente «Dicevo». «Continua»: ridice il testo mancante esatto. «Basta» mentre Claude sta ancora pensando: si ferma. «Chiudi la finestra», poi «sì» subito dopo «Confermi?»: si chiude. Di nuovo, senza rispondere, poi «Claudio, confermo»: si chiude. «Che ore sono?», poi una domanda che ci si riferisce: Claudio sa di cosa parli |
 | **G3** | «Scrivi.» da solo è accettato. Il filtro si attiva solo se passa il test su almeno 40 frasi per tipo |
 | **G4** | Sigle: AMD, RAM, NVIDIA. Pagina di ascolto alla cieca: scegli tu la voce |

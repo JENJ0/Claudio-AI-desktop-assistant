@@ -33,7 +33,24 @@ Piano approvato da JenJo il 05/11/2026 dopo grilling e deep research. I numeri d
 
 ### Stato lasciato
 
-Scritto il 06/11/2026. **G0 è chiuso.** Le prove B, C e D sono fatte: la B con 105 etichette (Whisper sbaglia l'11,1% delle parole su 42 frasi per Claudio), la D con 38 clip superate e 4 guasti noti. **La C ha trovato un guasto di sicurezza al livello 2, e il suo test audio resta rosso:** la correzione è il primo lavoro di G2, vedi lì. Manca la prova F, prima di G3. I task sono in `piani/IT-2-passo-0b-G0-task.md`, le prove in `piani/IT-2-passo-0b-prove.md`. Il prossimo gruppo è G1.
+**Aggiornato il 07/11/2026: G1 è scritto e rivisto, aspetta JenJo. Niente è committato.** Le modifiche stanno nel working tree del ramo. Mancano: la prova G di JenJo (`piani/IT-2-passo-0b-prove.md`), l'ok sul diff, i commit. Il registro è `.superpowers/sdd/IT-2-passo-0b-G1-task/progress.md` (fuori da git); le decisioni prese durante i task stanno anche in fondo a `piani/IT-2-passo-0b-G1-task.md`.
+
+Gate: 39 superate, 3 guasti noti, 0 fallite. Il retry vero, con Haiku che accetta il tool forzato, non è ancora passato dall'API: la registrazione del Blocco note è uscita senza taglio, quindi lo prova il passo 1 della prova G.
+
+**Da decidere con JenJo:** thinking di Haiku (A/B fatto, nessun cambio); cosa fare quando Haiku vede testo già presente nella finestra e non scrive più (visto registrando: «Non le tocco, socio»; dal vivo può capitare con un Blocco note che riapre vecchie schede).
+
+**Metodo, lezione di G1:** i test verdi con i finti non bastavano. La verifica per mutazione e la revisione dell'intero gruppo hanno trovato ciò che le revisioni a lettura per singolo task non vedevano, compreso il guasto più serio. Nei gruppi con sicurezza vanno chieste entrambe. Un finto che sposta la finestra all'istante nasconde le corse tra un'azione e la successiva.
+
+**Rimandati da G1:**
+
+| Gruppo | Cosa |
+|---|---|
+| G2 | Un'offerta di Sonnet mai sentita resta armata: una frase detta sopra può chiamare Sonnet (una chiamata, nessuna azione sul PC). Serve un `played` riempito nel finto `LongSpeaker`. Dopo un sì, senti solo «Confermi?» mentre il bersaglio può essere un altro: scheda «Blocco note online» davanti, `focus_window` fallito e poi `type_text`, un lancio che batte un focus successivo. Un'azione armata tolta da `cancel_pending` perde tutto il turno dalla cronologia. «Claudio, sì» sopra un «Confermi?» che sta suonando arriva a Haiku senza contesto. «Dicevo» può ripetere la promessa di un'azione fermata. Una richiesta locale sopra una risposta ferma l'azione in silenzio. `handle_typed` può azzerare lo stop mentre uno stream vecchio gira. `BRIDGE_RUN` («Eseguo.») resta in cronologia |
+| G6 | Il testo di una pagina può guidare le azioni di livello 1, e `open_website` può portare fuori quel testo in un URL senza un sì: conseguenza della scelta sul testo delle finestre, `level()` non guarda `_outside_text` per questi tool. Elenco delle finestre private: mancano nomi come `secrets.yaml`, `token.txt`. L'uscita di `run_command` e i titoli delle finestre non sono protetti dal recinto dei dati. `rich_text` non controlla i campi password |
+| G7 | Le attese nuove sul percorso Claude, da misurare dal vivo: fino a 1,2 s dopo `open_app` e `open_path`, fino a 1,2 s di rilettura dopo la scrittura. Una cartella col nome italiano («Download») aspetta sempre il tetto. `GetText(-1)` non ha un tetto su un documento enorme |
+| G9 | `test_pc_tools.py` è a 2600 righe: va diviso con un commit che sposta soltanto, spostando prima i finti. Rilevatore delle promesse: togliere `mi` e `vi` nudi («Devo salvarmi»). 5 `SSLError` su 240 chiamate nell'A/B, tutti a metà stream, nessuno nei log veri: ora gestiti, causa ignota, e il messaggio finirà nel log. Un retry interrotto da «basta» sottostima la spesa di 0,001 $ al massimo. `log.exception` su uno stream rotto può scrivere l'input intero del tool |
+
+Il resto di questa sezione è del 06/11. **G0 è chiuso.** Le prove B, C e D sono fatte: la B con 105 etichette (Whisper sbaglia l'11,1% delle parole su 42 frasi per Claudio), la D con 38 clip superate e 4 guasti noti. **La C ha trovato un guasto di sicurezza al livello 2, e il suo test audio resta rosso:** la correzione è il primo lavoro di G2, vedi lì. Manca la prova F, prima di G3. I task sono in `piani/IT-2-passo-0b-G0-task.md`, le prove in `piani/IT-2-passo-0b-prove.md`. Il prossimo gruppo è G1.
 
 `.claude/skills/graphify/` resta fuori da git per scelta di JenJo: si rigenera con `graphify install --project`. Graphify è uno strumento globale, senza versione fissata: oggi è la 0.9.103.
 
@@ -100,6 +117,8 @@ Budget: 2,58 $/giorno, al massimo 80 $ al mese, dai crediti Max. Le cassette del
 | Contesto (06/11) | Claudio ragiona sulla richiesta attuale in relazione alle precedenti della sessione, soprattutto l'ultima, comandi locali compresi |
 | Conferma vocale (06/11) | La correzione viene dopo G1, come primo lavoro di G2. Livello 2: soglia `avg_logprob` -0.75 sul sì e una sola seconda domanda, insieme. Livello 3: per ora solo voce, un'eventuale conferma non vocale si decide in G6 |
 | Pubblicazione (06/11) | Push del ramo alla fine di v0.4.2, se non ci rallenta |
+| Testo delle finestre (07/11) | Dopo `type_text`, `open_app`, `open_path` a Claude arrivano il verdetto del codice **e** il testo della finestra, marcato come dati. Quei tool contano come testo esterno; le finestre private non si leggono mai. Riconfermato anche per `open_app`, sapendo che i ricordi oltre 80 caratteri vengono rifiutati finché la nota resta in cronologia e che un Blocco note che riapre vecchie schede ne manda il testo |
+| Attesa della finestra (07/11) | Dopo `open_app` e `open_path` fino a 1 s, solo sulle richieste passate da Claude. Da misurare dal vivo |
 
 ## Attenzione ai casi limite
 
