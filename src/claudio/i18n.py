@@ -486,6 +486,7 @@ EN: dict[str, str] = {
     ", interrotta (stima)": ", cut short (estimate)",
     "Claude: chiave API non valida (401)": "Claude: invalid API key (401)",
     "Claude non raggiungibile: %s": "Claude unreachable: %s",
+    "Claude: evento illeggibile nello stream: %s": "Claude: unreadable event in the stream: %s",
     "Claude errore %s: %s": "Claude error %s: %s",
     "Claude: spesa non registrata": "Claude: spending not recorded",
     "Non è un comando, chiedo a Claude: %r": "Not a command, asking Claude: %r",
