@@ -179,7 +179,8 @@ async def test_tool_runs_once_and_claude_gets_its_result(make_scene, home: Path)
     _first, second = scene.client.calls
     assert second["messages"][-2]["content"][0]["type"] == "tool_use"
     result = second["messages"][-1]["content"][0]
-    assert result["tool_use_id"] == "tu_open_app" and result["content"] == "Started Spotify."
+    assert result["tool_use_id"] == "tu_open_app"
+    assert result["content"].startswith("Started Spotify. Its window is open.")
     assert scene.speaker.played == ["Aperto."]
     assert scene.row(0)["route"] == "claude"
 

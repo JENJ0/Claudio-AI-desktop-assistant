@@ -197,6 +197,7 @@ class SlowDesktop(FakeDesktop):
     def __init__(self, appears_after: int) -> None:
         super().__init__()
         self.looks = 0
+        self.opens_windows = False  # the window comes by `windows()`, after `appears_after` looks
         self.appears_after = appears_after
         self.chrome = Window(9, "Nuova scheda - Google Chrome", "chrome.exe")
         self.open_windows = [Window(1, "Senza nome - Blocco note", "notepad.exe", active=True)]
@@ -216,24 +217,30 @@ def slow_tools(desk: FakeDesktop, home: Path, clock: Monotonic) -> PcTools:
 
 
 async def test_typing_right_after_a_launch_waits_for_its_window(tmp_path: Path) -> None:
-    desk, clock = SlowDesktop(appears_after=3), Monotonic()
+    desk, clock = SlowDesktop(appears_after=10), Monotonic()  # past the open_app polling
     t = slow_tools(desk, tmp_path, clock)
     await t.run(call("open_app", name="Google Chrome"))
+    before = clock.t
     out = await t.run(call("type_text", text="Dainese Moto"))
     t.close()
-    assert not out.error
+    assert not out.error and clock.t > before  # type_text itself waited for the window
     focus = desk.done.index(("focus", "Nuova scheda - Google Chrome"))
     assert desk.done[focus + 1] == ("keys", "Dainese Moto")  # into Chrome, after it appeared
     assert desk.looks > 3
 
 
 async def test_a_named_window_of_a_new_app_is_waited_for(tmp_path: Path) -> None:
-    desk, clock = SlowDesktop(appears_after=2), Monotonic()
+    desk, clock = SlowDesktop(appears_after=10), Monotonic()  # past the open_app polling
     t = slow_tools(desk, tmp_path, clock)
     await t.run(call("open_app", name="Google Chrome"))
+    before = clock.t
     out = await t.run(call("type_text", text="ciao", window="Chrome"))
     t.close()
-    assert not out.error and ("focus", "Nuova scheda - Google Chrome") in desk.done
+    assert (
+        clock.t > before
+        and not out.error
+        and ("focus", "Nuova scheda - Google Chrome") in desk.done
+    )
 
 
 async def test_without_a_launch_a_missing_window_fails_at_once(tmp_path: Path) -> None:
@@ -244,12 +251,16 @@ async def test_without_a_launch_a_missing_window_fails_at_once(tmp_path: Path) -
     assert out.error and clock.t == 1000.0  # nothing was waited for
 
 
-async def test_a_window_that_never_comes_types_into_the_active_one(tmp_path: Path) -> None:
+async def test_a_window_that_never_comes_types_nothing(tmp_path: Path) -> None:
     desk, clock = SlowDesktop(appears_after=99), Monotonic()
     t = slow_tools(desk, tmp_path, clock)
     await t.run(call("open_app", name="Google Chrome"))
     start = clock.t
     out = await t.run(call("type_text", text="ciao"))
     t.close()
-    assert not out.error and desk.done[-1] == ("keys", "ciao")  # as before this change
+    assert out.error and out.text == (
+        "Not typed: no window of Google Chrome found. If it is open under another title, "
+        "call list_windows."
+    )
+    assert not any(d[0] in ("keys", "paste") for d in desk.done)  # not into the editor in front
     assert clock.t - start <= 3.5  # waited about WINDOW_WAIT_S, not forever

@@ -71,7 +71,8 @@ if TYPE_CHECKING:
 # Tools that may take a while (pc/tools.py SLOW; repeated here: no import of the PC package).
 SLOW_TOOLS = frozenset({"search_files", "read_window", "look_at_screen", "run_command"})
 # Tools that bring outside text in (pc/tools.py OUTSIDE_TEXT, repeated for the same reason).
-OUTSIDE_TEXT_TOOLS = frozenset({*SLOW_TOOLS, "list_windows"})
+# open_app, open_path and type_text report the window's text back to Claude.
+OUTSIDE_TEXT_TOOLS = frozenset({*SLOW_TOOLS, "list_windows", "open_app", "open_path", "type_text"})
 
 log = logging.getLogger(__name__)
 

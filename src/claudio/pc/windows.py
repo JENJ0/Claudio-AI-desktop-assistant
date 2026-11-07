@@ -24,7 +24,7 @@ from typing import Any
 from claudio.pc import terminal
 from claudio.pc.files import INDEX_KINDS, SHORTCUTS, Found, index_path, shortcuts
 from claudio.pc.terminal import CommandResult
-from claudio.pc.tools import App, Window
+from claudio.pc.tools import READ_CUT, App, Window
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +34,9 @@ GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 DWMWA_CLOAKED = 14
 PASTE_SETTLE_S = 0.3
+READ_MAX_NODES = 2000  # elements visited by read_window: next to the time cap, for a huge tree
+CLIPBOARD_OPEN_TRIES = 10  # another app (or the Win+V history) may hold the clipboard a moment
+CLIPBOARD_RETRY_S = 0.05
 DWMWA_EXTENDED_FRAME_BOUNDS = 9  # the visible frame, without the invisible resize border
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
 UIA_VALUE_PROPERTY = 30045
@@ -190,8 +193,14 @@ class WindowsDesktop:
         lines: list[str] = []
         total = 0
         queue: deque[Any] = deque([root])
-        while queue and total < max_chars and time.monotonic() < deadline:
+        visited = 0
+        cut = False  # a branch failed: the text is not whole
+        while queue and total < max_chars and visited < READ_MAX_NODES:
+            if time.monotonic() >= deadline:
+                log.info("Lettura di %r interrotta dopo %.1f s", window.title, timeout_s)
+                break
             info = queue.popleft()
+            visited += 1
             text = _element_text(info)
             if text and (not lines or lines[-1] != text) and text != window.title:
                 lines.append(text)
@@ -199,9 +208,9 @@ class WindowsDesktop:
             try:
                 queue.extend(info.children())
             except Exception:
-                continue
-        if queue and time.monotonic() >= deadline:
-            log.info("Lettura di %r interrotta dopo %.1f s", window.title, timeout_s)
+                cut = True
+        if queue or cut:  # time, characters, nodes or a failed branch: say so on the last line
+            lines.append(READ_CUT)
         return "\n".join(lines)
 
     def focus(self, window: Window) -> None:
@@ -220,24 +229,16 @@ class WindowsDesktop:
         send_keys(sequence, pause=0.02, with_spaces=True, with_tabs=True, with_newlines=True)
 
     def paste(self, text: str) -> None:
-        """Ctrl+V of `text`; JenJo's clipboard (text only) is put back afterwards."""
-        import win32clipboard
+        """Ctrl+V of `text`; JenJo's clipboard is put back afterwards, error or not."""
         from pywinauto.keyboard import send_keys
 
-        old = _clipboard_text()
-        _set_clipboard(text.replace("\r\n", "\n").replace("\n", "\r\n"))
+        saved = _save_clipboard()
         try:
+            _set_clipboard(text.replace("\r\n", "\n").replace("\n", "\r\n"))
             send_keys("^v", pause=0.02)
             time.sleep(PASTE_SETTLE_S)  # the app reads the clipboard after the key press
         finally:
-            if old is not None:
-                _set_clipboard(old)
-            else:
-                win32clipboard.OpenClipboard()
-                try:
-                    win32clipboard.EmptyClipboard()
-                finally:
-                    win32clipboard.CloseClipboard()
+            _restore_clipboard(saved)
 
     # --- screen and commands (v0.3.2) -----------------------------------------------------
 
@@ -313,22 +314,75 @@ def _alt_tab_window(hwnd: int) -> bool:
     return cloaked.value == 0
 
 
-def _clipboard_text() -> str | None:
+def _kept_formats() -> list[int]:
+    """The clipboard formats paste keeps. shortcut: other clipboard formats are lost, widen the
+    list if JenJo misses one."""
     import win32clipboard
 
-    win32clipboard.OpenClipboard()
+    return [
+        win32clipboard.CF_UNICODETEXT,
+        win32clipboard.CF_DIB,  # an image (a CF_BITMAP-only one is converted to it by Windows)
+        win32clipboard.CF_HDROP,  # copied files
+        win32clipboard.RegisterClipboardFormat("HTML Format"),
+        win32clipboard.RegisterClipboardFormat("Rich Text Format"),
+    ]
+
+
+def _save_clipboard() -> dict[int, bytes]:
+    """The raw bytes of every kept format the clipboard holds now."""
+    import win32clipboard
+
+    saved: dict[int, bytes] = {}
+    _open_clipboard()
     try:
-        if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
-            return str(win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT))
-        return None
+        for fmt in _kept_formats():
+            if win32clipboard.IsClipboardFormatAvailable(fmt):
+                handle = win32clipboard.GetClipboardDataHandle(fmt)
+                saved[fmt] = bytes(win32clipboard.GetGlobalMemory(handle))
     finally:
         win32clipboard.CloseClipboard()
+    return saved
+
+
+def _restore_clipboard(saved: dict[int, bytes]) -> None:
+    """Put `saved` back. Never raises: a failed restore is logged and the error that made the
+    paste fail (if any) stays the one the caller sees."""
+    import win32clipboard
+
+    try:
+        _open_clipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            for fmt, data in saved.items():
+                try:
+                    win32clipboard.SetClipboardData(fmt, data)  # raw bytes, whatever they hold
+                except Exception:
+                    log.exception("Appunti: formato %s non ripristinato", fmt)
+        finally:
+            win32clipboard.CloseClipboard()
+    except Exception:
+        log.exception("Appunti non ripristinati")
+
+
+def _open_clipboard() -> None:
+    """OpenClipboard, tried CLIPBOARD_OPEN_TRIES times: it fails at once while another app (or
+    the Win+V history reacting to our own change) holds it. The last error is raised."""
+    import win32clipboard
+
+    for attempt in range(CLIPBOARD_OPEN_TRIES):
+        try:
+            win32clipboard.OpenClipboard()
+            return
+        except Exception:
+            if attempt == CLIPBOARD_OPEN_TRIES - 1:
+                raise
+            time.sleep(CLIPBOARD_RETRY_S)
 
 
 def _set_clipboard(text: str) -> None:
     import win32clipboard
 
-    win32clipboard.OpenClipboard()
+    _open_clipboard()
     try:
         win32clipboard.EmptyClipboard()
         win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, text)

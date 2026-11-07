@@ -250,9 +250,6 @@ EN: dict[str, str] = {
         "Empty phrase while an answer is expected: still listening"
     ),
     "Browser %r sconosciuto: uso quello predefinito": "Unknown browser %r: using the default one",
-    "Finestra di %s non ancora aperta: scrivo in quella attiva": (
-        "%s has no window yet: typing in the active one"
-    ),
     "Non è una richiesta, fine della conversazione: %r": (
         "Not a request, end of the conversation: %r"
     ),
@@ -532,6 +529,12 @@ EN: dict[str, str] = {
     "Risposta alla conferma di Claude: %r": "Answer to Claude's confirmation: %r",
     "App nel menu Start: %d": "Apps in the Start menu: %d",
     "Lettura di %r interrotta dopo %.1f s": "Reading %r stopped after %.1f s",
+    "Lettura di %r fallita dopo l'azione": "Reading %r failed after the action",
+    "Rilettura di %r fallita dopo la scrittura": "Reading %r back failed after typing",
+    "Appunti: formato %s non ripristinato": "Clipboard: format %s not restored",
+    "Appunti non ripristinati": "Clipboard not restored",
+    "Focus su %r non riuscito (%s)": "Focus on %r failed (%s)",
+    "Elenco finestre fallito dopo l'avvio": "Window list failed after the launch",
     "COM non inizializzato per le azioni sul PC": "COM not initialised for the PC actions",
     "Indice di Windows non disponibile (%s): cerco nelle cartelle": (
         "Windows Search index unavailable (%s): walking the folders"
