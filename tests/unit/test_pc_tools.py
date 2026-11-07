@@ -36,8 +36,10 @@ from tests.unit.test_claude_brain import (
     OVERLOADED_MID_REPLY,
     REQUEST,
     USAGE,
+    Break,
     BreakingClient,
     FakeStream,
+    FlakyClient,
     Monotonic,
     RefusingClient,
     ScriptedClient,
@@ -820,7 +822,8 @@ async def test_a_raw_socket_error_after_a_typing_is_said_and_keeps_what_ran(
     said = await ask(b, "scrivi")
     assert said.endswith(NETWORK_SAID) and b.last_call["claude_error"] == "network"
     assert typed_anything(desk)
-    assert list(b._history) == [("[it] scrivi", f"Ho scri {ACTIONS_NOTE}type_text ok]")]
+    # "Ho scri" was never said (the retry broke at once): not in the history either.
+    assert list(b._history) == [("[it] scrivi", f"{ACTIONS_NOTE}type_text ok]")]
     assert b._read_outside()
 
 
@@ -848,7 +851,7 @@ async def test_a_cut_after_the_yes_is_recorded_at_once(
 @pytest.mark.parametrize(
     ("chunks", "said", "kept"),
     [
-        (["Dice di "], "Ci guardo. Dice di ", "Dice di"),
+        (["Dice di "], "Ci guardo. Dice di ", ""),  # "Dice di " is dropped at CUT_SHORT
         ([], "Ci guardo. ", ""),  # before any word of the second round
     ],
 )
@@ -889,9 +892,7 @@ async def test_a_broken_event_after_a_tool_round_keeps_its_note(
     b = acting_brain(pricing, client, tools)
     assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Dice di {NETWORK_SAID}"
     assert b.last_call["claude_error"] == "bad_stream"
-    assert list(b._history) == [
-        ("[it] leggimi il blocco note", "Dice di [Claudio ran: read_window ok]")
-    ]
+    assert list(b._history) == [("[it] leggimi il blocco note", "[Claudio ran: read_window ok]")]
 
 
 async def test_a_status_error_after_a_tool_round_keeps_its_note(
@@ -1245,6 +1246,50 @@ async def test_basta_during_the_retry_runs_nothing(
         )
     ]
     assert not [d for d in desk.done if d[0] in ("paste", "keys")]
+
+
+async def test_a_tool_runs_once_after_a_broken_stream(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """The broken round held a whole `tool_use`; its call never starts (only a finished round's
+    does), so the retry's one is the only run."""
+    client = FlakyClient(
+        Break([SAID_BEFORE], ssl.SSLError("[SSL] record layer failure")),
+        OPEN_NOTEPAD,
+        (["Fatto."], "end_turn", [text("Fatto.")]),
+    )
+    client.partial = [use("open_app", name="blocco note")]  # what the broken round had read
+    b = acting_brain(pricing, client, tools)
+    assert "Fatto." in await ask(b, "apri il blocco note")
+    assert [d for d in desk.done if d[0] == "launch"] == [("launch", "Blocco note")]
+    assert b.last_call["stream_retry"] is True and "claude_error" not in b.last_call
+
+
+async def test_a_retry_drops_the_broken_fragment_from_the_history(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """07/11: 'Ci guardCi guardo.' in the history, and a false 'promised' from 'Apro il Blocco no'
+    glued to 'Il Blocco note è già aperto.'"""
+    client = FlakyClient(
+        Break(["Apro il Blocco no"], ssl.SSLError("[SSL] record layer failure")),
+        (["Il Blocco note è già aperto."], "end_turn", [text("Il Blocco note è già aperto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "apri il blocco note")
+    assert list(b._history) == [("[it] apri il blocco note", "Il Blocco note è già aperto.")]
+    assert "promised" not in b.last_call
+
+
+async def test_no_stream_retry_on_a_silent_leg(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """The forced retry of a cut tool call gets no second retry: it would send another call."""
+    cut = (["Ora scrivo. "], "max_tokens", [use("type_text", text="x" * 10)])
+    client = FlakyClient(cut, Break([], ssl.SSLError("[SSL] record layer failure")))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, SCENE)
+    assert len(client.calls) == 2 and "stream_retry" not in b.last_call
+    assert b.last_call["cut_retry"] == "error"
 
 
 # --- a new request said over the reply: its stream goes on for "Dicevo", no action starts from it

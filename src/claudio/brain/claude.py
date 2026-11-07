@@ -64,6 +64,7 @@ from claudio.safety.confirmation import (
     Answer,
     parse_answer,
 )
+from claudio.tts.sentence_splitter import joined_reply
 
 if TYPE_CHECKING:
     from claudio.memory.prompt import MemoryPrompt
@@ -944,79 +945,94 @@ class ClaudeBrain:
         import httpx2
 
         model = params["model"]
-        stream: Any = None
-        final: Any = None
-        sent = self.clock()
-        # Per call (IT-1 5.2): request -> first token (the API sends its HTTP headers with
-        # it: measured equal on 30/10, so this counts tool-only calls too), -> first word
-        # to say, -> end. The network alone is the warm-up's round trip (api_rtt_ms).
-        timing: dict[str, int] = {}
-        try:
-            client: Any = self.client  # not None: ask() answered already without a key
-            async with client.messages.stream(**params) as stream:
-                timing["ttft_ms"] = _ms_since(sent, self.clock())
-                # aclosing: a "basta" at the yield closes this first, then the API stream.
-                async with contextlib.aclosing(_said_text(stream.text_stream)) as words:
-                    async for clean in words:
-                        if silent:
-                            continue
-                        if clean.strip() and "word_ms" not in timing:
-                            timing["word_ms"] = _ms_since(sent, self.clock())
-                        if first_key not in self.last_call and clean.strip():
-                            self.last_call[first_key] = round((self.clock() - start) * 1000)
-                        leg.parts.append(clean)
-                        yield clean
-                final = await stream.get_final_message()
-        except anthropic.AuthenticationError:
-            log.error("Claude: chiave API non valida (401)")
-            self.last_call["claude_error"] = "auth"
-            leg.end = StreamEnd.ERROR
-            yield in_language(BAD_KEY, language)
-            return
-        # Also timeouts. DecodingError: the body arrived corrupted, the reply is just as lost.
-        # OSError: a raw socket error, not wrapped (ssl.SSLError: 5 of 240 calls, A/B of 07/11).
-        except (
-            anthropic.APIConnectionError,
-            httpx2.TransportError,
-            httpx2.DecodingError,
-            OSError,
-        ) as exc:
-            log.error("Claude non raggiungibile: %s", exc)
-            self.last_call["claude_error"] = "network"
-            leg.end = StreamEnd.ERROR
-            # The SDK wraps these only at request time; raw, they broke a reply under way. Its
-            # words and the tools that ran stay in the history (no cut note: JenJo did not
-            # interrupt), and the voice never says "Attra" before this sentence. Also when the
-            # request itself failed, in a later round: the note of what ran must not be lost
-            # (a first round with nothing said or run stores nothing anyway: `_remember`).
-            leg.complete = True
-            yield CUT_SHORT
-            yield _space(leg) + in_language(NETWORK_ERROR, language)
-            return
-        except anthropic.APIStatusError as exc:
-            log.error("Claude errore %s: %s", exc.status_code, exc.message)
-            # An error event inside a 200 stream: its kind is in the body, the status is a 200.
-            self.last_call["claude_error"] = _event_error(exc) or exc.status_code
-            leg.end = StreamEnd.ERROR
-            # Also an error event during a reply (an overloaded API): as a lost connection.
-            leg.complete = True
-            yield CUT_SHORT
-            yield _space(leg) + in_language(API_ERROR, language)
-            return
-        except ValueError as exc:  # JSONDecodeError, UnicodeDecodeError and jiter's errors are ones
-            log.exception("Claude: evento illeggibile nello stream: %s", exc)
-            self.last_call["claude_error"] = "bad_stream"
-            leg.end = StreamEnd.ERROR
-            leg.complete = True  # as a lost connection: the words and the tools stay
-            yield CUT_SHORT
-            yield _space(leg) + in_language(NETWORK_ERROR, language)
-            return
-        finally:
-            self._last_contact = self.clock()
-            # Also on "basta" (the speaker cancels this generator): count what was generated.
-            if stream is not None:
-                timing["total_ms"] = _ms_since(sent, self.clock())
-                self._record(model, final, stream, leg.parts, timing)
+        for attempt in (1, 2):
+            if (
+                attempt > 1
+            ):  # the voice dropped the broken sentence at CUT_SHORT: so does the history
+                heard = joined_reply([*leg.parts, CUT_SHORT])
+                leg.parts[:] = [heard + " "] if heard else []
+            before = len(leg.parts)
+            stream: Any = None
+            final: Any = None
+            sent = self.clock()
+            # Per call (IT-1 5.2): request -> first token (the API sends its HTTP headers with
+            # it: measured equal on 30/10, so this counts tool-only calls too), -> first word
+            # to say, -> end. The network alone is the warm-up's round trip (api_rtt_ms).
+            timing: dict[str, int] = {}
+            try:
+                client: Any = self.client  # not None: ask() answered already without a key
+                async with client.messages.stream(**params) as stream:
+                    timing["ttft_ms"] = _ms_since(sent, self.clock())
+                    # aclosing: a "basta" at the yield closes this first, then the API stream.
+                    async with contextlib.aclosing(_said_text(stream.text_stream)) as words:
+                        async for clean in words:
+                            if silent:
+                                continue
+                            if clean.strip() and "word_ms" not in timing:
+                                timing["word_ms"] = _ms_since(sent, self.clock())
+                            if first_key not in self.last_call and clean.strip():
+                                self.last_call[first_key] = round((self.clock() - start) * 1000)
+                            leg.parts.append(clean)
+                            yield clean
+                    final = await stream.get_final_message()
+            except anthropic.AuthenticationError:
+                log.error("Claude: chiave API non valida (401)")
+                self.last_call["claude_error"] = "auth"
+                leg.end = StreamEnd.ERROR
+                yield in_language(BAD_KEY, language)
+                return
+            # Also timeouts. DecodingError: the body arrived corrupted, the reply is just as lost.
+            # OSError: a raw socket error, not wrapped (ssl.SSLError: 5 of 240 calls, A/B of 07/11).
+            except (
+                anthropic.APIConnectionError,
+                httpx2.TransportError,
+                httpx2.DecodingError,
+                OSError,
+            ) as exc:
+                if self._retry_broken(exc, stream, attempt, silent):
+                    yield CUT_SHORT
+                    continue
+                log.error("Claude non raggiungibile: %s", exc)
+                self.last_call["claude_error"] = "network"
+                leg.end = StreamEnd.ERROR
+                # The SDK wraps these only at request time; raw, they broke a reply under way. Its
+                # words and the tools that ran stay in the history (no cut note: JenJo did not
+                # interrupt), and the voice never says "Attra" before this sentence. Also when the
+                # request itself failed, in a later round: the note of what ran must not be lost
+                # (a first round with nothing said or run stores nothing anyway: `_remember`).
+                leg.complete = True
+                yield CUT_SHORT
+                yield _space(leg) + in_language(NETWORK_ERROR, language)
+                return
+            except anthropic.APIStatusError as exc:
+                log.error("Claude errore %s: %s", exc.status_code, exc.message)
+                # An error event inside a 200 stream: its kind is in the body, the status is a 200.
+                self.last_call["claude_error"] = _event_error(exc) or exc.status_code
+                leg.end = StreamEnd.ERROR
+                # Also an error event during a reply (an overloaded API): as a lost connection.
+                leg.complete = True
+                yield CUT_SHORT
+                yield _space(leg) + in_language(API_ERROR, language)
+                return
+            # JSONDecodeError, UnicodeDecodeError and jiter's errors are ValueErrors.
+            except ValueError as exc:
+                if self._retry_broken(exc, stream, attempt, silent):
+                    yield CUT_SHORT
+                    continue
+                log.exception("Claude: evento illeggibile nello stream: %s", exc)
+                self.last_call["claude_error"] = "bad_stream"
+                leg.end = StreamEnd.ERROR
+                leg.complete = True  # as a lost connection: the words and the tools stay
+                yield CUT_SHORT
+                yield _space(leg) + in_language(NETWORK_ERROR, language)
+                return
+            finally:
+                self._last_contact = self.clock()
+                # Also on "basta" (the speaker cancels this generator): count what was generated.
+                if stream is not None:
+                    timing["total_ms"] = _ms_since(sent, self.clock())
+                    self._record(model, final, stream, leg.parts[before:], timing)
+            break  # this attempt ended: no retry
         # No PC tools, no tools in the call (Sonnet) or tool_choice none (last round): no action
         # can be promised.
         offered = (
@@ -1056,6 +1072,16 @@ class ClaudeBrain:
             yield said
         leg.read(final)
         leg.complete = True
+
+    def _retry_broken(self, exc: BaseException, stream: Any, attempt: int, silent: bool) -> bool:
+        """07/11: ~2% of calls broke mid-reply ([SSL] record layer failure) and the request was
+        lost. Retry once, only if the reply had begun (before it the SDK retried already) and
+        nothing says to stop: the call of a broken round never started, so nothing runs twice."""
+        if stream is None or attempt > 1 or silent or self._stop_acting:
+            return False
+        log.warning("Claude: stream interrotto, riprovo una volta: %s", exc)
+        self.last_call["stream_retry"] = True
+        return True
 
     def _record(
         self,

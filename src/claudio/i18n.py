@@ -475,6 +475,7 @@ EN: dict[str, str] = {
     ),
     "Claude ha rifiutato la richiesta": "Claude refused the request",
     "Promessa senza azione": "Promise without an action",
+    "Claude: stream interrotto, riprovo una volta: %s": "Claude: stream broken, retrying once: %s",
     "Claude: risposta tagliata al limite di %d token": "Claude: reply cut at the %d token limit",
     "Claude: chiamata tagliata al limite di %d token": "Claude: call cut at the %d token limit",
     "Claude %s: %d in, %d out, cache %d letti / %d scritti (TTL %s), "
