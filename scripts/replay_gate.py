@@ -371,6 +371,7 @@ class CassetteClient:
         self.spent = 0.0  # what the replies recorded by THIS client cost (a replay costs nothing)
         self.braked: list[str] = []  # requests not recorded: the brake refused, or the one failed
         self.failure: str | None = None  # the first API error: nothing more leaves
+        self.first_error: tuple[str, Exception] | None = None  # answers the brain's one retry
         self.saved: list[str] = []  # keys written by this client, in order
         self.misses: list[str] = []
         self.sizes: dict[str, int] = {}  # miss -> characters of its request (--record's estimate)
@@ -386,6 +387,8 @@ class CassetteClient:
         saved = self._load(key)
         if saved is not None:
             return ReplayStream(saved, self._note)
+        if self.first_error and self.first_error[0] == key:
+            raise self.first_error[1]  # the brain's retry of a broken stream gets the same error
         if self.real is None or self._brake(key):
             raise self._miss(key, params)
         return RecordingStream(
@@ -457,6 +460,7 @@ class CassetteClient:
         follow goes out with a damaged history. Type and status only: its message may quote the
         request. A cut request costs money but no final message: `spent` does not count it."""
         if self.failure is None:
+            self.first_error = (key, exc)
             status = getattr(exc, "status_code", None)
             self.failure = type(exc).__name__ + (f" {status}" if status else "")
         self.braked.append(key)

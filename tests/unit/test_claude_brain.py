@@ -8,7 +8,7 @@ import ssl
 import sys
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 
 import anthropic
 import httpx2
@@ -508,7 +508,9 @@ async def test_the_fragment_of_a_cut_reply_never_reaches_the_voice(
         CLOSING.strip(),
     ]
     row = assistant.history[0]
-    assert row["cut"] == "max_tokens" and row["reply"] == ("".join(CUT_STORY) + CLOSING).strip()
+    # The row has what the voice said: the unfinished "Attra" is not in it.
+    said = "".join(CUT_STORY).removesuffix("Attra") + CLOSING.strip()
+    assert row["cut"] == "max_tokens" and row["reply"] == said
 
 
 async def test_tv_in_the_window_costs_nothing(
@@ -878,10 +880,44 @@ class BreakingClient(ScriptedClient):
     def __init__(self, error: BaseException, *replies: tuple[list[str], str, list[Any]]):
         super().__init__(*replies)
         self.error = error
+        self.last: list[str] | None = None
 
     def stream(self, **params: Any) -> ScriptedStream:
+        if not self.replies and self.last is not None:  # the retry breaks at once, no words
+            self.calls.append(params)
+            return BreakingStream([], self.error)
         stream = super().stream(**params)
-        return stream if self.replies else BreakingStream(stream.chunks, self.error)
+        if self.replies:
+            return stream
+        self.last = stream.chunks
+        return BreakingStream(stream.chunks, self.error)
+
+
+class Break(NamedTuple):
+    """A scripted reply of `FlakyClient` that dies after `chunks`; `request_time` dies on entry."""
+
+    chunks: list[str]
+    error: BaseException
+    request_time: bool = False
+
+
+class FlakyClient(ScriptedClient):
+    """Scripted replies, any of them a `Break`."""
+
+    def __init__(self, *replies: Any) -> None:
+        super().__init__(*replies)
+        self.partial: list[Any] = []  # the tool_use blocks a broken round had already read
+
+    def stream(self, **params: Any) -> Any:
+        if not isinstance(self.replies[0], Break):
+            return super().stream(**params)
+        self.calls.append(params)
+        broken: Break = self.replies.pop(0)
+        if broken.request_time:
+            return FakeStream([], dict(USAGE), "end_turn", broken.error)
+        stream = BreakingStream(broken.chunks, broken.error)
+        stream.content, stream.stop = self.partial, "tool_use"
+        return stream
 
 
 class RefusingClient(ScriptedClient):
@@ -915,13 +951,16 @@ async def test_a_connection_lost_during_a_reply_is_said_once_and_keeps_the_words
     """ask() raised: an error beep, no sentence, and the turn was lost."""
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
     chunks = [c async for c in b.ask("raccontami una storia", "it")]
-    assert chunks == ["Prima frase. ", "Seconda fra", "", f" {NETWORK_SAID}"]
+    # Two markers: the break and the retry that broke at once (it said nothing).
+    assert chunks == ["Prima frase. ", "Seconda fra", "", "", NETWORK_SAID]
     assert chunks[2] is CUT_SHORT
     assert b.last_call["claude_error"] == "network"
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
-    # What was generated is billed: 400 in, the 24 characters said at 3 per token.
-    assert b.tracker.calls_today() == 1
-    assert b.last_call["input_tokens"] == 400 and b.last_call["output_tokens"] == 8
+    # The history keeps what the voice said: the unfinished "Seconda fra" is dropped.
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase.")]
+    # What was generated is billed, the break and the retry: 400 in each, the 24 characters said
+    # at 3 per token on the first.
+    assert b.tracker.calls_today() == 2
+    assert b.last_call["input_tokens"] == 800 and b.last_call["output_tokens"] == 8
 
 
 async def test_the_voice_says_the_network_error_without_the_unfinished_sentence(
@@ -939,9 +978,14 @@ async def test_the_voice_says_the_network_error_without_the_unfinished_sentence(
 @pytest.mark.parametrize(
     ("replies", "before", "text", "question"),
     [
-        ([(["Prima fra"], "end_turn", [])], [], "Pensaci bene: 17?", "[it] Pensaci bene: 17?"),
+        (
+            [(["Prima frase. Seconda fra"], "end_turn", [])],
+            [],
+            "Pensaci bene: 17?",
+            "[it] Pensaci bene: 17?",
+        ),
         (  # the "no" to the offer: Haiku answers without its tools
-            [([], "tool_use", HANDOFF), (["Prima fra"], "end_turn", [])],
+            [([], "tool_use", HANDOFF), (["Prima frase. Seconda fra"], "end_turn", [])],
             ["fammi un confronto tra treno e auto"],
             "no",
             "[it] fammi un confronto tra treno e auto",
@@ -958,8 +1002,8 @@ async def test_a_connection_lost_keeps_the_words_of_the_model_that_answers(
     b = brain(pricing, BreakingClient(httpx2.ReadError("reset"), *replies))
     for said in before:
         await ask(b, said)
-    assert await ask(b, text) == f"Prima fra {NETWORK_SAID}"
-    assert list(b._history) == [(question, "Prima fra")]
+    assert await ask(b, text) == f"Prima frase. Seconda fra{NETWORK_SAID}"
+    assert list(b._history) == [(question, "Prima frase.")]  # the voice never said "Seconda fra"
 
 
 async def test_a_connection_refused_at_request_time_keeps_nothing(pricing: Pricing) -> None:
@@ -968,6 +1012,98 @@ async def test_a_connection_refused_at_request_time_keeps_nothing(pricing: Prici
     assert await ask(b, "chi era Dante") == NETWORK_SAID
     assert b.last_call["claude_error"] == "network"
     assert not b._history and b.tracker.calls_today() == 0
+
+
+SSL_BREAK = ssl.SSLError("[SSL] record layer failure")
+
+
+async def test_a_broken_stream_is_retried_once(pricing: Pricing) -> None:
+    """Live test of 07/11: about 2% of calls broke mid-reply and the request was lost."""
+    client = FlakyClient(
+        Break(["Prima frase. ", "Seconda fra"], SSL_BREAK), (["Ecco."], "end_turn", [])
+    )
+    b = brain(pricing, client)
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert chunks == ["Prima frase. ", "Seconda fra", CUT_SHORT, "Ecco."]
+    assert NETWORK_SAID not in "".join(chunks)
+    assert len(client.calls) == 2 and client.calls[0]["messages"] == client.calls[1]["messages"]
+    assert b.last_call["stream_retry"] is True
+    assert "claude_error" not in b.last_call
+    assert b.tracker.calls_today() == 2  # both attempts are billed
+
+
+async def test_each_attempt_is_recorded_once(pricing: Pricing) -> None:
+    """The retry failing at request time (no stream) bills nothing of its own."""
+    error = anthropic.APIConnectionError(request=REQUEST)
+    client = FlakyClient(Break(["Uno. "], SSL_BREAK), Break([], error, request_time=True))
+    b = brain(pricing, client)
+    await ask(b, "raccontami una storia")
+    assert b.tracker.calls_today() == 1
+
+
+async def test_the_history_keeps_only_the_words_that_were_said(pricing: Pricing) -> None:
+    """The voice drops the broken sentence at CUT_SHORT: 'Ci guardCi guardo.' was in the history."""
+    client = FlakyClient(
+        Break(["Ci guard"], SSL_BREAK), (["Ci guardo. Cerco il Blocco note."], "end_turn", [])
+    )
+    b = brain(pricing, client)
+    await ask(b, "cerca il blocco note")
+    assert list(b._history) == [("[it] cerca il blocco note", "Ci guardo. Cerco il Blocco note.")]
+
+
+async def test_the_log_row_has_what_was_said_after_a_stream_retry(
+    fake_vad, vad_settings, make_frames, matcher, pricing
+) -> None:
+    client = FlakyClient(
+        Break(["Ci guard"], SSL_BREAK), (["Ci guardo. Cerco il Blocco note."], "end_turn", [])
+    )
+    speaker = SentenceSpeaker()
+    assistant, _, _, r = build_conversation(
+        fake_vad, vad_settings, matcher, ["cerca il blocco note"], speaker=speaker
+    )
+    with_claude(assistant, r, brain(pricing, client))
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert assistant.history[0]["reply"] == "Ci guardo. Cerco il Blocco note."
+
+
+async def test_a_second_break_says_the_error(pricing: Pricing) -> None:
+    client = FlakyClient(
+        Break(["Uno. "], SSL_BREAK), Break(["Due. "], SSL_BREAK), (["Tre."], "end_turn", [])
+    )
+    b = brain(pricing, client)
+    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    assert len(client.calls) == 2 and len(client.replies) == 1
+    assert chunks[-1] == NETWORK_SAID and chunks[-2] is CUT_SHORT
+    assert b.last_call["claude_error"] == "network"
+    assert b.last_call["stream_retry"] is True
+
+
+async def test_a_break_before_any_reply_is_not_retried_again(pricing: Pricing) -> None:
+    """The SDK retried it already (max_retries=1): a second try of ours would make three."""
+    error = anthropic.APIConnectionError(request=REQUEST)
+    client = FlakyClient(Break([], error, request_time=True), (["Ecco."], "end_turn", []))
+    b = brain(pricing, client)
+    assert await ask(b, "chi era Dante") == NETWORK_SAID
+    assert len(client.calls) == 1 and "stream_retry" not in b.last_call
+
+
+async def test_a_status_error_is_not_retried(pricing: Pricing) -> None:
+    client = FlakyClient(Break(["Prima. "], OVERLOADED_MID_REPLY), (["Ecco."], "end_turn", []))
+    b = brain(pricing, client)
+    assert await ask(b, "raccontami una storia") == f"Prima. {API_SAID}"
+    assert len(client.calls) == 1 and "stream_retry" not in b.last_call
+    assert b.last_call["claude_error"] == "overloaded_error"
+
+
+async def test_no_stream_retry_after_a_new_request_over_the_reply(pricing: Pricing) -> None:
+    client = FlakyClient(Break(["Prima. "], SSL_BREAK), (["Ecco."], "end_turn", []))
+    b = brain(pricing, client)
+    chunks = []
+    async for chunk in b.ask("raccontami una storia", "it"):
+        b.stop_acting()  # a new request came over the reply
+        chunks.append(chunk)
+    assert len(client.calls) == 1 and "stream_retry" not in b.last_call
+    assert chunks[-1] == NETWORK_SAID
 
 
 API_SAID = "Claude non ha risposto. Riprova tra poco."
@@ -1077,25 +1213,30 @@ def real_sdk_brain(pricing: Pricing, *events: bytes) -> ClaudeBrain:
 async def test_a_broken_event_mid_stream_is_a_spoken_error(pricing: Pricing, event: bytes) -> None:
     """The reply was lost with ValueError out of ask(): an error beep and a lost turn."""
     b = real_sdk_brain(pricing, event)
-    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {NETWORK_SAID}"
+    # The mock answers the same broken body to the retry: its words come again.
+    both = "Prima frase. Seconda fra" * 2
+    assert await ask(b, "raccontami una storia") == f"{both} {NETWORK_SAID}"
     assert b.last_call["claude_error"] == "bad_stream"
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+    # The history has what the voice said: the first "Prima frase." once, then the retry's.
+    assert list(b._history) == [
+        ("[it] raccontami una storia", "Prima frase. Prima frase. Seconda fra")
+    ]
 
 
 async def test_invalid_json_mid_stream_is_a_spoken_error(pricing: Pricing) -> None:
     error = json.JSONDecodeError("Expecting value", "{", 1)
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
     chunks = [c async for c in b.ask("raccontami una storia", "it")]
-    assert chunks == ["Prima frase. ", "Seconda fra", "", f" {NETWORK_SAID}"]
+    assert chunks == ["Prima frase. ", "Seconda fra", "", "", NETWORK_SAID]
     assert b.last_call["claude_error"] == "bad_stream"
 
 
 async def test_invalid_utf8_mid_stream_is_a_spoken_error(pricing: Pricing) -> None:
     error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
-    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {NETWORK_SAID}"
+    assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra{NETWORK_SAID}"
     assert b.last_call["claude_error"] == "bad_stream"
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+    assert list(b._history) == [("[it] raccontami una storia", "Prima frase.")]
 
 
 async def test_a_cancel_during_a_reply_is_not_a_network_error(pricing: Pricing) -> None:
@@ -1607,7 +1748,7 @@ async def test_a_connection_lost_while_a_bracket_waits_drops_it(pricing: Pricing
     b = brain(pricing, BreakingClient(error, (["Prima frase. [Cla"], "end_turn", [])))
     chunks = [c async for c in b.ask("raccontami una storia", "it")]
     assert chunks[0] == "Prima frase. " and chunks[1] is CUT_SHORT
-    assert chunks[2:] == [NETWORK_SAID]
+    assert chunks[2:] == [CUT_SHORT, NETWORK_SAID]
     assert list(b._history) == [("[it] raccontami una storia", "Prima frase.")]
 
 
