@@ -60,6 +60,7 @@ from claudio.resume import (
 from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
 from claudio.stt.recovery import CommandRecovery
 from claudio.system import HIDDEN, SystemControl
+from claudio.tts.sentence_splitter import joined_reply
 from claudio.wakeword.verifier import clipped_name, unclear
 
 log = logging.getLogger(__name__)
@@ -403,7 +404,7 @@ class Assistant:
                 self._on_wake(*detection)
         elif detection is not None and self._weak(*detection):
             if not self._checking:
-                log.info("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
+                log.debug("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
             self._on_near_miss(*detection)
         elif detection is not None:
             name, score = detection
@@ -456,7 +457,7 @@ class Assistant:
         voice = self.voice_meter(heard)
         if voice < self.wake_min_voice_ms and not self._silent_wake:
             self._silent_wake = True
-            log.info("Wake word su silenzio (%.2f, %d ms di voce): la ignoro", score, voice)
+            log.debug("Wake word su silenzio (%.2f, %d ms di voce): la ignoro", score, voice)
             self._log_near_miss(name, score, heard, rejected="no_voice", wake_voice_ms=voice)
         return voice
 
@@ -548,7 +549,7 @@ class Assistant:
             )
             return
         if voice is not None and voice < self.wake_min_voice_ms:
-            log.info("Seconda possibilità: nessuna voce (%d ms), niente da fare", voice)
+            log.debug("Seconda possibilità: nessuna voce (%d ms), niente da fare", voice)
             self._log_near_miss(name, score, heard, rejected="no_voice", **info)
             return
         if heard_wake_word(text) or weak:
@@ -598,14 +599,17 @@ class Assistant:
     ) -> None:
         """An attempt that did not wake CLAUDIO: its audio, apart from the requests when there
         is a place for it (rejected_sink), and a metrics row. A noisy model (always_confirm)
-        leaves only the audio: a row for each of its misfires would fill the session log.
+        leaves only the audio (none for no_voice, so nothing at all: only hey_claudio's
+        no_voice events are counted): a row for each misfire would fill the session log.
         Heard while `off` (default: now): no audio, and none of its words in the row."""
         off = self.system.off if off is None else off
         noisy = name in self.always_confirm
         sink, kind = self.audio_sink, "near_miss"
-        if off or info.get("superseded"):
-            sink = None  # superseded: the wake's own WAV has this audio: no copy, no negative
-        elif self.rejected_sink is not None:  # named after why: no_voice, no_name
+        if off or info.get("superseded") or info.get("rejected") == "no_voice":
+            # superseded: the wake's own WAV has this audio. no_voice: a click or breath, no
+            # words to label (53 empty WAVs in 23 min); the row counts it, except for a noisy model.
+            sink = None
+        elif self.rejected_sink is not None:  # named after why: no_name, barge_ignored
             sink, kind = self.rejected_sink, str(info.get("rejected", kind))
         elif noisy:
             sink = None
@@ -1688,7 +1692,7 @@ class Assistant:
                 yield chunk
         finally:
             if parts:  # what was said, also when "basta" cut it short (session log, metrics)
-                inter.info["reply"] = "".join(parts).strip()
+                inter.info["reply"] = joined_reply(parts)
 
     def _mark_first_audio(self, inter: Interaction) -> None:
         inter.mark("first_audio")
