@@ -13,20 +13,23 @@ import anthropic
 import httpx2
 import pytest
 
-from claudio.brain.claude import CUT_NOTE, ClaudeBrain
-from claudio.brain.prompts import SYSTEM_PROMPT_TOOLS
+from claudio.brain.claude import ACTIONS_NOTE, CUT_NOTE, ClaudeBrain
+from claudio.brain.prompts import NOT_RUN_CUT, REFUSED, SYSTEM_PROMPT_TOOLS
 from claudio.config import ClaudeSettings, PcSettings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.pc.files import Found
 from claudio.pc.terminal import CommandResult
 from claudio.pc.tools import DEFINITIONS, LEVELS, App, PcTools, ToolCall, Window
+from claudio.protocols import CUT_SHORT
 from claudio.router.matcher import CommandMatcher
 from tests.unit.test_claude_brain import (
     API_SAID,
     NETWORK_SAID,
     OVERLOADED_MID_REPLY,
     REQUEST,
+    USAGE,
     BreakingClient,
+    FakeStream,
     Monotonic,
     RefusingClient,
     ScriptedClient,
@@ -348,7 +351,7 @@ async def test_keys_and_text(tools: PcTools, desk: FakeDesktop) -> None:
     assert ("keys", "^t{PGDN}") in desk.done
     await tools.run(call("type_text", text="50% fatto", window="chrome"))
     assert desk.done[-2:] == [("focus", "YouTube - Google Chrome"), ("keys", "50{%} fatto")]
-    out = await tools.run(call("type_text", text="x" * 501))
+    out = await tools.run(call("type_text", text="x" * 6001))
     assert out.error and "too long" in out.text
     out = await tools.run(call("press_keys", keys=["hyper+x"]))
     assert out.error
@@ -870,9 +873,195 @@ def test_windows_backend_loads_and_lists() -> None:
 async def test_a_call_cut_by_max_tokens_never_runs(
     pricing: Pricing, tools: PcTools, desk: FakeDesktop
 ) -> None:
-    client = ScriptedClient((["Apro"], "max_tokens", [use("open_app", name="spot")]))
+    cut = (["Apro"], "max_tokens", [use("open_app", name="spot")])
+    client = ScriptedClient(cut, cut)  # the retry is cut too
     await ask(acting_brain(pricing, client, tools), "apri spotify")
-    assert not [d for d in desk.done if d[0] == "launch"] and len(client.calls) == 1
+    assert not [d for d in desk.done if d[0] == "launch"] and len(client.calls) == 2
+
+
+# --- G1: a call cut at the token limit is retried once, or Claudio says it did not run it ---
+
+PLAN = "p" * 3000
+NOT_RUN_TYPE = "[Claudio did not run: type_text, cut at the token limit]"
+SAID_BEFORE = "Aperto, socio. Ora scrivo il piano."
+OPEN_NOTEPAD = ([], "tool_use", [use("open_app", name="blocco note")])
+CUT_TYPE = ([SAID_BEFORE], "max_tokens", [text(SAID_BEFORE), use("type_text", text="Pia")])
+NOT_RUN_SAID = NOT_RUN_CUT["it"]
+SCENE = "apri il blocco note e scrivi il piano"
+
+
+async def test_the_long_notepad_scene_writes_everything(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(
+        OPEN_NOTEPAD,
+        CUT_TYPE,
+        ([], "tool_use", [use("type_text", text=PLAN)]),
+        (["Scritto"], "end_turn", [text("Scritto")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    said = await ask(b, SCENE)
+    assert ("paste", PLAN) in desk.done
+    _, cut, retry, _ = client.calls
+    assert retry["max_tokens"] == 2048 and retry["timeout"] == 60.0
+    assert retry["tool_choice"] == {"type": "tool", "name": "type_text"}
+    assert retry["messages"] == cut["messages"]
+    assert "Mi fermo qui" not in said and said.endswith("Scritto")
+    assert b.last_call["cut"] == "tool_use" and b.last_call["cut_retry"] == "ok"
+    assert "type_text() not_run_cut" not in b.last_call["tools"]
+    assert "did not run" not in b._history[-1][1]  # it ran in the end
+    # The fourth request carries the retry's whole input, never the cut leg's half one.
+    sent = [
+        block["input"]
+        for m in client.calls[3]["messages"]
+        if m["role"] == "assistant" and isinstance(m["content"], list)
+        for block in m["content"]
+        if block["type"] == "tool_use"
+    ]
+    assert {"text": PLAN} in sent and {"text": "Pia"} not in sent
+
+
+async def test_a_double_cut_says_not_done_and_notes_it(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(OPEN_NOTEPAD, CUT_TYPE, CUT_TYPE)
+    b = acting_brain(pricing, client, tools)
+    chunks = [c async for c in b.ask(SCENE, "it")]
+    said = "".join(chunks)
+    assert not any(c is CUT_SHORT for c in chunks)  # a cut call is not a cut sentence
+    assert said.endswith(f"{SAID_BEFORE} {NOT_RUN_SAID}")
+    assert len(client.calls) == 3
+    assert not [d for d in desk.done if d[0] in ("paste", "keys")]
+    assert b.last_call["cut_retry"] == "cut"
+    assert "type_text() not_run_cut" in b.last_call["tools"]
+    answer = b._history[-1][1]
+    assert answer.endswith(f"{NOT_RUN_SAID} {NOT_RUN_TYPE} {ACTIONS_NOTE}open_app ok]")
+
+
+@pytest.mark.parametrize(("answer", "typed"), [("no", False), ("sì", True)])
+async def test_a_retried_call_still_asks_for_the_yes(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, answer: str, typed: bool
+) -> None:
+    cut = (["Ok. "], "max_tokens", [text("Ok. "), use("type_text", text="ci", window="chrome")])
+    client = ScriptedClient(
+        cut,
+        ([], "tool_use", [use("type_text", text="ciao", window="chrome")]),
+        (["Scritto."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "scrivi ciao su chrome")).endswith("Confermi?")
+    assert b.awaiting and not [d for d in desk.done if d[0] == "keys"]
+    await ask(b, answer)
+    assert (("keys", "ciao") in desk.done) is typed
+
+
+async def test_the_retry_never_speaks_its_own_text(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    babble = "z" * 3000
+    client = ScriptedClient(
+        OPEN_NOTEPAD,
+        CUT_TYPE,
+        ([babble], "tool_use", [text(babble), use("type_text", text=PLAN)]),
+        (["Scritto"], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    said = await ask(b, SCENE)
+    assert "zzz" not in said and "zzz" not in b._history[-1][1]
+    assert ("paste", PLAN) in desk.done
+
+
+async def test_the_bridge_is_said_before_a_retry_when_nothing_was_said(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        ([], "max_tokens", [use("type_text", text="Pia")]),
+        ([], "tool_use", [use("type_text", text=PLAN)]),
+        (["Ok"], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "scrivi il piano")).startswith("Ci guardo.")
+    assert "Ci guardo" not in b._history[-1][1]  # Haiku would imitate it
+
+
+async def test_no_retry_on_a_model_that_refuses_forced_tools(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(OPEN_NOTEPAD, CUT_TYPE)
+    b = acting_brain(pricing, client, tools, retry_models=["claude-opus-5-5"])
+    said = await ask(b, SCENE)
+    assert len(client.calls) == 2 and all("tool_choice" not in c for c in client.calls)
+    assert said.endswith(NOT_RUN_SAID) and b.last_call["cut_retry"] == "skipped"
+    assert not [d for d in desk.done if d[0] in ("paste", "keys")]
+
+
+class HangingStream(FakeStream):
+    def __init__(self) -> None:
+        super().__init__([], USAGE, "end_turn", None)
+
+    @property
+    def text_stream(self) -> Any:
+        async def gen() -> Any:
+            await asyncio.Event().wait()
+            yield ""
+
+        return gen()
+
+
+class HangingRetry(ScriptedClient):
+    """Its third request (the retry) never answers."""
+
+    def stream(self, **params: Any) -> Any:
+        if len(self.calls) < 2:
+            return super().stream(**params)
+        self.calls.append(params)
+        return HangingStream()
+
+
+async def test_basta_during_the_retry_runs_nothing(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = HangingRetry(OPEN_NOTEPAD, CUT_TYPE)
+    b = acting_brain(pricing, client, tools)
+    task = asyncio.create_task(ask(b, SCENE))
+    await asyncio.sleep(0.05)
+    assert len(client.calls) == 3  # the retry is under way
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(b._history) == [
+        (
+            f"[it] {SCENE}",
+            f"{SAID_BEFORE} {CUT_NOTE} {NOT_RUN_TYPE} {ACTIONS_NOTE}open_app ok]",
+        )
+    ]
+    assert not [d for d in desk.done if d[0] in ("paste", "keys")]
+
+
+async def test_an_api_error_during_the_retry_keeps_the_note(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = BreakingClient(
+        httpx2.RemoteProtocolError("peer closed"), OPEN_NOTEPAD, CUT_TYPE, ([], "end_turn", [])
+    )
+    b = acting_brain(pricing, client, tools)
+    said = await ask(b, SCENE)
+    assert said.endswith(f"{SAID_BEFORE} {NETWORK_SAID}") and NOT_RUN_SAID not in said
+    assert b.last_call["cut_retry"] == "error"
+    assert b._history[-1][1].endswith(f"{NOT_RUN_TYPE} {ACTIONS_NOTE}open_app ok]")
+
+
+async def test_a_tool_that_never_ran_is_not_outside_text(pricing: Pricing, tools: PcTools) -> None:
+    cut = ([], "max_tokens", [use("read_window", window="blocco note")])
+    b = acting_brain(pricing, ScriptedClient(OPEN_NOTEPAD, cut, cut), tools)
+    await ask(b, "apri il blocco note e leggilo")
+    note = "[Claudio did not run: read_window, cut at the token limit]"
+    assert b._history[-1][1].endswith(f"{note} {ACTIONS_NOTE}open_app ok]")
+    assert not b._read_outside()
+    b._history.append(("q", f"{ACTIONS_NOTE}open_app ok] {note}"))  # the other order
+    assert not b._read_outside()
+    b._history.append(("q", f"{NOT_RUN_TYPE} {ACTIONS_NOTE}read_window ok]"))
+    assert b._read_outside()
 
 
 async def test_sonnet_is_not_offered_in_the_middle_of_an_action(
@@ -901,3 +1090,63 @@ async def test_the_answer_keeps_the_question_language(
     await say(r, "chiudi la finestra di chrome")
     await say(r, "ok", language="en")  # Whisper heard "ok" as English
     assert r.language == "it"
+
+
+async def test_a_tool_that_ran_in_a_later_round_loses_its_not_run_note(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    both = ([], "max_tokens", [use("open_app", name="blocco note"), use("type_text", text="Pia")])
+    client = ScriptedClient(
+        both,
+        OPEN_NOTEPAD,  # the retry brings only the first tool
+        CUT_TYPE,  # the second round cuts type_text again
+        ([], "tool_use", [use("type_text", text=PLAN)]),
+        (["Scritto"], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, SCENE)
+    assert ("paste", PLAN) in desk.done
+    assert "did not run" not in b._history[-1][1]
+
+
+async def test_a_tool_the_retry_did_not_bring_keeps_its_note(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    both = ([], "max_tokens", [use("open_app", name="blocco note"), use("search_files", query="x")])
+    client = ScriptedClient(both, OPEN_NOTEPAD, (["Fatto"], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, SCENE)
+    note = "[Claudio did not run: search_files, cut at the token limit]"
+    assert b._history[-1][1].endswith(f"{note} {ACTIONS_NOTE}open_app ok]")
+
+
+async def test_a_slow_tool_after_a_retry_does_not_say_the_bridge_twice(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    read = use("read_window", window="blocco note")
+    client = ScriptedClient(
+        ([], "max_tokens", [read]), ([], "tool_use", [read]), (["Dice ciao"], "end_turn", [])
+    )
+    b = acting_brain(pricing, client, tools)
+    said = await ask(b, "leggimi il blocco note")
+    assert said.count("Ci guardo") == 1 and "Ci guardo" not in b._history[-1][1]
+
+
+async def test_a_retry_cut_in_words_only_says_it_did_not_run(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(OPEN_NOTEPAD, CUT_TYPE, (["Boh"], "max_tokens", [text("Boh")]))
+    b = acting_brain(pricing, client, tools)
+    said = await ask(b, SCENE)
+    assert said.endswith(f"{SAID_BEFORE} {NOT_RUN_SAID}") and "Mi fermo qui" not in said
+    assert "Boh" not in said
+    assert b.last_call["cut"] == "tool_use" and b.last_call["cut_retry"] == "cut"
+
+
+async def test_a_refused_retry_says_so_and_keeps_the_note(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(OPEN_NOTEPAD, CUT_TYPE, ([], "refusal", []))
+    b = acting_brain(pricing, client, tools)
+    said = await ask(b, SCENE)
+    assert said.endswith(f"{SAID_BEFORE} {REFUSED['it']}") and NOT_RUN_SAID not in said
+    assert b.last_call["cut_retry"] == "error"
+    assert b._history[-1][1].endswith(f"{NOT_RUN_TYPE} {ACTIONS_NOTE}open_app ok]")

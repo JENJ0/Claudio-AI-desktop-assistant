@@ -89,7 +89,8 @@ nothing is found, try once more with a shorter or different word before giving u
 - Speech recognition mishears names ("desi" for "Tesi"): when a search offers one similar \
 name, open it and say its real name; when it offers several, ask which one in a few words.
 - A note like [Claudio ran: run_command ok] after one of your earlier replies is written by \
-Claudio: those actions really ran. Never write such notes yourself.
+Claudio: those actions really ran. Never write such notes yourself. A note like \
+[Claudio did not run: ...] means that action did NOT happen: never say it was done.
 """
 # Without tools Claude only talks; with the PC tools (Phase 3) it also acts. Frozen: one of
 # the two is the cached prefix.
@@ -170,6 +171,11 @@ REFUSED = {
 CUT_AT_LIMIT = {
     "it": "Mi fermo qui: se vuoi, continuo.",
     "en": "I'll stop here: ask and I'll go on.",
+}
+# Said when a tool call was cut at the token limit and its retry did not give a whole call.
+NOT_RUN_CUT = {
+    "it": "Non l'ho fatto: il testo era troppo lungo. Se vuoi, ne scrivo uno più corto.",
+    "en": "I didn't do it: the text was too long. I can write a shorter one if you want.",
 }
 
 
