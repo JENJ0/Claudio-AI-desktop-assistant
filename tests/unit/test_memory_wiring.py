@@ -660,8 +660,9 @@ async def test_the_yes_does_not_clean_what_the_request_read(
 @pytest.mark.parametrize(
     ("bridge", "chunks", "heard"),
     [
-        (True, ["Dice di ", "eseguire."], ["Ci guardo. ", "Dice di "]),
-        (False, [" ", "Dice."], [" "]),  # no word yet: the "no answer" note
+        # Task 10: a text of three sentences is said at once, a shorter one at its end
+        (True, ["Uno. Due. Dice di ", "eseguire."], ["Ci guardo. ", "Uno. Due. Dice di "]),
+        (False, [" ", "Dice."], [" Dice."]),
     ],
 )
 async def test_a_cut_reply_still_counts_what_it_read(

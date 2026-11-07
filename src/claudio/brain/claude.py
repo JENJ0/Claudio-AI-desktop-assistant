@@ -102,6 +102,11 @@ _NOTE_OPENINGS = tuple(
     note[: note.index(":") + 1].lower()
     for note in (ACTIONS_NOTE, NOT_RUN_NOTE, CUT_NOTE, CUT_BEFORE_NOTE)
 )
+# Haiku says what it is about to do, then calls the tool, then says what it did (live test of
+# 07/11): the first sentences wait until the call is known. Not model facts: not in config.
+HOLD_SENTENCES = 2  # held until a sentence after these begins
+HOLD_MAX_CHARS = 200  # or until the text is longer: a story does not wait for its end
+_SENTENCE_END = re.compile(r"[.!?]+\s+")
 # A note ends at "]", at a new line, or at a sentence end followed by a space or "]" (a "." inside
 # "report.pdf" is no end). A terminator at the end of a chunk stays undecided: the note goes on.
 _NOTE_END = re.compile(r"\]|[.!?]+(?:\]|(?=\s))|\n")
@@ -413,7 +418,9 @@ class ClaudeBrain:
         """Haiku, with its tools, until it answers in words: each round runs the level-1
         calls and sends their results back; a level 2-3 call stops here and asks first."""
         # Only within this reply: after a yes the turn holds the question, already spoken.
+        # True = words the voice really kept (a fragment dropped by a stream retry is not).
         said_here = False
+        this_reply = len(turn.parts)  # after a yes the turn holds the question already asked
         streaming: _Leg | None = None  # the leg whose words are not in `turn` yet
         try:
             while True:
@@ -422,8 +429,8 @@ class ClaudeBrain:
                 leg = streaming = _Leg()
                 async with contextlib.aclosing(self._stream(params, language, start, leg)) as haiku:
                     async for chunk in haiku:
-                        said_here = said_here or bool(chunk.strip())
                         yield chunk
+                said_here = said_here or bool("".join(leg.parts).strip())
                 turn.parts.extend(leg.parts)
                 streaming = None
                 if self._stop_acting and (leg.calls or leg.cut_tools or leg.handoff):
@@ -450,10 +457,17 @@ class ClaudeBrain:
                         if said := self._end_not_run(turn, language):
                             yield said
                         return
+                    leg.held = cut.held  # the words before the cut call wait for its question
                 if reply := self._handed_over(leg, offer_from, turn, language, start):
                     async for chunk in reply:
                         yield chunk
                     return
+                if leg.handoff and not leg.calls and leg.held.strip():
+                    # Nobody proposes Sonnet (after a yes): the words are all there is to say.
+                    said, leg.held = leg.held, ""
+                    self._mark_word({}, self.clock(), start, "claude_first_ms")
+                    turn.parts.append(said)
+                    yield said
                 if not leg.complete or not leg.calls or self.tools is None:
                     turn.complete = leg.complete
                     self._remember(turn)
@@ -465,7 +479,13 @@ class ClaudeBrain:
                 active = [c for c in leg.calls if c.id not in refused]
                 await self.tools.prepare(active)
                 confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
-                ask = await self.tools.question(confirm, language) if confirm else ""
+                # Nothing said in this reply before the question: it reads the action out.
+                read_out = not leg.held.strip() and not "".join(turn.parts[this_reply:]).strip()
+                ask = (
+                    await self.tools.question(confirm, language, read_out=read_out)
+                    if confirm
+                    else ""
+                )
                 if self._stop_acting:  # it came during those two waits
                     self._end_stopped(turn, leg)
                     return
@@ -474,6 +494,8 @@ class ClaudeBrain:
                         ask, messages, leg, confirm, refused, turn, language, round_no
                     )
                     return
+                if leg.held:  # a free action says only what it did, after it
+                    log.debug("Parole prima dell'azione trattenute e scartate: %d", len(leg.held))
                 if said := self._before_tools(turn, leg, active, said_here, language):
                     said_here = True
                     yield said
@@ -614,7 +636,10 @@ class ClaudeBrain:
             ", ".join(c.brief() for c in confirm),
             extra={"route": "confirm", "level": level},
         )
-        said = _space(turn) + ask
+        said = _space(turn)
+        if held := leg.held.strip():  # "Chiudo Chrome." was held: it is said with its question
+            said += held + " "
+        said += ask
         turn.parts.append(said)
         return said
 
@@ -945,13 +970,21 @@ class ClaudeBrain:
         import httpx2
 
         model = params["model"]
+        # No PC tools, no tools in the call (Sonnet) or tool_choice none (last round): no action
+        # can be promised, and no call can follow the first words.
+        offered = (
+            self.tools is not None
+            and "tools" in params
+            and params.get("tool_choice") != {"type": "none"}
+        )
         for attempt in (1, 2):
-            if (
-                attempt > 1
-            ):  # the voice dropped the broken sentence at CUT_SHORT: so does the history
+            # The voice dropped the broken sentence at CUT_SHORT: so does the history.
+            if attempt > 1:
                 heard = joined_reply([*leg.parts, CUT_SHORT])
                 leg.parts[:] = [heard + " "] if heard else []
             before = len(leg.parts)
+            hold = _Hold() if offered else None  # a broken attempt's held words are dropped
+            leg.held = ""
             stream: Any = None
             final: Any = None
             sent = self.clock()
@@ -968,13 +1001,22 @@ class ClaudeBrain:
                         async for clean in words:
                             if silent:
                                 continue
-                            if clean.strip() and "word_ms" not in timing:
-                                timing["word_ms"] = _ms_since(sent, self.clock())
-                            if first_key not in self.last_call and clean.strip():
-                                self.last_call[first_key] = round((self.clock() - start) * 1000)
-                            leg.parts.append(clean)
-                            yield clean
+                            if hold is not None:
+                                clean = hold.feed(clean)
+                                leg.held = hold.held
+                            if clean.strip():
+                                self._mark_word(timing, sent, start, first_key)
+                            if clean:
+                                leg.parts.append(clean)
+                                yield clean
                     final = await stream.get_final_message()
+                    if leg.held and not _has_tool_use(final):
+                        # No call follows: what waited is said now, before any closing sentence.
+                        said, leg.held = leg.held, ""
+                        if said.strip():
+                            self._mark_word(timing, sent, start, first_key)
+                        leg.parts.append(said)
+                        yield said
             except anthropic.AuthenticationError:
                 log.error("Claude: chiave API non valida (401)")
                 self.last_call["claude_error"] = "auth"
@@ -1031,15 +1073,8 @@ class ClaudeBrain:
                 # Also on "basta" (the speaker cancels this generator): count what was generated.
                 if stream is not None:
                     timing["total_ms"] = _ms_since(sent, self.clock())
-                    self._record(model, final, stream, leg.parts[before:], timing)
+                    self._record(model, final, stream, [*leg.parts[before:], leg.held], timing)
             break  # this attempt ended: no retry
-        # No PC tools, no tools in the call (Sonnet) or tool_choice none (last round): no action
-        # can be promised.
-        offered = (
-            self.tools is not None
-            and "tools" in params
-            and params.get("tool_choice") != {"type": "none"}
-        )
         leg.end = end = stream_end(
             final,
             tools_offered=offered,
@@ -1072,6 +1107,13 @@ class ClaudeBrain:
             yield said
         leg.read(final)
         leg.complete = True
+
+    def _mark_word(self, timing: dict[str, int], sent: float, start: float, first_key: str) -> None:
+        """The first word that is really said: the first of this call and of the request."""
+        if "word_ms" not in timing:
+            timing["word_ms"] = _ms_since(sent, self.clock())
+        if first_key not in self.last_call:
+            self.last_call[first_key] = round((self.clock() - start) * 1000)
 
     def _retry_broken(self, exc: BaseException, stream: Any, attempt: int, silent: bool) -> bool:
         """07/11: ~2% of calls broke mid-reply ([SSL] record layer failure) and the request was
@@ -1153,6 +1195,7 @@ class _Leg:
         self.calls: list[ToolCall] = []
         self.content: list[dict[str, Any]] = []
         self.end = StreamEnd.DONE
+        self.held = ""  # words not said yet: a call may follow (`_Hold`)
         self.cut_tools: list[str] = []  # tool_use blocks cut at max_tokens (CUT_CALL), in order
 
     def read(self, final: Any) -> None:
@@ -1230,6 +1273,30 @@ class _Action:
         self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
         self.handoff = False  # Haiku also asked for Sonnet: Claude goes on after the calls
+
+
+class _Hold:
+    """Keeps the first sentences of a reply until it is known that no tool call follows: feed()
+    returns what may be said now (all of it, once the third sentence begins or the text is
+    longer than HOLD_MAX_CHARS), `held` what still waits."""
+
+    def __init__(self) -> None:
+        self.held = ""
+        self._flowing = False
+
+    def feed(self, chunk: str) -> str:
+        if self._flowing:
+            return chunk
+        self.held += chunk
+        ends = list(_SENTENCE_END.finditer(self.held))
+        third_begins = len(ends) >= HOLD_SENTENCES and bool(
+            self.held[ends[HOLD_SENTENCES - 1].end() :].strip()
+        )
+        if not third_begins and len(self.held) <= HOLD_MAX_CHARS:
+            return ""
+        self._flowing = True
+        said, self.held = self.held, ""
+        return said
 
 
 class _NoteFilter:

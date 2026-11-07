@@ -533,7 +533,7 @@ async def test_what_haiku_said_ends_its_sentence_before_the_tools_run(
 ) -> None:
     """IT-1 5.1: the space after "Ci guardo, socio." lets the voice say it while the tools
     run (30/10 14:07: it waited 2.1 s for the next round's text)."""
-    said = "Ci guardo, socio."
+    said = "Ci guardo, socio. Apro Spotify. Un attimo."  # a third sentence frees the first two
     client = ScriptedClient(
         ([said], "tool_use", [text(said), use("open_app", name="spotify")]),
         (["Aperto."], "end_turn", []),
@@ -680,10 +680,14 @@ async def test_a_silent_round_after_the_yes_says_nothing_before_its_tools(
             ["Ci guardo. "],
             "",
         ),
-        (  # the space that ends Haiku's sentence
-            (["Cerco."], "tool_use", [text("Cerco."), use("search_files", query="fattura")]),
-            ["Cerco.", " "],
-            "Cerco.",
+        (  # the space that ends Haiku's sentence (a third one frees the first two: Task 10)
+            (
+                ["Uno. Due. Cerco."],
+                "tool_use",
+                [text("Uno. Due. Cerco."), use("search_files", query="fattura")],
+            ),
+            ["Uno. Due. Cerco.", " "],
+            "Uno. Due. Cerco.",
         ),
     ],
 )
@@ -720,18 +724,19 @@ async def test_a_cancel_while_nothing_streams_keeps_the_words_and_awaits_no_answ
     tool: SimpleNamespace,
     note: str,
 ) -> None:
-    async def hang(*args: Any) -> None:
+    async def hang(*args: Any, **kwargs: Any) -> None:
         await asyncio.Event().wait()
 
     monkeypatch.setattr(tools, method, hang)
-    client = ScriptedClient((["Un attimo."], "tool_use", [text("Un attimo."), tool]))
+    words = "Ok. Va bene. Un attimo."  # three sentences: said at once, not held (Task 10)
+    client = ScriptedClient(([words], "tool_use", [text(words), tool]))
     b = acting_brain(pricing, client, tools)
     task = asyncio.create_task(ask(b, "fallo"))
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert list(b._history) == [("[it] fallo", f"Un attimo. {CUT_NOTE}{note}")]
+    assert list(b._history) == [("[it] fallo", f"{words} {CUT_NOTE}{note}")]
     assert not b.awaiting
 
 
@@ -797,9 +802,10 @@ async def test_a_confirmed_call_cancelled_while_running_stays_in_the_history(
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert list(b._history) == [
-        ("[it] scrivi su chrome", f"Confermi? {CUT_NOTE} {ACTIONS_NOTE}type_text interrupted]")
-    ]
+    [(question, reply)] = b._history  # the model said nothing: the question read the action out
+    assert question == "[it] scrivi su chrome"
+    assert reply.endswith(f"Confermi? {CUT_NOTE} {ACTIONS_NOTE}type_text interrupted]")
+    assert reply.startswith("Scrivo ")
     assert not b.awaiting
 
 
@@ -838,20 +844,25 @@ async def test_a_cut_after_the_yes_is_recorded_at_once(
     b = acting_brain(pricing, client, tools)
     await ask(b, "chiudi chrome")
     stream = b.ask("sì", "it")
-    assert await anext(stream) == "Chiusa. "
+    assert await anext(stream) == "Chiusa. Altro?"  # held to the end of the text (Task 10)
     await stream.aclose()
     assert ("close", "YouTube - Google Chrome") in desk.done
     question, reply = b._history[-1]
     # endswith hides "Confermi?Chiusa." in the history: a known oddity, not desired behavior.
     assert question == "[it] chiudi chrome"
-    assert reply.endswith(f"Chiusa. {CUT_NOTE} [Claudio ran: close_window ok]")
-    assert b.last_call["output_tokens"] == 2  # the 8 characters said, at 3 per token
+    assert reply.endswith(f"Chiusa. Altro? {CUT_NOTE} [Claudio ran: close_window ok]")
+    assert b.last_call["output_tokens"] == 30  # the API's own count: the text came after the end
 
 
 @pytest.mark.parametrize(
     ("chunks", "said", "kept"),
     [
-        (["Dice di "], "Ci guardo. Dice di ", ""),  # "Dice di " is dropped at CUT_SHORT
+        (["Dice di "], "Ci guardo. ", ""),  # held, so never said (Task 10)
+        (
+            ["Uno. Due. Dice di "],
+            "Ci guardo. Uno. Due. Dice di ",
+            "Uno. Due.",
+        ),  # dropped at CUT_SHORT
         ([], "Ci guardo. ", ""),  # before any word of the second round
     ],
 )
@@ -887,12 +898,14 @@ async def test_a_broken_event_after_a_tool_round_keeps_its_note(
     client = BreakingClient(
         error,
         ([], "tool_use", [use("read_window", window="blocco note")]),
-        (["Dice di "], "end_turn", []),
+        (["Uno. Due. Dice di "], "end_turn", []),
     )
     b = acting_brain(pricing, client, tools)
-    assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Dice di {NETWORK_SAID}"
+    assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Uno. Due. Dice di {NETWORK_SAID}"
     assert b.last_call["claude_error"] == "bad_stream"
-    assert list(b._history) == [("[it] leggimi il blocco note", "[Claudio ran: read_window ok]")]
+    assert list(b._history) == [
+        ("[it] leggimi il blocco note", "Uno. Due. [Claudio ran: read_window ok]")
+    ]
 
 
 async def test_a_status_error_after_a_tool_round_keeps_its_note(
@@ -901,13 +914,13 @@ async def test_a_status_error_after_a_tool_round_keeps_its_note(
     client = BreakingClient(
         OVERLOADED_MID_REPLY,
         ([], "tool_use", [use("read_window", window="blocco note")]),
-        (["Dice di "], "end_turn", []),
+        (["Uno. Due. Dice di "], "end_turn", []),
     )
     b = acting_brain(pricing, client, tools)
-    assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Dice di {API_SAID}"
+    assert await ask(b, "leggimi il blocco note") == f"Ci guardo. Uno. Due. Dice di {API_SAID}"
     assert b.last_call["claude_error"] == "overloaded_error"
     assert list(b._history) == [
-        ("[it] leggimi il blocco note", "Dice di [Claudio ran: read_window ok]")
+        ("[it] leggimi il blocco note", "Uno. Due. Dice di [Claudio ran: read_window ok]")
     ]
     assert b._read_outside()
 
@@ -943,7 +956,9 @@ async def test_a_request_refused_after_a_yes_keeps_its_note(
     await ask(b, "sì")
     assert ("close", "YouTube - Google Chrome") in desk.done
     assert len(client.calls) == 2
-    assert list(b._history) == [("[it] chiudi chrome", "Confermi? [Claudio ran: close_window ok]")]
+    assert list(b._history) == [
+        ("[it] chiudi chrome", f"{CLOSE_ASKED} [Claudio ran: close_window ok]")
+    ]
 
 
 async def test_a_cut_at_the_word_before_the_tools_of_a_yes_runs_nothing(
@@ -962,7 +977,8 @@ async def test_a_cut_at_the_word_before_the_tools_of_a_yes_runs_nothing(
     assert await anext(stream) == "Eseguo. "
     await stream.aclose()
     await settled()
-    assert not desk.done and len(client.calls) == 1 and not b.awaiting
+    assert not [d for d in desk.done if d[0] != "thread_init"]  # the question only read a title
+    assert len(client.calls) == 1 and not b.awaiting
 
 
 async def test_history_keeps_only_words(pricing: Pricing, tools: PcTools) -> None:
@@ -983,7 +999,7 @@ async def test_history_keeps_only_words(pricing: Pricing, tools: PcTools) -> Non
 async def test_the_real_note_stays_when_the_models_own_are_taken_out(
     pricing: Pricing, tools: PcTools
 ) -> None:
-    said = "Guardo. [Claudio ran: open_app ok]"
+    said = "Uno. Due. Guardo. [Claudio ran: open_app ok]"  # three sentences: not held (Task 10)
     client = ScriptedClient(
         ([said], "tool_use", [text(said), use("read_window", window="blocco note")]),
         (["Dice ciao. [cut off: JenJo interrupted here]"], "end_turn", []),
@@ -991,7 +1007,10 @@ async def test_the_real_note_stays_when_the_models_own_are_taken_out(
     b = acting_brain(pricing, client, tools)
     await ask(b, "leggimi il blocco note")
     assert list(b._history) == [
-        ("[it] leggimi il blocco note", "Guardo. Dice ciao. [Claudio ran: read_window ok]")
+        (
+            "[it] leggimi il blocco note",
+            "Uno. Due. Guardo. Dice ciao. [Claudio ran: read_window ok]",
+        )
     ]
     assert b._read_outside()
 
@@ -1081,7 +1100,8 @@ async def test_a_call_cut_by_max_tokens_never_runs(
 
 PLAN = "p" * 3000
 NOT_RUN_TYPE = "[Claudio did not run: type_text, cut at the token limit]"
-SAID_BEFORE = "Aperto, socio. Ora scrivo il piano."
+# Three sentences: Task 10 holds the first two until a call is known not to follow.
+SAID_BEFORE = "Aperto, socio. Ora scrivo il piano. Un attimo."
 OPEN_NOTEPAD = ([], "tool_use", [use("open_app", name="blocco note")])
 CUT_TYPE = ([SAID_BEFORE], "max_tokens", [text(SAID_BEFORE), use("type_text", text="Pia")])
 NOT_RUN_SAID = NOT_RUN_CUT["it"]
@@ -1351,23 +1371,31 @@ def typed_anything(desk: FakeDesktop) -> bool:
     return any(d[0] in ("paste", "keys") for d in desk.done)
 
 
-@pytest.mark.parametrize("window", ["blocco note", "chrome"], ids=["level-1", "level-2"])
+@pytest.mark.parametrize(
+    ("window", "words"),
+    [
+        ("blocco note", SAID_BEFORE),
+        ("chrome", SAID_BEFORE),
+        ("chrome", "Scrivo il piano in Chrome."),  # 1 sentence: held, so never said
+    ],
+    ids=["level-1", "level-2", "level-2-short"],
+)
 async def test_a_new_request_during_the_retry_runs_nothing(
-    pricing: Pricing, tools: PcTools, desk: FakeDesktop, window: str
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, window: str, words: str
 ) -> None:
-    cut = (
-        [SAID_BEFORE],
-        "max_tokens",
-        [text(SAID_BEFORE), use("type_text", text="Pia", window=window)],
-    )
+    cut = ([words], "max_tokens", [text(words), use("type_text", text="Pia", window=window)])
     whole = ([], "tool_use", [use("type_text", text=PLAN, window=window)])
     client = HeldCall(2, OPEN_NOTEPAD, cut, whole)
     b = acting_brain(pricing, client, tools)
     drained = await cut_by_a_new_request(b, client)
     assert not typed_anything(desk) and not b.awaiting
-    assert SAID_BEFORE in drained.text and "Confermi" not in drained.text
+    assert "Confermi" not in drained.text
+    # A held preamble is never said: the retry only covers the wait with the bridge.
+    said = words if words == SAID_BEFORE else "Ci guardo."
+    assert drained.text == said
+    kept = f"{words} {CUT_NOTE}" if words == SAID_BEFORE else CUT_BEFORE_NOTE
     assert list(b._history) == [
-        (f"[it] {SCENE}", f"{SAID_BEFORE} {CUT_NOTE} {STOPPED_TYPE} {ACTIONS_NOTE}open_app ok]")
+        (f"[it] {SCENE}", f"{kept} {STOPPED_TYPE} {ACTIONS_NOTE}open_app ok]")
     ]
 
 
@@ -1428,7 +1456,7 @@ async def test_a_new_request_in_the_last_waits_before_acting_stops_it(
 ) -> None:
     reached, go = asyncio.Event(), asyncio.Event()
 
-    async def held(*args: Any) -> str:
+    async def held(*args: Any, **kwargs: Any) -> str:
         reached.set()
         await go.wait()
         return "Confermi?"
@@ -1471,7 +1499,7 @@ async def test_sonnet_is_not_offered_by_a_reply_nobody_hears(
 async def test_a_tool_that_ran_before_a_new_request_keeps_its_note(
     pricing: Pricing, tools: PcTools, desk: FakeDesktop
 ) -> None:
-    said = "Ora scrivo."
+    said = "Ecco. Fatto. Ora scrivo."  # three sentences: said, not held (Task 10)
     next_round = ([said], "tool_use", [text(said), use("type_text", text=PLAN)])
     client = HeldCall(1, OPEN_NOTEPAD, next_round)
     b = acting_brain(pricing, client, tools)
@@ -3233,3 +3261,395 @@ async def test_the_words_of_a_forced_retry_are_never_a_promise(
     b = acting_brain(pricing, client, tools)
     await ask(b, SCENE)
     assert "promised" not in b.last_call
+
+
+# --- Task 10: one sentence per action, after it ---
+
+SPOTIFY = use("open_app", name="spotify")
+CHROME_CLOSE = use("close_window", window="chrome")
+
+
+def free_action(before: str, after: str = "Aperto, socio.") -> ScriptedClient:
+    return ScriptedClient(
+        ([before], "tool_use", [text(before), SPOTIFY]), ([after], "end_turn", [text(after)])
+    )
+
+
+async def test_a_sentence_before_a_free_action_is_not_said(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    b = acting_brain(pricing, free_action("Apro Spotify."), tools)
+    assert await ask(b, "apri spotify") == "Aperto, socio."
+    assert "Apro" not in b._history[-1][1]
+
+
+async def test_two_sentences_before_a_free_action_are_not_said(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    b = acting_brain(pricing, free_action("Ci guardo. Apro Spotify."), tools)
+    assert await ask(b, "apri spotify") == "Aperto, socio."
+
+
+async def test_the_model_text_still_goes_back_to_the_api(pricing: Pricing, tools: PcTools) -> None:
+    client = free_action("Apro Spotify.")
+    await ask(acting_brain(pricing, client, tools), "apri spotify")
+    assert client.calls[1]["messages"][-2]["content"][0] == {
+        "type": "text",
+        "text": "Apro Spotify.",
+    }
+
+
+async def test_the_sentences_before_a_question_are_said(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(
+        (["Chiudo Chrome."], "tool_use", [text("Chiudo Chrome."), CHROME_CLOSE]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "chiudi chrome") == "Chiudo Chrome. Confermi?"
+    assert (await ask(b, "no")).startswith("Va bene")
+    assert b._history[-1][1].count("Chiudo Chrome.") == 1  # once, not twice
+
+
+async def test_a_free_action_drops_the_held_words_in_the_debug_log(
+    pricing: Pricing, tools: PcTools, caplog: pytest.LogCaptureFixture
+) -> None:
+    b = acting_brain(pricing, free_action("Apro Spotify."), tools)
+    with caplog.at_level("DEBUG"):
+        await ask(b, "apri spotify")
+    assert not any("Apro" in str(r.__dict__) for r in caplog.records)  # never the words
+    assert any(r.levelname == "DEBUG" and "trattenut" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_reply_with_no_call_says_every_word_in_order(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient((["Uno. ", "Due. ", "Tre."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    assert [c async for c in b.ask("dimmi tre cose", "it")] == ["Uno. Due. Tre."]
+    assert b._history[-1][1] == "Uno. Due. Tre."
+
+
+class CountingClient(ScriptedClient):
+    """Keeps the streams, to see how many chunks the API had sent when a chunk came out."""
+
+    def __init__(self, *replies: tuple[list[str], str, list[Any]]):
+        super().__init__(*replies)
+        self.streams: list[ScriptedStream] = []
+
+    def stream(self, **params: Any) -> ScriptedStream:
+        self.streams.append(super().stream(**params))
+        return self.streams[-1]
+
+
+async def test_a_long_reply_starts_before_it_ends(pricing: Pricing, tools: PcTools) -> None:
+    client = CountingClient((["Uno. ", "Due. ", "Tre", " e quattro."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    stream = b.ask("raccontami", "it")
+    assert await anext(stream) == "Uno. Due. Tre"  # the third sentence began: all of it flows
+    assert client.streams[0].sent == 3
+    assert await anext(stream) == " e quattro."
+    await stream.aclose()
+
+
+async def test_a_reply_past_the_char_limit_flows(pricing: Pricing, tools: PcTools) -> None:
+    long = "a" * 150
+    client = CountingClient(([long, long, " fine."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    stream = b.ask("raccontami", "it")
+    assert await anext(stream) == long * 2
+    assert client.streams[0].sent == 2
+    assert await anext(stream) == " fine."
+    await stream.aclose()
+
+
+async def test_no_hold_when_tools_are_not_offered(pricing: Pricing, tools: PcTools) -> None:
+    """The last round (tool_choice none) and Sonnet (no tools): the words flow as they come."""
+    last = ScriptedClient(([], "tool_use", [SPOTIFY]), (["Fatto. ", "Davvero."], "end_turn", []))
+    b = acting_brain(pricing, last, tools, max_rounds=2)
+    assert [c async for c in b.ask("apri spotify", "it")] == ["Fatto. ", "Davvero."]
+    assert last.calls[1]["tool_choice"] == {"type": "none"}
+    sonnet = ScriptedClient((["Fa 391. ", "Davvero."], "end_turn", []))
+    b = acting_brain(pricing, sonnet, tools)
+    assert [c async for c in b.ask("Pensaci bene: 17 per 23?", "it")] == ["Fa 391. ", "Davvero."]
+    assert "tools" not in sonnet.calls[0]
+
+
+async def test_a_promise_still_reads_the_held_words(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(([PROMISE], "end_turn", [text(PROMISE)]))
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, SCENE) == PROMISE  # no call follows: all of it is said
+    assert b.last_call["promised"] is True
+
+
+class StallingStream(ScriptedStream):
+    """Says its chunks, then waits for ever."""
+
+    @property
+    def text_stream(self) -> Any:
+        async def gen() -> Any:
+            for chunk in self.chunks:
+                yield chunk
+            await asyncio.Event().wait()
+
+        return gen()
+
+
+class StallingClient(ScriptedClient):
+    def stream(self, **params: Any) -> ScriptedStream:
+        self.calls.append(params)
+        return StallingStream(["Chiudo Chrome. "], "tool_use", [], dict(USAGE))
+
+
+async def test_a_stop_during_held_words_keeps_them_out_of_the_history(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    b = acting_brain(pricing, StallingClient(), tools)
+    task = asyncio.create_task(ask(b, "chiudi chrome"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(b._history) == [("[it] chiudi chrome", CUT_BEFORE_NOTE)]
+
+
+async def test_a_broken_stream_drops_the_held_words(pricing: Pricing, tools: PcTools) -> None:
+    client = FlakyClient(
+        Break(["Apro Spotify. "], ssl.SSLError("[SSL] record layer failure")),
+        (["Fatto."], "end_turn", [text("Fatto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "apri spotify") == "Fatto."
+    assert list(b._history) == [("[it] apri spotify", "Fatto.")]
+
+
+async def test_a_slow_tool_after_a_dropped_fragment_still_gets_its_bridge(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = FlakyClient(
+        Break(["Cerco la fa"], ssl.SSLError("[SSL] record layer failure")),
+        ([], "tool_use", [use("search_files", query="fattura")]),
+        (["Trovata."], "end_turn", []),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "trova la fattura") == "Ci guardo. Trovata."
+
+
+class SteppedActingStream(ScriptedStream):
+    """Each chunk comes 0.1 s after the one before, on a fake clock."""
+
+    clock: Monotonic
+
+    @property
+    def text_stream(self) -> Any:
+        async def gen() -> Any:
+            for chunk in self.chunks:
+                self.clock.t += 0.1
+                yield chunk
+
+        return gen()
+
+
+async def test_a_held_word_is_timed_when_it_is_said(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient()
+    b = acting_brain(pricing, client, tools)
+    clock = b.clock
+    assert isinstance(clock, Monotonic)
+
+    def stepped(chunks: list[str]) -> Callable[..., ScriptedStream]:
+        def make(**params: Any) -> ScriptedStream:
+            stream = SteppedActingStream(chunks, "end_turn", [], dict(USAGE))
+            stream.clock = clock
+            return stream
+
+        return make
+
+    client.stream = stepped(["Uno. ", "Due. ", "Tre."])  # type: ignore[method-assign]
+    assert await ask(b, "dimmi tre cose") == "Uno. Due. Tre."
+    assert b.last_call["claude_first_ms"] == 300  # the third sentence began: it flows at once
+    # Two sentences are held to the end of the text: the release is what is timed.
+    b.last_call.clear()
+    client.stream = stepped(["Uno. ", "Due."])  # type: ignore[method-assign]
+    assert await ask(b, "dimmi due cose") == "Uno. Due."
+    assert b.last_call["claude_first_ms"] == 200
+
+
+async def test_a_blank_held_text_is_not_a_word(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(([" "], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "dimmi qualcosa")
+    assert "claude_first_ms" not in b.last_call
+
+
+# --- Task 10, fix round 1 ---
+
+CLOSE_ASKED = 'Chiudo la finestra "YouTube - Google Chrome". Confermi?'
+TYPE_PLAN = use("type_text", text=PLAN, window="chrome")
+
+
+async def test_a_short_preamble_before_a_cut_call_is_said_with_its_question(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    """05/11: "Scrivo il piano in Chrome." was held on the cut leg, the retry leg was empty."""
+    words = "Scrivo il piano in Chrome."
+    client = ScriptedClient(
+        ([words], "max_tokens", [text(words), use("type_text", text="Pia", window="chrome")]),
+        ([], "tool_use", [TYPE_PLAN]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, SCENE)).endswith(f"{words} Confermi?")
+
+
+async def test_words_and_a_handoff_with_nobody_to_propose_are_said(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [CHROME_CLOSE]),
+        (["Chiusa, socio."], "tool_use", [text("Chiusa, socio."), use("ask_sonnet")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "chiudi chrome")
+    assert await ask(b, "sì") == "Chiusa, socio."
+    assert b._history[-1][1].count("Chiusa, socio.") == 1
+
+
+async def test_an_unsaid_question_reads_the_action_out(pricing: Pricing, tools: PcTools) -> None:
+    """Nothing said before it: the brief "Confermi?" alone would not say what is closed."""
+    client = ScriptedClient(
+        (["Chiudo Chrome."], "tool_use", [text("Chiudo Chrome."), use("list_windows")]),
+        ([], "tool_use", [CHROME_CLOSE]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "chiudi chrome") == CLOSE_ASKED
+
+
+async def test_a_silent_model_asking_a_question_reads_the_action_out(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(([], "tool_use", [CHROME_CLOSE]))
+    assert await ask(acting_brain(pricing, client, tools), "chiudi chrome") == CLOSE_ASKED
+
+
+async def test_words_said_before_a_question_keep_it_brief(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(
+        (["Chiudo Chrome."], "tool_use", [text("Chiudo Chrome."), CHROME_CLOSE])
+    )
+    reply = await ask(acting_brain(pricing, client, tools), "chiudi chrome")
+    assert reply == "Chiudo Chrome. Confermi?"
+
+
+async def test_a_question_after_a_broken_stream_reads_the_action_out(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = FlakyClient(
+        Break(["Chiudo Chrome. "], ssl.SSLError("[SSL] record layer failure")),
+        ([], "tool_use", [CHROME_CLOSE]),
+    )
+    assert await ask(acting_brain(pricing, client, tools), "chiudi chrome") == CLOSE_ASKED
+
+
+async def test_a_question_nobody_can_describe_is_the_bare_ask(
+    tools: PcTools, verbose: PcTools
+) -> None:
+    bad = call("press_keys", keys=["hyper+x"])  # describes as ""
+    assert await tools.question([bad], "it", read_out=True) == "Confermi?"
+    assert await verbose.question([bad], "it") == "Confermi?"
+
+
+async def test_a_stop_during_the_question_runs_nothing_and_asks_nothing(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    gate = asyncio.Event()
+    real = tools.question
+
+    async def slow(*args: Any, **kwargs: Any) -> str:
+        await gate.wait()
+        return await real(*args, **kwargs)
+
+    tools.question = slow  # type: ignore[method-assign]
+    client = ScriptedClient(([], "tool_use", [CHROME_CLOSE]))
+    b = acting_brain(pricing, client, tools)
+    drained = DrainedStream(b.ask("chiudi chrome", "it"))
+    await asyncio.sleep(0.05)
+    b.stop_acting()
+    gate.set()
+    await drained.finish(5.0)
+    assert not b.awaiting and "Confermi" not in drained.text
+
+
+class StallsAtRound2(ScriptedClient):
+    """Its first reply is scripted; the second says "Dice di " and waits for ever."""
+
+    def stream(self, **params: Any) -> ScriptedStream:
+        if len(self.calls) == 0:
+            return super().stream(**params)
+        self.calls.append(params)
+        return StallingStream(["Dice di "], "end_turn", [], dict(USAGE))
+
+
+async def test_a_basta_during_a_held_second_round_keeps_the_note(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = StallsAtRound2(([], "tool_use", [use("read_window", window="blocco note")]))
+    b = acting_brain(pricing, client, tools, bridge=False)
+    task = asyncio.create_task(ask(b, "leggimi il blocco note"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(b._history) == [
+        ("[it] leggimi il blocco note", f"{CUT_BEFORE_NOTE} {ACTIONS_NOTE}read_window ok]")
+    ]
+
+
+async def test_a_cut_during_held_text_counts_the_tokens_it_made(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    class Stalls(ScriptedClient):
+        def stream(self, **params: Any) -> ScriptedStream:
+            return StallingStream(["a" * 90], "tool_use", [], dict(USAGE))
+
+    b = acting_brain(pricing, Stalls(), tools)
+    task = asyncio.create_task(ask(b, "chiudi chrome"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert b.last_call["output_tokens"] == 30
+
+
+async def test_the_held_words_of_a_broken_attempt_do_not_come_back(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    """The retry says nothing and calls a level-2 tool: the first attempt's words must be gone."""
+    client = FlakyClient(
+        Break(["Apro Spotify. "], ssl.SSLError("[SSL] record layer failure")),
+        ([], "tool_use", [CHROME_CLOSE]),
+    )
+    reply = await ask(acting_brain(pricing, client, tools), "chiudi chrome")
+    assert "Apro" not in reply and reply == CLOSE_ASKED
+
+
+async def test_a_cut_call_of_a_silent_model_says_the_bridge_then_reads_the_action_out(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    """ "Ci guardo." names no action: it does not count as something said."""
+    client = ScriptedClient(
+        ([], "max_tokens", [use("close_window", window="chro")]),
+        ([], "tool_use", [CHROME_CLOSE]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "chiudi chrome") == f"Ci guardo. {CLOSE_ASKED}"
+
+
+async def test_a_second_question_after_a_yes_names_its_window(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    """The first question is already in the turn: it is not something said in this reply."""
+    client = ScriptedClient(
+        ([], "tool_use", [CHROME_CLOSE]),
+        ([], "tool_use", [use("close_window", window="blocco note")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "chiudi chrome e il blocco note") == CLOSE_ASKED
+    second = await ask(b, "sì")
+    assert second.strip() == 'Chiudo la finestra "Senza nome - Blocco note". Confermi?'
+    assert b.awaiting
