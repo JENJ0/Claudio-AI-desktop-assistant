@@ -109,6 +109,7 @@ from claudio.intake import BARGE_IN, CONVERSATION, FOLLOW_UP  # noqa: E402
 
 if TYPE_CHECKING:
     from claudio.app import Assistant
+    from claudio.pc.tools import App
     from claudio.router.responder import LocalResponder
     from claudio.system import SystemControl
 
@@ -568,6 +569,23 @@ class LogicalClock:
         self.now += seconds
 
 
+class GateDesktop(FakeDesktop):
+    """A launched app shows an empty document: the fixed text reads as an old one, and Haiku
+    then refuses to write. One desktop serves the whole run, so each scene starts with reset()."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.first_text = self.text
+
+    def launch(self, app: App) -> None:
+        super().launch(app)
+        self.text = ""
+
+    def reset(self) -> None:
+        """The window text of a new scene: the original one, with nothing typed."""
+        self.text, self.typed = self.first_text, ""
+
+
 @dataclass
 class Harness:
     settings: Settings
@@ -613,6 +631,8 @@ class Harness:
         from claudio.system import SystemControl
 
         self.scenes += 1
+        if isinstance(self.desktop, GateDesktop):
+            self.desktop.reset()
         self.recorder = Recorder()
         self.speaker = FakeSpeaker()
         self.system = SystemControl()
@@ -720,7 +740,7 @@ def build_harness(
     for folder in (home, *(p for p in home.rglob("*") if p.is_dir())):
         os.utime(folder, (GATE_TIME, GATE_TIME))  # search_files tells Claude `modified <date>`
     if client is not None and desktop is None:
-        desktop = FakeDesktop()  # the gate never builds a WindowsDesktop
+        desktop = GateDesktop()  # the gate never builds a WindowsDesktop
     models = settings.resolve(settings.models_dir)
     rate = settings.audio.sample_rate
     wake = wake or OpenWakeWordDetector(

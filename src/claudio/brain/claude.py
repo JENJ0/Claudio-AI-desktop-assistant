@@ -1167,7 +1167,9 @@ class _Turn:
         self.complete = complete
         self.done: list[str] = []  # tools that ran in this request, for the history note
         self.not_run: list[str] = []  # tools that never ran, for the history note
-        self.not_run_why = CUT_AT_LIMIT_WHY  # one reason for the whole note
+        # shortcut: one reason for the whole note, so a cut call that a later stop also names gets
+        # the stop's reason; upgrade to a reason per tool if G2's turn state keeps this note.
+        self.not_run_why = CUT_AT_LIMIT_WHY
 
     def note_not_run(self, names: Iterable[str]) -> None:
         # shortcut: two calls of one tool share one note, lost when one of them runs; upgrade when
