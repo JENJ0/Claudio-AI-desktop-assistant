@@ -58,8 +58,9 @@ the end).
 
 Manifest (samples/gate/manifest.jsonl), one JSON object per line: clip (path under
 samples/corpus), expect (any of woke, route, command, tools, args, safety; absent keys are not
-compared; `actions` are the Recorder's, `args` Claude's tool_use inputs; a tool that ended in
-error fails the clip unless `tool_errors` names it), known_bug with known_diff (the expect keys
+compared; `actions` are the Recorder's, `args` the tool_use inputs that ran (not a call cut); a
+tool that ended in error fails the clip unless `tool_errors` names it), known_bug with known_diff
+(the expect keys
 wrong today: only a difference listed there is `known`, an error never is), why, scene,
 real_wake, no_wake (the clip runs with the wake unarmed; without it a clip with no live
 wake point fails). An unknown key is an error. A known_bug that now passes is `fixed` and fails
@@ -127,7 +128,8 @@ GATE_TIME = (
     1_800_000_000.0  # the memory store's fixed wall clock: a memory's date reaches the prompt
 )
 BIG_BUDGET = 1000.0  # USD a day: the daily block is not what the gate tries
-KEY_FIELDS = ("model", "system", "tools", "messages")  # what makes a request the same request
+# what makes a request the same request (tool_choice: a forced retry repeats the rest)
+KEY_FIELDS = ("model", "system", "tools", "messages", "tool_choice")
 TOKEN_CHARS_FLOOR = 2  # chars per token at the very worst: --record's estimate is an upper bound
 
 
@@ -213,8 +215,11 @@ def load_clip(wav: Path) -> Clip:
 
 
 def cassette_key(params: Mapping[str, Any]) -> str:
-    """SHA-256 of model, system, tools and messages as sorted JSON: not max_tokens, cache_control
-    or timeout (they do not change what Claude is asked)."""
+    """SHA-256 of model, system, tools, messages and tool_choice as sorted JSON: not max_tokens,
+    cache_control or timeout (they do not change what Claude is asked); as max_tokens is left out,
+    after changing a token limit the cassettes must be deleted and recorded again, because a
+    replay keeps the old cut. tool_choice is in because
+    a forced retry repeats the other four of the call it follows."""
     keyed = {name: params.get(name) for name in KEY_FIELDS}
     text = json.dumps(keyed, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -246,7 +251,7 @@ def args_line(name: str, args: Mapping[str, Any]) -> str:
 class ReplayStream:
     """The saved reply shaped as the SDK's stream manager (the brain uses `async with`)."""
 
-    def __init__(self, saved: dict[str, Any], note: Callable[[list[dict[str, Any]]], None]):
+    def __init__(self, saved: dict[str, Any], note: Callable[[dict[str, Any]], None]):
         self.saved, self._note = saved, note
 
     async def __aenter__(self) -> ReplayStream:
@@ -269,7 +274,7 @@ class ReplayStream:
         return SimpleNamespace(usage=self.saved["usage"])
 
     async def get_final_message(self) -> Any:
-        self._note(self.saved["content"])
+        self._note(self.saved)
         return rebuilt(self.saved)
 
 
@@ -368,7 +373,7 @@ class CassetteClient:
         self.saved: list[str] = []  # keys written by this client, in order
         self.misses: list[str] = []
         self.sizes: dict[str, int] = {}  # miss -> characters of its request (--record's estimate)
-        self.tool_uses: list[tuple[str, dict[str, Any]]] = []  # what Claude asked to run
+        self.tool_uses: list[tuple[str, dict[str, Any]]] = []  # calls that ran, not cut ones
         self.messages = self
         self.models = SimpleNamespace(retrieve=self._retrieve)
 
@@ -401,7 +406,7 @@ class CassetteClient:
                 raise
             self._save(key, saved)
             self._charge(params["model"], saved)
-        self._note(saved["content"])
+        self._note(saved)
         return rebuilt(saved)
 
     def _load(self, key: str) -> dict[str, Any] | None:
@@ -429,7 +434,7 @@ class CassetteClient:
     def _saved_and_noted(self, key: str, saved: dict[str, Any], model: str) -> None:
         self._save(key, saved)
         self._charge(model, saved)
-        self._note(saved["content"])
+        self._note(saved)
 
     def _charge(self, model: str, saved: dict[str, Any]) -> None:
         if self.pricing is not None:
@@ -456,9 +461,13 @@ class CassetteClient:
         self.braked.append(key)
         self._miss(key, params)  # a hard reason on its clip, whatever the brain makes of the error
 
-    def _note(self, content: list[dict[str, Any]]) -> None:
+    def _note(self, saved: dict[str, Any]) -> None:
+        if saved["stop_reason"] == "max_tokens":  # a cut call never runs (`_Leg.read`)
+            return
         self.tool_uses.extend(
-            (b["name"], dict(b.get("input") or {})) for b in content if b.get("type") == "tool_use"
+            (b["name"], dict(b.get("input") or {}))
+            for b in saved["content"]
+            if b.get("type") == "tool_use"
         )
 
     def _miss(self, key: str, params: Mapping[str, Any]) -> CassetteMiss:
@@ -905,7 +914,7 @@ def declared_safety(harness: Harness, row: dict[str, Any], since: Mark, until: M
 
 
 def tool_notes(row: dict[str, Any]) -> list[tuple[str, str]]:
-    """(tool, how it ended) from the row: `name(args) ok|error|refused|ask`."""
+    """(tool, how it ended) from the row: `name(args) ok|error|refused|ask|not_run_cut`."""
     notes = (str(t) for t in row.get("tools") or ())
     return [(t.split("(", 1)[0], t.rsplit(" ", 1)[-1]) for t in notes]
 
@@ -947,7 +956,7 @@ def read_outcome(
         text=str(row.get("text") or ""),
         route=row.get("route"),
         command=row.get("command"),
-        tools=tuple(name for name, _ in tool_notes(row)),
+        tools=tuple(name for name, how in tool_notes(row) if how != "not_run_cut"),
         actions=actions,
         safety=declared_safety(harness, row, since, end),
         outcome=row.get("outcome"),
