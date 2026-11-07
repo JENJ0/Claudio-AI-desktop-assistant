@@ -2542,3 +2542,87 @@ async def test_an_opened_folder_is_not_matched_by_a_program_name(
     t.close()
     assert out.text.endswith(", no window seen yet: it may still be starting.")
     assert ("read", "Artist - Track") not in desk.done
+
+
+# --- G1: a promise without a call is only logged ---
+
+PROMISE = "Ora scrivo il piano, socio."
+
+
+async def test_a_promise_without_a_call_is_only_logged(
+    pricing: Pricing, tools: PcTools, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = ScriptedClient(([PROMISE], "end_turn", [text(PROMISE)]))
+    b = acting_brain(pricing, client, tools)
+    with caplog.at_level("INFO"):
+        said = await ask(b, SCENE)
+    assert said == PROMISE and len(client.calls) == 1  # unchanged, no request added
+    assert list(b._history)[-1][1] == PROMISE
+    assert b.last_call["promised"] is True
+    (record,) = [r for r in caplog.records if r.getMessage() == "Promessa senza azione"]
+    assert "piano" not in str(record.__dict__)  # neither in the message nor in the extras
+
+
+async def test_a_promise_with_a_call_is_not_flagged(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient(
+        ([PROMISE], "tool_use", [text(PROMISE), use("open_app", name="blocco note")]),
+        (["Ho aperto il Blocco note."], "end_turn", [text("Ho aperto il Blocco note.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, SCENE)
+    assert "promised" not in b.last_call
+
+
+async def test_a_new_promise_after_a_tool_is_flagged(pricing: Pricing, tools: PcTools) -> None:
+    said = "Aperto, socio. Ora scrivo il piano."
+    client = ScriptedClient(
+        ([], "tool_use", [use("open_app", name="blocco note")]),
+        ([said], "end_turn", [text(said)]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, SCENE)
+    assert b.last_call["promised"] is True
+
+
+async def test_no_promise_on_the_last_round_where_tool_choice_is_none(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(([PROMISE], "end_turn", [text(PROMISE)]))
+    b = acting_brain(pricing, client, tools, max_rounds=1)  # the only round is the last
+    await ask(b, SCENE)
+    assert client.calls[0]["tool_choice"] == {"type": "none"}
+    assert "promised" not in b.last_call
+
+
+async def test_no_promise_on_the_sonnet_leg(pricing: Pricing, tools: PcTools) -> None:
+    client = ScriptedClient((["Ho aperto il file."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "Pensaci bene: quanto fa 17 per 23?")
+    assert client.calls[0]["model"] == "claude-sonnet-5-5" and "tools" not in client.calls[0]
+    assert "promised" not in b.last_call
+
+
+async def test_no_promise_when_the_pc_tools_are_off(pricing: Pricing) -> None:
+    client = ScriptedClient(([PROMISE], "end_turn", [text(PROMISE)]))
+    b = ClaudeBrain(
+        client, tracker(pricing, 1.0), ClaudeSettings(tell_time=False), clock=Monotonic()
+    )
+    await ask(b, SCENE)
+    assert [t["name"] for t in client.calls[0]["tools"]] == [
+        "ask_sonnet"
+    ]  # offered, but no PC tool
+    assert "promised" not in b.last_call
+
+
+async def test_the_words_of_a_forced_retry_are_never_a_promise(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    cut = ([SAID_BEFORE], "max_tokens", [text(SAID_BEFORE), use("type_text", text="Pia")])
+    client = ScriptedClient(
+        OPEN_NOTEPAD,
+        cut,
+        ([PROMISE], "end_turn", [text(PROMISE)]),  # the retry only talks
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, SCENE)
+    assert "promised" not in b.last_call

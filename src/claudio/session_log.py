@@ -123,6 +123,7 @@ def _details(row: dict[str, Any]) -> list[str]:
     for key in (
         "claude_error",
         "cut_retry",
+        "promised",
         "barge_in",
         "wake_check",
         "closed_list_from",
