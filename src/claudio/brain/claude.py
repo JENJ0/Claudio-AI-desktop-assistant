@@ -57,6 +57,7 @@ from claudio.memory.prompt import without_recalled
 from claudio.protocols import CUT_SHORT
 from claudio.router.normalizer import normalize, strip_wake_words
 from claudio.safety.confirmation import (
+    ACTION_TTL_S,
     CANCELLED,
     LEVEL_EXPLICIT,
     LEVEL_SAFE,
@@ -83,7 +84,7 @@ CACHE_TTL: CacheTtl = "5m"  # the default TTL of `cache_control`: what a cache w
 CHARS_PER_TOKEN = 3  # estimate for a reply cut short before the API sent its output count
 _MARKDOWN = re.compile(r"[*#`]+")  # read aloud as "asterisco": never sent to the voice
 OFFER_TTL_S = 60.0  # "Vuoi che usi Sonnet?" waits this long for its answer
-ACTION_TTL_S = 60.0  # and so does "Scrivo ciao. Confermi?"
+LOCAL_NOTE = "[Claudio answered: its own command, not Claude]"  # after a local reply
 ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: open_app ok]"
 # ... and for a call that never ran: "[Claudio did not run: type_text, cut at the token limit]"
 NOT_RUN_NOTE = "[Claudio did not run: "
@@ -105,7 +106,7 @@ CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
 # depends on it), yet the model imitates them (01/11 23:32, with no tool called): _NoteFilter.
 _NOTE_OPENINGS = tuple(
     note[: note.index(":") + 1].lower()
-    for note in (ACTIONS_NOTE, NOT_RUN_NOTE, CUT_NOTE, CUT_BEFORE_NOTE)
+    for note in (ACTIONS_NOTE, NOT_RUN_NOTE, CUT_NOTE, CUT_BEFORE_NOTE, LOCAL_NOTE)
 )
 # Haiku says what it is about to do, then calls the tool, then says what it did (live test of
 # 07/11): the first sentences wait until the call is known. Not model facts: not in config.
@@ -238,6 +239,15 @@ class ClaudeBrain:
         if cut and self._offer is not None:
             log.info("Offerta di Sonnet scaduta: interrotta", extra={"route": "tool"})
             self._offer = None
+
+    def note_local(self, question: str, answer: str) -> None:
+        """A local command answered `question`: Claude's next request sees the turn, marked as
+        not its own. The note holds no ACTIONS_NOTE, so `_read_outside` never reads it."""
+        if not self.settings.history_turns:
+            return  # no history is sent, and the deque would not be bounded
+        self._forget_if_idle()
+        self._history.append((question, f"{answer} {LOCAL_NOTE}"))
+        self._last_turn = self.clock()
 
     def stop_acting(self) -> None:
         """A new request was said over this reply. Its stream is still read, for "Dicevo", but
@@ -939,9 +949,12 @@ class ClaudeBrain:
         turn.written = entry
         self._last_turn = self.clock()
 
-    def _messages(self, text: str, language: str) -> list[dict[str, Any]]:
+    def _forget_if_idle(self) -> None:
         if self.clock() - self._last_turn > self.settings.history_reset_s:
             self._history.clear()  # a new conversation: old context costs and confuses
+
+    def _messages(self, text: str, language: str) -> list[dict[str, Any]]:
+        self._forget_if_idle()
         if self.memory is not None and self.memory.forgotten():
             # JenJo had something forgotten: the conversation may still quote it. Its cache
             # was to be written again anyway (the memory block changed).

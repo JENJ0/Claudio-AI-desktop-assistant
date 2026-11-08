@@ -433,12 +433,12 @@ async def test_the_answer_needs_no_wake_word(fake_vad, vad_settings, make_frames
     assert assistant.state is State.IDLE
 
 
-async def test_silence_after_the_question_cancels(
+async def test_silence_after_the_question_leaves_it_waiting_and_nothing_runs(
     fake_vad, vad_settings, make_frames, matcher
 ) -> None:
     assistant, speaker, rec, r = build(fake_vad, vad_settings, matcher, ["chiudi la finestra"])
     await feed(assistant, speaker, make_frames, answer=False)
     assert speaker.beeps == ["wake", "wake", "cancel"]
-    assert rec.combos == [] and not r.awaiting
+    assert rec.combos == [] and r.awaiting  # the question waits (ACTION_TTL_S), run by nothing
     assert [row["outcome"] for row in assistant.history] == ["ok", "timeout"]
     assert assistant.state is State.IDLE

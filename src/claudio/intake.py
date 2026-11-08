@@ -217,6 +217,8 @@ class RequestFilter:
         listen to the wake word itself and, if the name is there, decides again with
         name_heard. While a question is open, a yes or no that carries the name ("No,
         Claudio.") is the answer, not the name alone."""
+        if self._unnamed_answer(text, heard, responder):
+            return Decision(Kind.FALSE_WAKE, text, "name_not_heard")
         if self._is_answer(text, responder):  # "No, Claudio." is a no, not the name alone
             return self._answer(text, heard)
         if only_wake_words(text) and not heard.relistened:
@@ -285,6 +287,19 @@ class RequestFilter:
         ):
             return Decision(Kind.ANSWER, "", "quiet_answer")
         return Decision(Kind.ANSWER, text)
+
+    def _unnamed_answer(self, text: str, heard: Heard, responder: Responder) -> bool:
+        """A question waits for its yes (it outlives the silence), and a new wake detection
+        brings a phrase without the name: noise woke the detector, and a "sì" from the TV
+        must not run the action. The window right after the question needs no name."""
+        return (
+            self.verify_wake
+            and responder.awaiting
+            and heard.wake_word not in (CONVERSATION, BARGE_IN, FOLLOW_UP)
+            and not (heard.name_heard or heard.second_chance or heard.relistened)
+            and not heard_wake_word(text)
+            and not wake_confirmed(text, False)
+        )
 
     def _false_wake(self, text: str, language: str, heard: Heard, responder: Responder) -> bool:
         """Only a real wake word detection is judged: not the conversation window, not a

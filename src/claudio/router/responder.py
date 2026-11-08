@@ -33,6 +33,7 @@ from claudio.router.actions import ActionRunner
 from claudio.router.matcher import Command, CommandMatcher, Match, Near
 from claudio.router.normalizer import extract_number, normalize, strip_wake_words
 from claudio.safety.confirmation import (
+    ACTION_TTL_S,
     CANCELLED,
     LEVEL_CONFIRM,
     LEVEL_SAFE,
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# The routes whose reply Claude is told about (not the memory, a guess, repeat or stop).
+NOTED_ROUTES = frozenset({"local", "confirm", "confirmed", "refused"})
 ANSWER_WINDOW_S = 45.0  # then the question is old: a phrase without the name is not its answer
 
 # Asked with (request, reply language): Claude's reply, streamed.
@@ -93,6 +96,7 @@ class LocalResponder:
         fallback_awaiting: Callable[[], bool] | None = None,
         fallback_cancel: Callable[[bool], None] | None = None,
         fallback_stop: Callable[[], None] | None = None,
+        fallback_note: Callable[[str, str], None] | None = None,
         fallback_cut: Callable[[Sequence[str], object | None], object | None] | None = None,
         fallback_dropped: Callable[[object | None], bool] | None = None,
         fallback_heard: Callable[[Hearing], None] | None = None,
@@ -114,6 +118,8 @@ class LocalResponder:
         self.fallback_awaiting = fallback_awaiting
         self.fallback_cancel = fallback_cancel
         self.fallback_stop = fallback_stop  # a new request cut Claude's reply: it no longer acts
+        # A local command answered: Claude's history gets (request, reply), see NOTED_ROUTES.
+        self.fallback_note = fallback_note
         self.fallback_cut = fallback_cut  # Claude's reply was cut: what was heard of it
         self.fallback_dropped = fallback_dropped  # that cut reply's action was stopped
         # "continua" has something to say again (set by the Assistant): else it goes to Claude.
@@ -178,7 +184,7 @@ class LocalResponder:
     def awaiting(self) -> bool:
         """True after a confirmation question: the assistant listens again, no wake word."""
         return (
-            self._pending is not None
+            self._pending_open()
             or self._proposal is not None
             or self._fallback_waits()
             or (self.memory is not None and self.memory.awaiting)
@@ -188,7 +194,11 @@ class LocalResponder:
     def needs_voice(self) -> bool:
         """An action waits for a spoken yes (never given in the chat window). The memory's
         question ("Quale dimentico?") is not one: it can be answered by typing too."""
-        return self._pending is not None or self._proposal is not None or self._fallback_waits()
+        return self._pending_open() or self._proposal is not None or self._fallback_waits()
+
+    def _pending_open(self) -> bool:
+        """A local question was asked less than ACTION_TTL_S ago: it still waits for its yes."""
+        return self._pending is not None and self.clock() - self._pending.asked < ACTION_TTL_S
 
     def _fallback_waits(self) -> bool:
         return (
@@ -313,9 +323,9 @@ class LocalResponder:
 
     def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:
         """Nothing was said after the question (or it was not understood as speech). After
-        mere `silence` an action Claude proposed stays armed until it expires: JenJo may
-        answer later with the wake word ("Hey Claudio, confermo")."""
-        if self._pending is not None:
+        mere `silence` a question (Claude's or the router's) stays armed until it expires:
+        JenJo may answer later with the wake word ("Hey Claudio, confermo")."""
+        if self._pending is not None and not silence:
             log.info(
                 "Conferma scaduta: %s non eseguito",
                 self._pending.match.command.id,
@@ -362,6 +372,7 @@ class LocalResponder:
         "ripeti"."""
         parts: list[str] = []
         self.claude_replied = False
+        quiet = self._quiet()
         async for chunk in self._respond(text, language):
             parts.append(chunk)
             yield chunk
@@ -369,6 +380,18 @@ class LocalResponder:
         if reply and self.last_route.get("command") != "repeat":
             self._last_reply = (reply, self.language)
             self._last_reply_at = self.clock()
+            if not quiet and not self._quiet():
+                self._note_for_claude(text, reply)
+
+    def _quiet(self) -> bool:
+        system = self.actions.system
+        return system.off or system.paused
+
+    def _note_for_claude(self, text: str, reply: str) -> None:
+        """Claude's next request sees what a local command just answered, or it would not know
+        it happened (and could answer "che ore sono?" differently, or repeat the action)."""
+        if self.fallback_note is not None and self.last_route.get("route") in NOTED_ROUTES:
+            self.fallback_note(text, reply)
 
     async def _respond(
         self, text: str, language: str, confirmed: bool = False
@@ -426,6 +449,13 @@ class LocalResponder:
         if self.actions.system.off:
             self.cancel_pending()
             return None
+        if self._pending is not None and not self._pending_open():
+            log.info(
+                "Domanda scaduta: %s non eseguito",
+                self._pending.match.command.id,
+                extra={"route": "confirm_timeout"},
+            )
+            self._pending = None  # the phrase is a normal request
         if self._pending is not None:
             return self._answer(text)
         if self._proposal is not None:
@@ -486,7 +516,7 @@ class LocalResponder:
         if match.command.level > LEVEL_SAFE and not (
             confirmed and match.command.level <= LEVEL_CONFIRM
         ):
-            self._pending = Pending(match, self.language)
+            self._pending = Pending(match, self.language, self.clock())
             self.last_route.update(route="confirm", level=match.command.level)
             log.info(
                 "Conferma richiesta (livello %d): %s",

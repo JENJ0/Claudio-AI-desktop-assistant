@@ -22,6 +22,8 @@ from claudio.router.normalizer import GREETINGS, is_wake_word, normalize, strip_
 LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT = 1, 2, 3
 LEVELS = (LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT)
 
+ACTION_TTL_S = 60.0  # a question waits this long for its yes, Claude's and the router's alike
+
 # Said when a command does not carry its own question (`confirm` in commands.toml).
 ASK_LEVEL_2 = {"it": "Confermi?", "en": "Do you confirm?"}
 ASK_LEVEL_3 = {
@@ -131,6 +133,7 @@ class Pending:
 
     match: Match
     language: str  # of the question: the answer is given in it
+    asked: float  # the responder's clock when it was asked: ACTION_TTL_S from then
 
     @property
     def level(self) -> int:

@@ -60,7 +60,7 @@ from claudio.resume import (
 )
 from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
 from claudio.stt.recovery import CommandRecovery
-from claudio.system import HIDDEN, OFF, SystemControl
+from claudio.system import HIDDEN, OFF, PAUSE, SystemControl
 from claudio.tts.sentence_splitter import joined_reply
 from claudio.wakeword.verifier import clipped_name, unclear
 
@@ -301,6 +301,7 @@ class Assistant:
         self._unsaid_rest: CutReply | None = None
         responder.can_resume = self._can_resume
         self.system.subscribe(self._forget_rest_when_off)  # also from the tray menu
+        self.system.subscribe(self._end_questions_when_silenced)
         self._kept_after_empty = False  # the window already outlived one empty phrase
         self._listened = 0  # samples the window heard before its phrase began
         # Frames heard since the last phrase went to Whisper: if it was someone talking, they
@@ -703,8 +704,8 @@ class Assistant:
             else:
                 log.info("Nessuna richiesta dopo la wake word: torno in attesa")
             self._beep("cancel")
-            # Silence: a Claude action keeps waiting (ACTION_TTL_S) for "Hey Claudio, confermo"
-            # (24/10: JenJo answered 30 s later and the command had already been dropped).
+            # Silence: a question, Claude's or a local command's, keeps waiting (ACTION_TTL_S) for
+            # "Hey Claudio, confermo" (24/10: JenJo answered 30 s later and it had been dropped).
             self.responder.cancel_pending(silence=True)
             self._finish(outcome="timeout")
         elif event is EndpointEvent.END:
@@ -1667,6 +1668,7 @@ class Assistant:
         outcome = "ok"
         route_before = self.responder.last_route
         log.info("Scritto nella finestra: %r", text)
+        cancelled = self._cancel_spoken_question()
         try:
             if self.on_heard is not None:
                 self.on_heard(Hearing())  # typed: nothing misheard
@@ -1697,6 +1699,8 @@ class Assistant:
                 outcome = "needs_voice"
             if self.responder.last_route is not route_before:  # else it never reached the router
                 inter.info.update(self.responder.last_route)
+            if cancelled:
+                inter.info["reply"] = f"{cancelled} {inter.info.get('reply', '')}".strip()
             inter.mark("done")
             inter.info["outcome"] = outcome
             row = self.metrics.write(inter) if self.metrics else inter.summary()
@@ -1704,6 +1708,18 @@ class Assistant:
             self.wake.reset()
             self._set_state(State.IDLE)
         return str(inter.info.get("reply", ""))
+
+    def _cancel_spoken_question(self) -> str:
+        """A question armed by voice is never answered by typing (a typed "sì" confirmed a
+        level 2 action, found by Task 6's reviewer): it is cancelled and the text is a new
+        request. Returns what the chat says about it ("" when nothing was waiting). The memory's
+        "Quale dimentico?" is no spoken action: it can be answered by typing (`needs_voice`)."""
+        if not self.responder.needs_voice:
+            return ""
+        log.info("Messaggio scritto con una domanda a voce in attesa: la annullo")
+        note = in_language(TYPED_CANCELS_QUESTION, self.responder.language)
+        self.responder.cancel_pending()
+        return note
 
     async def _speak_reply(
         self,
@@ -1779,6 +1795,12 @@ class Assistant:
     def _typed_continue(self, route_before: dict[str, Any]) -> bool:
         route = self.responder.last_route
         return route is not route_before and route.get("command") == CONTINUE_COMMAND
+
+    def _end_questions_when_silenced(self, what: str) -> None:
+        """Off or paused (voice or tray): a question still waiting is over, so a "sì" after
+        "accenditi" or during the pause runs nothing."""
+        if what in (OFF, PAUSE):
+            self.responder.cancel_pending()
 
     def _forget_rest_when_off(self, what: str) -> None:
         if what == OFF:
@@ -2112,6 +2134,12 @@ async def _fixed_reply(text: str) -> AsyncIterator[str]:
     """A fixed sentence of Claudio's own, as a reply stream."""
     yield text
 
+
+# A typed message came while a question was waiting for a spoken answer.
+TYPED_CANCELS_QUESTION = {
+    "it": "Ho annullato la domanda a voce.",
+    "en": "I cancelled the spoken question.",
+}
 
 # A level 2-3 action written in the chat window: it is confirmed by voice only.
 TYPED_NEEDS_VOICE = {

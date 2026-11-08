@@ -234,6 +234,10 @@ EN: dict[str, str] = {
         "Confirmation unclear (level %d): %s not run"
     ),
     "Conferma scaduta: %s non eseguito": "Confirmation expired: %s not run",
+    "Domanda scaduta: %s non eseguito": "Question expired: %s not run",
+    "Messaggio scritto con una domanda a voce in attesa: la annullo": (
+        "Message typed while a spoken question was waiting: cancelling it"
+    ),
     "Nuova richiesta sopra la risposta: %s non eseguito": "New request over the reply: %s not run",
     "Offerta di Sonnet scaduta: interrotta": "Sonnet offer expired: interrupted",
     "Offerta di Sonnet non sentita: annullata": "Sonnet offer not heard: cancelled",
