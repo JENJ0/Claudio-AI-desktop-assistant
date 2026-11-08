@@ -7,7 +7,6 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Sequence
 
-from claudio.intake import asks_something
 from claudio.router.normalizer import normalize
 from claudio.tts.sentence_splitter import joined_reply
 
@@ -18,6 +17,12 @@ CLOSERS = frozenset(
     | {"claudio", "ehi", "hey", "e", "si", "no", "allora", "dai"}
 )
 RESUME_PREFIX = {"it": "Dicevo:", "en": "As I was saying:"}
+# Said after a local answer given over a reply whose action was stopped: "Dicevo" would repeat the
+# promise of that action.
+ACTION_STOPPED = {
+    "it": "Ho lasciato stare l'azione di prima.",
+    "en": "I dropped the action from before.",
+}
 
 
 class DrainedStream:
@@ -54,6 +59,11 @@ class DrainedStream:
             await self._new.wait()
 
     @property
+    def ended(self) -> bool:
+        """The whole reply has arrived (not cancelled, not still being written)."""
+        return self._task.done() and not self._task.cancelled()
+
+    @property
     def text(self) -> str:
         """What the voice would say: a reply cut at the token limit loses its fragment."""
         return joined_reply(self.parts)
@@ -85,11 +95,11 @@ def remainder(text: str, played: Sequence[str]) -> str:
 
 
 def worth_resuming(reply: str, min_chars: int) -> bool:
-    """A long reply that does not end asking something: a story or an explanation. Of the 14
-    replies resumed in JenJo's logs up to 30/10 the 9 wrong ones were answers, banter and
-    questions ("Dicevo: Non è chiaro cosa intendi, socio: chi ha fatto cosa?"); every reply
-    worth resuming had more than 200 characters."""
-    return len(reply.strip()) >= min_chars and not asks_something(reply)
+    """A long reply: a story or an explanation. Of the 14 replies resumed in JenJo's logs up to
+    30/10 the 9 wrong ones were answers and banter; every reply worth resuming had more than 200
+    characters. A story ending with "Vuoi il seguito?" is still one (17:08, 05/11); a reply that
+    waits for a yes is the caller's to keep out."""
+    return len(reply.strip()) >= min_chars
 
 
 def ends_the_reply(request: str) -> bool:

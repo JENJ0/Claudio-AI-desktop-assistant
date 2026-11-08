@@ -51,6 +51,7 @@ from claudio.protocols import (
     WakeWordDetector,
 )
 from claudio.resume import (
+    ACTION_STOPPED,
     RESUME_PREFIX,
     DrainedStream,
     ends_the_reply,
@@ -59,7 +60,7 @@ from claudio.resume import (
 )
 from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
 from claudio.stt.recovery import CommandRecovery
-from claudio.system import HIDDEN, SystemControl
+from claudio.system import HIDDEN, OFF, SystemControl
 from claudio.tts.sentence_splitter import joined_reply
 from claudio.wakeword.verifier import clipped_name, unclear
 
@@ -75,6 +76,7 @@ WAKE_CHECK_S = 2.5
 QUIET_SPEECH_DBFS = -30.0  # loudest 32 ms of a phrase below this: the microphone is too quiet
 HISTORY_MAX = 200  # finished interactions kept in memory
 WHILE_SPEAKING_S = 3600.0  # the barge-in listener never times out while CLAUDIO speaks
+CONTINUE_COMMAND = "continue_reply"  # config/commands.toml: "continua", action "resume"
 CUT_FINISH_S = 5.0  # a cut reply still arriving from Claude: wait this long for the rest
 # The outcomes of a request that was really said to Claudio: the microphone level learns from
 # these only (a false wake, noise, the TV in the conversation window or a timeout are not it).
@@ -134,6 +136,9 @@ class BargeIn:
     # if it took less than this (0: never) and the reply was long enough to be worth it.
     resume_s: float = 60.0
     resume_min_chars: int = 200
+    # "continua" says again the text still missing of a cut reply for this long (the time after
+    # which Claude's context starts over too).
+    rest_s: float = 300.0
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,7 @@ class CutReply:
     resumed: bool = False
     rest: str = ""
     handle: object | None = None  # Claude's turn that was cut: "Dicevo" completes its history
+    dropped: bool = False  # its action was stopped: not resumed, the words would repeat the promise
 
 
 class Assistant:
@@ -282,6 +288,11 @@ class Assistant:
         # A reply cut by a new request, still read to its end: resumed once that request is
         # answered. None: no reply was cut.
         self._cut: CutReply | None = None
+        # The text a "continua" says again: a cut reply that was not resumed by itself, or one
+        # stopped with "basta" after it was fully written. None: nothing is missing.
+        self._unsaid_rest: CutReply | None = None
+        responder.can_resume = self._can_resume
+        self.system.subscribe(self._forget_rest_when_off)  # also from the tray menu
         self._kept_after_empty = False  # the window already outlived one empty phrase
         self._listened = 0  # samples the window heard before its phrase began
         # Frames heard since the last phrase went to Whisper: if it was someone talking, they
@@ -760,8 +771,8 @@ class Assistant:
                 await self._beep_now("cancel")
             # A confirmation question ("Confermi?"): the answer comes without the wake word.
             follow_up = self.responder.awaiting and not self._interrupted
-            if resume and outcome == "ok" and not follow_up and self._takeover is None:
-                await self._resume_reply(resume, decision.text, inter)
+            ok = outcome == "ok" and not follow_up and self._takeover is None
+            await self._go_on(resume, decision.text, inter, route_before, ok)
         except Exception:
             outcome = "error"
             log.exception("Errore durante la richiesta")
@@ -774,6 +785,41 @@ class Assistant:
                 cut.stream.cancel()
             if outcome not in (Kind.RELISTEN.value, Kind.CONTINUE.value):
                 await self._close_request(inter, outcome, follow_up, route_before)
+
+    async def _go_on(
+        self,
+        resume: CutReply | None,
+        request: str,
+        inter: Interaction,
+        route_before: dict[str, Any],
+        ok: bool,
+    ) -> None:
+        """What comes after the answer: "continua" says the missing text, a local answer given
+        over a cut reply goes back to it ("Dicevo"), anything else keeps it for "continua"."""
+        barge = self.barge_in
+        if self.system.off:
+            self._unsaid_rest = None  # nothing is kept while off
+        if barge is None:
+            return  # nothing is cut without it: nothing to go on with
+        route = self.responder.last_route
+        mine = route is not route_before  # else this request never reached the router
+        if mine and route.get("command") == CONTINUE_COMMAND:
+            rest, self._unsaid_rest = self._unsaid_rest, None
+            if rest is not None and ok:
+                await self._resume_reply(rest, request, inter, barge.rest_s)
+            return
+        if mine and route.get("route") == "claude" and not self._interrupted:
+            self._unsaid_rest = None  # Claude went on from the history: the old text is stale
+        if resume is None:
+            return
+        local = mine and route.get("route") in ("local", "memory")
+        if resume.dropped:
+            if local and ok:
+                await self._say_dropped(inter)
+        elif local and ok:
+            await self._resume_reply(resume, request, inter, barge.resume_s)
+        elif not (self.system.off or ends_the_reply(request)):
+            self._unsaid_rest = resume
 
     async def _hear_phrase(
         self, audio: np.ndarray, inter: Interaction
@@ -1568,6 +1614,10 @@ class Assistant:
             outcome = "error"
             log.exception("Errore rispondendo al messaggio scritto")
         finally:
+            if self._typed_continue(route_before):  # silent in the chat: show the rest instead
+                rest, self._unsaid_rest = self._unsaid_rest, None
+                if rest is not None:
+                    inter.info["reply"] = rest.rest
             if self.responder.needs_voice:  # level 2-3: confirmed by voice only, never armed here
                 self.responder.cancel_pending()
                 note = in_language(TYPED_NEEDS_VOICE, self.responder.language)
@@ -1605,6 +1655,8 @@ class Assistant:
             handle = None
             if self._interrupted and not resumed:  # before the stream is closed
                 handle = self.responder.reply_cut(list(self.speaker.played))
+                if handle is not None:
+                    self._unsaid_rest = None  # a newer Claude reply: the older text is stale
             if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
                 self.responder.stop_acting()  # kept for its words: no action may follow from it
                 language_now = lang() if callable(lang) else lang
@@ -1612,7 +1664,58 @@ class Assistant:
                 unsure = bool(inter.info.get("stt_unsure"))
                 self._cut = CutReply(drained, played, now, language_now, unsure, handle=handle)
             else:
+                self._keep_stopped(drained, handle, lang)
                 drained.cancel()
+
+    def _keep_stopped(self, drained: DrainedStream, handle: object | None, lang: Any) -> None:
+        """ "basta" over Claude's reply that was already fully written: "continua" can say the
+        rest for free. A stream still being written stays cancelled (no money for words nobody
+        hears): then Claude continues from the history."""
+        barge = self.barge_in
+        if barge is None or handle is None or self._takeover is not None or not drained.ended:
+            return
+        # `awaiting` still matters for a question that was heard whole ("Lo uso?"); one that was
+        # not heard is disarmed by reply_cut and shows as a dropped action instead.
+        if (
+            self.responder.awaiting
+            or self.responder.action_dropped(handle)
+            or not worth_resuming(drained.text, barge.resume_min_chars)
+        ):
+            return
+        played = list(self.speaker.played)
+        rest = remainder(drained.text, played)
+        if rest:
+            language = lang() if callable(lang) else lang
+            self._unsaid_rest = CutReply(
+                drained, played, self.clock(), language, rest=rest, handle=handle
+            )
+
+    def _typed_continue(self, route_before: dict[str, Any]) -> bool:
+        route = self.responder.last_route
+        return route is not route_before and route.get("command") == CONTINUE_COMMAND
+
+    def _forget_rest_when_off(self, what: str) -> None:
+        if what == OFF:
+            self._unsaid_rest = None
+
+    def _can_resume(self) -> bool:
+        """There is a text to say again for "continua": recent, and Claudio is on."""
+        rest = self._unsaid_rest
+        if rest is None or self.barge_in is None:
+            return False
+        if self.system.off or self.clock() - rest.at > self.barge_in.rest_s:
+            self._unsaid_rest = None
+            return False
+        return True
+
+    async def _say_dropped(self, inter: Interaction) -> None:
+        """The answer to a local request given over a reply whose action was stopped: it was
+        left, and "Dicevo" does not repeat its promise."""
+        text = in_language(ACTION_STOPPED, self.responder.language)
+        self._reply_parts = []
+        await self._speak_reply(
+            _fixed_reply(text), inter, self._on_resume_audio, self.responder.language, resumed=True
+        )
 
     async def _unsaid(self, cut: CutReply | None) -> CutReply | None:
         """The reply this request cut, with its last words (Claude is usually done by now):
@@ -1628,23 +1731,23 @@ class Assistant:
             log.info("Non riprendo la risposta interrotta: rispondeva a una frase incerta")
             return None
         await cut.stream.finish(CUT_FINISH_S)
+        if cut.handle is not None and self.responder.action_dropped(cut.handle):
+            log.info("Non riprendo la risposta interrotta: la sua azione è stata fermata")
+            return replace(cut, dropped=True)
         if self.responder.awaiting:
             return None  # it asked something ("Lo uso?"): not a story to go on with
         if not cut.resumed and not worth_resuming(cut.stream.text, self.barge_in.resume_min_chars):
             # (a resumed reply was judged whole the first time: "Dicevo: <rest>" may be short)
-            log.info("Non riprendo la risposta interrotta: breve o una domanda")
+            log.info("Non riprendo la risposta interrotta: troppo breve")
             return None
         rest = remainder(cut.stream.text, cut.played)
         return replace(cut, rest=rest) if rest else None
 
-    async def _resume_reply(self, cut: CutReply, request: str, inter: Interaction) -> None:
-        """After answering the request that cut a reply: "Dicevo: ..." and the rest of it."""
-        assert self.barge_in is not None
-        if (
-            self.system.off
-            or ends_the_reply(request)
-            or self.clock() - cut.at > self.barge_in.resume_s
-        ):
+    async def _resume_reply(
+        self, cut: CutReply, request: str, inter: Interaction, max_age_s: float
+    ) -> None:
+        """ "Dicevo: ..." and the rest of a reply, if it was cut no longer than `max_age_s` ago."""
+        if self.system.off or ends_the_reply(request) or self.clock() - cut.at > max_age_s:
             return  # off ("spegniti" cut it): nothing more is said
         rest, language = cut.rest, cut.language
         log.info("Riprendo la risposta interrotta: %r", rest[:60])

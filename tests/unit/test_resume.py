@@ -47,8 +47,8 @@ LONG = STORY * 3  # 222 characters: a story worth going on with
     [
         (LONG, True),
         (STORY, False),  # 74 characters: an answer, banter, a joke
-        (f"{LONG} Ti è piaciuta?", False),  # it ends asking something
-        (f"{LONG} Ne vuoi un'altra? Dimmelo e la racconto.", False),  # a short line after it
+        (f"{LONG} Vuoi il seguito?", True),  # a story asking for more is still a story (17:08)
+        (f"{LONG} Ne vuoi un'altra? Dimmelo e la racconto.", True),
         (f"Una storia? Eccola. {LONG}", True),  # a "?" at the start is no question to JenJo
     ],
 )

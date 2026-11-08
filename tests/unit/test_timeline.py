@@ -16,7 +16,10 @@ import pytest
 
 from claudio.app import Interaction, State, _fixed_reply
 from claudio.brain.claude import CUT_NOTE
-from claudio.resume import DrainedStream
+from claudio.brain.prompts import BRIDGE
+from claudio.memory.store import MemoryStore
+from claudio.memory.voice import MemoryVoice
+from claudio.resume import ACTION_STOPPED, DrainedStream, remainder
 from claudio.tts.speaker import StreamingSpeaker
 from tests.unit.test_pc_tools import FakeDesktop, text, use
 from tests.unit.test_speaker import FakePlayer, FakeSynth
@@ -333,16 +336,22 @@ async def test_a_request_over_the_reply_gets_its_own_answer(
     assert not any("Confermi" in said for said in scene.speaker.spoken)
 
 
-async def test_the_words_of_the_cut_reply_still_come_back(make_scene, home: Path) -> None:
-    """Only the action is stopped: the story it told before the call is resumed, as always."""
+async def test_a_local_request_over_a_dropped_action_says_so_and_does_not_resume(
+    make_scene, home: Path
+) -> None:
+    """Resuming would repeat the promise of the action that was stopped: the answer, then one
+    sentence saying the action was left, no "Dicevo"."""
     desk = FakeDesktop()
     scene = make_scene(SAY_THEN_CALL, sentence_frames=PLAY, chunk_wait=9, desk=desk, home=home)
     await scene.say(WRITE)
     await scene.until_speaking()
     await scene.say_over("che ore sono")
     await idle(scene, poll_s=0.002)
-    assert resumed(scene)
+    spoken = scene.speaker.spoken
+    assert not resumed(scene) and spoken.count(ACTION_STOPPED["it"]) == 1
+    assert spoken.index("Sono le 14 e 5.") < spoken.index(ACTION_STOPPED["it"])
     assert not typed_anything(desk) and not scene.brain.awaiting
+    assert scene.assistant._unsaid_rest is None  # its rest would repeat the promise
 
 
 async def test_basta_over_the_reply_runs_nothing_either(make_scene, home: Path) -> None:
@@ -488,12 +497,6 @@ async def test_a_story_heard_in_two_parts_is_whole_in_the_history(make_scene) ->
     assert answer.count(SENTENCES[1]) == 1 and RESUME not in answer
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="G2: worth_resuming discards a story ending with a question (Vuoi il seguito?),"
-    " so Dicevo does not start after a local command",
-)
 async def test_17_08_story_then_time_resumes(make_scene) -> None:
     """A story that ends asking "Vuoi il seguito?" is cut by "che ore sono": the time is a local
     answer, so "Dicevo" goes on with the story (JenJo's decision)."""
@@ -508,12 +511,6 @@ async def test_17_08_story_then_time_resumes(make_scene) -> None:
     assert resumed(scene)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="G2: _resume_reply goes on after any answered request, also one to Claude;"
-    " JenJo wants it only after a local command",
-)
 async def test_17_13_story_then_new_request_does_not_resume(make_scene) -> None:
     """A story cut by a request for Claude is not resumed by itself (JenJo's decision)."""
     scene = make_scene(
@@ -577,3 +574,189 @@ async def test_typed_request_over_a_stale_stream_does_not_wake_it(make_scene, ho
     await scene.advance(1.0)
     await stale.finish(5.0)
     assert not scene.brain.awaiting and not typed_anything(desk)
+
+
+# --- "continua": the missing text said again, for free (G2 task 7) ------------------------
+
+
+def api_calls(scene: Scene) -> int:
+    return len(scene.client.calls)
+
+
+async def stop_the_story(scene: Scene) -> None:
+    """The story is told, "basta" cuts it after its first sentence."""
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("basta")
+    await idle(scene)
+
+
+async def test_continua_after_basta_says_the_exact_rest_for_free(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, window_s=4.0)
+    await stop_the_story(scene)
+    assert scene.row(0)["outcome"] == "interrupted"
+    heard = list(scene.speaker.played)
+    assert 0 < len(heard) < len(SENTENCES)
+    await scene.say("continua")
+    await idle(scene)
+    assert api_calls(scene) == 1
+    assert scene.row(1)["route"] == "local" and scene.row(1)["command"] == "continue_reply"
+    assert scene.speaker.spoken[-1] == f"Dicevo: {remainder(''.join(STORY), heard)}"
+    ((_, answer),) = scene.remembered  # Claude knows all of it was said, once
+    assert all(sentence in answer for sentence in SENTENCES)
+    assert answer.count(SENTENCES[1]) == 1 and RESUME not in answer and CUT_NOTE not in answer
+
+
+async def test_continua_after_basta_over_a_reply_still_written_goes_to_claude(make_scene) -> None:
+    """The stream is cancelled at "basta": no money for words nobody hears. More than
+    `resume_min_chars` have arrived, so only the unfinished stream keeps the rest away."""
+    scene = make_scene(
+        text_reply(*STORY * 3),
+        text_reply("Eravamo al faro."),
+        sentence_frames=PLAY,
+        chunk_wait=3,
+        window_s=4.0,
+    )
+    await stop_the_story(scene)
+    assert scene.assistant._unsaid_rest is None
+    await scene.say("continua")
+    await idle(scene)
+    assert api_calls(scene) == 2 and scene.row(1)["route"] == "claude"
+    assert not resumed(scene)
+
+
+async def test_continua_with_nothing_missing_goes_to_claude(make_scene) -> None:
+    scene = make_scene(text_reply("Eccomi."))
+    await scene.say("continua")
+    await idle(scene)
+    assert scene.row(0)["route"] == "claude" and api_calls(scene) == 1
+
+
+async def test_continua_after_history_reset_goes_to_claude(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), text_reply("Dove?"), sentence_frames=PLAY)
+    assert scene.assistant.barge_in is not None
+    scene.assistant.barge_in.rest_s = 5.0
+    await stop_the_story(scene)
+    await scene.advance(6.0)
+    await scene.say("continua")
+    await idle(scene)
+    assert scene.row(1)["route"] == "claude" and not resumed(scene)
+
+
+async def test_continua_after_switching_off_and_on_goes_to_claude(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), text_reply("Dove?"), sentence_frames=PLAY)
+    await stop_the_story(scene)
+    await scene.say("spegniti")
+    await idle(scene)
+    await scene.say("accenditi")
+    await idle(scene)
+    await scene.say("continua")
+    await idle(scene)
+    assert scene.rows[-1]["route"] == "claude" and not resumed(scene)
+
+
+async def test_a_later_claude_answer_clears_the_rest(make_scene) -> None:
+    scene = make_scene(
+        text_reply(*STORY), text_reply("Parigi."), text_reply("Dimmi."), sentence_frames=PLAY
+    )
+    await stop_the_story(scene)
+    await scene.say("qual è la capitale della Francia")
+    await idle(scene)
+    assert scene.assistant._unsaid_rest is None
+    await scene.say("continua")
+    await idle(scene)
+    assert scene.rows[-1]["route"] == "claude" and not resumed(scene)
+
+
+async def test_memory_request_over_a_story_resumes_it(make_scene, tmp_path: Path) -> None:
+    """A memory answer is local too (free): the story goes on after it."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, window_s=4.0)
+    scene.responder.memory = MemoryVoice(MemoryStore(tmp_path / "memory.db"))
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("ricordati che mia sorella è Anna")
+    await idle(scene)
+    assert scene.row(1)["route"] == "memory" and resumed(scene) and api_calls(scene) == 1
+
+
+async def test_a_reply_cut_after_a_bridge_keeps_no_bridge_in_the_history(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    scene.speaker.played[:0] = [BRIDGE["it"]]  # "Ci guardo." was said before the story
+    scene.assistant._interrupted = True
+    scene.responder.reply_cut(list(scene.speaker.played))
+    ((_, answer),) = scene.remembered
+    assert BRIDGE["it"] not in answer
+
+
+async def test_a_newer_cut_claude_reply_clears_the_older_rest(make_scene) -> None:
+    """Story A is whole when "basta" cuts it; story B is still being written when "basta" cuts
+    it: "continua" is for B (Claude), never A's rest."""
+    scene = make_scene(
+        text_reply(*STORY),
+        text_reply(*STORY * 3),
+        text_reply("Eravamo al drago."),
+        sentence_frames=PLAY,
+    )
+    await stop_the_story(scene)
+    assert scene.assistant._unsaid_rest is not None
+    scene.client.chunk_wait = 3
+    await stop_the_story(scene)
+    assert scene.assistant._unsaid_rest is None
+    await scene.say("continua")
+    await idle(scene)
+    assert api_calls(scene) == 3 and scene.rows[-1]["route"] == "claude"
+    assert not resumed(scene)
+
+
+async def test_basta_over_a_whole_reply_with_an_unrun_action_keeps_no_rest(
+    make_scene, home: Path
+) -> None:
+    """The story ends with a "Confermi?" nobody can answer after "basta": no rest to say."""
+    desk = FakeDesktop()
+    scene = make_scene(
+        SAY_THEN_CALL, text_reply("Dimmi."), sentence_frames=PLAY, desk=desk, home=home
+    )
+    await scene.say(WRITE)
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("basta")
+    await idle(scene, poll_s=0.002)
+    assert scene.assistant._unsaid_rest is None
+    await scene.say("continua")
+    await idle(scene, poll_s=0.002)
+    assert scene.rows[-1]["route"] == "claude" and not resumed(scene)
+
+
+async def test_continua_after_the_tray_switched_it_off_and_on_goes_to_claude(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), text_reply("Dove?"), sentence_frames=PLAY)
+    await stop_the_story(scene)
+    system = scene.responder.actions.system
+    system.apply("off")
+    system.apply("on")
+    await scene.say("continua")
+    await idle(scene)
+    assert scene.rows[-1]["route"] == "claude" and not resumed(scene)
+
+
+async def test_typed_continua_shows_the_rest_in_the_chat(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY)
+    await stop_the_story(scene)
+    heard = list(scene.speaker.played)
+    reply = await scene.assistant.handle_typed("continua", "it")
+    assert reply == remainder("".join(STORY), heard) and api_calls(scene) == 1
+    assert scene.assistant._unsaid_rest is None
+
+
+async def test_dropped_action_answers_for_the_handles_turn_not_the_newest(make_scene) -> None:
+    from claudio.brain.claude import _Turn
+
+    brain = make_scene().brain
+    old = _Turn("old")
+    old.note_not_run(["type_text"])
+    brain._turn = _Turn("newer")
+    assert brain.dropped_action(old) and not brain.dropped_action(brain._turn)
+    assert not brain.dropped_action(None)

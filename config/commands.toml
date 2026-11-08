@@ -7,7 +7,7 @@
 # voice). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
 # Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system,
-# chat, memory, repeat, stop.
+# chat, memory, repeat, resume, stop.
 
 [[command]]
 id = "open_chrome"
@@ -225,6 +225,17 @@ keywords = ["ripeti", "ripetere", "ripetilo", "ridillo", "detto", "capito"]
 keywords_en = ["repeat", "again", "say", "pardon"]
 action = "repeat"
 params = { empty = "Non ho ancora detto niente.", empty_en = "I haven't said anything yet." }
+reply = ""
+reply_en = ""
+
+# "continua": says again the text still missing of a reply that was cut, for free. Only while there is
+# one (the Assistant knows); else the phrase goes to Claude, as if no command matched.
+[[command]]
+id = "continue_reply"
+phrases = ["continua", "riprendi", "continua la storia", "riprendi la storia", "vai avanti"]
+phrases_en = ["go on", "continue", "carry on", "go ahead"]
+exact = true
+action = "resume"
 reply = ""
 reply_en = ""
 

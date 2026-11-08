@@ -783,11 +783,18 @@ async def test_a_story_cut_by_a_request_goes_on(
     assert speaker.spoken[-1] == f"Dicevo: {STORY}" and rows[1]["resumed"] is True
 
 
+async def test_a_long_story_asking_for_more_still_goes_on(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    story = f"{STORY} Ti è piaciuta o ne vuoi un'altra?"
+    rows, speaker = await cut_by_a_request(fake_vad, vad_settings, make_frames, matcher, story)
+    assert speaker.spoken[-1] == f"Dicevo: {story}" and rows[1]["resumed"] is True
+
+
 @pytest.mark.parametrize(
     "reply",
     [
         QUESTION,
-        f"{STORY} Ti è piaciuta o ne vuoi un'altra?",  # long, but it ends asking something
         "Sono le 14 e 5.",  # short: an answer, not a story
     ],
 )
@@ -823,13 +830,11 @@ class StartSpeaker(LongSpeaker):
         await super()._during_sentence()
 
 
-@pytest.mark.parametrize("b_unsure", [False, True])
 async def test_a_resumed_story_cut_again_goes_on_again(
-    fake_vad, vad_settings, make_frames, matcher, b_unsure: bool
+    fake_vad, vad_settings, make_frames, matcher
 ) -> None:
-    # The story answers a request heard well: cut, resumed and cut again, it goes on again,
-    # also when the request that cut it the first time was one Whisper doubted.
-    b, c = "come si chiama l'autore", "che giorno è oggi"
+    # The story answers a request heard well: cut, resumed and cut again, it goes on again.
+    b, c = "che ore sono", "che giorno è oggi"  # local answers: only they bring "Dicevo" back
     speaker = StartSpeaker()
     assistant, _, _, r = build(
         fake_vad,
@@ -839,7 +844,7 @@ async def test_a_resumed_story_cut_again_goes_on_again(
         speaker=speaker,
         barge_in=barge(vad_settings, [b, c]),
     )
-    replies = iter([STORY, "Non ha un nome: è una fiaba."])
+    replies = iter([STORY])
 
     async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
         yield next(replies)
@@ -848,9 +853,6 @@ async def test_a_resumed_story_cut_again_goes_on_again(
     stt = assistant.transcriber
     assert isinstance(stt, FakeStt)
     assistant.on_heard = r.heard
-    assistant.unsure_logprob = -0.2
-    sure, doubtful = [Segment(0.0, -0.05)], [Segment(0.05, -0.65)]
-    assistant.stt_segments = lambda: doubtful if b_unsure and len(stt.heard) == 2 else sure
     clock = assistant.clock
     assert isinstance(clock, AudioClock)
     silence = np.zeros(1280, dtype=np.int16)
@@ -888,8 +890,6 @@ async def test_a_resumed_story_cut_again_goes_on_again(
                 yield frame
 
     await assistant.run(gen())
-    rows = list(assistant.history)
-    assert rows[1].get("stt_unsure", False) is b_unsure
     assert [t[:7] for t in speaker.started].count("Dicevo:") == 2
 
 
