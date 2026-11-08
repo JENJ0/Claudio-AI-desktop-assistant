@@ -961,6 +961,7 @@ class Assistant:
             second_chance="second_chance" in info,
             speech_dbfs=speech_dbfs,
             segments=segments,
+            deaf_voice_ms=self._deaf_voice_before_answer(info),
         )
         if segments:  # for tuning the noise filter on real logs
             info["stt_no_speech"] = round(max(s.no_speech_prob for s in segments), 3)
@@ -974,8 +975,8 @@ class Assistant:
             log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", self._kept(text))
             return Decision(Kind.NOT_REQUEST, text, "echo")
         if decision.reason and not decision.dropped and decision.kind is not Kind.CONTINUE:
-            info["intake"] = decision.reason  # e.g. quiet_answer: the "sì" was not counted
-            log.info("Risposta troppo lontana dal microfono, non la conto: %r", self._kept(text))
+            info["intake"] = decision.reason  # quiet_answer, deaf_answer, unsure_yes: not counted
+            log.info("Risposta non sentita (%s), la scarto: %r", decision.reason, self._kept(text))
         if not echo and self._may_recover(decision, heard, language):
             recovered = await self._recover_command(audio, decision.text, language, inter)
             if recovered is not None:
@@ -1999,20 +2000,36 @@ class Assistant:
         except Exception:
             log.exception("Impossibile salvare la nota accanto al WAV %s", name)
 
-    def _measure_deaf(self, inter: Interaction) -> None:
-        """How much voice the window's deaf start held (deaf_speech_ms): a "sì" said over the
-        beep's tail used to be lost without a trace. Only for windows that opened deaf."""
+    def _deaf_voice_ms(self) -> int | None:
+        """How much voice the window's deaf start held (None: not measured). Only for windows
+        that opened deaf. Does not clear what was heard: `_measure_deaf` does, at the end."""
         deaf = self._deaf_heard
         if not deaf.size and self._deaf:
             deaf = np.concatenate(self._deaf).astype(np.float32) / 32768.0
-        self._deaf.clear()
-        self._deaf_heard = np.zeros(0, dtype=np.float32)
         if not deaf.size or self.voice_meter is None:
-            return
+            return None
         try:
-            inter.info["deaf_speech_ms"] = self.voice_meter(deaf)
+            return self.voice_meter(deaf)
         except Exception:
             log.exception("Misura della voce sorda non riuscita")
+            return None
+
+    def _deaf_voice_before_answer(self, info: dict[str, Any]) -> int:
+        """The voice lost while deaf before an answer in the window right after a question: its
+        head may be missing ("no, aspetta" heard from "aspetta"). A later answer, through a new
+        wake word, had no deaf stretch."""
+        if not self.responder.awaiting or info.get("wake_word") not in (CONVERSATION, FOLLOW_UP):
+            return 0
+        return self._deaf_voice_ms() or 0
+
+    def _measure_deaf(self, inter: Interaction) -> None:
+        """Writes deaf_speech_ms: a "sì" said over the beep's tail used to be lost without a
+        trace."""
+        voice = self._deaf_voice_ms()
+        self._deaf.clear()
+        self._deaf_heard = np.zeros(0, dtype=np.float32)
+        if voice is not None:
+            inter.info["deaf_speech_ms"] = voice
 
     def _microphone(self) -> str | None:
         """The microphone AutoGain is following now (None: no automatic gain)."""

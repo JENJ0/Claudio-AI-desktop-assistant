@@ -242,6 +242,66 @@ def test_an_answer_is_never_noise() -> None:
     assert decide("no", responder, segments=[UNSURE], wake_word="follow_up").kind is Kind.ANSWER
 
 
+# -- Task 3: the answer's confidence and the voice lost while deaf --
+
+WEAK = Segment(0.01, -0.9)  # under the floor of -0.75
+FAIR = Segment(0.01, -0.5)
+
+
+def answer_to_question(text: str, **heard):
+    responder = Commands()
+    responder.awaiting = True
+    return decide(text, responder, wake_word="follow_up", **heard)
+
+
+def test_the_floor_and_the_deaf_voice_have_their_settings() -> None:
+    assert NoiseSettings().answer_min_logprob == -0.75
+    assert NoiseSettings().answer_deaf_voice_ms == 100
+
+
+@pytest.mark.parametrize("text", ["sì", "Va bene.", "Confermo.", "Sì, Claudio."])
+def test_a_yes_whisper_is_unsure_of_is_passed_on_as_nothing(text: str) -> None:
+    decision = answer_to_question(text, segments=[SURE, WEAK])  # the weakest segment counts
+    assert decision.kind is Kind.ANSWER and decision.text == ""
+    assert decision.reason == "unsure_yes"
+
+
+def test_a_yes_above_the_floor_or_without_figures_is_a_yes() -> None:
+    assert answer_to_question("sì", segments=[FAIR]).text == "sì"
+    assert answer_to_question("sì").text == "sì"  # no segments, no floor
+
+
+def test_a_no_below_the_floor_is_still_a_no() -> None:
+    decision = answer_to_question("no", segments=[Segment(0.01, -1.0)])
+    assert decision.text == "no" and decision.reason == ""
+
+
+def test_an_unclear_phrase_below_the_floor_is_passed_on_as_it_is() -> None:
+    assert answer_to_question("che ore sono", segments=[WEAK]).text == "che ore sono"
+
+
+def test_a_weak_yes_is_a_weak_yes_at_level_3_too() -> None:
+    decision = answer_to_question("confermo", segments=[WEAK])
+    assert decision.text == "" and decision.reason == "unsure_yes"
+
+
+@pytest.mark.parametrize("text", ["va bene", "no", "no, aspetta", "sì"])
+def test_voice_lost_while_deaf_is_no_answer_at_all(text: str) -> None:
+    decision = answer_to_question(text, deaf_voice_ms=100)
+    assert decision.kind is Kind.ANSWER and decision.text == ""
+    assert decision.reason == "deaf_answer"
+
+
+def test_a_little_voice_while_deaf_is_the_echo_not_a_lost_head() -> None:
+    assert answer_to_question("va bene", deaf_voice_ms=99).text == "va bene"
+    assert answer_to_question("va bene", deaf_voice_ms=0).text == "va bene"
+
+
+def test_a_quiet_answer_keeps_its_own_reason() -> None:
+    decision = answer_to_question("sì", speech_dbfs=-40.0, segments=[WEAK], deaf_voice_ms=500)
+    assert decision.reason == "quiet_answer"
+
+
 # -- before decide() --
 
 

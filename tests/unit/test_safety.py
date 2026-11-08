@@ -329,7 +329,8 @@ async def test_level_2_refused_or_unclear_does_nothing(matcher: CommandMatcher) 
     await say(r, "chiudi la finestra")
     assert await say(r, "no") == "Va bene, non lo faccio."
     await say(r, "chiudi la finestra")
-    assert await say(r, "apri chrome") == "Non ho capito: non lo faccio."
+    assert await say(r, "apri chrome") == "Non ho capito. Chiudi la finestra: sì o no?"
+    assert await say(r, "apri chrome") == "Non ho capito: non lo faccio."  # the second time
     assert rec.combos == [] and rec.ran == []  # Chrome was not opened either
     assert r.last_route["answer"] == "unclear"
 
@@ -342,6 +343,9 @@ async def test_a_phrase_that_is_not_only_a_yes_does_not_run_the_command(
     r = responder(matcher, rec)
     await say(r, "chiudi la finestra")
     await say(r, said)
+    assert rec.combos == []
+    if r.awaiting:  # unclear: asked once more, then cancelled (a refusal cancels at once)
+        await say(r, said)
     assert rec.combos == [] and not r.awaiting
 
 
@@ -442,3 +446,28 @@ async def test_silence_after_the_question_leaves_it_waiting_and_nothing_runs(
     assert rec.combos == [] and r.awaiting  # the question waits (ACTION_TTL_S), run by nothing
     assert [row["outcome"] for row in assistant.history] == ["ok", "timeout"]
     assert assistant.state is State.IDLE
+
+
+# --- Task 3: a greeting after a yes word is a new call, not a yes ------------------------
+
+
+@pytest.mark.parametrize(
+    "said", ["Certo. Hey Claudio.", "Procedi. Hey Claudio.", "Ok, ehi Claudio"]
+)
+def test_a_greeting_after_a_yes_word_is_unclear(said: str) -> None:
+    assert parse_answer(said) is Answer.UNCLEAR
+
+
+def test_a_greeting_before_the_yes_is_still_a_yes() -> None:
+    assert parse_answer("Hey Claudio, sì.") is Answer.YES
+    assert parse_answer("Hey Claudio, confermo.", 3) is Answer.YES
+    assert parse_answer("Confermo. Hey Claudio.", 3) is Answer.UNCLEAR
+
+
+def test_the_second_question_has_its_words() -> None:
+    from claudio.safety.confirmation import ASK_AGAIN, ASK_AGAIN_EXPLICIT
+
+    assert ASK_AGAIN["it"].format(what="Chiudo Chrome") == "Non ho capito. Chiudo Chrome: sì o no?"
+    assert ASK_AGAIN_EXPLICIT["en"].format(what="Erase it") == (
+        "I didn't catch that. Erase it. To go ahead, say: I confirm."
+    )

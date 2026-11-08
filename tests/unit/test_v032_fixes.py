@@ -90,17 +90,18 @@ async def test_confermo_with_the_wake_word_after_the_window_closed(
     assert [d for d in desk.done if d[0] == "command"]
 
 
-async def test_a_new_request_replaces_the_pending_action(
+async def test_a_long_unclear_phrase_does_not_replace_the_pending_action(
     pricing: Pricing, tools: PcTools, desk: FakeDesktop
 ) -> None:
-    client = ScriptedClient(
-        ([], "tool_use", [command()]),
-        (["Sono le tre."], "end_turn", []),
-    )
+    """It pinned the old rule (a long phrase was a new request). Now: asked once more, then
+    cancelled, and Claude is not called again; with the name the responder takes it."""
+    client = ScriptedClient(([], "tool_use", [command()]))
     b = acting_brain(pricing, client, tools)
     await ask(b, "quali programmi usano più memoria")
-    assert await ask(b, "che ore sono adesso in Giappone") == "Sono le tre."
+    assert (await ask(b, "che ore sono adesso in Giappone")).startswith("Non ho capito. ")
+    assert await ask(b, "che ore sono adesso in Giappone") == "Non ho capito: non lo faccio."
     assert not [d for d in desk.done if d[0] == "command"] and not b.awaiting
+    assert len(client.calls) == 1
 
 
 async def test_history_says_the_command_ran(pricing: Pricing, tools: PcTools) -> None:

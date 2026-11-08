@@ -13,6 +13,7 @@ import pytest
 from claudio.app import Assistant, State
 from claudio.audio.own_sound import OwnSound
 from claudio.audio.vad import Endpointer
+from claudio.config import NoiseSettings
 from claudio.router.actions import VK_F4, VK_MENU
 from claudio.router.matcher import Command, CommandMatcher
 from tests.unit.test_actions import Recorder
@@ -240,6 +241,36 @@ async def test_the_answer_after_the_tail_is_heard(fake_vad, vad_settings, matche
     assert speaker.spoken == ["Chiudo la finestra in primo piano. Confermi?", "Fatto."]
     assert rec.combos == [(VK_MENU, VK_F4)]
     assert stt.heard == ["chiudi la finestra", "sì"]
+
+
+@pytest.mark.parametrize(("deaf_ms", "runs"), [(480, False), (60, True)])
+async def test_a_yes_with_voice_lost_while_deaf_runs_nothing(
+    fake_vad, vad_settings, matcher, deaf_ms: int, runs: bool
+) -> None:
+    """Task 3: "va bene" with the head of a longer phrase lost in the deaf start ("no, aspetta"
+    heard from the middle) is not a yes; a little voice there is only the echo."""
+    stt = EchoStt(["chiudi la finestra", "va bene"], echo="Confermi?")
+    assistant, speaker, rec = assistant_for(
+        fake_vad, vad_settings, matcher, stt, FakeWake({3}), voice_meter=lambda audio: deaf_ms
+    )
+    assistant.intake.noise = NoiseSettings()
+
+    async def steps() -> AsyncIterator[np.ndarray]:
+        for f in several(SILENCE, 3) + several(VOICE, 10):
+            yield f
+        async for f in until(assistant, lambda: asked(assistant, speaker)):
+            yield f
+        for f in several(ECHO, 6) + several(SILENCE, 6) + several(VOICE, 5) + several(SILENCE, 30):
+            yield f
+
+    await play(assistant, steps())
+    assert stt.heard == ["chiudi la finestra", "va bene"]
+    assert (rec.combos == [(VK_MENU, VK_F4)]) is runs
+    if not runs:
+        assert assistant.history[1]["intake"] == "deaf_answer"
+        assert speaker.spoken[1] == "Non ho capito. Chiudi la finestra: sì o no?"
+        assert assistant.history[1]["asked_again"] is True
+        assert assistant.history[1]["deaf_speech_ms"] == deaf_ms
 
 
 async def test_the_low_beep_after_a_dropped_phrase_does_not_wake_claudio(

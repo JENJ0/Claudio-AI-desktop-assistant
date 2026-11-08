@@ -524,13 +524,18 @@ class PcTools:
         memory = any(c.name in memory_tools.NAMES for c in calls)
         if top <= LEVEL_CONFIRM and self.settings.confirm_brief and not memory and not read_out:
             return ASK_LEVEL_2.get(language) or ASK_LEVEL_2[DEFAULT_LANGUAGE]
-        say = _SAY.get(language) or _SAY[DEFAULT_LANGUAGE]
-        parts = [await self._describe(call, say, language) for call in calls]
-        what = say["then"].join(p for p in parts if p)
-        what = what[:1].upper() + what[1:]
+        what = await self.describe_calls(calls, language)
         ask = ASK_LEVEL_3 if top > LEVEL_CONFIRM else ASK_LEVEL_2
         ask_text = ask.get(language) or ask[DEFAULT_LANGUAGE]
         return f"{what}. {ask_text}" if what else ask_text  # a bad call describes as ""
+
+    async def describe_calls(self, calls: Sequence[ToolCall], language: str) -> str:
+        """What `calls` will do, read out ("Chiudo la finestra ..., poi premo enter"); the
+        second question says it too. "" when no call has a description."""
+        say = _SAY.get(language) or _SAY[DEFAULT_LANGUAGE]
+        parts = [await self._describe(call, say, language) for call in calls]
+        what = say["then"].join(p for p in parts if p)
+        return what[:1].upper() + what[1:]
 
     async def _describe(self, call: ToolCall, say: dict[str, str], language: str) -> str:
         a = call.args

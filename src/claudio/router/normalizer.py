@@ -231,6 +231,17 @@ def heard_wake_word(text: str) -> bool:
     return any(w not in GREETINGS and is_wake_word(w) for w in words)
 
 
+def after_wake_word(text: str) -> str:
+    """What was said after the last time the name was (the new request in "Certo. Claudio, che
+    ore sono"), as written; "" when the name ends the phrase."""
+    tokens = text.split()
+    for i in range(len(tokens) - 1, -1, -1):
+        word = normalize(tokens[i], drop_fillers=False)
+        if word and word not in GREETINGS and is_wake_word(word):
+            return " ".join(tokens[i + 1 :]).strip(" ,.;:!-")
+    return ""
+
+
 def last_clauses(text: str, lang: str = DEFAULT) -> list[str]:
     """How the end of a phrase said to Claudio may read, whatever punctuation Whisper wrote ("No,
     Claudio, non parlare. Claudio, stop.", "no claudio non parlare claudio stop"): what follows

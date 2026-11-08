@@ -299,3 +299,138 @@ async def test_the_system_commands_leave_nothing_in_claudes_history(
     for said in ("vai in pausa", "svegliati", "spegniti", "accenditi"):
         await say(r, said)
         assert list(b._history) == [], said
+
+
+# --- Task 3: an answer not heard is asked once more; the name cancels --------------------
+
+CLOSE_AGAIN = "Non ho capito. Chiudi la finestra: sì o no?"
+WIPE_AGAIN = "Non ho capito. Dimentica tutto. Per procedere dì: confermo."
+
+
+@pytest.mark.parametrize("blank", ["", "boh, forse"])
+async def test_a_blank_or_unclear_answer_asks_once_more_then_cancels(
+    matcher: CommandMatcher, blank: str
+) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    assert await say(r, blank) == CLOSE_AGAIN
+    assert r.awaiting and r.last_route.get("asked_again") is True
+    assert await say(r, blank) == "Non ho capito: non lo faccio."
+    assert not r.awaiting and rec.combos == []
+
+
+async def test_the_scene_of_17_16_09_asks_once_then_cancels(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    assert await say(r, "Si apre il blocco note.") == CLOSE_AGAIN
+    assert await say(r, "Si apre il blocco note.") == "Non ho capito: non lo faccio."
+    assert rec.combos == []
+
+
+async def test_after_the_second_question_a_yes_runs_and_a_no_cancels(
+    matcher: CommandMatcher,
+) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    await say(r, "")
+    assert await say(r, "sì") == "Fatto."
+    await say(r, "chiudi la finestra")
+    await say(r, "")
+    assert await say(r, "no") == "Va bene, non lo faccio."
+    assert rec.combos == [(VK_MENU, VK_F4)] and not r.awaiting
+
+
+async def test_the_second_question_waits_a_full_ttl(matcher: CommandMatcher) -> None:
+    clock = Monotonic()
+    r = local(matcher, Recorder(), clock)
+    await say(r, "chiudi la finestra")
+    clock.t += 50
+    await say(r, "")
+    clock.t += 59
+    assert r.awaiting  # 109 s after the first question, 59 after the second
+    clock.t += 2
+    assert not r.awaiting
+
+
+async def test_level_3_asks_again_with_the_explicit_words(matcher: CommandMatcher) -> None:
+    r = local(matcher, Recorder(), Monotonic())
+    await say(r, "dimentica tutto")
+    assert await say(r, "") == "Non ho capito. Dimentica tutto. Per procedere dì: confermo."
+
+
+async def test_a_clear_confermo_still_runs_after_a_second_question(
+    matcher: CommandMatcher,
+) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    await say(r, "")
+    assert await say(r, "Claudio, confermo") == "Fatto."
+
+
+async def test_the_name_over_an_open_question_cancels_it_and_answers_the_request(
+    matcher: CommandMatcher,
+) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    reply = await say(r, "Claudio, che ore sono")
+    assert reply.startswith("Va bene, non lo faccio. ") and len(reply) > 30
+    assert r.last_route["command"] == "tell_time" and not r.awaiting
+    assert rec.combos == []
+
+
+async def test_the_name_cancels_the_second_question_too(matcher: CommandMatcher) -> None:
+    r = local(matcher, Recorder(), Monotonic())
+    await say(r, "chiudi la finestra")
+    await say(r, "")
+    reply = await say(r, "Claudio, che ore sono")
+    assert reply.startswith("Va bene, non lo faccio. ") and not r.awaiting
+
+
+async def test_the_name_with_nothing_after_it_only_cancels(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    assert await say(r, "Certo. Hey Claudio.") == "Va bene, non lo faccio."
+    assert not r.awaiting and rec.combos == []
+
+
+async def test_hey_claudio_si_is_still_a_yes(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    assert await say(r, "Hey Claudio, sì.") == "Fatto."
+    assert rec.combos == [(VK_MENU, VK_F4)]
+
+
+async def test_the_scene_of_17_20_17_cancels_and_answers_in_one_stream(
+    matcher: CommandMatcher, pricing: Pricing
+) -> None:
+    client, clock = FakeClient(["Ho un'idea."]), Monotonic()
+    r = wired(matcher, brain(pricing, client, clock), clock)
+    await say(r, "chiudi la finestra")
+    assert await say(r, "Claudio, che idea hai?") == "Va bene, non lo faccio. Ho un'idea."
+    assert "che idea hai?" in client.calls[0]["messages"][-1]["content"]
+
+
+# --- Cleanup: the name rule fires only on a phrase unclear at level 2 ---------------------
+
+
+async def test_claudio_si_at_level_3_asks_again_instead_of_cancelling(
+    matcher: CommandMatcher,
+) -> None:
+    r = local(matcher, Recorder(), Monotonic())
+    await say(r, "dimentica tutto")
+    assert await say(r, "Claudio, sì") == WIPE_AGAIN
+    assert r.awaiting and r.last_route.get("asked_again") is True
+
+
+async def test_the_row_keeps_the_name_cancel_when_words_follow(matcher: CommandMatcher) -> None:
+    r = local(matcher, Recorder(), Monotonic())
+    await say(r, "chiudi la finestra")
+    await say(r, "Claudio, che ore sono")
+    assert r.last_route["command"] == "tell_time" and r.last_route["cancelled_by_name"] is True
