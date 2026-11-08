@@ -14,8 +14,9 @@ from typing import Any
 
 import pytest
 
-from claudio.app import State
+from claudio.app import Interaction, State, _fixed_reply
 from claudio.brain.claude import CUT_NOTE
+from claudio.resume import DrainedStream
 from claudio.tts.speaker import StreamingSpeaker
 from tests.unit.test_pc_tools import FakeDesktop, text, use
 from tests.unit.test_speaker import FakePlayer, FakeSynth
@@ -72,22 +73,15 @@ def home(tmp_path: Path) -> Path:
 # --- interruptions ---------------------------------------------------------------------
 
 
-HISTORY_BUG = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="G2 history item: the history gets the whole reply, not what was heard",
-)
-
-
 @pytest.mark.parametrize(
     ("chunk_wait", "through_cut"),
     [
         # The reply is all read before the cut: _remember stores it whole.
-        pytest.param(0, False, marks=HISTORY_BUG, id="reply-read-before-the-cut"),
+        pytest.param(0, False, id="reply-read-before-the-cut"),
         # Chunks come every 9 frames (read at 15, 24, 33, 42, 51), the stop is at frame 47: the
         # last chunk is still to come, so _remember_cut stores what was read, which is more
         # than what was heard (the stream goes on being read while the voice plays).
-        pytest.param(9, True, marks=HISTORY_BUG, id="cut-while-reading"),
+        pytest.param(9, True, id="cut-while-reading"),
         # Text arrives no faster than it is said: nothing to tell apart, protects the fix.
         pytest.param(30, False, id="read-as-heard"),
     ],
@@ -440,34 +434,15 @@ class Player(FakePlayer):
         return 0.0
 
 
-LOSES_THE_TEXT = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="G2: text lost in the row after basta (5.2 #4): _marked saves the reply in its"
-    " finally, which does not run while the speaker leaves the stream open",
-)
-TIMED_TYPED = pytest.param(
-    "timed",
-    "typed",
-    marks=pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="G2: text lost in the row after basta (5.2 #4): as the spoken one, but no voice"
-        " can reach a typed reply today: speaker.interrupt() has two callers, _stop_reply and"
-        " _take_over, never on a typed reply",
-    ),
-)
-
-
 @pytest.mark.parametrize(
     ("voice", "path"),
     [
-        TIMED_TYPED,
-        pytest.param("timed", "spoken", marks=LOSES_THE_TEXT),
+        ("timed", "typed"),
+        ("timed", "spoken"),
         # The real speaker leaves the stream open too while _produce is rendering (a sentence
         # to synthesise: the inline to_thread hands over for one turn) or on a full queue.
-        pytest.param("streaming", "typed", marks=LOSES_THE_TEXT),
-        pytest.param("streaming", "spoken", marks=LOSES_THE_TEXT),
+        ("streaming", "typed"),
+        ("streaming", "spoken"),
     ],
 )
 async def test_typed_reply_cut_short_keeps_what_was_said(make_scene, voice: str, path: str) -> None:
@@ -496,6 +471,21 @@ async def test_typed_reply_cut_short_keeps_what_was_said(make_scene, voice: str,
 
 
 # --- the real sequences of 05/11 (their shape, with generic phrases) --------------------
+
+
+async def test_a_story_heard_in_two_parts_is_whole_in_the_history(make_scene) -> None:
+    """Cut by a local answer and resumed to its end ("Dicevo"): all of it was heard, so all of
+    it is in the history, once, with no cut note."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, window_s=4.0)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("che ore sono")
+    await idle(scene)
+    assert resumed(scene)
+    ((_, answer),) = scene.remembered
+    assert CUT_NOTE not in answer and all(sentence in answer for sentence in SENTENCES)
+    assert answer.count(SENTENCES[1]) == 1 and RESUME not in answer
 
 
 @pytest.mark.xfail(
@@ -540,3 +530,50 @@ async def test_17_13_story_then_new_request_does_not_resume(make_scene) -> None:
     assert [r["outcome"] for r in scene.rows[:2]] == ["interrupted", "ok"]
     assert scene.row(1)["route"] == "claude"
     assert not resumed(scene)
+
+
+async def test_dicevo_after_a_claude_answer_keeps_both_lines(make_scene) -> None:
+    scene = make_scene(
+        text_reply(*STORY), text_reply("Parigi."), sentence_frames=PLAY, window_s=4.0
+    )
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("qual è la capitale della Francia")
+    await idle(scene)
+    story, capital = scene.remembered
+    assert capital == ("[it] qual è la capitale della Francia", "Parigi.")
+    assert "Parigi" not in story[1] and SENTENCES[0] in story[1]
+
+
+async def test_a_cut_question_of_the_guess_leaves_the_claude_line_alone(make_scene) -> None:
+    scene = make_scene(text_reply("Circa quattrocentomila chilometri."))
+    await scene.say("quanto dista la Luna dalla Terra")
+    await idle(scene)
+    before = scene.remembered
+    scene.responder.propose("chiudi la finestra", "it")
+    scene.assistant._interrupted = True
+    inter = Interaction(clock=scene.clock, info={})
+    await scene.assistant._speak_reply(
+        _fixed_reply("Hai detto: chiudi la finestra?"), inter, lambda: None
+    )
+    assert scene.remembered == before
+
+
+async def test_typed_request_over_a_stale_stream_does_not_wake_it(make_scene, home: Path) -> None:
+    desk = FakeDesktop()
+    scene = make_scene(
+        SAY_THEN_CALL,
+        text_reply("Circa quattrocentomila chilometri."),
+        claude_wait=5,
+        desk=desk,
+        home=home,
+    )
+    stale = DrainedStream(scene.brain.ask(WRITE, "it"))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    scene.brain.stop_acting()
+    await scene.assistant.handle_typed("quanto dista la Luna dalla Terra", "it")
+    await scene.advance(1.0)
+    await stale.finish(5.0)
+    assert not scene.brain.awaiting and not typed_anything(desk)

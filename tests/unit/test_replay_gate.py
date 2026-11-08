@@ -897,7 +897,7 @@ async def test_the_real_sdk_message_survives_record_and_replay(tmp_path: Path) -
     from anthropic.types import Message, TextBlock, ToolUseBlock
     from anthropic.types import Usage as ApiUsage
 
-    from claudio.brain.claude import _Leg
+    from claudio.brain.claude import _Leg, _Turn
     from claudio.cost.pricing import Usage
 
     message = Message(
@@ -923,7 +923,7 @@ async def test_the_real_sdk_message_survives_record_and_replay(tmp_path: Path) -
     _, saved = await drain(replay.stream(**PARAMS))
     assert replay.tool_uses == [("open_app", {"name": "Chrome"})]
     assert Usage.from_api(saved.usage, "5m") == Usage.from_api(live.usage, "5m")
-    a, b = _Leg(), _Leg()
+    a, b = _Leg(_Turn("")), _Leg(_Turn(""))
     a.read(live)
     b.read(saved)
     assert a.content == b.content and a.calls == b.calls and a.calls

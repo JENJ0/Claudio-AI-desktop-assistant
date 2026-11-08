@@ -19,7 +19,14 @@ import anthropic
 import httpx2
 import pytest
 
-from claudio.brain.claude import ACTIONS_NOTE, CUT_BEFORE_NOTE, CUT_NOTE, ClaudeBrain
+from claudio.brain.claude import (
+    ACTIONS_NOTE,
+    CUT_BEFORE_NOTE,
+    CUT_NOTE,
+    NOT_RUN_NOTE,
+    ClaudeBrain,
+    _Turn,
+)
 from claudio.brain.prompts import NOT_RUN_CUT, REFUSED, SYSTEM_PROMPT_TOOLS
 from claudio.config import ClaudeSettings, PcSettings
 from claudio.cost.pricing import Pricing, load_pricing
@@ -1566,8 +1573,9 @@ async def test_the_stop_never_reaches_the_next_request(
     assert ("launch", "Spotify") in desk.done
 
 
-def test_the_stop_is_wired_where_claudio_is_built(tmp_path: Path, desk: FakeDesktop) -> None:
-    """`Scene` wires the responder by hand: without `fallback_stop` here nothing would say so."""
+def test_the_stop_and_the_cut_are_wired_where_built(tmp_path: Path, desk: FakeDesktop) -> None:
+    """`Scene` wires the responder by hand: without `fallback_stop` and `fallback_cut` here
+    nothing would say so."""
     from claudio.__main__ import build_responder
     from claudio.config import load_settings
     from tests.unit.test_actions import Recorder
@@ -1584,8 +1592,12 @@ def test_the_stop_is_wired_where_claudio_is_built(tmp_path: Path, desk: FakeDesk
     )
     brain = responder.fallback.__self__  # type: ignore[union-attr]
     try:
+        brain._turn = turn = _Turn("[it] ciao")
         responder.stop_acting()
-        assert brain._stop_acting
+        assert turn.stopped
+        responder.claude_replied = True
+        responder.reply_cut(["Ciao."])
+        assert turn.heard == "Ciao."
     finally:
         brain.tools.close()
 
@@ -3653,3 +3665,103 @@ async def test_a_second_question_after_a_yes_names_its_window(
     second = await ask(b, "sì")
     assert second.strip() == 'Chiudo la finestra "Senza nome - Blocco note". Confermi?'
     assert b.awaiting
+
+
+# --- the turn owns its stop, and what was heard (IT-2 step 0b, G2 task 6) -------------------
+
+
+async def test_a_new_request_cannot_clear_the_stop_of_an_old_stream(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """The fault of handle_typed: a request asked while the cut reply was still being read
+    cleared the stop, and the old stream armed its question."""
+    old = ([], "tool_use", [TYPE_INTO_CHROME])
+    client = HeldCall(0, old, (["Sono le due."], "end_turn", [text("Sono le due.")]))
+    b = acting_brain(pricing, client, tools)
+    drained = DrainedStream(b.ask(SCENE, "it"))
+    await asyncio.wait_for(client.reached.wait(), 5)
+    b.stop_acting()
+    assert await ask(b, "che ore sono") == "Sono le due."  # a new turn, with its own state
+    client.go.set()
+    await drained.finish(5.0)
+    assert not b.awaiting and not typed_anything(desk)
+    assert "Confermi" not in drained.text
+
+
+async def test_cancel_pending_writes_the_armed_turn_with_the_not_run_note(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(([], "tool_use", [TYPE_INTO_CHROME]))
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "scrivi su chrome")).endswith("Confermi?")
+    assert not b._history
+    b.cancel_pending()
+    [(question, reply)] = b._history
+    assert question == "[it] scrivi su chrome"
+    assert reply.endswith("Confermi? " + f"{NOT_RUN_NOTE}type_text, JenJo did not confirm it]")
+    assert not b.awaiting
+    b.cancel_pending()
+    assert len(b._history) == 1  # once
+
+
+async def test_a_question_that_was_not_heard_drops_the_action_and_keeps_the_turn(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(([], "tool_use", [TYPE_INTO_CHROME]))
+    b = acting_brain(pricing, client, tools)
+    asked = await ask(b, "scrivi su chrome")
+    b.reply_cut([asked])  # "Confermi?" started playing: the action waits for its answer
+    assert b.awaiting and not b._history
+    b.reply_cut([])  # the same reply, heard to nothing
+    assert not b.awaiting
+    [(_, reply)] = b._history
+    assert reply == f"{CUT_BEFORE_NOTE} {NOT_RUN_NOTE}type_text, the question was not heard]"
+
+
+async def test_a_tool_that_ran_keeps_its_note_after_the_cut(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use("open_app", name="spotify")]),
+        (["Fatto, Spotify è aperto."], "end_turn", [text("Fatto, Spotify è aperto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "apri spotify")
+    b.reply_cut([])
+    assert b._history[-1][1] == f"{CUT_BEFORE_NOTE} {ACTIONS_NOTE}open_app ok]"
+
+
+COMMAND = use("run_command", command="Get-Process", purpose="vedere i processi")
+
+
+async def test_a_confirmed_slow_tool_keeps_the_bridge_out_of_the_history_and_the_space(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [COMMAND]),
+        (["Chrome usa più memoria."], "end_turn", [text("Chrome usa più memoria.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "quali programmi usano memoria")).endswith("confermo.")
+    said = await ask(b, "confermo")
+    assert said.startswith("Eseguo.")  # said to JenJo
+    [(_, line)] = b._history
+    assert "Eseguo" not in line and "Confermi" not in line
+    assert "confermo. Chrome usa più memoria." in line
+    assert not re.search(r"[.?!]\w", line)  # no sentence glued to the next
+
+
+async def test_a_cut_after_a_yes_keeps_the_question_heard_before(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [TYPE_INTO_CHROME]),
+        (["Fatto, ho scritto."], "end_turn", [text("Fatto, ho scritto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    asked = await ask(b, "scrivi su chrome")
+    await ask(b, "sì")
+    b.reply_cut(["Fatto,"])
+    [(_, line)] = b._history
+    assert line.startswith(asked.strip()) and "Confermi? Fatto, " + CUT_NOTE in line
+    assert "ho scritto" not in line and line.endswith(f"{ACTIONS_NOTE}type_text ok]")

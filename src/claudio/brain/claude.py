@@ -89,6 +89,8 @@ ACTIONS_NOTE = "[Claudio ran: "  # history note after a reply: "[Claudio ran: op
 NOT_RUN_NOTE = "[Claudio did not run: "
 CUT_AT_LIMIT_WHY = "cut at the token limit"
 STOPPED_WHY = "a new request came first"
+NOT_CONFIRMED_WHY = "JenJo did not confirm it"
+NOT_HEARD_WHY = "the question was not heard"
 # The result of a call that a new request stopped: every tool_use still needs one.
 STOPPED_RESULT = "Not run: JenJo said something else over the reply."
 NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
@@ -206,7 +208,8 @@ class ClaudeBrain:
         # the facts that match a request (None: no long-term memory).
         self.memory = memory
         self._memory_block = ""  # the memories as this request's rounds see them
-        self._stop_acting = False  # a new request cut this reply: its words go on, no action
+        # The turn whose words are being spoken: where a cut and a stop are written.
+        self._turn: _Turn | None = None
 
     def reset(self) -> None:
         self._history.clear()
@@ -226,9 +229,10 @@ class ClaudeBrain:
         action Claude asked "Confermi?" for is not run. The Sonnet offer ("Lo uso?") is dropped
         only when `cut`, JenJo stopped the reply ("basta"): otherwise it waits for the "sì"."""
         if self._action is not None:
-            names = ", ".join(c.name for c in self._action.calls)
+            action, self._action = self._action, None
+            names = ", ".join(c.name for c in action.calls)
             log.info("Conferma scaduta: %s non eseguito", names, extra={"route": "tool"})
-            self._action = None
+            self._drop(action, NOT_CONFIRMED_WHY)
         if cut and self._offer is not None:
             log.info("Offerta di Sonnet scaduta: interrotta", extra={"route": "tool"})
             self._offer = None
@@ -236,8 +240,50 @@ class ClaudeBrain:
     def stop_acting(self) -> None:
         """A new request was said over this reply. Its stream is still read, for "Dicevo", but
         from now on no call starts and no question is armed; a call already running finishes.
-        The next `ask` clears it: it never blocks the request after."""
-        self._stop_acting = True
+        It is the stop of this turn only: a request asked next has a turn of its own."""
+        if self._turn is not None:
+            self._turn.stopped = True
+
+    def reply_cut(self, played: Sequence[str], handle: object | None = None) -> object | None:
+        """The reply was cut: `played` is what the voice started saying of it, and that is all
+        the history keeps of it (also the words still to arrive); the replies of the same turn
+        before it stay. A question or an offer whose words were not among them is not waiting
+        for an answer. Returns the cut turn: passed back as `handle` later (after "Dicevo",
+        when other turns came since), it rewrites that turn and no other."""
+        turn = handle if isinstance(handle, _Turn) else self._turn
+        if turn is None:
+            return None
+        before = "".join(turn.parts[: turn.reply_from]).strip()
+        now = " ".join(p.strip() for p in played if p.strip())
+        turn.heard = f"{before} {now}".strip()
+        self._disarm_unheard(turn, now)
+        index = self._index_of(turn.written)
+        if index is not None:  # else it is not written yet, or the window dropped it
+            self._history[index] = turn.written = (turn.question, _cut_line(turn))
+        return turn
+
+    def _disarm_unheard(self, turn: _Turn, heard: str) -> None:
+        if not turn.asked or _said_in(turn.asked, heard):
+            return
+        action = self._action
+        if action is not None and action.turn is turn:
+            self._action = None
+            self._drop(action, NOT_HEARD_WHY)
+        if self._offer is not None and turn is self._turn:  # the offer is this reply's
+            log.info("Offerta di Sonnet non sentita: annullata", extra={"route": "tool"})
+            self._offer = None
+
+    def _drop(self, action: _Action, why: str) -> None:
+        """An armed action will not run: its turn goes into the history with the note."""
+        turn = action.turn
+        turn.not_run_why = why
+        turn.note_not_run(c.name for c in action.calls)
+        turn.complete = True
+        self._remember(turn)
+
+    def _index_of(self, entry: tuple[str, str] | None) -> int | None:
+        """Where `entry` is in the history now (the window may have dropped it)."""
+        return next((i for i, e in enumerate(self._history) if e is entry), None)
 
     def warm_up(self) -> None:
         """JenJo is about to speak (wake word): open the HTTPS connection now, for free (a
@@ -292,7 +338,6 @@ class ClaudeBrain:
         """Claude's reply to `text`, in `language`, as it arrives. Problems become one short
         spoken sentence: Claudio never goes silent and never crashes because of the API."""
         self.last_call = {}
-        self._stop_acting = False
         self._asked_at = self.clock()
         rtt, self._rtt = self._rtt, None
         if rtt is not None and self._asked_at - rtt[2] <= RTT_FRESH_S:
@@ -400,12 +445,20 @@ class ClaudeBrain:
         return offer[0], offer[1], answer
 
     async def _propose(
-        self, messages: list[dict[str, Any]], language: str, lead: str = ""
+        self,
+        messages: list[dict[str, Any]],
+        language: str,
+        lead: str = "",
+        turn: _Turn | None = None,
     ) -> AsyncGenerator[str, None]:
         """Ask "Vuoi che usi Sonnet?" and keep the question: the next request is the answer."""
+        question = in_language(OFFER, language)
+        if turn is None:
+            turn = self._turn = _Turn(messages[-1]["content"])
+        turn.asked = question
         self._offer = (messages, language, self.clock())
         self.last_call["escalated"] = "offered"
-        yield lead + in_language(OFFER, language)
+        yield lead + question
 
     async def _loop(
         self,
@@ -421,27 +474,30 @@ class ClaudeBrain:
         # Only within this reply: after a yes the turn holds the question, already spoken.
         # True = words the voice really kept (a fragment dropped by a stream retry is not).
         said_here = False
-        this_reply = len(turn.parts)  # after a yes the turn holds the question already asked
+        self._turn = turn
+        this_reply = turn.reply_from = len(
+            turn.parts
+        )  # after a yes the turn holds the question already asked
         streaming: _Leg | None = None  # the leg whose words are not in `turn` yet
         try:
             while True:
                 last = round_no >= self.pc.max_rounds - 1
                 params = self._params(messages, last_round=last)
-                leg = streaming = _Leg()
+                leg = streaming = _Leg(turn)
                 async with contextlib.aclosing(self._stream(params, language, start, leg)) as haiku:
                     async for chunk in haiku:
                         yield chunk
                 said_here = said_here or bool("".join(leg.parts).strip())
                 turn.parts.extend(leg.parts)
                 streaming = None
-                if self._stop_acting and (leg.calls or leg.cut_tools or leg.handoff):
+                if turn.stopped and (leg.calls or leg.cut_tools or leg.handoff):
                     self._end_stopped(turn, leg)
                     return
                 if leg.end is StreamEnd.CUT_CALL:
                     # At once: a "basta" during the retry finds the right note. It stays until the
                     # call really runs (`_Turn.ran`), also after a "no" or a "basta" before that.
                     turn.note_not_run(leg.cut_tools)
-                    cut, leg = leg, _Leg()
+                    cut, leg = leg, _Leg(turn)
                     streaming = leg
                     async with contextlib.aclosing(
                         self._retry_cut(params, cut, leg, turn, language, start, said_here)
@@ -451,7 +507,7 @@ class ClaudeBrain:
                             yield chunk
                     turn.parts.extend(leg.parts)
                     streaming = None
-                    if self._stop_acting:
+                    if turn.stopped:
                         self._end_stopped(turn, leg)
                         return
                     if not leg.calls:
@@ -487,7 +543,7 @@ class ClaudeBrain:
                     if confirm
                     else ""
                 )
-                if self._stop_acting:  # it came during those two waits
+                if turn.stopped:  # it came during those two waits
                     self._end_stopped(turn, leg)
                     return
                 if confirm:
@@ -608,7 +664,7 @@ class ClaudeBrain:
         if self.smart_model:
             # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question.
             log.info("Haiku propone Sonnet: chiedo conferma")
-            return self._propose(offer_from, language, _space(turn))
+            return self._propose(offer_from, language, _space(turn), turn)
         return None
 
     def _ask_first(
@@ -642,6 +698,7 @@ class ClaudeBrain:
             said += held + " "
         said += ask
         turn.parts.append(said)
+        turn.asked = ask
         return said
 
     def _before_tools(
@@ -665,6 +722,7 @@ class ClaudeBrain:
     async def _confirm(self, action: _Action, text: str, start: float) -> AsyncGenerator[str, None]:
         """The answer to "Confermi?": yes runs the calls and Haiku goes on; anything else
         cancels (a TV in the background never confirms an action)."""
+        self._turn = action.turn
         answer = Answer.YES if self._repeats(action, text) else parse_answer(text, action.level)
         self.last_call["confirm"] = answer.value
         if answer is not Answer.YES:
@@ -681,9 +739,10 @@ class ClaudeBrain:
         if self.pc.bridge and any(
             c.name in SLOW_TOOLS and c.id not in action.refused for c in action.calls
         ):
-            said = in_language(BRIDGE_RUN, action.language) + " "  # a new reply: no lead space
-            action.turn.parts.append(_space(action.turn) + said)
-            yield said
+            # Not in turn.parts, like BRIDGE: Haiku would copy it. Only the space that ends the
+            # question's sentence, or the next words stick to it ("confermo.Chrome").
+            action.turn.parts.append(_space(action.turn))
+            yield in_language(BRIDGE_RUN, action.language) + " "
         alone = not action.turn.done and not action.handoff
         try:
             results, own = await self._run_calls(
@@ -718,7 +777,7 @@ class ClaudeBrain:
                 self._note_tools([call], "refused")
                 results.append(_failed_result(call, refused[call.id]))
                 continue
-            if self._stop_acting:  # it came while the call before this one was running
+            if turn.stopped:  # it came while the call before this one was running
                 own = None
                 self._not_started(turn, [call])
                 results.append(_failed_result(call, STOPPED_RESULT))
@@ -798,7 +857,8 @@ class ClaudeBrain:
     async def _haiku(
         self, messages: list[dict[str, Any]], language: str, start: float, tools: bool = True
     ) -> AsyncGenerator[str, None]:
-        leg = _Leg()
+        turn = self._turn = _Turn(messages[-1]["content"])
+        leg = _Leg(turn)
         try:
             async with contextlib.aclosing(
                 self._stream(self._params(messages, tools), language, start, leg)
@@ -806,14 +866,18 @@ class ClaudeBrain:
                 async for chunk in haiku:
                     yield chunk
         except (GeneratorExit, asyncio.CancelledError):
-            self._remember_cut(_Turn(messages[-1]["content"], leg.parts))
+            turn.parts.extend(leg.parts)
+            self._remember_cut(turn)
             raise
-        self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
+        turn.parts.extend(leg.parts)
+        turn.complete = leg.complete
+        self._remember(turn)
 
     async def _sonnet(
         self, messages: list[dict[str, Any]], language: str, start: float
     ) -> AsyncGenerator[str, None]:
-        leg = _Leg()
+        turn = self._turn = _Turn(messages[-1]["content"])
+        leg = _Leg(turn)
         try:
             async with contextlib.aclosing(
                 self._stream(self._smart_params(messages), language, start, leg, "smart_first_ms")
@@ -821,9 +885,12 @@ class ClaudeBrain:
                 async for chunk in sonnet:
                     yield chunk
         except (GeneratorExit, asyncio.CancelledError):
-            self._remember_cut(_Turn(messages[-1]["content"], leg.parts))
+            turn.parts.extend(leg.parts)
+            self._remember_cut(turn)
             raise
-        self._remember(_Turn(messages[-1]["content"], leg.parts, leg.complete))
+        turn.parts.extend(leg.parts)
+        turn.complete = leg.complete
+        self._remember(turn)
 
     def _read_outside(self) -> bool:
         """The conversation sent with the next request ran a tool that read outside text."""
@@ -841,20 +908,28 @@ class ClaudeBrain:
         (they cost tokens at every later turn, and the history is plain text). A short note of
         the actions that really ran is added: without it Haiku, reading only its own words,
         later "admitted" that a command it had run never ran (24/10)."""
+        if turn.heard is not None:  # cut meanwhile: what was heard, never the words after it
+            self._remember_cut(turn)
+            return
         answer = f"{''.join(turn.parts).strip()} {_notes(turn)}".strip()
         if turn.complete and answer:
-            self._history.append((turn.question, answer))
-            self._last_turn = self.clock()
+            self._write(turn, answer)
 
     def _remember_cut(self, turn: _Turn) -> None:
         """A reply JenJo cut short ("basta", or a new request over it) stays in the history
         with what was said and a note, so "continua la storia" or "ripeti la storia" make
         sense to Claude (before, only finished replies were kept and the story was lost)."""
-        said = "".join(turn.parts).strip()
-        note = CUT_NOTE if said else CUT_BEFORE_NOTE
-        # After the cut note: "interrupted here" stays right after the words.
-        answer = f"{said} {note} {_notes(turn)}".strip()
-        self._history.append((turn.question, answer))
+        self._write(turn, _cut_line(turn))
+
+    def _write(self, turn: _Turn, answer: str) -> None:
+        """The turn's line: a turn written before (cut, then answered) is replaced, not doubled."""
+        entry = (turn.question, answer)
+        index = self._index_of(turn.written)
+        if index is None:
+            self._history.append(entry)
+        else:
+            self._history[index] = entry
+        turn.written = entry
         self._last_turn = self.clock()
 
     def _messages(self, text: str, language: str) -> list[dict[str, Any]]:
@@ -1032,7 +1107,7 @@ class ClaudeBrain:
                 httpx2.DecodingError,
                 OSError,
             ) as exc:
-                if self._retry_broken(exc, stream, attempt, silent):
+                if self._retry_broken(exc, stream, attempt, silent, leg.turn.stopped):
                     yield CUT_SHORT
                     continue
                 log.error("Claude non raggiungibile: %s", exc)
@@ -1059,7 +1134,7 @@ class ClaudeBrain:
                 return
             # JSONDecodeError, UnicodeDecodeError and jiter's errors are ValueErrors.
             except ValueError as exc:
-                if self._retry_broken(exc, stream, attempt, silent):
+                if self._retry_broken(exc, stream, attempt, silent, leg.turn.stopped):
                     yield CUT_SHORT
                     continue
                 log.exception("Claude: evento illeggibile nello stream: %s", exc)
@@ -1116,11 +1191,13 @@ class ClaudeBrain:
         if first_key not in self.last_call:
             self.last_call[first_key] = round((self.clock() - start) * 1000)
 
-    def _retry_broken(self, exc: BaseException, stream: Any, attempt: int, silent: bool) -> bool:
+    def _retry_broken(
+        self, exc: BaseException, stream: Any, attempt: int, silent: bool, stopped: bool
+    ) -> bool:
         """07/11: ~2% of calls broke mid-reply ([SSL] record layer failure) and the request was
         lost. Retry once, only if the reply had begun (before it the SDK retried already) and
         nothing says to stop: the call of a broken round never started, so nothing runs twice."""
-        if stream is None or attempt > 1 or silent or self._stop_acting:
+        if stream is None or attempt > 1 or silent or stopped:
             return False
         log.warning("Claude: stream interrotto, riprovo una volta: %s", exc)
         self.last_call["stream_retry"] = True
@@ -1189,7 +1266,8 @@ class _Leg:
     """One API call of an answer: its text, whether it finished, whether Haiku handed over,
     the PC tools it called and its content (sent back with the tool results)."""
 
-    def __init__(self) -> None:
+    def __init__(self, turn: _Turn) -> None:
+        self.turn = turn  # whose stop it reads
         self.parts: list[str] = []
         self.complete = False
         self.handoff = False
@@ -1240,6 +1318,11 @@ class _Turn:
         # shortcut: one reason for the whole note, so a cut call that a later stop also names gets
         # the stop's reason; upgrade to a reason per tool if G2's turn state keeps this note.
         self.not_run_why = CUT_AT_LIMIT_WHY
+        self.stopped = False  # a new request came over this reply: no call starts, no question
+        self.heard: str | None = None  # what the voice started saying, once cut (None: not cut)
+        self.written: tuple[str, str] | None = None  # its line in the history, to rewrite
+        self.reply_from = 0  # where the reply being spoken starts in `parts`: a "sì" begins one
+        self.asked = ""  # the question it ended on, if any: "Confermi?", "Lo uso?"
 
     def note_not_run(self, names: Iterable[str]) -> None:
         # shortcut: two calls of one tool share one note, lost when one of them runs; upgrade when
@@ -1372,6 +1455,23 @@ def _notes(turn: _Turn) -> str:
     if turn.done:
         notes.append(f"{ACTIONS_NOTE}{', '.join(turn.done)}]")
     return " ".join(notes)
+
+
+def _cut_line(turn: _Turn) -> str:
+    """The history line of a cut turn: what was heard (or, uncut-by-the-voice, what was read),
+    the cut note right after it, then the notes. All of it heard is no cut."""
+    read = "".join(turn.parts)
+    said = read.strip() if turn.heard is None else turn.heard
+    note = CUT_NOTE if said else CUT_BEFORE_NOTE
+    if turn.heard and turn.complete and " ".join(said.split()) == " ".join(read.split()):
+        note = ""  # nothing was left unheard
+    return " ".join(part for part in (said, note, _notes(turn)) if part)
+
+
+def _said_in(question: str, heard: str) -> bool:
+    """The last sentence of `question` is among the words `heard`."""
+    last = re.split(r"(?<=[.!?])\s+", question.strip())[-1]
+    return f" {normalize(last, drop_fillers=False)} " in f" {normalize(heard, drop_fillers=False)} "
 
 
 def _failed_result(call: ToolCall, why: str) -> dict[str, Any]:

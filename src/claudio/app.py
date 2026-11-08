@@ -150,6 +150,7 @@ class CutReply:
     unsure: bool = False
     resumed: bool = False
     rest: str = ""
+    handle: object | None = None  # Claude's turn that was cut: "Dicevo" completes its history
 
 
 class Assistant:
@@ -1601,12 +1602,15 @@ class Assistant:
                 self.speaker.speak(text, on_first_audio=on_first_audio, language=lang)
             )
         finally:
+            handle = None
+            if self._interrupted and not resumed:  # before the stream is closed
+                handle = self.responder.reply_cut(list(self.speaker.played))
             if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
                 self.responder.stop_acting()  # kept for its words: no action may follow from it
                 language_now = lang() if callable(lang) else lang
                 played, now = list(self.speaker.played), self.clock()
                 unsure = bool(inter.info.get("stt_unsure"))
-                self._cut = CutReply(drained, played, now, language_now, unsure)
+                self._cut = CutReply(drained, played, now, language_now, unsure, handle=handle)
             else:
                 drained.cancel()
 
@@ -1651,9 +1655,20 @@ class Assistant:
             yield f"{in_language(RESUME_PREFIX, language)} {rest}"
 
         await self._speak_reply(text(), inter, self._on_resume_audio, language, resumed=True)
+        if cut.handle is not None:
+            self.responder.reply_cut(self._heard_in_all(cut), handle=cut.handle)
         if self._cut is not None:
             # Cut again: still the answer to the request it was judged on, not to this one.
             self._cut = replace(self._cut, unsure=cut.unsure, resumed=True)
+
+    def _heard_in_all(self, cut: CutReply) -> list[str]:
+        """What JenJo heard of a resumed reply: the pieces before the one said again, then what
+        started playing after "Dicevo:".
+        shortcut: one resume; a reply cut again and resumed again loses the words before its
+        first cut (and keeps its "Dicevo:"), upgrade when a real session shows it."""
+        prefix = in_language(RESUME_PREFIX, cut.language)
+        again = [p.removeprefix(prefix).strip() for p in self.speaker.played]
+        return [*cut.played[:-1], *again]
 
     def _on_resume_audio(self) -> None:
         """The resumed reply can be cut again, like any other."""
@@ -1689,6 +1704,8 @@ class Assistant:
                 inter.mark("first_text")
                 parts.append(chunk)
                 self._reply_parts.append(chunk)
+                # At each chunk: the speaker may leave this stream open for good ("basta").
+                inter.info["reply"] = joined_reply(parts)
                 yield chunk
         finally:
             if parts:  # what was said, also when "basta" cut it short (session log, metrics)

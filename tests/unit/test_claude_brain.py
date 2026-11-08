@@ -15,9 +15,9 @@ import httpx2
 import pytest
 
 from claudio.app import Assistant, addressed_to_claudio
-from claudio.brain.claude import CUT_NOTE, ClaudeBrain, StreamEnd, stream_end
+from claudio.brain.claude import CUT_BEFORE_NOTE, CUT_NOTE, ClaudeBrain, StreamEnd, stream_end
 from claudio.brain.prompts import ASK_SONNET_TOOL, OFFER, SYSTEM_PROMPT
-from claudio.config import ClaudeSettings
+from claudio.config import ClaudeSettings, in_language
 from claudio.cost.pricing import Pricing, Usage, load_pricing
 from claudio.protocols import CUT_SHORT
 from claudio.router.actions import ActionRunner
@@ -1792,3 +1792,123 @@ def test_stream_end_promised_only_with_tools_offered_and_no_call() -> None:
     assert stream_end(_final("end_turn", "text", "tool_use"), tools_offered=True, said=said) is (
         StreamEnd.DONE
     )
+
+
+# --- the history holds what JenJo heard (IT-2 step 0b, G2 task 6) ---------------------
+
+STORY_CHUNKS = ["Prima frase. ", "Seconda frase. ", "Terza frase."]
+
+
+async def test_reply_cut_rewrites_a_written_turn_with_what_was_heard(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(STORY_CHUNKS))
+    await ask(b, "raccontami")
+    assert b._history[-1][1] == "Prima frase. Seconda frase. Terza frase."
+    b.reply_cut(["Prima frase.", "Seconda frase."])
+    assert list(b._history) == [("[it] raccontami", f"Prima frase. Seconda frase. {CUT_NOTE}")]
+
+
+async def test_reply_cut_before_the_first_word_writes_the_no_answer_note(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(STORY_CHUNKS))
+    await ask(b, "raccontami")
+    b.reply_cut([])
+    assert list(b._history) == [("[it] raccontami", CUT_BEFORE_NOTE)]
+
+
+async def test_a_reply_heard_to_its_end_is_not_marked_cut(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(STORY_CHUNKS))
+    await ask(b, "raccontami")
+    b.reply_cut(["Prima frase.", "Seconda frase.", "Terza frase."])
+    assert list(b._history) == [("[it] raccontami", "Prima frase. Seconda frase. Terza frase.")]
+
+
+async def test_text_that_arrives_after_the_cut_never_reaches_the_history(pricing: Pricing) -> None:
+    b = brain(pricing, FakeClient(STORY_CHUNKS))
+    stream = b.ask("raccontami", "it")
+    first = await anext(stream)
+    b.reply_cut([first])
+    assert [c async for c in stream] == STORY_CHUNKS[1:]  # still read: "Dicevo" needs it
+    assert list(b._history) == [("[it] raccontami", f"Prima frase. {CUT_NOTE}")]
+
+
+async def test_a_history_pruned_or_cleared_before_the_cut_is_not_rewritten(
+    pricing: Pricing,
+) -> None:
+    b = brain(pricing, FakeClient(STORY_CHUNKS), history_turns=1)
+    await ask(b, "uno")
+    b._history.append(("[it] altro", "risposta"))  # the window drops "uno"
+    b.reply_cut(["Prima frase."])
+    assert list(b._history) == [("[it] altro", "risposta")]
+    b.reset()
+    b.reply_cut([])
+    assert not b._history
+
+
+async def test_an_offer_nobody_heard_is_disarmed(pricing: Pricing) -> None:
+    client = ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF))
+    b = brain(pricing, client)
+    assert (await ask(b, "spiegami il mutuo variabile")).endswith(in_language(OFFER, "it"))
+    assert b._offer is not None
+    b.reply_cut(["Domanda complessa."])  # the voice never started "Lo uso?"
+    assert b._offer is None
+
+
+async def test_an_offer_that_was_heard_stays_armed(pricing: Pricing) -> None:
+    client = ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF))
+    b = brain(pricing, client)
+    await ask(b, "spiegami il mutuo variabile")
+    b.reply_cut(["Domanda complessa.", in_language(OFFER, "it")])
+    assert b._offer is not None
+
+
+async def test_a_local_reply_cut_leaves_claudes_history_alone(
+    matcher: CommandMatcher, pricing: Pricing
+) -> None:
+    b = brain(pricing, FakeClient())
+    r = LocalResponder(
+        matcher,
+        ActionRunner(Recorder().ctx()),
+        fallback=b.ask,
+        fallback_info=lambda: b.last_call,
+        fallback_cut=b.reply_cut,
+    )
+    await say(r, "qual è la capitale d'Italia")
+    whole = list(b._history)
+    await say(r, "che ore sono")  # local
+    r.reply_cut(["Sono le"])
+    assert list(b._history) == whole
+    await say(r, "qual è la capitale della Francia")  # Claude again
+    r.reply_cut(["Roma è la"])
+    assert b._history[-1][1] == f"Roma è la {CUT_NOTE}"
+
+
+async def test_dicevo_rewrites_the_turn_that_was_cut_and_no_other(pricing: Pricing) -> None:
+    """The story is cut by a request Claude answers; "Dicevo" ends, then the story's own line is
+    completed through the handle the first cut returned."""
+    b = brain(pricing, FakeClient(STORY_CHUNKS))
+    await ask(b, "raccontami")
+    handle = b.reply_cut(["Prima frase."])
+    b.client.chunks = ["Parigi."]
+    await ask(b, "qual è la capitale della Francia")
+    b.reply_cut(["Prima frase.", "Seconda frase.", "Terza frase."], handle=handle)
+    assert list(b._history) == [
+        ("[it] raccontami", "Prima frase. Seconda frase. Terza frase."),
+        ("[it] qual è la capitale della Francia", "Parigi."),
+    ]
+
+
+async def test_a_cut_guess_question_leaves_claudes_history_alone(
+    matcher: CommandMatcher, pricing: Pricing
+) -> None:
+    b = brain(pricing, FakeClient())
+    r = LocalResponder(
+        matcher,
+        ActionRunner(Recorder().ctx()),
+        fallback=b.ask,
+        fallback_info=lambda: b.last_call,
+        fallback_cut=b.reply_cut,
+    )
+    await say(r, "qual è la capitale d'Italia")
+    whole = list(b._history)
+    r.propose("chiudi la finestra", "it")  # never goes through respond()
+    r.reply_cut(["Hai detto"])
+    assert list(b._history) == whole
