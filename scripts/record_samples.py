@@ -13,6 +13,8 @@ Commands (the first phrase of every command, x2, for benchmark_latency.py), in I
     uv run python scripts/record_samples.py commands --repeat 2 --language en
 Safety phrases (a yes and near-yes phrases, x2, for tests/integration/test_safety_audio.py):
     uv run python scripts/record_samples.py safety --repeat 2
+The 145-take safety set for the final test (one stream open for the whole session, about 25 min):
+    uv run python scripts/record_samples.py safety-v2
 
 Only some ways of speaking (a few takes of each, in a few minutes):
     uv run python scripts/record_samples.py wakeword --phrase "Claudio" --styles veloce,distratto
@@ -24,10 +26,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import sys
 import time
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +48,8 @@ NOISE_TAKES = [
     ("stanza", "la stanza com'è di solito, senza parlare"),
     ("tv", "la TV o la musica accesa al volume di sempre, senza parlare tu"),
 ]
+SAFETY_V2_SEED = 2026  # the order of the takes is shuffled, the same way on every restart
+QUESTION_NOTE = "  (come una vera domanda, con il tono che sale)"
 PACK_DIRS = ("hey_claudio", "claudio", "negatives", "noise")
 
 
@@ -157,13 +163,53 @@ def record(seconds: float, device: int | None) -> np.ndarray:
     return np.asarray(audio[:, 0])
 
 
-def check(audio: np.ndarray, min_peak: float) -> str:
+def peak_problem(audio: np.ndarray, min_peak: float) -> str | None:
     peak = float(np.abs(audio).max()) / 32768
     if peak >= 0.99:
         return f"picco {peak:.0%}  <- distorto, allontanati un po' e rifai (r)"
     if peak < min_peak:
         return f"picco {peak:.0%}  <- troppo basso, rifai (r) più vicino o più forte"
-    return f"picco {peak:.0%}"
+    return None
+
+
+def check(audio: np.ndarray, min_peak: float) -> str:
+    return peak_problem(audio, min_peak) or f"picco {float(np.abs(audio).max()) / 32768:.0%}"
+
+
+class OpenMic:
+    """One input stream for the whole session, takes are slices of it: a stream opened per take
+    made the headset's voice processing adapt at each start, and a burst followed each start."""
+
+    def __init__(self, device: int | None) -> None:
+        self.device = device
+        self.stream: Any = None
+
+    def __enter__(self) -> OpenMic:
+        import sounddevice as sd
+
+        from claudio.audio.devices import stream_settings
+
+        self.stream = sd.InputStream(
+            samplerate=SR,
+            channels=1,
+            dtype="int16",
+            device=self.device,
+            extra_settings=stream_settings(self.device),
+        )
+        self.stream.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.stream.stop()
+        self.stream.close()
+
+    def take(self, seconds: float) -> np.ndarray:
+        """Drops what the stream heard since the last take, then reads the next `seconds`."""
+        if stale := self.stream.read_available:
+            self.stream.read(stale)
+        print("   ● parla", flush=True)
+        audio, _ = self.stream.read(int(seconds * SR))
+        return np.asarray(audio[:, 0])
 
 
 def min_peak_for(stem: str) -> float:
@@ -178,17 +224,21 @@ def session(
     out: Path,
     device: int | None,
     labels: dict[str, str] | None = None,
+    mic: OpenMic | None = None,
 ) -> int:
     """Records the prompts in order; returns how many different clips were saved. `labels`
     (file stem -> sentence) is written next to the takes, so a take is never taken for
-    another sentence when the list of prompts changes."""
+    another sentence when the list of prompts changes. With `mic` (one stream for the whole
+    session) a take under the peak check or clipped is not saved: the prompt comes back."""
     import soundfile as sf
 
     out.mkdir(parents=True, exist_ok=True)
     print(f"Registro {len(prompts)} clip in {out}")
     print("Invio = registra   r + Invio = rifai la precedente   q + Invio = basta così\n")
     i, header, saved = 0, "", set()
+    held: np.ndarray | None = None  # a quiet noise take, kept if JenJo answers "a"
     while True:
+        kept, held, accept = held, None, False
         if i == len(prompts):  # after the last take, one more chance to redo it
             again = input("r + Invio = rifai l'ultima   Invio = fine ") if prompts else ""
             if again.strip().lower() != "r":
@@ -203,6 +253,7 @@ def session(
             answer = input(f"[{i + 1}/{len(prompts)}] Invio, poi {text} ").strip().lower()
             if answer == "q":
                 break
+            accept = answer == "a" and kept is not None
             if answer == "r":
                 if i == 0:
                     print("   niente da rifare")
@@ -215,7 +266,16 @@ def session(
                 print(f"   {s}...", end=" ", flush=True)
                 time.sleep(1)
             print()
-        audio = record(seconds, device)
+        audio = kept if accept and kept is not None else None
+        if audio is None:
+            audio = mic.take(seconds) if mic else record(seconds, device)
+        if mic and not accept and (problem := peak_problem(audio, min_peak_for(stem))):
+            print(f"   scartata, {problem}")
+            if stem.startswith("noise/") and float(np.abs(audio).max()) / 32768 < 0.99:
+                # a whispered "psst" may never reach the peak; a clipped take is always redone
+                held = audio
+                print("   (a + Invio = tienila lo stesso)")
+            continue
         (out / f"{stem}.wav").parent.mkdir(parents=True, exist_ok=True)  # safety: yes/, no/
         sf.write(out / f"{stem}.wav", audio, SR, subtype="PCM_16")
         if labels and stem in labels:
@@ -243,17 +303,88 @@ def command_prompts(
     return prompts
 
 
-def load_safety_phrases(path: Path) -> list[tuple[str, str]]:
-    """(expected answer, phrase) per line of the TSV; blank lines and # comments are skipped."""
-    rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+def safety_lines(path: Path, columns: int) -> list[tuple[int, list[str]]]:
+    """(line number, fields) per data line of the TSV; blank lines and # comments are skipped.
+    A line with too few columns, an unknown answer or an empty phrase stops with its number."""
+    lines = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip() or line.startswith("#"):
             continue
-        expected, _, phrase = line.partition("\t")
-        if expected not in ("yes", "no", "unclear") or not phrase.strip():
-            raise ValueError(f"{path.name}: riga non valida {line!r} (atteso: yes, no, unclear)")
-        rows.append((expected, phrase.strip()))
+        fields = line.split("\t")
+        where = f"{path.name}, riga {number}"
+        if len(fields) < columns:
+            raise ValueError(
+                f"{where}: servono {columns} colonne separate da tab, ce ne sono {len(fields)}"
+            )
+        if fields[0] not in ("yes", "no", "unclear"):
+            raise ValueError(f"{where}: risposta {fields[0]!r}, attesa una tra yes, no, unclear")
+        if not fields[1].strip():
+            raise ValueError(f"{where}: frase vuota")
+        lines.append((number, fields))
+    return lines
+
+
+def load_safety_phrases(path: Path) -> list[tuple[str, str]]:
+    """(expected answer, phrase) per line of the TSV; the columns after the phrase are for
+    safety-v2."""
+    return [(f[0], f[1].strip()) for _, f in safety_lines(path, 2)]
+
+
+@dataclass(frozen=True)
+class SafetyRow:
+    expected: str
+    phrase: str
+    group: str  # folder of the takes in samples/safety_v2/
+    takes: int
+
+
+def load_safety_v2(path: Path) -> list[SafetyRow]:
+    """Rows of the TSV with their group and number of takes (the columns after the phrase)."""
+    rows = []
+    for number, (expected, phrase, group, takes, *_) in safety_lines(path, 4):
+        if not takes.isdigit():
+            raise ValueError(f"{path.name}, riga {number}: prese {takes!r}, atteso un numero")
+        rows.append(SafetyRow(expected, phrase.strip(), group, int(takes)))
     return rows
+
+
+def safety_v2_prompts(
+    phrases_file: Path, seconds: float, out: Path
+) -> list[tuple[str, str, str, float]]:
+    """The takes still missing in out/<group>/, two rounds, each shuffled (the same way on every
+    run), so a restart goes on from where the session stopped."""
+    rounds: dict[int, list[tuple[str, str, str, float]]] = {}
+    for row in load_safety_v2(phrases_file):
+        prefix = slug(row.phrase)
+        text = f'di\': "{row.phrase}"' + (QUESTION_NOTE if row.phrase.endswith("?") else "")
+        for take in range(row.takes):
+            if (out / row.group / f"{prefix}__{take}.wav").exists():
+                continue  # the takes are not recorded in order: ask for each one that is missing
+            stem = f"{row.group}/{prefix}__{take}"
+            # a phrase with many takes (the 8 "sì?") is spread over the first two rounds
+            rounds.setdefault(take % 2, []).append(("frasi di sicurezza", text, stem, seconds))
+    rng = random.Random(SAFETY_V2_SEED)
+    prompts = []
+    for take in sorted(rounds):
+        rng.shuffle(rounds[take])
+        prompts += rounds[take]
+    return prompts
+
+
+def missing_takes(phrases_file: Path, safety_dir: Path) -> tuple[list[str], list[str]]:
+    """(expected WAVs not in safety_dir, WAVs there that nothing expects), as `group/stem.wav`."""
+    expected = {
+        f"{r.group}/{slug(r.phrase)}__{n}.wav"
+        for r in load_safety_v2(phrases_file)
+        for n in range(r.takes)
+    }
+    found = {p.relative_to(safety_dir).as_posix() for p in safety_dir.glob("*/*.wav")}
+    return sorted(expected - found), sorted(found - expected)
+
+
+def run_safety_v2(prompts: list[tuple[str, str, str, float]], out: Path, device: int | None) -> int:
+    with OpenMic(device) as mic:
+        return session(prompts, out, device, mic=mic)
 
 
 def safety_prompts(
@@ -280,7 +411,8 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "mode", choices=["wakeword", "negatives", "noise", "commands", "safety", "pack"]
+        "mode",
+        choices=["wakeword", "negatives", "noise", "commands", "safety", "safety-v2", "pack"],
     )
     parser.add_argument("--phrase", default="Hey Claudio")
     parser.add_argument("--count", type=int, default=50)
@@ -327,6 +459,15 @@ def main() -> None:
         out = args.out / "safety"
         phrases_file = PROJECT_ROOT / "scripts" / "safety_phrases.tsv"
         prompts = safety_prompts(phrases_file, args.repeat, args.seconds or 3.0, out)
+    elif args.mode == "safety-v2":
+        out = args.out / "safety_v2"
+        phrases_file = PROJECT_ROOT / "scripts" / "safety_phrases.tsv"
+        prompts = safety_v2_prompts(phrases_file, args.seconds or 3.0, out)
+        print('Le 8 "sì?" vanno dette come vere domande, con il tono che sale.')
+        print(f"{len(prompts)} riprese da fare. Lo stream resta aperto fino alla fine.\n")
+        saved = run_safety_v2(prompts, out, device)
+        print(f"\nFatto: {saved} clip salvate in {out}")
+        return
     else:
         out = args.out / "commands"
         commands = load_commands(settings.resolve(settings.router.commands_file))

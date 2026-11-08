@@ -96,7 +96,7 @@ Etichette salvate finora:
 
 **Per G2, prima di registrare:** la prova H0 più sotto.
 
-Quello che segue è la prova come l'hai fatta.
+Quello che segue è la prova come l'hai fatta. **Superata dalla H1:** il comando di test qui sotto ora legge `samples/safety_v2/` e parte solo con `CLAUDIO_SAFETY_V2_RUN=1`, che imposta il coordinatore.
 
 **Perché:** finora i «sì» sono stati provati solo su testo scritto. Qui si prova come Whisper li sente, e che nessun «non va bene» diventi un «va bene». Claudio deve essere chiuso. Usa il microfono che usi di solito con Claudio.
 
@@ -225,6 +225,8 @@ Get-Content logs\metrics.jsonl -Tail 1 | ConvertFrom-Json | Select-Object cut, c
 
 **Scrivimi:** G bis, i passi che non tornano, la frase del passo 4 e la tabella del passo 5.
 
+**Esito G bis (08/11):** passo 1 una frase sola; passo 2 la domanda locale dice «in primo piano» senza il titolo (da G6); passo 4 offerta vera «Lo uso?». Da sistemare: con una domanda aperta, ripetere lo stesso comando col nome fa dire «Va bene, non lo faccio.» e poi la stessa domanda (G3).
+
 ---
 
 ## Adesso: G2
@@ -247,9 +249,58 @@ Get-Content logs\metrics.jsonl -Tail 1 | ConvertFrom-Json | Select-Object cut, c
 
 **Scrivimi:** H0 e le tre risposte. I passi dopo (effetti spenti, altro microfono sulle stesse 10 frasi) li preparo solo se servono.
 
-### H1. Le 145 riprese nuove (circa 25 minuti, una volta sola)
+**Esito H0 (08/11):** WAV dal vivo puliti, un po' bassi; si sente il bip di Claudio. Alle 12:51:11 avevi detto quasi certamente «Confermo»: il «Con-» è caduto nel tratto sordo. Microfono con Voice Clarity e messa a fuoco della voce attivi; «Volume di ingresso» segnava 0: ricontrollalo con la cuffia accesa e dimmi il numero, senza cambiarlo.
 
-Si prepara con il task 4: comando e passi arrivano qui. Da quel momento parte la corsia B.
+### H0b. Effetti audio accesi e spenti (circa 5 minuti)
+
+**Perché:** Voice Clarity e la messa a fuoco della voce cambiano l'audio prima di Claudio. Registri le stesse 10 frasi due volte, poi misuro quale dei due fa sbagliare meno Whisper. **Claudio chiuso.** Usa la cuffia di sempre, alla distanza di sempre.
+
+1. Effetti come sono adesso:
+   ```
+   uv run python "research_notes/Conferma vocale sicura con Whisper/prove/chain_ab.py" on
+   ```
+   A ogni frase: `Invio`, aspetta «● parla», poi dilla con calma. Se dice «troppo basso» o «distorto», `r` la rifà. `q` esce; rilanciando, registra solo quelle mancanti.
+2. Spegni gli effetti: Impostazioni, Sistema, Audio, il microfono «Wireless Stereo Headset». Metti **Ottimizzazione audio** sull'opzione che lo spegne e **Messa a fuoco della voce** su spento (i nomi esatti possono variare).
+3. Le stesse frasi, effetti spenti:
+   ```
+   uv run python "research_notes/Conferma vocale sicura con Whisper/prove/chain_ab.py" off
+   ```
+4. **Rimetti gli effetti com'erano**: Voice Clarity e Automatico.
+
+**Scrivimi:** H0b fatta. Il confronto lo lancio io.
+
+**Esito H0b (08/11):** 10 su 10 giuste sia con gli effetti accesi sia spenti; le riprese nuove sono molto più pulite di quelle vecchie, quindi la distorsione veniva dal registratore vecchio. Gli effetti restano accesi.
+
+### H1. Registrare le 145 riprese di sicurezza (circa 25 minuti, una volta sola)
+
+**Perché:** è il test che dirà se una risposta che non è un sì può ancora far eseguire un'azione. I criteri sono già scritti nel test. **Nessuno ascolta le riprese prima della corsa unica**: non riascoltarle, non rifare quelle "venute male" a orecchio.
+
+**Prima:** Claudio chiuso (anche dalla system tray). Stesso headset di sempre, nella stessa posizione, con gli effetti di Windows come li usi dal vivo. Una stanza silenziosa.
+
+```
+uv run python scripts/record_samples.py safety-v2
+```
+
+Il registratore apre il microfono **una volta sola** e lo tiene aperto fino alla fine. Scrive quante riprese ci sono da fare (145 la prima volta).
+
+**Come si registra:**
+
+- A ogni riga: premi `Invio`, aspetta la scritta `● parla`, poi **di' la frase**. Ogni ripresa dura 3 secondi.
+- Parla con la voce di tutti i giorni, alla distanza di sempre. Non scandire.
+- Se la ripresa è troppo bassa o distorta, il registratore la **scarta da solo** e rifà la stessa riga: di' la frase di nuovo, un po' più vicino o più forte (più lontano se è distorta).
+- **Le frasi con il punto interrogativo («sì?» e «confermo?») vanno dette come vere domande, con il tono che sale.** Sono 8 «sì?» in tutto, sparsi nella lista; accanto compare la nota `(come una vera domanda, con il tono che sale)`.
+- Alcune righe sono suoni, non parole («mmh», «ehm», «boh»): dillo come lo diresti davvero, senza esagerare. Se un suono molto sommesso («psst») viene scartato come troppo basso, scrivi `a` + `Invio` alla riga dopo: lo tiene lo stesso. Vale solo per i suoni, non per le frasi.
+- La stessa frase torna due volte: dille uguale, non cercare di variarle.
+- `r` + `Invio`: rifà la ripresa **precedente** (quella scritta sulla riga `rifai:`). Usalo solo se hai sbagliato frase, non per la qualità.
+- `q` + `Invio`: esci e riposa. Rilancia lo stesso comando: il registratore **riprende da dove eri e fa solo le riprese mancanti** (ma riapre il microfono: se puoi, fai tutto in una volta).
+
+**Esito atteso:** alla fine `Fatto: 145 clip salvate in ...\samples\safety_v2`. Le riprese stanno in `samples\safety_v2\<gruppo>\` (yes, question, twin, rewrite, offtopic, noise), fuori da Git.
+
+**Non lanciare il test.** Lo lancia il coordinatore, una volta sola, dopo la fine del gruppo.
+
+**Scrivimi:** H1 fatta, e se hai dovuto interrompere (e quante volte) o se qualcosa non ha funzionato (microfono, scritte, scarti continui).
+
+Dopo la H1 parte la corsia B.
 
 ### H2. Interruzioni e conferme (circa 15 minuti, qualche centesimo)
 

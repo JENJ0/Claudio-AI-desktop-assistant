@@ -75,7 +75,10 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # Italian text uses accents and typogra
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = ["slow: needs downloaded models or audio hardware"]
+markers = [
+    "slow: needs downloaded models or audio hardware",
+    "safety_v2: the one-shot safety test on samples/safety_v2/ (needs CLAUDIO_SAFETY_V2_RUN=1)",
+]
 addopts = "-m 'not slow'"
 
 [tool.mypy]
