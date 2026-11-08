@@ -411,6 +411,12 @@ async def test_a_refusal_wins_over_a_repeat(
         "vai in pausa",  # a command too, but not the one that waits
         "Ti prendo i niti.",  # 02/11 16:23:57
         "Spegniti?",  # a question is no yes
+        "Spegniti?!",
+        "Spegniti?.",
+        "Spegniti?...",
+        "Spegniti? Grazie.",
+        "Sì, spegniti?!",
+        "Spegni?!",
         "Claudio.",
     ],
 )

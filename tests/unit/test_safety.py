@@ -48,8 +48,6 @@ NOT_A_YES = [
     "you can do it",
     "i will do it",
     "can you do it",
-    "sì, Claudio",  # the name is a wake phrase, but not at the start: it is not stripped
-    "ok Claudio",
     "go ahead and open chrome",
     "do it later",
     "per favore apri chrome",
@@ -182,12 +180,58 @@ def test_a_question_is_not_a_yes(text: str) -> None:
     assert parse_answer(text) is Answer.UNCLEAR
 
 
+@pytest.mark.parametrize(
+    "text", ["Sì?!", "Sì?.", "Sì?...", "Sì? Grazie.", "Va bene? Grazie.", "Ok? Sì."]
+)
+def test_a_question_mark_anywhere_is_not_a_yes(text: str) -> None:
+    assert parse_answer(text) is Answer.UNCLEAR
+
+
+@pytest.mark.parametrize("text", ["Sì, Claudio.", "Ok Claudio.", "Claudio, sì.", "Claudio, ok."])
+def test_a_yes_with_the_name_is_a_yes(text: str) -> None:
+    assert parse_answer(text) is Answer.YES
+
+
+@pytest.mark.parametrize("text", ["Claudio.", "Hey Claudio.", "Allora Claudio.", "E Claudio."])
+def test_the_name_alone_is_unclear(text: str) -> None:
+    assert parse_answer(text) is Answer.UNCLEAR
+
+
+@pytest.mark.parametrize("text", ["Sì？", "Ok Claudio？", "Sì⁇", "Sì‽"])
+def test_every_question_mark_asks(text: str) -> None:
+    assert parse_answer(text) is Answer.UNCLEAR
+
+
+@pytest.mark.parametrize(
+    "text", ["Ok. Hey Claudio.", "Sì. Hey Claudio.", "Hey, sì, Claudio.", "Ehi sì Claudio"]
+)
+def test_a_greeting_is_a_new_call_not_a_yes(text: str) -> None:
+    assert parse_answer(text) is Answer.UNCLEAR
+
+
+@pytest.mark.parametrize("text", ["Sì, Claudia.", "E Claudio, sì."])
+def test_the_fallback_still_reads_a_yes(text: str) -> None:
+    assert parse_answer(text) is Answer.YES
+
+
+def test_the_fallback_runs_only_when_nothing_is_left() -> None:
+    # Fails safe: the part after the name has no yes word, the second question covers it.
+    assert parse_answer("Sì, Claudio, grazie.") is Answer.UNCLEAR
+
+
+def test_level_3_wants_the_explicit_word_also_with_the_name() -> None:
+    assert parse_answer("Sì, Claudio.", 3) is Answer.UNCLEAR
+    assert parse_answer("Ok Claudio.", 3) is Answer.UNCLEAR
+    assert parse_answer("Claudio, confermo.", 3) is Answer.YES
+
+
 def test_a_question_is_not_an_explicit_confirmation() -> None:
     assert parse_answer("confermo?", 3) is Answer.UNCLEAR
 
 
 def test_a_refusal_in_a_question_is_still_a_no() -> None:
     assert parse_answer("no?") is Answer.NO
+    assert parse_answer("No? Sì.") is Answer.NO
 
 
 @pytest.mark.parametrize("text", ["", "apri chrome", "boh", "Claudio", "che ore sono"])

@@ -62,6 +62,7 @@ from claudio.safety.confirmation import (
     LEVEL_SAFE,
     NOT_UNDERSTOOD,
     Answer,
+    has_question_mark,
     parse_answer,
 )
 from claudio.tts.sentence_splitter import joined_reply
@@ -378,7 +379,7 @@ class ClaudeBrain:
         return (
             action.level < LEVEL_EXPLICIT
             and parse_answer(text, action.level) is Answer.UNCLEAR
-            and not text.rstrip().endswith("?")
+            and not has_question_mark(text)
             and self.tools.repeats(action.calls, text, action.language)
         )
 

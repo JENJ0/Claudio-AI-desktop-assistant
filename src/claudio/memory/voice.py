@@ -29,7 +29,13 @@ from claudio.echo import WORD_SHARE, word_share
 from claudio.memory.relevance import STOPWORDS, rank, same_word, stems
 from claudio.memory.store import Kind, Memory, MemoryRefused, MemoryStore
 from claudio.router.normalizer import normalize, strip_accents, strip_wake_words
-from claudio.safety.confirmation import NO_WORDS, Answer, parse_answer
+from claudio.safety.confirmation import (
+    NO_WORDS,
+    Answer,
+    has_question_mark,
+    parse_answer,
+    words_without_name,
+)
 
 Action = Literal["remember", "rule", "forget", "forget_it", "forget_last", "recall"]
 
@@ -388,6 +394,7 @@ class MemoryVoice:
         """The reply to a memory request; None when `text` is not one (the router goes on).
         `addressed`: said with the wake word (or typed); without it a rule or a forget is
         asked about first."""
+        addressed = addressed and not has_question_mark(text)  # "Dimenticalo?" asks, never forgets
         question = self._question if self.awaiting else None
         self._question = None
         if question is not None:
@@ -520,8 +527,11 @@ class MemoryVoice:
         if _echo(text, q):
             self._question = q  # Claudio's own question in the microphone: still waiting
             return Reply("", q.language, "echo")
+        asked = has_question_mark(text)  # parse_answer gets the words, without the "?"
         intent = parse(text)
         if intent is not None and intent.action == "forget_it":
+            if asked:
+                return None  # "Dimenticalo?" asks: nothing is forgotten
             if q.kind == "forget":
                 return self._forgot(q.options, q.language)  # "Dimenticalo." is the yes
             if q.kind == "rule":
@@ -538,7 +548,6 @@ class MemoryVoice:
             kept = say["rule_dropped" if q.kind == "rule" else "kept"]
             return Reply(kept, q.language, "kept")
         if q.kind != "which":
-            asked = text.rstrip().endswith("?")  # parse_answer gets the words, without the "?"
             if not asked and parse_answer(" ".join(_without_question(q, words))) is Answer.YES:
                 return (
                     self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options, q.language)
@@ -548,13 +557,15 @@ class MemoryVoice:
 
     def _which_answer(self, words: list[str], text: str, q: _Question) -> Reply | None:
         """The answer to "which one?": all of them, an ordinal or one named. `words` is the
-        stripped answer, `text` the raw one (a "?" makes a named answer a question)."""
+        stripped answer, `text` the raw one (a "?" makes any answer a question)."""
+        if has_question_mark(text):
+            return None
         if _all(words):
             return self._forgot(q.options, q.language)
         index = _ordinal(words, len(q.options))
         if index is not None:
             return self._forgot([q.options[index]], q.language)
-        if len(words) <= NAMED_ANSWER_WORDS and not text.rstrip().endswith("?"):
+        if len(words) <= NAMED_ANSWER_WORDS:
             # "quella di Torino": every word in one of them, as a whole word
             allowed = NAMED_ANSWER_CONNECTORS
             if words[0] in NAMED_ANSWER_LEADS:
@@ -609,7 +620,7 @@ class MemoryVoice:
 def _answer_words(text: str) -> list[str]:
     """The words of an answer without the name, the openers ("ok", "allora") and the
     courtesy ("grazie", "per favore")."""
-    words = strip_wake_words(normalize(text, drop_fillers=False).split())
+    words = words_without_name(normalize(text, drop_fillers=False).split())
     while words and words[0] in _OPENER_WORDS:
         words = words[1:]
     while words and words[-1] in _COURTESY_WORDS:

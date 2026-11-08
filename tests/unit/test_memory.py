@@ -884,6 +884,124 @@ def test_a_question_is_not_a_yes_to_forget_or_to_the_rule(voice: MemoryVoice, sa
     assert texts(voice.store) == ["mio padre ha 60 anni"]
 
 
+QUESTIONS = [
+    "Sì?!", "Sì?.", "Sì?...", "Sì? Grazie.", "Va bene? Grazie.", "Ok? Sì.", "Certo?!",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("said", QUESTIONS)
+def test_any_question_mark_is_no_yes_to_forget_or_to_the_rule(
+    voice: MemoryVoice, said: str
+) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert _not_an_answer(voice.handle(said))
+    assert texts(voice.store) == ["mio padre ha 60 anni"]
+    reply(voice, "da ora in poi chiamami capo", addressed=False)
+    assert _not_an_answer(voice.handle(said))
+    assert texts(voice.store) == ["mio padre ha 60 anni"]
+
+
+def test_dimenticalo_with_a_question_mark_asks_first(voice: MemoryVoice) -> None:
+    reply(voice, "ricordati che il treno parte alle 8")
+    assert reply(voice, "Dimenticalo?") == "Dimentico questo: il treno parte alle 8?"
+    assert len(voice.store) == 1
+
+
+def test_dimenticalo_with_a_question_mark_at_an_open_question_asks_again(
+    voice: MemoryVoice,
+) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert reply(voice, "Dimenticalo?").startswith("Dimentico questo")
+    assert len(voice.store) == 1
+
+
+def test_dimentica_with_a_question_mark_asks_first(voice: MemoryVoice) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    assert reply(voice, "Dimentica mio padre?").startswith("Dimentico questo")
+    assert len(voice.store) == 1
+
+
+def test_a_rule_with_a_question_mark_asks_first(voice: MemoryVoice) -> None:
+    assert reply(voice, "Da ora in poi chiamami capo?").endswith("?")
+    assert len(voice.store) == 0
+
+
+def test_a_recall_with_a_question_mark_still_answers(voice: MemoryVoice) -> None:
+    voice.store.add("mia sorella si chiama Anna")
+    assert "Anna" in reply(voice, "Cosa ricordi di mia sorella?")
+
+
+def test_ok_with_the_name_is_no_yes_to_forget(voice: MemoryVoice) -> None:
+    """Deliberate: plain "ok" never was a yes here, and forgetting gets the stricter rule."""
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert _not_an_answer(voice.handle("Ok Claudio."))
+    assert len(voice.store) == 1
+
+
+def test_dimenticalo_with_a_question_mark_is_no_answer_to_the_question(voice: MemoryVoice) -> None:
+    """As an answer it is dropped (None); `handle` then reads it as a fresh "dimenticalo"
+    request, the same as without any open question."""
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert voice._question is not None
+    assert voice._answer("Dimenticalo?", voice._question) is None
+    assert len(voice.store) == 1
+
+
+@pytest.mark.parametrize("said", ["La prima?", "Tutti e due?", "Mio padre?!", "Mio padre? Grazie."])
+def test_a_question_mark_answers_nothing_at_which_one(voice: MemoryVoice, said: str) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    voice.store.add("mio padre abita a Torino")
+    reply(voice, "dimentica mio padre")
+    assert _not_an_answer(voice.handle(said))
+    assert len(voice.store) == 2
+
+
+@pytest.mark.parametrize("said", ["Mia sorella", "Mia sorella?!", "Mia sorella? Grazie."])
+def test_a_named_answer_with_a_question_mark_forgets_nothing(
+    voice: MemoryVoice, said: str
+) -> None:
+    remember(voice.store, "mio padre ha 60 anni", "mia sorella ha 30 anni")
+    got = reply(voice, "dimentica anni")
+    assert "Quale" in got, got
+    handled = voice.handle(said)
+    if "?" in said:
+        assert _not_an_answer(handled) and len(voice.store) == 2
+    else:  # control: without the "?" the same answer names exactly one memory
+        assert handled is not None and handled.outcome == "forgot"
+        assert texts(voice.store) == ["mio padre ha 60 anni"]
+
+
+def test_no_with_a_question_mark_keeps_the_memory_and_closes_the_question(
+    voice: MemoryVoice,
+) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    got = voice.handle("No?")
+    assert got is not None and got.outcome == "kept"
+    assert texts(voice.store) == ["mio padre ha 60 anni"]
+
+
+def test_a_yes_or_no_with_the_name_answers_the_memory_question(voice: MemoryVoice) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    got = voice.handle("No, Claudio.")
+    assert got is not None and got.outcome == "kept" and len(voice.store) == 1
+    reply(voice, "dimentica Anna")
+    assert reply(voice, "Sì, Claudio.").startswith("Dimenticato")
+    assert len(voice.store) == 0
+
+
+def test_the_name_alone_is_still_no_answer_at_the_memory_question(voice: MemoryVoice) -> None:
+    voice.store.add("mio padre ha 60 anni")
+    reply(voice, "dimentica Anna")
+    assert _not_an_answer(voice.handle("Claudio."))
+    assert len(voice.store) == 1
+
+
 @pytest.mark.parametrize("said", ["come sì", "a regola sì", "sì a"])
 def test_the_rules_words_around_a_yes_do_not_save_it(voice: MemoryVoice, said: str) -> None:
     reply(voice, "da ora in poi chiamami capo", addressed=False)
