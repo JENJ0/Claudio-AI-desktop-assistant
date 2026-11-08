@@ -217,7 +217,8 @@ no_speech_prob = 0.5       # a phrase is noise when every segment is above this.
 avg_logprob = -0.8         # ...or below this
 min_speech_dbfs = -45.0    # loudest 32 ms quieter than this: nobody is talking to the microphone
 answer_min_dbfs = -35.0    # a "sì" to "Confermi?" quieter than this is the TV: not confirmed
-answer_min_logprob = -0.75 # a "sì" Whisper is less sure of than this does not run: Claudio asks again
+# answer_min_logprob = -0.75 # off: on 145 takes it stopped no false yes and lost 4 true "Sì." (08/11)
+name_min_logprob = -0.9    # a lone "Ehi Claudio." over an open question is the name only at or above this
 answer_deaf_voice_ms = 100 # this much voice lost while deaf before an answer: it is not heard whole
 
 [cost]

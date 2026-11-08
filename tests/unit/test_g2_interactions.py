@@ -255,3 +255,96 @@ async def test_the_history_keeps_a_space_between_the_question_and_the_reply(
     lines = [reply for _, reply in scene.brain._history]
     assert any("Confermi? Scritto." in line for line in lines), lines
     assert LOCAL_NOTE not in "".join(lines)
+
+
+# --- a lone name counts as the name only when Whisper is sure of it ---------------------------
+
+
+def _lone_name_scene(scene, name_logprob: float) -> None:
+    from claudio.intake import Segment
+
+    scene.assistant.stt_segments = lambda: [
+        Segment(0.01, name_logprob if scene.said == "Ehi Claudio." else -0.2)
+    ]
+
+
+async def test_a_shaky_lone_name_does_not_turn_a_yes_into_a_new_request(make_scene) -> None:
+    scene = make_scene(text_reply("x"), sentence_frames=PLAY)
+    _lone_name_scene(scene, -0.95)
+    await scene.say("chiudi la finestra")
+    await idle(scene)
+    assert scene.responder.awaiting
+    await scene.say("Ehi Claudio.")
+    await scene.say("Sì.")
+    await idle(scene)
+    assert scene.recorder.combos == [CLOSE]  # the question was answered and run
+    assert scene.client.calls == []
+
+
+async def test_a_shaky_lone_name_leaves_an_unclear_phrase_as_an_unclear_answer(
+    make_scene,
+) -> None:
+    scene = make_scene(text_reply("x"), sentence_frames=PLAY)
+    _lone_name_scene(scene, -0.95)
+    await scene.say("chiudi la finestra")
+    await idle(scene)
+    await scene.say("Ehi Claudio.")
+    await scene.say("che ore sono")
+    await idle(scene)
+    assert not any("Sono le 14 e 5." in s for s in scene.speaker.spoken)
+    assert scene.responder.awaiting  # asked once more
+    assert scene.recorder.combos == [] and scene.client.calls == []
+
+
+async def test_a_sure_lone_name_still_cancels_the_question_by_name(make_scene) -> None:
+    scene = make_scene(text_reply("x"), sentence_frames=PLAY)
+    _lone_name_scene(scene, -0.5)
+    await scene.say("chiudi la finestra")
+    await idle(scene)
+    await scene.say("Ehi Claudio.")
+    await scene.say("che ore sono")
+    await idle(scene)
+    assert any("Sono le 14 e 5." in s for s in scene.speaker.spoken)
+    assert scene.recorder.combos == [] and not scene.responder.awaiting
+
+
+# --- a late answer after a lone name needs a sure name too ------------------------------------
+
+
+async def _late_yes_after_a_lone_name(make_scene, name_logprob: float):
+    scene = make_scene(text_reply("x"), sentence_frames=PLAY)
+    _lone_name_scene(scene, name_logprob)
+    await scene.say("chiudi la finestra")
+    await idle(scene)
+    scene.assistant.intake.verify_wake = True  # noise wakes are judged from here on
+    await scene.say("Ehi Claudio.")
+    await scene.say("Sì.")
+    await idle(scene)
+    return scene
+
+
+async def test_a_shaky_lone_name_does_not_let_a_late_yes_run(make_scene) -> None:
+    scene = await _late_yes_after_a_lone_name(make_scene, -1.0)
+    assert scene.recorder.combos == [] and scene.client.calls == []
+
+
+@pytest.mark.parametrize("name_logprob", [-0.5, -0.9])  # -0.9 is the threshold: it counts
+async def test_a_sure_lone_name_lets_a_late_yes_run(make_scene, name_logprob: float) -> None:
+    scene = await _late_yes_after_a_lone_name(make_scene, name_logprob)
+    assert scene.recorder.combos == [CLOSE] and scene.client.calls == []
+    assert scene.rows[-1]["relisten_logprob"] == name_logprob
+
+
+async def test_the_row_rounds_the_lone_name_logprob_to_three_decimals(make_scene) -> None:
+    scene = await _late_yes_after_a_lone_name(make_scene, -0.123456)
+    assert scene.rows[-1]["relisten_logprob"] == -0.123
+
+
+async def test_a_shaky_lone_name_with_no_question_open_is_still_answered(make_scene) -> None:
+    scene = make_scene(text_reply("x"), sentence_frames=PLAY)
+    _lone_name_scene(scene, -1.0)
+    scene.assistant.intake.verify_wake = True
+    await scene.say("Ehi Claudio.")
+    await scene.say("che ore sono")
+    await idle(scene)
+    assert any("Sono le 14 e 5." in s for s in scene.speaker.spoken)

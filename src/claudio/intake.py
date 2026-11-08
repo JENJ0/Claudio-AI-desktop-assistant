@@ -165,6 +165,7 @@ class Heard:
 
     wake_word: str  # the wake word model, CONVERSATION, BARGE_IN, FOLLOW_UP or "typed"
     relistened: bool = False  # the request after a phrase that was only the wake word
+    name_sure: bool = True  # the lone name passed the weakest-segment gate (set by the Assistant)
     second_chance: bool = False  # Whisper already heard the name in a near miss
     name_heard: bool = False  # Whisper heard the name in the wake word audio itself
     speech_dbfs: float | None = None  # loudest 32 ms of speech; None: not measured
@@ -289,7 +290,8 @@ class RequestFilter:
         if heard.deaf_voice_ms >= noise.answer_deaf_voice_ms:
             return Decision(Kind.ANSWER, "", "deaf_answer")
         weakest = min((s.avg_logprob for s in heard.segments), default=0.0)
-        if weakest < noise.answer_min_logprob and parse_answer(text) is Answer.YES:
+        floor = noise.answer_min_logprob
+        if floor is not None and weakest < floor and parse_answer(text) is Answer.YES:
             return Decision(Kind.ANSWER, "", "unsure_yes")  # a no, even weak, is a no
         return Decision(Kind.ANSWER, text)
 
@@ -301,7 +303,9 @@ class RequestFilter:
             self.verify_wake
             and responder.awaiting
             and heard.wake_word not in (CONVERSATION, BARGE_IN, FOLLOW_UP)
-            and not (heard.name_heard or heard.second_chance or heard.relistened)
+            and not (
+                heard.name_heard or heard.second_chance or (heard.relistened and heard.name_sure)
+            )
             and not heard_wake_word(text)
             and not wake_confirmed(text, False)
         )

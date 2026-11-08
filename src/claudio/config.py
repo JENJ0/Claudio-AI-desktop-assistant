@@ -384,7 +384,10 @@ class NoiseSettings(BaseModel):
     # The answer to "Confermi?": quieter than this is the TV, not JenJo (treated as unclear).
     answer_min_dbfs: float = Field(-35.0, le=0)
     # A yes whose weakest segment is below this is not run: Claudio asks once more (Task 3).
-    answer_min_logprob: float = Field(-0.75, le=0)
+    # None: no floor.
+    answer_min_logprob: float | None = Field(None, le=0)
+    # A lone name ("Ehi Claudio.") over an open question counts as the name only at or above this.
+    name_min_logprob: float = Field(-0.9, le=0)
     # Voice heard while the window was deaf, at or above this: the head of the answer is lost.
     answer_deaf_voice_ms: int = Field(100, ge=1)
 
