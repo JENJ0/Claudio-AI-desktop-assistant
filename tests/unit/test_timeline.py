@@ -12,10 +12,11 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from claudio.app import Interaction, State, _fixed_reply
-from claudio.brain.claude import CUT_NOTE
+from claudio.brain.claude import CUT_BEFORE_NOTE, CUT_NOTE
 from claudio.brain.prompts import BRIDGE
 from claudio.memory.store import MemoryStore
 from claudio.memory.voice import MemoryVoice
@@ -109,13 +110,6 @@ async def test_basta_while_speaking_keeps_what_was_heard(
     assert not any(sentence in answer for sentence in SENTENCES[len(heard) :])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="discovery (not in the plan): while RESPONDING (Claude has not spoken yet)"
-    " handle_frame ignores the microphone, so a 'basta' said then is lost and the reply"
-    " is spoken in full",
-)
 async def test_basta_before_the_first_word_says_nothing_later(make_scene) -> None:
     scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, claude_wait=40)
     await scene.say("raccontami una storia")
@@ -123,7 +117,254 @@ async def test_basta_before_the_first_word_says_nothing_later(make_scene) -> Non
     await scene.say_over("basta")
     await idle(scene)
     assert scene.speaker.played == []
+    assert scene.row(0)["outcome"] == "stopped"
+    assert scene.speaker.beeps.count("cancel") == 1
+    assert scene.assistant._unsaid_rest is None  # nothing was heard: nothing to go on with
+    assert CUT_BEFORE_NOTE in "".join(answer for _, answer in scene.remembered)
+
+
+async def test_basta_before_the_first_word_pays_for_no_more_words(make_scene) -> None:
+    """The stream is closed at the stop: the chunks that would arrive later are never read."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, claude_wait=40, chunk_wait=3)
+    await scene.say("raccontami una storia")
+    await scene.say_over("basta")
+    await idle(scene)
+    await scene.advance(8.0)  # well past the frame where Claude's first words would arrive
+    assert scene.client.streams[0].chunks_read == 0
+    assert not any(scene.speaker.spoken) and api_calls(scene) == 1  # (the fake logs "")
+    assert scene.assistant._unsaid_rest is None
+
+
+async def test_a_phrase_with_the_name_before_the_first_word_takes_the_request_place(
+    make_scene,
+) -> None:
+    scene = make_scene(
+        text_reply(*STORY),
+        text_reply("Circa quattrocentomila chilometri."),
+        sentence_frames=PLAY,
+        claude_wait=40,
+    )
+    await scene.say("raccontami una storia")
+    assert scene.assistant.state is State.RESPONDING
+    await scene.say_over("Claudio, quanto dista la Luna dalla Terra")
+    await idle(scene)
+    assert [r["outcome"] for r in scene.rows[:2]] == ["interrupted", "ok"]
+    assert [said for said in scene.speaker.spoken if said] == [
+        "Circa quattrocentomila chilometri."
+    ]
+    assert not resumed(scene) and scene.assistant._unsaid_rest is None  # nothing was heard
+    assert scene.speaker.beeps.count("wake") == 1  # the person is still talking: no beep
+
+
+async def test_tv_without_the_name_before_the_first_word_changes_nothing(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, claude_wait=40)
+    assert scene.assistant.barge_in is not None
+    scene.assistant.barge_in.needs_name = True
+    await scene.say("raccontami una storia")
+    assert scene.assistant.state is State.RESPONDING
+    await scene.say_over("e poi mio fratello ha comprato la macchina nuova")
+    await idle(scene)
+    assert scene.speaker.played == SENTENCES
+    assert scene.row(0)["outcome"] == "ok" and len(scene.rows) == 1
+
+
+async def test_a_noise_while_the_beep_plays_does_not_stop_the_thinking(make_scene) -> None:
+    """Claudio's own sound is out of the listener, as when it speaks."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, claude_wait=40)
+    await scene.say("raccontami una storia")
+    assert scene.assistant.state is State.RESPONDING
+    scene.assistant.own_sound.started()  # a beep is playing
+    await scene.say_over("basta")
+    scene.assistant.own_sound.ended()
+    await idle(scene)
+    assert scene.speaker.played == SENTENCES and scene.row(0)["outcome"] == "ok"
+
+
+def count_listener_passes(scene: Scene) -> list[int]:
+    """The over-the-reply Whisper passes, one entry each."""
+    passes: list[int] = []
+    assert scene.assistant.barge_in is not None
+    transcribe = scene.assistant.barge_in.transcribe
+
+    def counting(audio: Any) -> str:
+        passes.append(1)
+        return transcribe(audio)
+
+    counting.__self__ = transcribe.__self__  # type: ignore[attr-defined]  # keeps its duration
+    scene.assistant.barge_in.transcribe = counting  # type: ignore[assignment,misc]
+    return passes
+
+
+async def silent_typed_hears_nothing(scene: Scene) -> None:
+    """A typed message answered in the chat only: voice frames during it reach no listener."""
+    passes = count_listener_passes(scene)
+    typed = asyncio.create_task(scene.assistant.handle_typed("raccontami una storia", "it"))
+    await scene.until(lambda: scene.assistant.state is State.RESPONDING)
+    await scene.say_over("basta")
+    await scene.until(typed.done, poll_s=0.002)
+    assert not passes and not scene.assistant._interrupted and scene.assistant._takeover is None
+    assert scene.row(-1)["wake_word"] == "typed" and scene.row(-1)["outcome"] == "ok"
+
+
+async def test_a_typed_request_stays_deaf_while_claude_thinks(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), claude_wait=40)
+    await silent_typed_hears_nothing(scene)
+
+
+async def test_a_request_left_by_a_timeout_does_not_make_typed_listen(make_scene) -> None:
+    """"Claudio" alone listens again; its window times out: nothing stays armed."""
+    scene = make_scene(text_reply(*STORY), claude_wait=40, window_s=0.0)
+    await scene.say("Claudio")
+    await idle(scene)
+    assert not scene.assistant._listens_while_thinking
+    await silent_typed_hears_nothing(scene)
+
+
+async def test_a_stop_judged_while_whisper_works_ends_the_request_before_claude(
+    make_scene,
+) -> None:
+    """The check of "basta" can only end during the request's own Whisper when a later pass of
+    the request waits behind it (the lock); here the verdict is set while TRANSCRIBING."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, whisper_frames=30)
+    await scene.say("raccontami una storia")
+    assert scene.assistant.state is State.TRANSCRIBING
+    scene.assistant._stop_before_reply = True
+    await idle(scene)
+    assert scene.row(0)["outcome"] == "stopped" and scene.row(0)["text"] == "raccontami una storia"
+    assert api_calls(scene) == 0 and not any(scene.speaker.spoken)
+    assert scene.speaker.beeps.count("cancel") == 1
+
+
+@pytest.mark.parametrize(("heard", "stops"), [("basta", True), ("che ore sono", False)])
+async def test_only_a_stop_judged_while_whisper_works_counts(
+    make_scene, heard: str, stops: bool
+) -> None:
+    """The verdict of a check that ends while the request is still being transcribed (the
+    state is put there by hand: the lock makes the natural order end later)."""
+    scene = make_scene(text_reply("Sono le tre."))
+    assistant = scene.assistant
+    assert assistant.barge_in is not None
+    assistant._set_state(State.TRANSCRIBING)
+    assistant._listen_while_thinking()
+    scene.said = heard
+    assistant._phrase_stop_only = True  # what the start of a phrase in TRANSCRIBING sets
+    assistant._start_barge_check(np.zeros(16000, dtype=np.float32), assistant.barge_in, -20.0)
+    await scene.until(lambda: not assistant._barge_checking)
+    assert assistant._stop_before_reply is stops and assistant._takeover is None
+    assistant._set_state(State.IDLE)
+
+
+async def test_basta_said_during_whisper_and_judged_after_stops_the_thinking(make_scene) -> None:
+    """The check ends only after the request reached Claude (the lock order): the stop still
+    works, as one said while Claude thinks."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, whisper_frames=30, claude_wait=80)
+    await scene.say("raccontami una storia")
+    assert scene.assistant.state is State.TRANSCRIBING
+    await scene.say_over("basta")
+    await idle(scene)
+    assert scene.row(0)["outcome"] == "stopped" and scene.speaker.played == []
+
+
+async def test_words_while_whisper_works_leave_the_request_alone(make_scene) -> None:
+    scene = make_scene(text_reply("Sono le tre."), whisper_frames=30)
+    await scene.say("che ore sono")
+    assert scene.assistant.state is State.TRANSCRIBING
+    await scene.say_over("Claudio, quanto dista la Luna dalla Terra")
+    await idle(scene)
+    assert scene.row(0)["text"] == "che ore sono" and scene.row(0)["outcome"] == "ok"
+    assert scene.speaker.spoken == ["Sono le 14 e 5."]
+
+
+async def test_basta_while_whisper_works_survives_the_switch_to_claude(make_scene) -> None:
+    """The phrase is still being said (its end-silence) when Whisper ends: the listener keeps
+    hearing it."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, whisper_frames=9, claude_wait=40)
+    await scene.say("raccontami una storia")
+    await scene.say_over("basta")
+    await idle(scene)
+    assert scene.speaker.played == [] and scene.row(0)["outcome"] == "stopped"
+
+
+@pytest.mark.parametrize("first_word", [8, 10])
+async def test_basta_survives_the_first_word_arriving(make_scene, first_word: int) -> None:
+    """"basta" said at once, its end not detected yet when Claude's first sound starts."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, claude_wait=first_word)
+    await scene.say("raccontami una storia")
+    await scene.say_over("basta")
+    await idle(scene)
+    assert len(scene.speaker.played) < len(SENTENCES)
     assert scene.row(0)["outcome"] in ("stopped", "interrupted")
+
+
+async def test_a_phrase_begun_in_whisper_is_no_request_when_it_ends_later(make_scene) -> None:
+    """Said while Whisper worked, ended while Claude thinks: the check starts in RESPONDING,
+    but the phrase began earlier, so only a "basta" in it would count."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, whisper_frames=9, claude_wait=40)
+    await scene.say("raccontami una storia")
+    assert scene.assistant.state is State.TRANSCRIBING
+    await scene.say_over("Claudio, quanto dista la Luna dalla Terra")
+    assert scene.assistant.state is State.RESPONDING
+    await idle(scene)
+    assert scene.speaker.played == SENTENCES
+    assert scene.row(0)["outcome"] == "ok" and len(scene.rows) == 1
+
+
+async def test_the_wait_at_the_reply_end_does_not_chain_new_checks(make_scene) -> None:
+    """A TV that keeps talking: the reply's end waits for the checks running then, no more."""
+    scene = make_scene(text_reply(*STORY[:2]), sentence_frames=PLAY, whisper_frames=20)
+    assert scene.assistant.barge_in is not None
+    scene.assistant.barge_in.needs_name = True  # the TV is no request
+    waited: list[int] = []
+    judge = scene.assistant._judge_stranded
+
+    async def timed() -> None:
+        start = scene.ticks.count
+        await judge()
+        waited.append(scene.ticks.count - start)
+
+    scene.assistant._judge_stranded = timed  # type: ignore[method-assign]
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    for _ in range(8):  # one phrase after the other, each checked for 20 frames
+        await scene.say_over("e poi mio fratello ha comprato la macchina nuova")
+    await idle(scene)
+    assert waited and waited[0] <= 80  # the running check and the one waiting, not 120 frames
+
+
+async def test_a_request_waiting_behind_a_tv_check_is_not_lost_at_the_reply_end(
+    make_scene,
+) -> None:
+    """The TV is being checked, the request is said meanwhile and waits for that check; the
+    reply ends before the check does."""
+    scene = make_scene(
+        text_reply(*STORY[:2]),
+        text_reply("Circa quattrocentomila chilometri."),
+        sentence_frames=PLAY,
+        whisper_frames=20,
+    )
+    assert scene.assistant.barge_in is not None
+    scene.assistant.barge_in.needs_name = True  # the TV is no request
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.say_over("e poi mio fratello ha comprato la macchina nuova")
+    await scene.say_over("Claudio, quanto dista la Luna dalla Terra")
+    await idle(scene)
+    assert "Circa quattrocentomila chilometri." in scene.speaker.spoken
+
+
+async def test_a_request_heard_while_the_whisper_check_runs_is_not_lost(make_scene) -> None:
+    """5.2 #5: the reply ends while the check of the phrase said over it is still running."""
+    scene = make_scene(
+        text_reply(*STORY[:2]),
+        text_reply("Circa quattrocentomila chilometri."),
+        sentence_frames=PLAY,
+        whisper_frames=20,
+    )
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.say_over("Claudio, quanto dista la Luna dalla Terra")
+    await idle(scene)
+    assert "Circa quattrocentomila chilometri." in scene.speaker.spoken
 
 
 async def test_noise_over_the_reply_lets_it_finish(make_scene) -> None:

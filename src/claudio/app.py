@@ -273,6 +273,14 @@ class Assistant:
         self._deaf: deque[np.ndarray] = deque(maxlen=DEAF_FRAMES)
         self._deaf_heard = np.zeros(0, dtype=np.float32)
         self._interrupted = False  # the reply being spoken was cut short by "basta"
+        # A spoken request is being transcribed or answered and nothing has been said yet: the
+        # microphone listens as it does over the reply. Typed requests and announcements never.
+        self._listens_while_thinking = False
+        # "basta" was heard before the first word: the request ends as stopped.
+        self._stop_before_reply = False
+        # The phrase the listener is hearing began while Whisper worked on the request: it is
+        # not a new request, only a "basta" in it counts.
+        self._phrase_stop_only = False
         # A voice took over while CLAUDIO spoke: the start of the next request, then the frames
         # heard until the reply has stopped. None: nobody interrupted.
         self._takeover: tuple[np.ndarray, list[np.ndarray]] | None = None
@@ -396,8 +404,31 @@ class Assistant:
             self._on_listen(frame, own)
         elif self.state == State.TRANSCRIBING:
             self._held.append(frame)  # the request itself, if the phrase was only the wake word
+            self._on_thinking_frame(frame, own)
+        elif self.state == State.RESPONDING:
+            self._on_thinking_frame(frame, own)
         elif self.state == State.SPEAKING and self.barge_in is not None:
             self._on_barge_frame(frame, self.barge_in)
+
+    def _on_thinking_frame(self, frame: np.ndarray, own: bool) -> None:
+        """Before the first word of a spoken request's reply the listener of the reply is on,
+        except for CLAUDIO's own sound (a beep)."""
+        if self._listens_while_thinking and self.barge_in is not None and not own:
+            self._on_barge_frame(frame, self.barge_in)
+
+    def _listen_while_thinking(self) -> None:
+        """Arm the listener over the reply for a request being transcribed or answered."""
+        self._listens_while_thinking = self.barge_in is not None
+        self._stop_before_reply = False
+        self._phrase_stop_only = False
+        self._barge_pending = None
+        self._reset_barge_listener()
+
+    def _reset_barge_listener(self) -> None:
+        if self.barge_in is not None:
+            self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
+            self._since_check.clear()
+            self._barge_slices = []
 
     def _on_idle_frame(self, frame: np.ndarray, own: bool) -> None:
         """The wake word listens: a clear detection wakes CLAUDIO, a weak one or a near miss
@@ -683,6 +714,7 @@ class Assistant:
             self._interaction.marks["endpoint"] = now
             self._held.clear()
             self._set_state(State.TRANSCRIBING)
+            self._listen_while_thinking()
             self._task = asyncio.create_task(self._handle_utterance(self.endpointer.audio()))
 
     def _join_deaf(self, inter: Interaction) -> None:
@@ -760,9 +792,13 @@ class Assistant:
                     await self._beep_now("cancel")
                 return
             reply = await self._reply_to(decision, audio, heard, segments, inter)
-            self._set_state(State.RESPONDING)
             resume = await self._unsaid(cut)  # the reply this request cut, read to its end
+            if self._stop_before_reply:  # "basta" while Whisper worked: nothing is asked or said
+                outcome = "stopped"
+                await self._beep_now("cancel")
+                return  # the reply is not started: the router and Claude never run
             cut = None
+            self._set_state(State.RESPONDING)  # the listener armed at TRANSCRIBING goes on
             await self._speak_reply(
                 reply, inter, on_first_audio=lambda: self._on_first_audio(inter)
             )
@@ -878,7 +914,7 @@ class Assistant:
             return "off"  # only "accenditi" is answered, without a sound otherwise
         if route.get("route") == "paused":
             return "paused"  # only the system commands are answered
-        if route.get("command") == "stop":
+        if route.get("command") == "stop" or self._stop_before_reply:
             return "stopped"  # "basta": the conversation is over
         return "interrupted" if self._interrupted else outcome
 
@@ -1224,6 +1260,8 @@ class Assistant:
         self._since_check.append(frame)
         event = barge.endpointer.process(frame)
         if event is EndpointEvent.START:
+            if not self._barge_slices:  # a new phrase, not the rest of one
+                self._phrase_stop_only = self.state is State.TRANSCRIBING
             self._on_barge_voice(barge)
         elif event is EndpointEvent.TIMEOUT:
             self._restart_barge(barge.endpointer)
@@ -1256,6 +1294,8 @@ class Assistant:
 
     def _on_barge_voice(self, barge: BargeIn) -> None:
         """A voice starts over the reply: `barge.mode` says what to do before Whisper hears it."""
+        if self.state is not State.SPEAKING:
+            return  # nothing is playing yet: only Whisper's words count
         if not self._barge_loud(barge):
             return
         if self._sounds_like_echo(barge):
@@ -1302,6 +1342,15 @@ class Assistant:
         barge = self.barge_in
         if barge is None:
             return
+        running, waiting = set(self._checks), self._barge_pending is not None
+        if running:
+            # Checks of phrases heard earlier are still running: their verdict comes first, or
+            # a request said then is lost.
+            await asyncio.wait(running)
+        if waiting and (chained := set(self._checks) - running):
+            # The phrase that waited behind them was fully said before the reply ended: its
+            # check too, and no more: a TV going on does not chain further.
+            await asyncio.wait(chained)
         ep = barge.endpointer
         if self._takeover is not None or not (self._barge_slices or ep.started):
             self._barge_slices = []
@@ -1315,7 +1364,11 @@ class Assistant:
         try:
             async with self._stt_lock:
                 text = await asyncio.to_thread(barge.transcribe, audio)
-            if self._takeover is None and self._is_talking_to_me(text):
+            if (
+                self._takeover is None
+                and not self._phrase_stop_only  # begun in Whisper's time: not a new request
+                and self._is_talking_to_me(text)
+            ):
                 # What the listener heard meanwhile is the same phrase going on.
                 now = self._barge_audio(ep.partial() if ep.started else ep.listened())
                 self._take_over(np.concatenate((audio, now)), text, rest=[])
@@ -1354,7 +1407,9 @@ class Assistant:
         self, audio: np.ndarray, barge: BargeIn, dbfs: float, slice_only: bool = False
     ) -> None:
         """`slice_only`: a piece of a phrase still being said, checked for "basta" alone;
-        the frames heard meanwhile still belong to the phrase."""
+        the frames heard meanwhile still belong to the phrase. A phrase heard while Whisper
+        works on the request is also checked for "basta" alone: it is not a new request."""
+        slice_only = slice_only or self._phrase_stop_only
         self._barge_checking = True
         if not slice_only:
             self._since_check.clear()
@@ -1365,7 +1420,7 @@ class Assistant:
     def _next_barge_check(self, barge: BargeIn) -> None:
         """The phrase heard while Whisper was busy, if the reply is still being spoken."""
         pending, self._barge_pending = self._barge_pending, None
-        if pending is not None and self.state is State.SPEAKING and self._takeover is None:
+        if pending is not None and self._hears_over_reply() and self._takeover is None:
             self._start_barge_check(pending[0], barge, pending[1])
 
     def _sounds_like_echo(self, barge: BargeIn) -> bool:
@@ -1397,7 +1452,7 @@ class Assistant:
             log.exception("Ascolto durante la risposta non riuscito")
         finally:
             self._barge_checking = False
-        if self.state is not State.SPEAKING or self._takeover is not None:
+        if not self._hears_over_reply() or self._takeover is not None:
             self._barge_pending = None
             return  # the reply had already ended, or someone already took over
         try:
@@ -1407,8 +1462,19 @@ class Assistant:
                 # Only a slice that is just "basta": a stop word inside a longer phrase ("e
                 # basta") waits for the whole phrase, which may be a request.
                 self._stop_reply(text)
+            elif text and self._phrase_stop_only:
+                log.info(
+                    "Sentito mentre elaboravo, non è un 'basta': lo ignoro: %r", self._kept(text)
+                )
         finally:
             self._next_barge_check(barge)
+
+    def _hears_over_reply(self) -> bool:
+        """The listener of the reply is on: the reply is spoken, or a spoken request is still
+        being transcribed or answered."""
+        return self.state is State.SPEAKING or (
+            self._listens_while_thinking and self.state in (State.TRANSCRIBING, State.RESPONDING)
+        )
 
     def _stop_reply(self, text: str, with_echo: bool = False) -> None:
         """ "basta" was heard over the reply: it stops, and the conversation with it.
@@ -1417,7 +1483,13 @@ class Assistant:
             log.info("Interrotto a voce (insieme alla mia eco): %r", self._kept(text))
         else:
             log.info("Interrotto a voce: %r", self._kept(text))
+        if self.state is State.TRANSCRIBING:
+            # The request is not answered yet: it ends as stopped before it reaches the router.
+            self._stop_before_reply = True
+            self._barge_slices = []
+            return
         self._interrupted = True
+        self._stop_before_reply = self.state is State.RESPONDING  # nothing has been said yet
         self._barge_slices = []
         if self._interaction is not None:
             self._interaction.info["barge_in"] = self._kept(text)
@@ -1647,18 +1719,30 @@ class Assistant:
         lang = (lambda: self.responder.language) if language is None else language
         drained = DrainedStream(stream)
         text = self._echoed(drained.read()) if resumed else self._marked(drained.read(), inter)
+        sounding = False
+
+        def first_sound() -> None:
+            # Own sound from its first sample, not while it waits for Claude's first words:
+            # the microphone listens then (a "basta" while Claude thinks).
+            nonlocal sounding
+            sounding = True
+            self.own_sound.started()
+            on_first_audio()
+
         try:
-            await self._sound(
-                self.speaker.speak(text, on_first_audio=on_first_audio, language=lang)
-            )
+            await self.speaker.speak(text, on_first_audio=first_sound, language=lang)
         finally:
+            if sounding:
+                self._sound_ended()
             handle = None
             if self._interrupted and not resumed:  # before the stream is closed
                 handle = self.responder.reply_cut(list(self.speaker.played))
                 if handle is not None:
                     self._unsaid_rest = None  # a newer Claude reply: the older text is stale
-            if self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0:
+            kept = self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0
+            if kept:
                 self.responder.stop_acting()  # kept for its words: no action may follow from it
+            if kept and (resumed or self.speaker.played):  # else not a word was heard: no "Dicevo"
                 language_now = lang() if callable(lang) else lang
                 played, now = list(self.speaker.played), self.clock()
                 unsure = bool(inter.info.get("stt_unsure"))
@@ -1674,6 +1758,8 @@ class Assistant:
         barge = self.barge_in
         if barge is None or handle is None or self._takeover is not None or not drained.ended:
             return
+        if not self.speaker.played:
+            return  # nothing was heard: nothing for "continua"
         # `awaiting` still matters for a question that was heard whole ("Lo uso?"); one that was
         # not heard is disarmed by reply_cut and shows as a dropped action instead.
         if (
@@ -1822,10 +1908,9 @@ class Assistant:
     def _on_first_audio(self, inter: Interaction) -> None:
         self._mark_first_audio(inter)
         self._barge_pending = None
-        if self.barge_in is not None:
-            self.barge_in.endpointer.reset(timeout_s=WHILE_SPEAKING_S)
-            self._since_check.clear()
-            self._barge_slices = []
+        if not self._listens_while_thinking:  # else a phrase may be under way: keep hearing it
+            self._reset_barge_listener()
+        self._listens_while_thinking = False  # from here the reply itself is what listens
         self._set_state(State.SPEAKING)
 
     def _finish(self, outcome: str) -> None:
@@ -1866,6 +1951,8 @@ class Assistant:
             row = self.metrics.write(inter) if self.metrics else inter.summary()
             self.history.append(row)
         self._interaction = None
+        self._listens_while_thinking = False  # whichever way the request ended
+        self._stop_before_reply = False
         self.wake.reset()
         self._set_state(State.IDLE)
 
