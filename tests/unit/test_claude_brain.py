@@ -15,7 +15,14 @@ import httpx2
 import pytest
 
 from claudio.app import Assistant, addressed_to_claudio
-from claudio.brain.claude import CUT_BEFORE_NOTE, CUT_NOTE, ClaudeBrain, StreamEnd, stream_end
+from claudio.brain.claude import (
+    CUT_BEFORE_NOTE,
+    CUT_NOTE,
+    LOCAL_NOTE,
+    ClaudeBrain,
+    StreamEnd,
+    stream_end,
+)
 from claudio.brain.prompts import ASK_SONNET_TOOL, OFFER, SYSTEM_PROMPT
 from claudio.config import ClaudeSettings, in_language
 from claudio.cost.pricing import Pricing, Usage, load_pricing
@@ -1493,6 +1500,16 @@ async def test_a_note_split_anywhere_reaches_neither_the_voice_nor_the_history(
             "Va bene, socio, lo cerco per te. Dai, un attimo di pazienza da genio.",
         )
     ]
+
+
+LOCAL_COPY = f"Sono le dieci. {LOCAL_NOTE} Altro?"
+
+
+@pytest.mark.parametrize("split", [None, *range(1, len(LOCAL_COPY))])
+async def test_a_copied_local_note_is_never_spoken(pricing: Pricing, split: int | None) -> None:
+    chunks = [LOCAL_COPY] if split is None else [LOCAL_COPY[:split], LOCAL_COPY[split:]]
+    b = brain(pricing, FakeClient(chunks))
+    assert await ask(b, "che ore sono davvero") == "Sono le dieci.  Altro?"
 
 
 async def test_the_voice_says_only_the_sentences_around_a_note(pricing: Pricing) -> None:

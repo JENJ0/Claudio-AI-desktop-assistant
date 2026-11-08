@@ -212,6 +212,19 @@ def test_an_answer_with_the_name_is_an_answer_while_a_question_is_open(text: str
     assert decide(text, responder, relistened=True).kind is Kind.ANSWER
 
 
+def test_an_unnamed_answer_after_a_noise_wake_is_a_false_wake() -> None:
+    f = RequestFilter(verify_wake=True)
+    responder = Commands()
+    responder.awaiting = True
+    assert decide("sì", responder, f=f).kind is Kind.FALSE_WAKE
+    assert decide("Claudio, sì", responder, f=f).kind is Kind.ANSWER
+    assert decide("Sì, Claudio.", responder, f=f).kind is Kind.ANSWER
+    assert decide("sì", responder, f=f, name_heard=True).kind is Kind.ANSWER
+    assert decide("sì", responder, f=f, second_chance=True).kind is Kind.ANSWER
+    for window in ("follow_up", CONVERSATION):  # the window right after the question
+        assert decide("sì", responder, f=f, wake_word=window).kind is Kind.ANSWER
+
+
 def test_the_name_alone_still_listens_again_while_a_question_is_open() -> None:
     responder = Commands()
     responder.awaiting = True
