@@ -97,7 +97,9 @@ class FakeResponder:
     def reply_cut(self, played: Sequence[str], handle: object | None = None) -> None:
         return None
 
-    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+    async def respond(
+        self, text: str, language: str = "it", named: bool = False
+    ) -> AsyncIterator[str]:
         self.seen.append(text)
         self.language = "en" if "open" in text else language  # the language of the phrase
         if "chrome" in text:
@@ -1161,14 +1163,18 @@ class SeenLevel:
 
 
 class FailingResponder(FakeResponder):
-    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+    async def respond(
+        self, text: str, language: str = "it", named: bool = False
+    ) -> AsyncIterator[str]:
         self.seen.append(text)
         raise RuntimeError("Claude non risponde")
         yield ""  # an async generator
 
 
 class StopResponder(FakeResponder):
-    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+    async def respond(
+        self, text: str, language: str = "it", named: bool = False
+    ) -> AsyncIterator[str]:
         self.seen.append(text)
         self.last_route = {"route": "local", "command": "stop"}
         yield "Ok."
@@ -1181,9 +1187,11 @@ class SwitchingResponder(FakeResponder):
         super().__init__()
         self.level = level
 
-    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+    async def respond(
+        self, text: str, language: str = "it", named: bool = False
+    ) -> AsyncIterator[str]:
         self.level.microphone = "Webcam"
-        async for part in super().respond(text, language):
+        async for part in super().respond(text, language, named):
             yield part
 
 
@@ -1302,7 +1310,9 @@ class SystemResponder(FakeResponder):
         super().__init__()
         self.system = system
 
-    async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
+    async def respond(
+        self, text: str, language: str = "it", named: bool = False
+    ) -> AsyncIterator[str]:
         self.seen.append(text)
         command = {"dormi": "pause", "svegliati": "resume", "spegniti": "shutdown"}.get(text)
         if command:

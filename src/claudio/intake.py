@@ -71,6 +71,7 @@ class Decision:
     kind: Kind
     text: str  # what the responder gets
     reason: str = ""  # why a phrase is dropped, or why its text was changed
+    named: bool = False  # the wake audio held the name, though the transcript may not
 
     @property
     def dropped(self) -> bool:

@@ -153,6 +153,8 @@ class Pending:
     language: str  # of the question: the answer is given in it
     asked: float  # the responder's clock when it was asked: ACTION_TTL_S from then
     asked_again: bool = False  # the answer was not heard once: the second question is the last
+    heard: bool = True  # False: a phrase cut the question before its last sentence played
+    said_unheard: bool = False  # the unheard question was already said again once
 
     @property
     def level(self) -> int:

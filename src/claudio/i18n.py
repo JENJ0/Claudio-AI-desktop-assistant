@@ -241,6 +241,9 @@ EN: dict[str, str] = {
     "Nuova richiesta sopra la risposta: %s non eseguito": "New request over the reply: %s not run",
     "Offerta di Sonnet scaduta: interrotta": "Sonnet offer expired: interrupted",
     "Offerta di Sonnet non sentita: annullata": "Sonnet offer not heard: cancelled",
+    "Offerta di Sonnet non fatta: spento o in pausa": "Sonnet offer not made: off or paused",
+    "Domanda non posta: spento o in pausa": "Question not asked: off or paused",
+    "Domanda non sentita: la ripeto (%s)": "Question not heard: saying it again (%s)",
     "Basta: fine della conversazione": "Stop: end of the conversation",
     "Ripeto: %r": "Repeating: %r",
     "Fine della conversazione: torno in attesa della wake word": (

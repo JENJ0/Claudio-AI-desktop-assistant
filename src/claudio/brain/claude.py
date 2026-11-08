@@ -55,7 +55,7 @@ from claudio.i18n import tr
 from claudio.intake import Hearing
 from claudio.memory.prompt import without_recalled
 from claudio.protocols import CUT_SHORT
-from claudio.router.normalizer import normalize
+from claudio.router.normalizer import normalize, said_in
 from claudio.safety.confirmation import (
     ACTION_TTL_S,
     ASK_AGAIN,
@@ -96,6 +96,7 @@ CUT_AT_LIMIT_WHY = "cut at the token limit"
 STOPPED_WHY = "a new request came first"
 NOT_CONFIRMED_WHY = "JenJo did not confirm it"
 NOT_HEARD_WHY = "the question was not heard"
+SILENCED_WHY = "Claudio was switched off or paused"
 NO_FOCUS_WHY = "the window did not come to the front"
 # The result of a call that a new request stopped: every tool_use still needs one.
 STOPPED_RESULT = "Not run: JenJo said something else over the reply."
@@ -222,6 +223,8 @@ class ClaudeBrain:
         self._memory_block = ""  # the memories as this request's rounds see them
         # The turn whose words are being spoken: where a cut and a stop are written.
         self._turn: _Turn | None = None
+        # True while Claudio is off or paused (set by the builder): no question is armed then.
+        self.silenced: Callable[[], bool] = lambda: False
 
     def reset(self) -> None:
         self._history.clear()
@@ -290,7 +293,7 @@ class ClaudeBrain:
         return isinstance(handle, _Turn) and bool(handle.not_run)
 
     def _disarm_unheard(self, turn: _Turn, heard: str) -> None:
-        if not turn.asked or _said_in(turn.asked, heard):
+        if not turn.asked or said_in(turn.asked, heard):
             return
         action = self._action
         if action is not None and action.turn is turn:
@@ -473,6 +476,12 @@ class ClaudeBrain:
         turn: _Turn | None = None,
     ) -> AsyncGenerator[str, None]:
         """Ask "Vuoi che usi Sonnet?" and keep the question: the next request is the answer."""
+        if self.silenced():  # off or paused: the offer is not made, Haiku's words are all
+            log.info("Offerta di Sonnet non fatta: spento o in pausa", extra={"route": "tool"})
+            if turn is not None:
+                turn.complete = True
+                self._remember(turn)
+            return
         question = in_language(OFFER, language)
         if turn is None:
             turn = self._turn = _Turn(messages[-1]["content"])
@@ -570,9 +579,11 @@ class ClaudeBrain:
                     self._end_stopped(turn, leg)
                     return
                 if confirm:
-                    yield self._ask_first(
+                    # "": switched off or paused meanwhile, nothing is armed and nothing said
+                    if said := self._ask_first(
                         ask, messages, leg, confirm, refused, turn, language, round_no
-                    )
+                    ):
+                        yield said
                     return
                 if leg.held:  # a free action says only what it did, after it
                     log.debug("Parole prima dell'azione trattenute e scartate: %d", len(leg.held))
@@ -701,8 +712,17 @@ class ClaudeBrain:
         language: str,
         round_no: int,
     ) -> str:
-        """Level 2-3 calls wait for JenJo's yes: arms `ask` and returns what to say."""
+        """Level 2-3 calls wait for JenJo's yes: arms `ask` and returns what to say. Off or
+        paused, nothing is armed or said: the calls are noted as not run."""
         assert self.tools is not None
+        if self.silenced():
+            log.info("Domanda non posta: spento o in pausa", extra={"route": "tool"})
+            self._note_tools(confirm, "not_run_silenced")
+            turn.not_run_why = SILENCED_WHY
+            turn.note_not_run(c.name for c in leg.calls)
+            turn.complete = True
+            self._remember(turn)
+            return ""
         level = max(self.tools.level(c) for c in confirm)
         self._action = _Action(messages, leg.calls, turn, language, level, round_no)
         self._action.refused = refused
@@ -771,12 +791,12 @@ class ClaudeBrain:
             yield said
             return
         log.info("Conferma data (livello %d): eseguo", action.level)
+        # The space that ends the question's sentence, or the next words stick to it in the
+        # history ("confermo.Chrome", "Confermi?Scritto."). Not the bridge: Haiku would copy it.
+        action.turn.parts.append(_space(action.turn))
         if self.pc.bridge and any(
             c.name in SLOW_TOOLS and c.id not in action.refused for c in action.calls
         ):
-            # Not in turn.parts, like BRIDGE: Haiku would copy it. Only the space that ends the
-            # question's sentence, or the next words stick to it ("confermo.Chrome").
-            action.turn.parts.append(_space(action.turn))
             yield in_language(BRIDGE_RUN, action.language) + " "
         alone = not action.turn.done and not action.handoff
         try:
@@ -1558,12 +1578,6 @@ def _cut_line(turn: _Turn) -> str:
     if turn.heard and turn.complete and " ".join(said.split()) == " ".join(read.split()):
         note = ""  # nothing was left unheard
     return " ".join(part for part in (said, note, _notes(turn)) if part)
-
-
-def _said_in(question: str, heard: str) -> bool:
-    """The last sentence of `question` is among the words `heard`."""
-    last = re.split(r"(?<=[.!?])\s+", question.strip())[-1]
-    return f" {normalize(last, drop_fillers=False)} " in f" {normalize(heard, drop_fillers=False)} "
 
 
 def _reaches_a_window(call: ToolCall) -> bool:

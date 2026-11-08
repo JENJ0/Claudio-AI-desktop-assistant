@@ -961,9 +961,7 @@ def test_a_question_mark_answers_nothing_at_which_one(voice: MemoryVoice, said: 
 
 
 @pytest.mark.parametrize("said", ["Mia sorella", "Mia sorella?!", "Mia sorella? Grazie."])
-def test_a_named_answer_with_a_question_mark_forgets_nothing(
-    voice: MemoryVoice, said: str
-) -> None:
+def test_a_named_answer_with_a_question_mark_forgets_nothing(voice: MemoryVoice, said: str) -> None:
     remember(voice.store, "mio padre ha 60 anni", "mia sorella ha 30 anni")
     got = reply(voice, "dimentica anni")
     assert "Quale" in got, got
