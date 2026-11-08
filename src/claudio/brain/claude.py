@@ -96,8 +96,14 @@ CUT_AT_LIMIT_WHY = "cut at the token limit"
 STOPPED_WHY = "a new request came first"
 NOT_CONFIRMED_WHY = "JenJo did not confirm it"
 NOT_HEARD_WHY = "the question was not heard"
+NO_FOCUS_WHY = "the window did not come to the front"
 # The result of a call that a new request stopped: every tool_use still needs one.
 STOPPED_RESULT = "Not run: JenJo said something else over the reply."
+# The result of keys that follow a call that failed to reach its window: they would go elsewhere.
+NO_FOCUS_RESULT = (
+    "Not run: the window an earlier call needed did not come to the front, so nothing was typed. "
+    "Say so to JenJo, or name the window again."
+)
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
 # The bridges, in every language: said aloud, never in the history (Haiku copied them, 05/11).
@@ -238,7 +244,7 @@ class ClaudeBrain:
             action, self._action = self._action, None
             names = ", ".join(c.name for c in action.calls)
             log.info("Conferma scaduta: %s non eseguito", names, extra={"route": "tool"})
-            self._drop(action, NOT_CONFIRMED_WHY)
+            self._drop(action, NOT_CONFIRMED_WHY if action.heard else NOT_HEARD_WHY)
         if cut and self._offer is not None:
             log.info("Offerta di Sonnet scaduta: interrotta", extra={"route": "tool"})
             self._offer = None
@@ -262,9 +268,10 @@ class ClaudeBrain:
     def reply_cut(self, played: Sequence[str], handle: object | None = None) -> object | None:
         """The reply was cut: `played` is what the voice started saying of it, and that is all
         the history keeps of it (also the words still to arrive); the replies of the same turn
-        before it stay. A question or an offer whose words were not among them is not waiting
-        for an answer. Returns the cut turn: passed back as `handle` later (after "Dicevo",
-        when other turns came since), it rewrites that turn and no other."""
+        before it stay. An offer whose words were not among them is not waiting for an answer;
+        an action's question is, but its next answer only has it said again. Returns the cut
+        turn: passed back as `handle` later (after "Dicevo", when other turns came since), it
+        rewrites that turn and no other."""
         turn = handle if isinstance(handle, _Turn) else self._turn
         if turn is None:
             return None
@@ -287,8 +294,7 @@ class ClaudeBrain:
             return
         action = self._action
         if action is not None and action.turn is turn:
-            self._action = None
-            self._drop(action, NOT_HEARD_WHY)
+            action.heard = False  # stays armed: a "sì" or "no" has the question said again
         if self._offer is not None and turn is self._turn:  # the offer is this reply's
             log.info("Offerta di Sonnet non sentita: annullata", extra={"route": "tool"})
             self._offer = None
@@ -549,7 +555,9 @@ class ClaudeBrain:
                     c.id: why for c in leg.calls if (why := self.tools.refusal(c, leg.calls))
                 }
                 active = [c for c in leg.calls if c.id not in refused]
-                await self.tools.prepare(active)
+                late = await self.tools.prepare(active) or {}  # keys with no window to name
+                refused.update(late)
+                active = [c for c in active if c.id not in late]
                 confirm = [c for c in active if self.tools.level(c) > LEVEL_SAFE]
                 # Nothing said in this reply before the question: it reads the action out.
                 read_out = not leg.held.strip() and not "".join(turn.parts[this_reply:]).strip()
@@ -738,11 +746,20 @@ class ClaudeBrain:
         """The answer to "Confermi?": yes runs the calls and Haiku goes on; anything else
         cancels (a TV in the background never confirms an action)."""
         self._turn = action.turn
+        action.turn.stopped = False  # a phrase said over the question is its answer: calls may run
+        self._fold_cut(action.turn)
         answer = Answer.YES if self._repeats(action, text) else parse_answer(text, action.level)
         self.last_call["confirm"] = answer.value
-        if answer is Answer.UNCLEAR and not action.asked_again:
+        unheard = not action.heard
+        if unheard and not action.said_unheard and answer is not Answer.UNCLEAR:
+            # The voice never got to the question: it is said again, once (not a second question).
+            yield await self._ask_again(action, second=False)
+            return
+        if answer is Answer.UNCLEAR and not action.asked_again and not unheard:
             yield await self._ask_again(action)
             return
+        if unheard and answer is Answer.YES:
+            answer = Answer.UNCLEAR  # nobody heard the question, even said again: never a yes
         if answer is not Answer.YES:
             reply = CANCELLED if answer is Answer.NO else NOT_UNDERSTOOD
             log.info("Conferma %s: azione non eseguita", answer.value, extra={"route": "tool"})
@@ -780,24 +797,45 @@ class ClaudeBrain:
             async for chunk in haiku:
                 yield chunk
 
-    async def _ask_again(self, action: _Action) -> str:
+    @staticmethod
+    def _fold_cut(turn: _Turn) -> None:
+        """The reply was cut over its question and the turn goes on: it keeps only what was
+        heard, as a plain part of the turn, not as a cut one."""
+        if turn.heard is None:
+            return
+        turn.parts = [turn.heard] if turn.heard else []
+        turn.heard = None
+        turn.reply_from = len(turn.parts)
+
+    async def _ask_again(self, action: _Action, second: bool = True) -> str:
         """The answer was not heard: the question is asked once more, for a full ACTION_TTL_S,
-        with the action read out (the first one may have been the brief "Confermi?")."""
+        with the action read out (the first one may have been the brief "Confermi?").
+        `second` False: the question itself was not heard, so this is still the first one and
+        a real second question may follow."""
         assert self.tools is not None
-        self.last_call.update(confirm="asked_again", asked_again=True)
+        if second:
+            self.last_call.update(confirm="asked_again", asked_again=True)
+        else:
+            self.last_call["confirm"] = "asked_unheard"
         asked = [
             c
             for c in action.calls
             if c.id not in action.refused and self.tools.level(c) > LEVEL_SAFE
         ]
         what = await self.tools.describe_calls(asked, action.language)
-        if what:
+        plain = in_language(
+            ASK_LEVEL_3 if action.level >= LEVEL_EXPLICIT else ASK_LEVEL_2, action.language
+        )
+        if not what:
+            said = plain
+        elif second:
             again = ASK_AGAIN_EXPLICIT if action.level >= LEVEL_EXPLICIT else ASK_AGAIN
             said = in_language(again, action.language).format(what=what)
-        else:
-            plain = ASK_LEVEL_3 if action.level >= LEVEL_EXPLICIT else ASK_LEVEL_2
-            said = in_language(plain, action.language)
-        action.asked_again = True
+        else:  # a clear answer to a question nobody heard: the question itself
+            said = f"{what}. {plain}"
+        action.asked_again = action.asked_again or second
+        action.said_unheard = action.said_unheard or not second
+        action.heard = True
         action.asked = self.clock()
         self._action = action
         turn = action.turn
@@ -816,11 +854,20 @@ class ClaudeBrain:
         assert self.tools is not None
         results = []
         own: list[str] | None = []
+        lost = False  # a call before this one did not reach the window it named (or its keys)
         for call in calls:
+            lost = lost or (call.id in refused and _reaches_a_window(call))
             if call.id in refused:
                 own = None
                 self._note_tools([call], "refused")
                 results.append(_failed_result(call, refused[call.id]))
+                continue
+            if lost and self.tools.keys_for_the_front(call):
+                own = None
+                self._note_tools([call], "not_run_focus")
+                turn.not_run_why = NO_FOCUS_WHY
+                turn.note_not_run([call.name])
+                results.append(_failed_result(call, NO_FOCUS_RESULT))
                 continue
             if turn.stopped:  # it came while the call before this one was running
                 own = None
@@ -837,6 +884,7 @@ class ClaudeBrain:
                 own = None
             elif own is not None:
                 own.append(outcome.spoken)
+            lost = lost or (outcome.error and _reaches_a_window(call))
             self._note_tools([call], "error" if outcome.error else "ok", outcome.ms)
             turn.ran(call.name, "failed" if outcome.error else "ok")
             block: dict[str, Any] = {
@@ -1405,6 +1453,8 @@ class _Action:
         self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
         self.asked_again = False  # the answer was not heard once: the second question is the last
+        self.heard = True  # False: the voice never got to the question, the next phrase repeats it
+        self.said_unheard = False  # it was said again once for that: the next phrase is a plain one
         self.handoff = False  # Haiku also asked for Sonnet: Claude goes on after the calls
 
 
@@ -1514,6 +1564,12 @@ def _said_in(question: str, heard: str) -> bool:
     """The last sentence of `question` is among the words `heard`."""
     last = re.split(r"(?<=[.!?])\s+", question.strip())[-1]
     return f" {normalize(last, drop_fillers=False)} " in f" {normalize(heard, drop_fillers=False)} "
+
+
+def _reaches_a_window(call: ToolCall) -> bool:
+    """A call that brings a window up or sends keys to one: when it fails, the keys after it
+    (with no window of their own) would go to a window nobody named."""
+    return call.name in ("focus_window", "open_app", "type_text", "press_keys")
 
 
 def _failed_result(call: ToolCall, why: str) -> dict[str, Any]:

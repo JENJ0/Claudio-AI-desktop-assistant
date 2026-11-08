@@ -930,9 +930,10 @@ class Assistant:
         if route and route is not route_before:  # else it never reached the router
             inter.info.update(route)
         if not follow_up:
-            # An error or silence never leaves an action armed; a real cut also drops the offer.
+            # An error or silence never leaves an action armed (a phrase said over the reply does:
+            # it is the answer); a real cut also drops the offer.
             cut = outcome in ("interrupted", "stopped") and self._takeover is None
-            self.responder.cancel_pending(cut=cut)
+            self.responder.cancel_pending(cut=cut, takeover=self._takeover is not None)
         self._finish(outcome)
         if self._takeover is not None:
             self._listen_to_takeover()
@@ -1778,7 +1779,7 @@ class Assistant:
         if not self.speaker.played:
             return  # nothing was heard: nothing for "continua"
         # `awaiting` still matters for a question that was heard whole ("Lo uso?"); one that was
-        # not heard is disarmed by reply_cut and shows as a dropped action instead.
+        # not heard stays armed too (marked unheard), so it also ends here.
         if (
             self.responder.awaiting
             or self.responder.action_dropped(handle)

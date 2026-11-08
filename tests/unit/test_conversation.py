@@ -1445,3 +1445,28 @@ async def test_a_phrase_heard_while_whisper_is_busy_waits_its_turn(
             break
         await asyncio.sleep(0.01)
     assert heard == [1600, 1600] and speaker.cut
+
+
+@pytest.mark.parametrize(("said", "takeover"), [("che giorno è oggi", True), ("basta", False)])
+async def test_only_a_phrase_over_the_reply_keeps_claudes_question_armed(
+    fake_vad, vad_settings, make_frames, matcher, said: str, takeover: bool
+) -> None:
+    speaker = LongSpeaker()
+    assistant, _, _, r = build(
+        fake_vad,
+        vad_settings,
+        matcher,
+        ["che ore sono", said],
+        speaker=speaker,
+        barge_in=barge(vad_settings, [said], resume_min_chars=0),
+    )
+    seen: list[dict[str, bool]] = []
+    real = r.cancel_pending
+
+    def spy(silence: bool = False, cut: bool = False, takeover: bool = False) -> None:
+        seen.append({"cut": cut, "takeover": takeover})
+        real(silence=silence, cut=cut, takeover=takeover)
+
+    r.cancel_pending = spy  # type: ignore[method-assign]
+    await speak_over(assistant, make_frames, speaker)
+    assert (seen[0]["takeover"], seen[0]["cut"]) == (takeover, not takeover)

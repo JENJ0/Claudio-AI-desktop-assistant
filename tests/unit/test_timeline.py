@@ -149,9 +149,7 @@ async def test_a_phrase_with_the_name_before_the_first_word_takes_the_request_pl
     await scene.say_over("Claudio, quanto dista la Luna dalla Terra")
     await idle(scene)
     assert [r["outcome"] for r in scene.rows[:2]] == ["interrupted", "ok"]
-    assert [said for said in scene.speaker.spoken if said] == [
-        "Circa quattrocentomila chilometri."
-    ]
+    assert [said for said in scene.speaker.spoken if said] == ["Circa quattrocentomila chilometri."]
     assert not resumed(scene) and scene.assistant._unsaid_rest is None  # nothing was heard
     assert scene.speaker.beeps.count("wake") == 1  # the person is still talking: no beep
 
@@ -212,7 +210,7 @@ async def test_a_typed_request_stays_deaf_while_claude_thinks(make_scene) -> Non
 
 
 async def test_a_request_left_by_a_timeout_does_not_make_typed_listen(make_scene) -> None:
-    """"Claudio" alone listens again; its window times out: nothing stays armed."""
+    """ "Claudio" alone listens again; its window times out: nothing stays armed."""
     scene = make_scene(text_reply(*STORY), claude_wait=40, window_s=0.0)
     await scene.say("Claudio")
     await idle(scene)
@@ -287,7 +285,7 @@ async def test_basta_while_whisper_works_survives_the_switch_to_claude(make_scen
 
 @pytest.mark.parametrize("first_word", [8, 10])
 async def test_basta_survives_the_first_word_arriving(make_scene, first_word: int) -> None:
-    """"basta" said at once, its end not detected yet when Claude's first sound starts."""
+    """ "basta" said at once, its end not detected yet when Claude's first sound starts."""
     scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, claude_wait=first_word)
     await scene.say("raccontami una storia")
     await scene.say_over("basta")
@@ -1019,3 +1017,22 @@ async def test_dropped_action_answers_for_the_handles_turn_not_the_newest(make_s
     brain._turn = _Turn("newer")
     assert brain.dropped_action(old) and not brain.dropped_action(brain._turn)
     assert not brain.dropped_action(None)
+
+
+async def test_a_yes_over_the_playing_confermi_runs_the_action_once(make_scene, home: Path) -> None:
+    """Rule 6 through the Assistant: "Confermi?" is playing, "Claudio, sì" takes over the reply
+    and is the answer, so the action runs and Haiku goes on."""
+    desk = FakeDesktop()
+    words = "Scrivo ciao."
+    call = (
+        [words + " "],
+        "tool_use",
+        [text(words), use("type_text", text="ciao", **INTO_CHROME)],
+    )
+    scene = make_scene(call, text_reply("Scritto."), sentence_frames=PLAY, desk=desk, home=home)
+    await scene.say(WRITE)
+    await scene.until(lambda: any("Confermi?" in p for p in scene.speaker.played))
+    await scene.say_over("Claudio, sì")
+    await idle(scene, poll_s=0.002)
+    assert [d[0] for d in desk.done if d[0] in ("keys", "paste")] == ["keys"]
+    assert not scene.brain.awaiting
