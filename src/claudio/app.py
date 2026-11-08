@@ -781,7 +781,7 @@ class Assistant:
             outcome = decision.kind.value
             if decision.kind is Kind.RELISTEN:
                 self._cut, cut = cut, None  # still the same request
-                self._relisten(inter)
+                self._relisten(inter, segments)
                 return
             if decision.kind is Kind.CONTINUE:
                 self._cut, cut = cut, None  # still the same request
@@ -972,13 +972,14 @@ class Assistant:
         if segments:  # for tuning the noise filter on real logs
             info["stt_no_speech"] = round(max(s.no_speech_prob for s in segments), 3)
             info["stt_logprob"] = round(min(s.avg_logprob for s in segments), 3)
+        heard = replace(heard, name_sure=self._relistened_sure(info, heard))
         decision = self.intake.decide(text, language, heard, self.responder)
         if decision.kind is Kind.FALSE_WAKE and await self._name_before(inter):
             heard = replace(heard, name_heard=True)
             decision = self.intake.decide(text, language, heard, self.responder)
         # The name counts when the wake audio held it, not only the transcript (a lone "Claudio."
         # before the request, a near miss Whisper heard, a check of the wake word).
-        named = heard.relistened or heard.name_heard or heard.second_chance
+        named = heard.name_sure or heard.name_heard or heard.second_chance
         echo = self._window_echo(text, decision, heard, info)
         if echo and not decision.dropped:
             log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", self._kept(text))
@@ -994,6 +995,15 @@ class Assistant:
             recovery = await self._recover(decision, language, heard, inter) or decision
             return replace(recovery, named=named)
         return replace(decision, named=named)
+
+    def _relistened_sure(self, info: dict[str, Any], heard: Heard) -> bool:
+        """The name of a lone-name phrase counts over an open question only if Whisper was sure
+        of it: a hallucinated "Ehi Claudio." must not cancel the question."""
+        if not heard.relistened:
+            return False
+        noise = self.intake.noise or NoiseSettings()
+        sure = info.get("relisten_logprob", 0.0) >= noise.name_min_logprob
+        return sure or not self.responder.awaiting
 
     def _window_echo(
         self, text: str, decision: Decision, heard: Heard, info: dict[str, Any]
@@ -1634,11 +1644,14 @@ class Assistant:
         log.info("Riprovato in %s, non capito neanche così: %r", first, self._kept(again))
         return text, heard
 
-    def _relisten(self, inter: Interaction) -> None:
+    def _relisten(self, inter: Interaction, segments: Sequence[Segment]) -> None:
         """The phrase was only the wake word (said again, or its tail after an early detection):
         listen for the request, starting from what was heard while transcribing."""
         log.info("Solo la wake word: ascolto la richiesta")
         inter.info["relisten"] = inter.info.pop("text")
+        inter.info["relisten_logprob"] = round(
+            min((s.avg_logprob for s in segments), default=0.0), 3
+        )
         for stage in ("speech_start", "speech_end", "endpoint", "stt_done"):
             inter.marks.pop(stage, None)
         self._prewake = np.concatenate((self._prewake, self.endpointer.listened()))  # saved WAV

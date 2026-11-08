@@ -248,40 +248,48 @@ WEAK = Segment(0.01, -0.9)  # under the floor of -0.75
 FAIR = Segment(0.01, -0.5)
 
 
-def answer_to_question(text: str, **heard):
+FLOOR = RequestFilter(noise=NoiseSettings(answer_min_logprob=-0.75))  # the floor, switched on
+
+
+def answer_to_question(text: str, f: RequestFilter | None = None, **heard):
     responder = Commands()
     responder.awaiting = True
-    return decide(text, responder, wake_word="follow_up", **heard)
+    return decide(text, responder, f, wake_word="follow_up", **heard)
 
 
 def test_the_floor_and_the_deaf_voice_have_their_settings() -> None:
-    assert NoiseSettings().answer_min_logprob == -0.75
+    assert NoiseSettings().answer_min_logprob is None  # off: it stopped no false yes (08/11)
+    assert NoiseSettings().name_min_logprob == -0.9
     assert NoiseSettings().answer_deaf_voice_ms == 100
 
 
 @pytest.mark.parametrize("text", ["sì", "Va bene.", "Confermo.", "Sì, Claudio."])
 def test_a_yes_whisper_is_unsure_of_is_passed_on_as_nothing(text: str) -> None:
-    decision = answer_to_question(text, segments=[SURE, WEAK])  # the weakest segment counts
+    decision = answer_to_question(text, FLOOR, segments=[SURE, WEAK])  # the weakest counts
     assert decision.kind is Kind.ANSWER and decision.text == ""
     assert decision.reason == "unsure_yes"
 
 
 def test_a_yes_above_the_floor_or_without_figures_is_a_yes() -> None:
-    assert answer_to_question("sì", segments=[FAIR]).text == "sì"
-    assert answer_to_question("sì").text == "sì"  # no segments, no floor
+    assert answer_to_question("sì", FLOOR, segments=[FAIR]).text == "sì"
+    assert answer_to_question("sì", FLOOR).text == "sì"  # no segments, no floor
+
+
+def test_with_no_floor_a_weak_yes_runs() -> None:
+    assert answer_to_question("Sì.", segments=[Segment(0.01, -1.5)]).text == "Sì."
 
 
 def test_a_no_below_the_floor_is_still_a_no() -> None:
-    decision = answer_to_question("no", segments=[Segment(0.01, -1.0)])
+    decision = answer_to_question("no", FLOOR, segments=[Segment(0.01, -1.0)])
     assert decision.text == "no" and decision.reason == ""
 
 
 def test_an_unclear_phrase_below_the_floor_is_passed_on_as_it_is() -> None:
-    assert answer_to_question("che ore sono", segments=[WEAK]).text == "che ore sono"
+    assert answer_to_question("che ore sono", FLOOR, segments=[WEAK]).text == "che ore sono"
 
 
 def test_a_weak_yes_is_a_weak_yes_at_level_3_too() -> None:
-    decision = answer_to_question("confermo", segments=[WEAK])
+    decision = answer_to_question("confermo", FLOOR, segments=[WEAK])
     assert decision.text == "" and decision.reason == "unsure_yes"
 
 
