@@ -106,11 +106,12 @@ def build_responder(
     desktop: Desktop | None = None,
     home: Path | None = None,
     memory_clock: Callable[[], float] | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> LocalResponder:
     """`tracker`: open it on the thread that runs the requests (its SQLite connection only
     works there) when this runs in a loader thread. `client`, `desktop`, `home` and
     `memory_clock` are the replay gate's edges (a cassette client, a fake desktop, a fake home,
-    a fixed clock); None: as in production."""
+    a fixed clock); `clock` is the brain's own clock; None: as in production."""
     from claudio.memory.voice import MemoryVoice
     from claudio.router.actions import ActionRunner
     from claudio.router.command_tool import CommandTool
@@ -128,7 +129,15 @@ def build_responder(
     # Claude runs the commands it recognises in garbled words through the same actions.
     own_commands = CommandTool(commands, actions, matcher.threshold)
     brain = build_brain(
-        settings, tracker, chat, own_commands, store, client=client, desktop=desktop, home=home
+        settings,
+        tracker,
+        chat,
+        own_commands,
+        store,
+        client=client,
+        desktop=desktop,
+        home=home,
+        clock=clock,
     )
     guesser = None
     if brain is not None and settings.guess.enabled:
@@ -197,11 +206,12 @@ def build_brain(
     client: Any | None = None,
     desktop: Desktop | None = None,
     home: Path | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> ClaudeBrain | None:
     """Claude for what no command understands; None when it is switched off. A missing key
     still builds it: Claudio then says where the key goes instead of "I can't do that".
     With a `memory`, Claude sees the memories and may save and forget them. `client`,
-    `desktop`, `home`: the replay gate's edges (None: the real ones)."""
+    `desktop`, `home`, `clock`: the replay gate's edges (None: the real ones)."""
     from claudio.brain.claude import ClaudeBrain, make_client
     from claudio.brain.personality import load_personality
     from claudio.cost.pricing import PricingError
@@ -238,6 +248,7 @@ def build_brain(
             home=home,
         ),
         pc=settings.pc,
+        clock=clock if clock is not None else time.monotonic,
         personality=personality,
         on_show=chat.open if chat is not None else None,  # a command is read in the chat
         memory=(

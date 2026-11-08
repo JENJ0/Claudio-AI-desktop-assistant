@@ -168,3 +168,30 @@ async def test_first_sound_delay_is_readable_when_first_audio_fires(speaker: Spe
     )
     assert len(delays) == 1
     assert isinstance(delays[0], float) and delays[0] >= 0.0
+
+
+async def test_an_error_of_the_stream_reaches_the_caller_after_the_sentences_that_started(
+    speaker: Speaker,
+) -> None:
+    async def stream() -> AsyncIterator[str]:
+        yield "Uno. "
+        raise RuntimeError("la rete è caduta")
+
+    with pytest.raises(RuntimeError, match="la rete è caduta"):
+        await run(speaker, stream())
+    assert speaker.played == ["Uno."]
+    await run(speaker, text("Due."))  # the speaker is usable again
+    assert speaker.played == ["Due."]
+
+
+async def test_a_stream_cancelled_without_an_await_does_not_hang_the_speaker(
+    speaker: Speaker,
+) -> None:
+    async def stream() -> AsyncIterator[str]:
+        yield "Uno. "
+        raise asyncio.CancelledError  # the producer ends cancelled, nothing was awaited
+
+    await run(speaker, stream())
+    assert speaker.played == ["Uno."]
+    await asyncio.sleep(0)
+    assert asyncio.all_tasks() == {asyncio.current_task()}

@@ -475,20 +475,14 @@ async def test_conversation_follow_up_goes_to_claude(
 
 
 class SentenceSpeaker(FakeSpeaker):
-    """Splits the reply as StreamingSpeaker does: the sentences the voice would say."""
+    """Keeps, over all replies, the sentences the voice started to say."""
 
     def __init__(self) -> None:
         super().__init__()
         self.sentences: list[str] = []
 
-    async def speak(
-        self, text_stream: AsyncIterator[str], on_first_audio: Any = None, language: Any = "it"
-    ) -> None:
-        said = [s async for s in split_stream(text_stream)]
-        if on_first_audio:
-            on_first_audio()
-        self.sentences += said
-        self.spoken.append(" ".join(said))
+    async def _during_sentence(self) -> None:
+        self.sentences.append(self.played[-1])
 
 
 async def test_the_fragment_of_a_cut_reply_never_reaches_the_voice(
@@ -1338,6 +1332,24 @@ def test_sonnet_without_prices_is_turned_off(tmp_path: Any, monkeypatch: Any) ->
     settings = load_settings()
     b = build_brain(settings, build_tracker(settings))
     assert b is not None and b.smart_model is None
+
+
+def test_build_brain_passes_the_clock_on(tmp_path: Any, monkeypatch: Any) -> None:
+    """The replay gate's clock reaches the brain, so `history_reset_s` and the 60 s deadlines
+    are tried without sleeping; with none, the brain keeps `time.monotonic`."""
+    import time
+
+    from claudio.__main__ import build_brain, build_tracker
+    from claudio.config import load_settings
+
+    monkeypatch.setenv("CLAUDIO_COST__DB_FILE", str(tmp_path / "spend.db"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    settings = load_settings()
+    now = Monotonic()
+    with_clock = build_brain(settings, build_tracker(settings), client=ScriptedClient(), clock=now)
+    without = build_brain(settings, build_tracker(settings), client=ScriptedClient())
+    assert with_clock is not None and without is not None
+    assert with_clock.clock is now and without.clock is time.monotonic
 
 
 async def test_the_yes_reaches_claude_through_the_router(

@@ -400,7 +400,8 @@ async def feed(assistant: Assistant, speaker: FakeSpeaker, make_frames, answer: 
             yield f
             await asyncio.sleep(0)
         for _ in range(200):  # until the question has been asked
-            if speaker.spoken and assistant.state is State.LISTENING:
+            listening = assistant.state is State.LISTENING and not assistant.own_sound.playing
+            if speaker.spoken and listening:
                 break
             clock.t += 0.08
             yield silence

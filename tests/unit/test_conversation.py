@@ -457,7 +457,11 @@ async def talk(
             await asyncio.sleep(0)
         for n in range(1, requests):
             for _ in range(200):  # until the reply is over and CLAUDIO listens again
-                if len(speaker.beeps) > n and assistant.state is State.LISTENING:
+                if (
+                    len(speaker.beeps) > n
+                    and assistant.state is State.LISTENING
+                    and not assistant.own_sound.playing  # beep over; its echo tail may still deafen
+                ):
                     break
                 clock.t += 0.08
                 yield silence
@@ -526,7 +530,7 @@ async def test_no_conversation_after_pausing(fake_vad, vad_settings, make_frames
 
 
 class LongSpeaker(FakeSpeaker):
-    """Speaks for up to `frames` microphone frames, or until interrupted."""
+    """FakeSpeaker whose first sentence lasts up to a second, or until interrupted."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -536,15 +540,16 @@ class LongSpeaker(FakeSpeaker):
     def interrupt(self) -> None:
         self.cut = True
         self._stop.set()
+        super().interrupt()
 
     async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
         self._stop = asyncio.Event()
-        text = "".join([c async for c in text_stream])
-        if on_first_audio:
-            on_first_audio()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._stop.wait(), timeout=1.0)
-        self.spoken.append(text)
+        await super().speak(text_stream, on_first_audio, language)
+
+    async def _during_sentence(self) -> None:
+        if len(self.played) == 1:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=1.0)
 
 
 def barge(vad_settings: VadSettings, heard: list[str], **kwargs) -> BargeIn:
@@ -805,21 +810,17 @@ async def test_the_answer_to_a_doubtful_hearing_is_not_resumed(
 
 
 class StartSpeaker(LongSpeaker):
-    """LongSpeaker that also keeps what it started to say, in order."""
+    """LongSpeaker that also keeps what it started to say, in order: one entry per reply, its
+    first sentence."""
 
     def __init__(self) -> None:
         super().__init__()
         self.started: list[str] = []
 
-    async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
-        self._stop = asyncio.Event()
-        text = "".join([c async for c in text_stream])
-        self.started.append(text)
-        if on_first_audio:
-            on_first_audio()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._stop.wait(), timeout=1.0)
-        self.spoken.append(text)
+    async def _during_sentence(self) -> None:
+        if len(self.played) == 1:
+            self.started.append(self.played[0])
+        await super()._during_sentence()
 
 
 @pytest.mark.parametrize("b_unsure", [False, True])
