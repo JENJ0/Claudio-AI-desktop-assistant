@@ -59,6 +59,17 @@ KEYS_MAX_CHARS = 500  # key by key at 20 ms a key: 6000 characters would take 2 
 # These return before the front has moved (Popen, startfile, a key that Windows acts on later): it
 # can move after `_type` has looked.
 FRONT_LATER_TOOLS = frozenset({"open_path", "open_website", "web_search", "press_keys"})
+# Calls after which the front window is whatever the system picks: keys that follow them
+# (with no window of their own) have no window to be told about.
+BLIND_FRONT_TOOLS = frozenset({"close_window", "open_website", "open_path", "web_search"})
+# Calls that may open the window a later call names.
+LAUNCH_TOOLS = frozenset({"open_app", "open_path", "open_website", "web_search"})
+BLIND_FRONT_WHY = (
+    "Not run: a call before it changes the front window in a way that cannot be known, so the "
+    "keys would go to an unknown window. Name the window: type_text with its window, or "
+    "focus_window first."
+)
+NO_WINDOW_WHY = "Not typed: no window is in front, so the keys have nowhere to go."
 READ_CUT = "[...]"  # the last line of a window read that stopped before the end (pc/windows.py)
 READ_BACK_MIN_CHARS = 12  # a shorter text is found in any window: it proves nothing
 CHECK_CHARS = 40  # the start and the end of a typed text, looked for in the window afterwards
@@ -317,6 +328,7 @@ _SAY = {
         "type_text": 'scrivo "{text}"',
         "type_into": 'scrivo "{text}" in "{window}"',
         "press_keys": "premo {keys}",
+        "press_keys_into": 'premo {keys} in "{window}"',
         "close_window": 'chiudo la finestra "{window}"',
         "move_file": 'sposto "{source}" in "{destination}"',
         "run_command": "per {purpose}: il comando è nella chat",
@@ -328,6 +340,7 @@ _SAY = {
         "type_text": 'I\'ll type "{text}"',
         "type_into": 'I\'ll type "{text}" in "{window}"',
         "press_keys": "I'll press {keys}",
+        "press_keys_into": 'I\'ll press {keys} in "{window}"',
         "close_window": 'I\'ll close the window "{window}"',
         "move_file": 'I\'ll move "{source}" to "{destination}"',
         "run_command": "to {purpose}: the command is in the chat",
@@ -336,6 +349,33 @@ _SAY = {
         "active": "active",
     },
 }
+
+
+def _holds_name(window: Window | None, name: str) -> bool:
+    """The title or the program of `window` contains `name`, whatever the case."""
+    if window is None:
+        return False
+    name = name.casefold().strip()
+    return name in window.title.casefold() or name in window.process.casefold()
+
+
+def _keys_ask_for_a_window(call: ToolCall) -> bool:
+    """Keys whose question names the window they go to."""
+    return call.name == "type_text" or keys_for_the_front(call)
+
+
+def keys_for_the_front(call: ToolCall) -> bool:
+    """Keys with no window of their own: they go to whatever is in front."""
+    return call.name in ("type_text", "press_keys") and not call.args.get("window")
+
+
+@dataclass(frozen=True)
+class _Expect:
+    """Where windowless keys will go, as the question tells it."""
+
+    title: str  # what JenJo hears
+    window: Window | None  # None: a window that does not exist yet, nothing to compare
+    contains: str = ""  # then, at the yes, a window whose title or program holds this name
 
 
 def _merge(first: Sequence[Found], then: Sequence[Found]) -> list[Found]:
@@ -368,6 +408,13 @@ class PcTools:
         self._launched: App | None = None  # the last app started in this request
         self._launch_failed = False  # the last open_app of this request did not start
         self._free: set[str] = set()  # type_text calls `prepare` expects in a free_typing window
+        # The window each question named for keys with no window of their own (by call id): the
+        # yes must find that same window in front, or nothing is typed.
+        self._named: dict[str, _Expect] = {}
+        # Windows that keys have run into in this reply: only there may a title have changed
+        # because of our own typing ("*" in Notepad). Keys refused or sent elsewhere add nothing.
+        self._ran_into: set[int] = set()
+        self._reply: list[ToolCall] = []  # the calls of the reply being asked about, in order
         self._outside_text = False  # this request read a window, the screen, files...
         self._apps: list[App] | None = None
         self._apps_at = -float("inf")
@@ -404,6 +451,8 @@ class PcTools:
         self._outside_text = outside_text
         self._launched = None  # the answer to "Confermi?" is not a new request: it keeps it
         self._launch_failed = False
+        self._named.clear()
+        self._ran_into.clear()
 
     def refusal(self, call: ToolCall, calls: Sequence[ToolCall]) -> str | None:
         """Why `call` is refused before JenJo is even asked; None when it may go on. A command
@@ -466,17 +515,28 @@ class PcTools:
             return False
         return self.commands.said_again(calls[0].args, text, language)
 
-    async def prepare(self, calls: Sequence[ToolCall]) -> None:
+    async def prepare(self, calls: Sequence[ToolCall]) -> dict[str, str]:
         """Before the levels are read: which type_text calls should land in a window of
         `[pc] free_typing` (Notepad), so level 1. Only a prediction, made before anything runs,
-        and it can be wrong: `_type` checks the real window before any key."""
+        and it can be wrong: `_type` checks the real window before any key. Returns the calls
+        refused before any question (id -> why): keys that would ask, with no window to name."""
         self._free.clear()  # only this reply's calls
+        self._reply = list(calls)
+        self._ran_into.clear()
         for i, call in enumerate(calls):
             if call.name != "type_text":
                 continue
             where = await self._expected_target(str(call.args.get("window") or ""), calls[:i])
             if self._names_free(where):
                 self._free.add(call.id)
+        refused: dict[str, str] = {}
+        for call in calls:
+            if _keys_ask_for_a_window(call) and self.level(call) > LEVEL_SAFE:
+                try:
+                    await self._expect(call, calls)
+                except ToolFailed as exc:
+                    refused[call.id] = str(exc)
+        return refused
 
     async def _expected_target(self, query: str, earlier: Sequence[ToolCall]) -> str:
         """The name a type_text is judged by. Empty, never free: an earlier call of this reply
@@ -519,9 +579,11 @@ class PcTools:
         """What Claudio says before running `calls` (those of level 2-3): what will happen,
         then "Confermi?" (or, at level 3, how to confirm). Brief: level 2 asks only "Confermi?",
         except for a memory, which is always read out (JenJo must hear what is kept or lost).
-        `read_out`: nothing was said before, so the action is read out for this call too."""
+        `read_out`: nothing was said before, so the action is read out for this call too. Keys
+        with no window of their own always are: JenJo must hear where they go."""
         top = max((self.level(c) for c in calls), default=LEVEL_CONFIRM)
         memory = any(c.name in memory_tools.NAMES for c in calls)
+        read_out = read_out or any(keys_for_the_front(c) for c in calls)
         if top <= LEVEL_CONFIRM and self.settings.confirm_brief and not memory and not read_out:
             return ASK_LEVEL_2.get(language) or ASK_LEVEL_2[DEFAULT_LANGUAGE]
         what = await self.describe_calls(calls, language)
@@ -533,27 +595,30 @@ class PcTools:
         """What `calls` will do, read out ("Chiudo la finestra ..., poi premo enter"); the
         second question says it too. "" when no call has a description."""
         say = _SAY.get(language) or _SAY[DEFAULT_LANGUAGE]
-        parts = [await self._describe(call, say, language) for call in calls]
+        ids = {c.id for c in self._reply}
+        reply = self._reply if all(c.id in ids for c in calls) else list(calls)
+        parts = [await self._describe(call, say, language, reply) for call in calls]
         what = say["then"].join(p for p in parts if p)
         return what[:1].upper() + what[1:]
 
-    async def _describe(self, call: ToolCall, say: dict[str, str], language: str) -> str:
+    async def _describe(
+        self, call: ToolCall, say: dict[str, str], language: str, reply: Sequence[ToolCall]
+    ) -> str:
         a = call.args
         if call.name == "type_text":
             text = str(a.get("text", ""))
             if len(text) > SPOKEN_TEXT_CHARS:
                 text = text[:SPOKEN_TEXT_CHARS].rsplit(" ", 1)[0] + "..."
-            if a.get("window"):
-                window = await self._window_title(str(a["window"]), say)
-                return say["type_into"].format(text=text, window=window)
-            return say["type_text"].format(text=text)
+            window = await self._front_title(call, say, reply)
+            return say["type_into"].format(text=text, window=window)
         if call.name == "press_keys":
             try:
                 combos = keys.parse_combos(list(a.get("keys") or []))
             except (keys.BadKey, TypeError):
                 return ""
             spoken = ", ".join(keys.spoken(c, language) for c in combos)
-            return say["press_keys"].format(keys=spoken)
+            window = await self._front_title(call, say, reply)
+            return say["press_keys_into"].format(keys=spoken, window=window)
         if call.name == "close_window":
             window = await self._window_title(str(a.get("window", "")), say)
             return say["close_window"].format(window=window)
@@ -575,6 +640,62 @@ class PcTools:
         if call.name in memory_tools.NAMES and self.memory is not None:
             return self.memory.describe(call.name, a, language)
         return call.name
+
+    async def _front_title(
+        self, call: ToolCall, say: dict[str, str], reply: Sequence[ToolCall]
+    ) -> str:
+        """Where the keys of `call` (no window named) go, as JenJo hears it. Without a known
+        place, the word for "the active one" (such a call is refused before it is asked)."""
+        try:
+            return (await self._expect(call, reply)).title
+        except ToolFailed:
+            return str(call.args.get("window") or say["active"])
+
+    async def _expect(self, call: ToolCall, reply: Sequence[ToolCall]) -> _Expect:
+        """Where the keys of `call` go if they went now, remembered for the yes (asked again
+        each time the question is said, so JenJo hears the window as it is then)."""
+        ids = [c.id for c in reply]
+        before = list(reply[: ids.index(call.id)]) if call.id in ids else []
+        self._named[call.id] = await self._call(self._expected, call, before)
+        return self._named[call.id]
+
+    def _expected(self, call: ToolCall, before: Sequence[ToolCall]) -> _Expect:
+        """The window `call` names, or walk the reply up to its windowless keys as
+        `_typing_target` will at the yes, without moving the focus. A call that names its target
+        (a window, an app) sets it; one that moves the front blind unsets it; the front window
+        now is where the walk starts (or the app started earlier in this request)."""
+        query = str(call.args.get("window") or "")
+        target: tuple[str, str] | None = None
+        if not query:
+            if self._launched is not None:
+                target = ("window", self._launched.name)
+            blind = False
+            for earlier in before:
+                if earlier.name in BLIND_FRONT_TOOLS:
+                    blind = True
+                elif earlier.name == "open_app":
+                    target, blind = ("app", str(earlier.args.get("name") or "")), False
+                elif earlier.name == "focus_window" or (
+                    earlier.name in ("type_text", "press_keys") and earlier.args.get("window")
+                ):
+                    named = earlier.args.get("window") or ""
+                    target, blind = ("window", str(named)), False
+            if blind:
+                raise ToolFailed(BLIND_FRONT_WHY)
+            if target is not None and target[0] == "app":
+                return _Expect(target[1], None)
+            query = target[1] if target is not None else ""
+        try:
+            window = self._find_window(query)
+        except ToolFailed:
+            if not query:
+                raise ToolFailed(NO_WINDOW_WHY) from None
+            if any(c.name in LAUNCH_TOOLS for c in before):
+                return _Expect(query, None, query)  # may be opened by this very reply
+            raise ToolFailed(
+                f'Not run: no window like "{query}" is open. Open it first, or name another.'
+            ) from None
+        return _Expect(window.title, window)
 
     async def _window_title(self, query: str, say: dict[str, str]) -> str:
         """The title of the window that would be used (so JenJo hears the real one)."""
@@ -673,11 +794,14 @@ class PcTools:
             return f'"{window.title}" is now in front.'
         if call.name == "press_keys":
             combos = keys.parse_combos(list(a.get("keys") or []))
+            if call.id in self._named:
+                self._check_named(call.id, self._active_or_none())
             self.desktop.send_keys("".join(keys.to_send_keys(c) for c in combos))
+            self._note_ran_into(self._active_or_none())
             return "Pressed " + ", ".join(combos) + "."
         if call.name == "type_text":
             return self._type(
-                str(a.get("text", "")), str(a.get("window") or ""), call.id in self._free
+                str(a.get("text", "")), str(a.get("window") or ""), call.id in self._free, call.id
             )
         if call.name == "close_window":
             window = self._find_window(str(a.get("window", "")))
@@ -1037,7 +1161,7 @@ class PcTools:
         text = result.describe(timeout, self.settings.command_output_chars)
         return ToolOutcome(text, error=result.code != 0)
 
-    def _type(self, text: str, query: str, free: bool) -> str:
+    def _type(self, text: str, query: str, free: bool, call_id: str = "") -> str:
         """`free`: nobody said yes, `prepare` only predicted Notepad. The target's process, never
         its title, must be free when this looks, or nothing is typed. One look, one instant."""
         if not text:
@@ -1049,6 +1173,7 @@ class PcTools:
                 "Write a shorter one."
             )
         window = self._typing_target(query)
+        self._check_named(call_id, window)
         # shortcut: the check is one instant; a program that takes the front later still gets the
         # keys: after a close_window of the same reply, from a call of an earlier round, or from
         # JenJo's own alt+tab. Upgrade if a live session shows it.
@@ -1057,7 +1182,51 @@ class PcTools:
                 "Not typed: that window needs JenJo's yes. Call type_text again naming the window."
             )
         self._enter(text)
+        self._note_ran_into(window)
         return f"Typed {len(text)} characters." + self._read_back(window, text)
+
+    def _check_named(self, call_id: str, window: Window | None) -> None:
+        """The yes was for the window the question named: nothing goes to another one, to no
+        window at all, or to one whose title changed, unless our own keys already ran into it
+        in this reply."""
+        named = self._named.get(call_id)
+        if named is None:
+            return
+        if named.window is None:
+            if named.contains and not _holds_name(window, named.contains):
+                # never the fuzzy match the search found: only a window with that name in it
+                raise ToolFailed(
+                    f'Nothing was typed: no window named "{named.contains}" was found.'
+                )
+            return
+        if window is None:
+            raise ToolFailed(NO_WINDOW_WHY)
+        was = named.window
+        if window.handle != was.handle:
+            there = (
+                f'another window titled "{window.title}" is in front'
+                if window.title == was.title
+                else f'"{window.title}" is in front, not "{was.title}"'
+            )
+            raise ToolFailed(
+                f"Nothing was typed: {there}, not the window JenJo agreed to. "
+                "Ask again if it should go there."
+            )
+        if window.title != was.title and window.handle not in self._ran_into:
+            raise ToolFailed(
+                f'Nothing was typed: the window now reads "{window.title}", it read '
+                f'"{was.title}" when JenJo agreed. Ask again if it should go there.'
+            )
+
+    def _note_ran_into(self, window: Window | None) -> None:
+        if window is not None and self._named:  # only a reply with a question needs it
+            self._ran_into.add(window.handle)
+
+    def keys_for_the_front(self, call: ToolCall) -> bool:
+        return keys_for_the_front(call)
+
+    def _active_or_none(self) -> Window | None:
+        return next((w for w in self.desktop.windows() if w.active), None)
 
     def _typing_target(self, query: str) -> Window | None:
         """The window the keys will go to, in front. The window Claude named, or the app just

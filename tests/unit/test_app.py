@@ -86,7 +86,9 @@ class FakeResponder:
     def is_stop(self, text: str) -> bool:
         return False
 
-    def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:
+    def cancel_pending(
+        self, silence: bool = False, cut: bool = False, takeover: bool = False
+    ) -> None:
         pass
 
     def stop_acting(self) -> None:

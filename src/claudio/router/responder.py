@@ -332,10 +332,13 @@ class LocalResponder:
         log.info("Chiedo conferma della richiesta dedotta: %r", text, extra={"route": "guess"})
         return question
 
-    def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:
+    def cancel_pending(
+        self, silence: bool = False, cut: bool = False, takeover: bool = False
+    ) -> None:
         """Nothing was said after the question (or it was not understood as speech). After
         mere `silence` a question (Claude's or the router's) stays armed until it expires:
-        JenJo may answer later with the wake word ("Hey Claudio, confermo")."""
+        JenJo may answer later with the wake word ("Hey Claudio, confermo"). `takeover`: a
+        phrase was said over the reply and answers Claude's question next: only that one stays."""
         if self._pending is not None and not silence:
             log.info(
                 "Conferma scaduta: %s non eseguito",
@@ -346,7 +349,7 @@ class LocalResponder:
         if self._proposal is not None:
             log.info("Nessuna risposta: %r non eseguito", self._proposal.text)
             self._proposal = None
-        if self.fallback_cancel is not None and not silence:
+        if self.fallback_cancel is not None and not silence and not takeover:
             self.fallback_cancel(cut)
         if self.memory is not None:
             # "Quale dimentico?" without an answer, even after mere silence: nothing is

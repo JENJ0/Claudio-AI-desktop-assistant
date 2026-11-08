@@ -225,7 +225,7 @@ def test_prudent_setting_asks_for_every_key(desk: FakeDesktop, home: Path) -> No
 async def test_level_2_asks_only_confermi_by_default(tools: PcTools) -> None:
     """JenJo (23/10): "Confermi?" alone, without repeating the action."""
     q = await tools.question(
-        [call("type_text", text="ciao", window="chrome"), call("press_keys", keys=["enter"])],
+        [call("type_text", text="ciao", window="chrome"), call("close_window", window="chrome")],
         "it",
     )
     assert q == "Confermi?"
@@ -246,7 +246,10 @@ async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
         [call("type_text", text="ciao", window="chrome"), call("press_keys", keys=["enter"])],
         "it",
     )
-    assert q == 'Scrivo "ciao" in "YouTube - Google Chrome", poi premo enter. Confermi?'
+    assert q == (
+        'Scrivo "ciao" in "YouTube - Google Chrome", '
+        'poi premo enter in "YouTube - Google Chrome". Confermi?'
+    )
     q = await verbose.question([call("close_window", window="")], "en")
     assert q == 'I\'ll close the window "Senza nome - Blocco note". Do you confirm?'
     q = await verbose.question(
@@ -257,7 +260,7 @@ async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
 
 async def test_long_text_is_shortened_in_the_question(verbose: PcTools) -> None:
     q = await verbose.question([call("type_text", text="parola " * 40)], "it")
-    assert len(q) < 120 and "..." in q
+    assert len(q) < 140 and "..." in q
 
 
 async def test_typing_in_notepad_needs_no_yes(tools: PcTools) -> None:
@@ -1466,10 +1469,10 @@ async def test_a_new_request_in_the_last_waits_before_acting_stops_it(
 ) -> None:
     reached, go = asyncio.Event(), asyncio.Event()
 
-    async def held(*args: Any, **kwargs: Any) -> str:
+    async def held(*args: Any, **kwargs: Any) -> Any:
         reached.set()
         await go.wait()
-        return "Confermi?"
+        return {} if method == "prepare" else "Confermi?"
 
     monkeypatch.setattr(tools, method, held)
     b = acting_brain(pricing, ScriptedClient(([], "tool_use", [tool])), tools)
@@ -3209,7 +3212,7 @@ async def test_a_done_sentence_after_a_tool_that_failed_is_flagged(
     await ask(b, SCENE)
     t.close()
     assert not typed_anything(desk)
-    assert [row.rsplit(" ", 1)[1] for row in b.last_call["tools"]] == ["error", "error"]
+    assert [row.rsplit(" ", 1)[1] for row in b.last_call["tools"]] == ["error", "not_run_focus"]
     assert b.last_call["promised"] is True
 
 
@@ -3707,7 +3710,7 @@ async def test_cancel_pending_writes_the_armed_turn_with_the_not_run_note(
     assert len(b._history) == 1  # once
 
 
-async def test_a_question_that_was_not_heard_drops_the_action_and_keeps_the_turn(
+async def test_a_question_that_was_not_heard_stays_armed_until_the_next_phrase(
     pricing: Pricing, tools: PcTools
 ) -> None:
     client = ScriptedClient(([], "tool_use", [TYPE_INTO_CHROME]))
@@ -3716,6 +3719,8 @@ async def test_a_question_that_was_not_heard_drops_the_action_and_keeps_the_turn
     b.reply_cut([asked])  # "Confermi?" started playing: the action waits for its answer
     assert b.awaiting and not b._history
     b.reply_cut([])  # the same reply, heard to nothing
+    assert b.awaiting  # kept, marked unheard: the next phrase decides
+    b.cancel_pending(cut=True)  # "basta"
     assert not b.awaiting
     [(_, reply)] = b._history
     assert reply == f"{CUT_BEFORE_NOTE} {NOT_RUN_NOTE}type_text, the question was not heard]"
@@ -3867,3 +3872,585 @@ async def test_hey_claudio_si_confirms(pricing: Pricing, tools: PcTools) -> None
     b = closing_chrome(pricing, tools, DONE)
     await ask(b, "chiudi chrome")
     assert await ask(b, "Hey Claudio, sì.") == "Chiusa."
+
+
+# --- Task 9b: the yes reaches the window the question named; a yes over a playing question -----
+
+TYPE_CIAO = use("type_text", text="ciao")  # no window: the keys go where the front is
+TYPE_CIAO_CALL = ToolCall("tu_type_text", "type_text", {"text": "ciao"})
+CIAO_IN_CHROME = 'Scrivo "ciao" in "YouTube - Google Chrome". Confermi?'
+FOCUS_NOWHERE = use("focus_window", window="finestra che non esiste")
+
+
+def in_front(desk: FakeDesktop, handle: int) -> None:
+    desk.open_windows = [replace(w, active=w.handle == handle) for w in desk.open_windows]
+
+
+def typed(desk: FakeDesktop) -> list[tuple[str, Any]]:
+    return [step for step in desk.done if step[0] in ("keys", "paste")]
+
+
+def last_results(client: ScriptedClient) -> list[dict[str, Any]]:
+    return client.calls[-1]["messages"][-1]["content"]
+
+
+async def test_a_failed_focus_stops_the_typing_after_it(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    desk.focus_works = False  # the window cannot be brought up
+    client = ScriptedClient(
+        ([], "tool_use", [use("focus_window", window="chrome"), TYPE_CIAO]),
+        (["Non ci sono riuscito."], "end_turn", [text("Non ci sono riuscito.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao nella finestra")
+    await ask(b, "sì")
+    assert not typed(desk)
+    focus, typing = last_results(client)
+    assert focus["is_error"]
+    assert typing["is_error"] and "did not come to the front" in typing["content"]
+    assert "nothing was typed" in typing["content"]
+    assert b.last_call["tools"][-1] == f"{TYPE_CIAO_CALL.brief()} not_run_focus"
+
+
+async def test_a_refused_focus_stops_the_typing_and_a_named_window_still_types(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = tools.refusal
+    monkeypatch.setattr(
+        tools, "refusal", lambda c, cs: "no" if c.name == "focus_window" else real(c, cs)
+    )
+    into_chrome = use("type_text", text="ciao", window="chrome")
+    client = ScriptedClient(
+        ([], "tool_use", [FOCUS_NOWHERE, use("press_keys", keys=["ctrl+w"]), into_chrome]),
+        (["Fatto."], "end_turn", [text("Fatto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi")
+    await ask(b, "sì")
+    _, keys_result, typing = last_results(client)
+    assert keys_result["is_error"] and "did not come to the front" in keys_result["content"]
+    assert not typing.get("is_error") and len(typed(desk)) == 1  # it named its window
+
+
+async def test_a_typing_question_names_the_window_the_keys_go_to(
+    tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    assert await tools.question([TYPE_CIAO_CALL], "it") == CIAO_IN_CHROME
+    keys_call = call("press_keys", keys=["ctrl+w"])
+    assert await tools.question([keys_call], "it") == (
+        'Premo control W in "YouTube - Google Chrome". Confermi?'
+    )
+    assert await tools.question([keys_call], "en") == (
+        'I\'ll press control W in "YouTube - Google Chrome". Do you confirm?'
+    )
+
+
+async def test_words_said_before_do_not_hide_the_window_the_keys_go_to(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    client = ScriptedClient((["Scrivo ciao."], "tool_use", [text("Scrivo ciao."), TYPE_CIAO]))
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "scrivi ciao") == f"Scrivo ciao. {CIAO_IN_CHROME}"
+
+
+async def test_the_tab_title_in_front_is_what_is_heard_before_a_retry(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """The parked G1 scene: a Chrome tab "Blocco note online" in front, the typing refused once."""
+    desk.open_windows[1] = replace(desk.open_windows[1], title="Blocco note online - Chrome")
+    in_front(desk, 2)
+    client = ScriptedClient(([], "tool_use", [TYPE_CIAO]))  # the retry, a request of its own
+    b = acting_brain(pricing, client, tools)
+    asked = await ask(b, "sì, scrivilo lì")
+    assert asked.endswith('Scrivo "ciao" in "Blocco note online - Chrome". Confermi?')
+
+
+async def test_a_yes_after_the_front_changed_types_nothing_and_names_the_new_window(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    client = ScriptedClient(
+        ([], "tool_use", [TYPE_CIAO]),
+        (["Non ho scritto."], "end_turn", [text("Non ho scritto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "scrivi ciao") == CIAO_IN_CHROME
+    in_front(desk, 3)  # JenJo alt-tabbed to KeePassXC meanwhile
+    await ask(b, "sì")
+    assert not typed(desk)
+    [result] = last_results(client)
+    assert result["is_error"] and '"KeePassXC"' in result["content"]
+    assert "YouTube - Google Chrome" in result["content"]
+
+
+async def test_a_yes_with_the_same_window_in_front_types(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    client = ScriptedClient(([], "tool_use", [TYPE_CIAO]), (["Fatto."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao")
+    assert await ask(b, "sì") == "Fatto."
+    assert len(typed(desk)) == 1
+
+
+# "Claudio, sì" said over the question (Task 9b, rule 6)
+
+WRITTEN = (["Scritto."], "end_turn", [text("Scritto.")])
+
+
+def typing_brain(pricing: Pricing, tools: PcTools, *later: Any) -> ClaudeBrain:
+    client = ScriptedClient(([], "tool_use", [TYPE_INTO_CHROME]), *later)
+    return acting_brain(pricing, client, tools)
+
+
+async def test_a_yes_said_over_the_playing_question_answers_it(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    b = typing_brain(pricing, tools, WRITTEN)
+    asked = await ask(b, "scrivi su chrome")
+    b.reply_cut([asked])  # "Confermi?" had started playing
+    b.stop_acting()  # the phrase took over
+    assert b.awaiting
+    assert await ask(b, "Claudio, sì") == "Scritto."
+    assert len(typed(desk)) == 1
+
+
+async def test_the_takeover_leaves_the_claude_action_armed_and_basta_drops_it(
+    matcher: CommandMatcher, pricing: Pricing, tools: PcTools
+) -> None:
+    b = typing_brain(pricing, tools)
+    r = hybrid(matcher, b)
+    r.fallback_awaiting = lambda: b.awaiting
+    r.fallback_cancel = b.cancel_pending
+    await say(r, "scrivi su chrome")
+    r.cancel_pending(cut=False, takeover=True)  # a phrase took over the reply
+    assert b.awaiting
+    r.cancel_pending(cut=True)  # "basta"
+    assert not b.awaiting
+
+
+async def test_a_yes_before_the_question_played_has_it_said_again_and_a_second_yes_runs(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    b = typing_brain(pricing, tools, WRITTEN)
+    await ask(b, "scrivi su chrome")
+    b.reply_cut([])  # the voice never got to "Confermi?"
+    b.stop_acting()
+    assert b.awaiting  # kept, not dropped
+    again = await ask(b, "Claudio, sì")
+    assert again.endswith("Confermi?") and again.startswith("Scrivo")  # read out, not a repeat
+    assert "Non ho capito" not in again  # it was a clear yes: the question was never heard
+    assert not typed(desk) and b.awaiting
+    assert await ask(b, "sì") == "Scritto."
+    assert len(typed(desk)) == 1
+
+
+async def test_an_unheard_question_said_again_still_allows_one_real_second_question(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    b = typing_brain(pricing, tools)
+    await ask(b, "scrivi su chrome")
+    b.reply_cut([])
+    b.stop_acting()
+    assert "Scrivo" in await ask(b, "sì")  # the unheard question again: not counted
+    assert (await ask(b, "boh")).startswith("Non ho capito")  # the second question
+    assert (await ask(b, "boh")) == "Non ho capito: non lo faccio."  # and no third
+    assert not b.awaiting and not typed(desk)
+
+
+@pytest.mark.parametrize("phrase", ["che ore sono", "boh forse"])
+async def test_any_other_phrase_over_an_unheard_question_cancels_it(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, phrase: str
+) -> None:
+    b = typing_brain(pricing, tools)
+    await ask(b, "scrivi su chrome")
+    b.reply_cut([])
+    b.stop_acting()
+    assert await ask(b, phrase) == "Non ho capito: non lo faccio."
+    assert not b.awaiting and not typed(desk)
+
+
+async def test_the_name_with_a_new_request_over_the_question_cancels_it(
+    matcher: CommandMatcher, pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    b = typing_brain(pricing, tools)
+    r = hybrid(matcher, b)
+    r.fallback_awaiting = lambda: b.awaiting
+    r.fallback_cancel = b.cancel_pending
+    asked = await say(r, "scrivi su chrome")
+    b.reply_cut([asked])
+    b.stop_acting()
+    await say(r, "Claudio, che ore sono")
+    assert not b.awaiting and not typed(desk)
+
+
+# --- Task 9b fix round 1 ---------------------------------------------------------------------
+
+ENTER = use("press_keys", keys=["enter"])
+
+
+async def test_keys_after_an_open_app_name_the_app_and_go_to_its_window(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    desk.app_list.append(App("Word", "WINWORD"))
+    in_front(desk, 2)
+    client = ScriptedClient(
+        ([], "tool_use", [use("open_app", name="word"), TYPE_CIAO]),
+        (["Scritto."], "end_turn", [text("Scritto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "apri word e scrivi ciao") == 'Scrivo "ciao" in "word". Confermi?'
+    assert await ask(b, "sì") == "Scritto."
+    assert len(typed(desk)) == 1 and ("launch", "Word") in desk.done
+    assert [w.title for w in desk.open_windows if w.active] == ["Word (aperta)"]
+
+
+async def test_typing_into_chrome_then_enter_asks_once_naming_chrome(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """Notepad in front: both calls go to Chrome, and that is what JenJo hears."""
+    client = ScriptedClient(
+        ([], "tool_use", [use("type_text", text="ciao", window="chrome"), ENTER]),
+        (["Fatto."], "end_turn", [text("Fatto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "scrivi ciao su chrome e premi invio") == (
+        'Scrivo "ciao" in "YouTube - Google Chrome", '
+        'poi premo enter in "YouTube - Google Chrome". Confermi?'
+    )
+    assert await ask(b, "sì") == "Fatto."
+    assert [step[0] for step in typed(desk)] == ["keys", "keys"]
+    assert [w.title for w in desk.open_windows if w.active] == ["YouTube - Google Chrome"]
+
+
+@pytest.mark.parametrize(
+    "mover",
+    [
+        use("open_website", url="https://example.com"),
+        use("web_search", query="meteo"),
+        use("open_path", path="~/Downloads"),
+    ],
+    ids=lambda c: c.name,
+)
+async def test_keys_after_a_call_that_moves_the_front_blind_are_refused_unasked(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, mover: SimpleNamespace
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [mover, ENTER]),
+        (["Dimmi la finestra."], "end_turn", [text("Dimmi la finestra.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "fai e premi invio") == "Dimmi la finestra."
+    assert not typed(desk)
+    keys_result = last_results(client)[-1]
+    assert keys_result["is_error"] and "Name the window" in keys_result["content"]
+
+
+async def test_a_close_before_the_keys_asks_for_the_close_only(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use("close_window", window="chrome"), ENTER]),
+        (["Chiusa."], "end_turn", [text("Chiusa.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "chiudi chrome e premi invio") == CLOSE_ASKED
+    await ask(b, "sì")
+    assert not typed(desk) and "Name the window" in last_results(client)[-1]["content"]
+
+
+async def test_a_focus_after_the_mover_makes_the_keys_known_again(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    mover = use("open_website", url="https://example.com")
+    client = ScriptedClient(([], "tool_use", [mover, use("focus_window", window="chrome"), ENTER]))
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "x")).endswith('remo enter in "YouTube - Google Chrome". Confermi?')
+
+
+async def test_a_tab_switched_between_question_and_yes_gets_no_keys(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    client = ScriptedClient(([], "tool_use", [TYPE_CIAO]), (["Non ho scritto."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "scrivi ciao") == CIAO_IN_CHROME
+    desk.open_windows[1] = replace(desk.open_windows[1], title="Gmail - Google Chrome")
+    await ask(b, "sì")
+    assert not typed(desk)
+    [result] = last_results(client)
+    assert result["is_error"] and "Gmail - Google Chrome" in result["content"]
+    assert "YouTube - Google Chrome" in result["content"]
+
+
+async def test_a_title_changed_by_our_own_typing_does_not_stop_the_next_keys(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    real = desk.send_keys
+
+    def star(sequence: str) -> None:
+        real(sequence)
+        desk.open_windows[1] = replace(desk.open_windows[1], title="*YouTube - Google Chrome")
+
+    desk.send_keys = star  # type: ignore[method-assign]
+    client = ScriptedClient(([], "tool_use", [TYPE_CIAO, ENTER]), (["Fatto."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao e premi invio")
+    assert await ask(b, "sì") == "Fatto."
+    assert len(typed(desk)) == 2  # the second call needs the same handle only
+
+
+async def test_no_window_in_front_at_the_question_refuses_the_keys_unasked(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 0)  # nothing active
+    client = ScriptedClient(
+        ([], "tool_use", [TYPE_CIAO]), (["Non so dove."], "end_turn", [text("Non so dove.")])
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "scrivi ciao") == "Non so dove."
+    assert not typed(desk)
+    assert last_results(client)[0]["is_error"]
+
+
+async def test_no_window_in_front_at_the_yes_types_nothing(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    client = ScriptedClient(([], "tool_use", [TYPE_CIAO]), (["No."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao")
+    in_front(desk, 0)
+    await ask(b, "sì")
+    assert not typed(desk) and last_results(client)[0]["is_error"]
+
+
+async def test_the_turn_goes_on_as_a_whole_after_a_yes_over_a_cut_question(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    b = typing_brain(pricing, tools, WRITTEN)
+    asked = await ask(b, "scrivi su chrome")
+    b.reply_cut([asked])
+    b.stop_acting()
+    await ask(b, "Claudio, sì")
+    [(_, line)] = b._history
+    assert CUT_NOTE not in line and "Scritto." in line and line.startswith(asked.strip())
+
+
+async def test_the_history_of_a_never_heard_question_has_it_once(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    b = typing_brain(pricing, tools, WRITTEN)
+    await ask(b, "scrivi su chrome")
+    b.reply_cut([])
+    b.stop_acting()
+    await ask(b, "sì")  # said again
+    await ask(b, "sì")
+    [(_, line)] = b._history
+    assert CUT_BEFORE_NOTE not in line and line.count("Scrivo") == 1 and "Scritto." in line
+
+
+# --- Task 9b fix round 2 ---------------------------------------------------------------------
+
+INTO_CHROME_CIAO = use("type_text", text="ciao", window="chrome")
+
+
+def retitle(desk: FakeDesktop, handle: int, title: str) -> None:
+    desk.open_windows = [
+        replace(w, title=title) if w.handle == handle else w for w in desk.open_windows
+    ]
+
+
+async def test_a_named_window_that_cannot_be_found_is_refused_unasked_and_the_enter_with_it(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    gone = use("type_text", text="ciao", window="finestra inesistente")
+    client = ScriptedClient(
+        ([], "tool_use", [gone, ENTER]),
+        (["Non la trovo."], "end_turn", [text("Non la trovo.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "scrivi ciao nella finestra e premi invio") == "Non la trovo."
+    assert not typed(desk)  # nothing reached the Notepad in front
+    assert all(r["is_error"] for r in last_results(client))
+
+
+async def test_a_window_that_vanishes_before_the_yes_stops_the_enter_after_it(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [INTO_CHROME_CIAO, ENTER]), (["No."], "end_turn", [text("No.")])
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao su chrome e premi invio")
+    desk.open_windows = [w for w in desk.open_windows if w.handle != 2]
+    await ask(b, "sì")
+    assert not typed(desk)  # the Enter did not go to the Notepad in front
+    typing, enter = last_results(client)
+    assert typing["is_error"] and enter["is_error"] and "nothing was typed" in enter["content"]
+
+
+async def test_a_window_opened_by_the_same_reply_may_be_named_before_it_exists(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        (
+            [],
+            "tool_use",
+            [use("open_app", name="spotify"), use("type_text", text="x", window="spotify")],
+        )
+    )
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "apri spotify e scrivi")).endswith("Confermi?")
+
+
+async def test_the_named_tab_switched_before_the_yes_gets_neither_the_text_nor_the_enter(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """H2 step 13: Chrome is named, the tab becomes Gmail before the yes."""
+    client = ScriptedClient(
+        ([], "tool_use", [INTO_CHROME_CIAO, ENTER]), (["No."], "end_turn", [text("No.")])
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao su chrome e premi invio")
+    retitle(desk, 2, "Gmail - Google Chrome")
+    await ask(b, "sì")
+    assert not typed(desk)
+    typing, enter = last_results(client)
+    assert "Gmail - Google Chrome" in typing["content"] and enter["is_error"]
+
+
+async def test_a_first_windowless_call_refused_for_its_title_stops_the_enter_after_it(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    client = ScriptedClient(
+        ([], "tool_use", [TYPE_CIAO, ENTER]), (["No."], "end_turn", [text("No.")])
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao e premi invio")
+    retitle(desk, 2, "Gmail - Google Chrome")
+    await ask(b, "sì")
+    assert not typed(desk)
+    assert all(r["is_error"] for r in last_results(client))
+
+
+async def test_keys_into_another_window_earlier_do_not_relax_the_title_check_for_chrome(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    into_notepad = SimpleNamespace(  # free: no question
+        type="tool_use",
+        id="tu_notepad",
+        name="type_text",
+        input={"text": "x", "window": "blocco note"},
+    )
+    client = ScriptedClient(
+        ([], "tool_use", [into_notepad, use("focus_window", window="chrome"), TYPE_CIAO]),
+        (["Fatto."], "end_turn", [text("Fatto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert (await ask(b, "x")).endswith("Confermi?")
+    retitle(desk, 2, "Gmail - Google Chrome")
+    await ask(b, "sì")
+    assert len(typed(desk)) == 1  # the Notepad only; Gmail got nothing
+
+
+async def test_two_windows_with_one_title_are_not_named_twice(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    in_front(desk, 2)
+    client = ScriptedClient(([], "tool_use", [TYPE_CIAO]), (["No."], "end_turn", []))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao")
+    desk.open_windows = [replace(w, active=False) for w in desk.open_windows] + [
+        Window(9, "YouTube - Google Chrome", "chrome.exe", active=True)
+    ]
+    await ask(b, "sì")
+    [result] = last_results(client)
+    assert result["content"].count("YouTube - Google Chrome") == 1 and not typed(desk)
+
+
+async def test_an_unheard_question_is_said_again_at_most_once(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    b = typing_brain(pricing, tools, WRITTEN)
+    await ask(b, "scrivi su chrome")
+    b.reply_cut([])
+    b.stop_acting()
+    assert "Scrivo" in await ask(b, "sì")  # said again
+    b.reply_cut([])  # and cut once more, before it played: nobody heard it
+    b.stop_acting()
+    assert await ask(b, "sì") == "Non ho capito: non lo faccio."  # cancelled, never answered
+    assert not b.awaiting and not typed(desk)
+
+
+async def test_a_question_said_again_and_heard_follows_the_normal_rules(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    b = typing_brain(pricing, tools, WRITTEN)
+    await ask(b, "scrivi su chrome")
+    b.reply_cut([])
+    b.stop_acting()
+    again = await ask(b, "sì")
+    b.reply_cut([again])  # this time it played
+    b.stop_acting()
+    assert await ask(b, "sì") == "Scritto."
+    assert len(typed(desk)) == 1
+
+
+async def test_a_name_that_matches_nothing_is_not_typed_into_a_fuzzy_match(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(
+        (
+            [],
+            "tool_use",
+            [use("open_app", name="spotify"), use("type_text", text="x", window="posta")],
+        ),
+        (["No."], "end_turn", [text("No.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    assert await ask(b, "apri spotify e scrivi") == 'Scrivo "x" in "posta". Confermi?'
+    await ask(b, "sì")
+    assert not typed(desk)  # "posta" is close to "Spotify" for the fuzzy search, but not in it
+    assert (
+        "posta" in last_results(client)[1]["content"]
+        and "was found" in last_results(client)[1]["content"]
+    )
+
+
+async def test_a_launched_window_that_contains_the_name_gets_the_keys(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    client = ScriptedClient(
+        (
+            [],
+            "tool_use",
+            [use("open_app", name="spotify"), use("type_text", text="x", window="spotify")],
+        ),
+        (["Fatto."], "end_turn", [text("Fatto.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "apri spotify e scrivi")
+    assert await ask(b, "sì") == "Fatto."
+    assert len(typed(desk)) == 1
+
+
+async def test_a_failed_named_call_stops_a_later_safe_key_by_itself(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    """F5 is level 1 and has no expectation: only the stop keeps it out of the Notepad."""
+    client = ScriptedClient(
+        ([], "tool_use", [INTO_CHROME_CIAO, use("press_keys", keys=["f5"])]),
+        (["No."], "end_turn", [text("No.")]),
+    )
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "scrivi ciao su chrome e aggiorna")
+    desk.open_windows = [w for w in desk.open_windows if w.handle != 2]
+    await ask(b, "sì")
+    assert not typed(desk)

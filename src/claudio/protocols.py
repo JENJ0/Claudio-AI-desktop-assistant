@@ -91,8 +91,11 @@ class Responder(Protocol):
         CLAUDIO speaks, it interrupts."""
         ...
 
-    def cancel_pending(self, silence: bool = False, cut: bool = False) -> None:
-        """Drop an armed level 2-3 action (nothing was answered); `cut`: the reply was stopped."""
+    def cancel_pending(
+        self, silence: bool = False, cut: bool = False, takeover: bool = False
+    ) -> None:
+        """Drop an armed level 2-3 action (nothing was answered); `cut`: the reply was stopped.
+        `takeover`: a phrase was said over the reply and is the answer to Claude's question."""
         ...
 
     def stop_acting(self) -> None:

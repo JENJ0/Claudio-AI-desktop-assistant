@@ -35,7 +35,12 @@ Piano approvato da JenJo il 05/11/2026 dopo grilling e deep research. I numeri d
 
 **Aggiornato il 07/11/2026. G1 è chiuso: commit fino a `e3b7348`, nessun push.** Prova G di JenJo fatta; manca solo la breve «G bis» in `piani/IT-2-passo-0b-prove.md`. Registro di G1: `.superpowers/sdd/IT-2-passo-0b-G1-task/progress.md` (fuori da git). Il gate di replay dà 39 superate, 3 note, 0 fallite.
 
-**Adesso G2, corsia A. Piano approvato da JenJo il 07/11: `piani/IT-2-passo-0b-G2-task.md`.** Registro: `.superpowers/sdd/IT-2-passo-0b-G2-task/progress.md`. I task 2, 3 e 4 aspettano la prova H0, perché la distorsione può spostare la soglia; il task 1 e i task 5-9 non dipendono dalla catena audio. Budget API di G2: 0,05 $.
+**Adesso G2, corsia A (aggiornato l'08/11, 04:10). Piano approvato da JenJo il 07/11: `piani/IT-2-passo-0b-G2-task.md`.** Registro, da leggere per primo: `.superpowers/sdd/IT-2-passo-0b-G2-task/progress.md` (rulings, minori rimandati, alberi di ogni task). **Niente di G2 è committato:** tutto è nel working tree.
+- Fatti e revisionati, con verifica per mutazione: task 1, 3, 5, 6, 7, 8, 9a. Il task 9 è stato diviso in 9a e 9b. Il task 3 è partito prima della prova H0: dalla catena audio dipende solo il valore della soglia, che sta in configurazione (-0.75 provvisorio).
+- In corso: task 9b, secondo giro di correzioni.
+- Aspettano la prova H0 di JenJo: task 2 (replay offline, può cambiare la soglia) e task 4 (registratore e 145 riprese, sblocca la corsia B).
+- Poi task 10: lancio unico del test sulle 145 riprese, revisione dell'intero gruppo su Opus con mutazioni, gate di replay con cassette nuove (`probes/record_low_brake.py`, budget G2 0,05 $), prova H2 di JenJo, diff, commit dopo l'ok.
+- Da dire a JenJo nel riepilogo: la soglia vale anche al livello 3; «Ok Claudio» detto per iniziare una richiesta nuova con una domanda aperta è un sì (spec); una frase lunga senza nome dopo «Confermi?» non diventa più una richiesta a Claude, riceve la seconda domanda; una risposta dopo il silenzio deve avere il nome; spegnimento e pausa annullano ogni domanda.
 
 **Da guardare dalla prova G bis:** Haiku offre Sonnet solo a parole («dimmi solo se procedo»), senza un'offerta armata: in una scena 6 volte su 6 con la stessa cronologia, 3 su 4 con una nuova. Haiku può scrivere un ragionamento in inglese prima di un comando di livello 3, e viene detto con la domanda. Con Haiku muto Claudio dice «Spegniti. Confermi?». «Va bene. Confermi?» passa la regola senza nominare nulla. Candidati per G3.
 

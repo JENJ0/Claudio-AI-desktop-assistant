@@ -251,9 +251,36 @@ Get-Content logs\metrics.jsonl -Tail 1 | ConvertFrom-Json | Select-Object cut, c
 
 Si prepara con il task 4: comando e passi arrivano qui. Da quel momento parte la corsia B.
 
-### H2. Interruzioni e conferme
+### H2. Interruzioni e conferme (circa 15 minuti, qualche centesimo)
 
-Si prepara a fine gruppo, dalla riga G2 della tabella qui sotto. Comprende il «lascia stare» da rifare dal vivo.
+**Perché:** i test usano voce e tempi finti. Qui si prova come reagisce Claudio quando lo interrompi davvero. **Claudio acceso, versione nuova.** Un Blocco note vuoto aperto. Se un passo non torna, fermati e scrivimi quale.
+
+**«Dicevo» e «continua»**
+1. «Claudio, raccontami una storia lunga». Dopo due frasi: «Claudio, che ore sono?». Atteso: dice l'ora, poi **«Dicevo:»** e la storia riprende, anche se finiva con una domanda.
+2. Di nuovo una storia. Dopo due frasi: «Claudio, quanto dista la Luna?». Atteso: risponde, **senza «Dicevo»**. Poi «Claudio, continua»: ridice il pezzo mancante, con «Dicevo:».
+3. Di nuovo una storia. Dopo due frasi: «Claudio, basta». Poi «Claudio, continua». Atteso: o ridice il pezzo mancante, o la continua dal punto in cui l'hai fermata. **Non deve inventare una puntata nuova.**
+
+**Mentre Claude pensa**
+4. «Claudio, raccontami una barzelletta» e subito, prima che cominci a parlare: «Claudio, basta». Atteso: **nessuna barzelletta**.
+5. «Claudio, raccontami una barzelletta» e subito: «Claudio, che ore sono?». Atteso: **dice l'ora**, non la barzelletta.
+
+**Conferme**
+6. Blocco note davanti. «Claudio, chiudi la finestra». A «Confermi?» rispondi «sì». Atteso: si chiude. Riapri il Blocco note.
+7. Di nuovo. A «Confermi?» non rispondere: aspetta che smetta di ascoltare. Poi, entro un minuto: «Claudio, confermo». Atteso: si chiude. Riapri il Blocco note.
+8. Di nuovo. A «Confermi?» rispondi «mah». Atteso: **ripete la domanda una volta**, con «sì o no?». Rispondi «no»: non si chiude.
+9. Di nuovo. A «Confermi?» rispondi «Claudio, che ore sono?». Atteso: dice che non lo fa, poi l'ora. Non si chiude.
+10. Di nuovo. Con «Confermi?» aperto, scrivi «sì» nella finestra della chat. Atteso: **non si chiude**, e la chat dice «Ho annullato la domanda a voce.».
+
+**Dove vanno i tasti**
+13. Chrome aperto su una pagina qualsiasi, Blocco note davanti. «Claudio, scrivi ciao su Chrome e premi invio». Atteso: **chiede una volta e nomina Chrome**. Prima di rispondere, in Chrome passa a un'altra scheda. Poi «sì». Atteso: **non scrive**, e dice che la finestra è cambiata.
+14. Ripeti il passo 13 senza cambiare scheda. Atteso: dopo il «sì» scrive «ciao» in Chrome e preme Invio (se il cursore è nella barra degli indirizzi, cerca «ciao»: va bene).
+15. Blocco note davanti. «Claudio, chiudi la finestra». **Mentre dice «Confermi?»**, parlaci sopra: «Claudio, sì». Atteso: si chiude, una volta sola.
+
+**Contesto e azioni fermate**
+11. «Claudio, che ore sono?», poi «Claudio, e tra due ore che ore saranno?». Atteso: Claude sa di cosa parli.
+12. «Claudio, scrivi un piano lungo nel blocco note». Prima che compaia il testo: «Claudio, lascia stare». Atteso: **non scrive nulla.** È il passo 8 della prova G, rifatto dal vivo.
+
+**Scrivimi:** H2, i passi che non tornano, cosa ha detto al passo 3 e cosa ha detto al passo 13.
 
 ---
 
