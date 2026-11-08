@@ -1326,7 +1326,14 @@ async def until_idle(harness: Harness) -> Any:
         yield frame
 
 
-async def _replay_scene(harness: Harness, planned: Sequence[Planned], before: Mark) -> list[Ran]:
+async def _replay_scene(
+    harness: Harness,
+    planned: Sequence[Planned],
+    before: Mark,
+    stop_when: Callable[[], bool] | None = None,
+) -> list[Ran]:
+    """`stop_when`: asked before each clip after the first; True ends the scene there (the
+    clips left are not fed)."""
     marks = [before]
     begun: list[int] = []  # the clips whose frames started to be fed
     stuck: dict[int, Reason] = {}  # the clip the scene stopped on, and why
@@ -1335,6 +1342,8 @@ async def _replay_scene(harness: Harness, planned: Sequence[Planned], before: Ma
     async def feed() -> Any:
         for n, part in enumerate(planned):
             if harness.system.stopping:  # "chiuditi" was said: this clip is never heard
+                return
+            if n > 0 and stop_when is not None and stop_when():
                 return
             begun.append(1)
             if n > 0 and part.fire_at is not None:

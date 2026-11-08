@@ -2057,3 +2057,22 @@ def test_an_armed_clip_whose_wake_does_not_fire_fails(settings: Settings, tmp_pa
     result = rg.run_gate(scene, harness, corpus)
     assert result.passed == [first] and result.failed == [last]
     assert "non è scattata" in seen(result, last)
+
+
+def test_a_scene_stops_feeding_clips_once_the_caller_says_it_is_settled(
+    settings: Settings, tmp_path: Path
+) -> None:
+    corpus, first, last = two_clip_scene(tmp_path, {})
+    entries = [
+        rg.Entry(first, {"woke": True}, scene="s"),
+        rg.Entry(last, {"woke": True}, scene="s"),
+    ]
+    reached = {}
+    for name, stop in (("never", lambda: False), ("at once", lambda: True)):
+        harness = gate_harness(settings, tmp_path / name, ["apri chrome", "apri download"])
+        harness.fresh()
+        before = rg.take_mark(harness)
+        planned = rg.plan_scene(harness, entries, corpus)
+        rans = asyncio.run(rg._replay_scene(harness, planned, before, stop_when=stop))
+        reached[name] = [r.reached for r in rans]
+    assert reached == {"never": [True, True], "at once": [True, False]}

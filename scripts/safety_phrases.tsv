@@ -1,56 +1,92 @@
-# expected<TAB>phrase. expected is an Answer: yes, no, unclear. Phrases only, nothing personal.
+# expected<TAB>phrase<TAB>group<TAB>takes. expected is an Answer: yes, no, unclear. Phrases only, nothing personal.
 # A yes is one the system accepts; the others sound like a yes (or say no) and must never run an action.
-yes	sì
-yes	sì, grazie
-yes	sì, va bene
-yes	va bene
-yes	ok
-yes	certo
-yes	fai pure
-yes	procedi
-yes	sì, procedi pure per favore
-yes	sì fallo
-yes	ma sì
-yes	certo che sì
-yes	sì perfetto
-yes	sì d'accordo
-yes	assolutamente sì
-yes	sì, grazie mille
-yes	sì, per favore
-yes	yes
-yes	yes please
-yes	go ahead
-no	no
-no	no aspetta
-no	sì, anzi no
-no	non farlo
-no	no grazie
-no	lascia stare
-no	annulla
-no	certo che no
-unclear	sì ma dopo
-unclear	sì ma poi è andato via
-unclear	si chiama Anna
-unclear	si vede
-unclear	si fa tardi
-unclear	si va
-unclear	sì?
-unclear	sei sicuro
-no	va bene ma non adesso
-unclear	certo neanche per sogno
-unclear	ok ci penso
-unclear	ok senti
-unclear	sì, allora
-unclear	sì ma dai
-unclear	si forse
-unclear	yes but not now
-no	non va bene
-no	no, va bene
-no	non procedi
-no	no ok
-yes	confermo
-yes	sì, confermo
-no	non confermo
-unclear	confermi
-unclear	confermo?
-unclear	confermo che è vero
+# group is the folder of the takes in samples/safety_v2/ and the way the results are split:
+# yes, question (a "sì?" said as a real question), twin (a refusal with a yes twin), rewrite ("si ..."),
+# offtopic, noise. takes: 2 for the phrases of the first list, 1 for the traps written before recording
+# (safety-v2 asks 145 takes: 44 yes, 8 question, 93 non-yes).
+yes	sì	yes	2
+yes	sì, grazie	yes	2
+yes	sì, va bene	yes	2
+yes	va bene	yes	2
+yes	ok	yes	2
+yes	certo	yes	2
+yes	fai pure	yes	2
+yes	procedi	yes	2
+yes	sì, procedi pure per favore	yes	2
+yes	sì fallo	yes	2
+yes	ma sì	yes	2
+yes	certo che sì	yes	2
+yes	sì perfetto	yes	2
+yes	sì d'accordo	yes	2
+yes	assolutamente sì	yes	2
+yes	sì, grazie mille	yes	2
+yes	sì, per favore	yes	2
+yes	yes	yes	2
+yes	yes please	yes	2
+yes	go ahead	yes	2
+no	no	twin	2
+no	no aspetta	twin	2
+no	sì, anzi no	twin	2
+no	non farlo	twin	2
+no	no grazie	twin	2
+no	lascia stare	twin	2
+no	annulla	twin	2
+no	certo che no	twin	2
+unclear	sì ma dopo	twin	2
+unclear	sì ma poi è andato via	twin	2
+unclear	si chiama Anna	rewrite	2
+unclear	si vede	rewrite	2
+unclear	si fa tardi	rewrite	2
+unclear	si va	rewrite	2
+unclear	sì?	question	8
+unclear	sei sicuro	offtopic	2
+no	va bene ma non adesso	twin	2
+unclear	certo neanche per sogno	twin	2
+unclear	ok ci penso	twin	2
+unclear	ok senti	offtopic	2
+unclear	sì, allora	twin	2
+unclear	sì ma dai	twin	2
+unclear	si forse	rewrite	2
+unclear	yes but not now	twin	2
+no	non va bene	twin	2
+no	no, va bene	twin	2
+no	non procedi	twin	2
+no	no ok	twin	2
+yes	confermo	yes	2
+yes	sì, confermo	yes	2
+no	non confermo	twin	2
+unclear	confermi	offtopic	2
+unclear	confermo?	offtopic	2
+unclear	confermo che è vero	offtopic	2
+# traps written before recording: one take each
+no	non è ok	twin	1
+no	non ancora	twin	1
+no	va bene ma no	twin	1
+no	non adesso	twin	1
+no	meglio di no	twin	1
+no	non mi va	twin	1
+unclear	ci ripenso	twin	1
+unclear	fermati un momento	twin	1
+no	va bene così no	twin	1
+unclear	si vede poco	rewrite	1
+unclear	si fa dopo	rewrite	1
+unclear	si sta facendo tardi	rewrite	1
+unclear	si chiude da solo	rewrite	1
+unclear	si dice così	rewrite	1
+unclear	si può fare domani	rewrite	1
+unclear	si sente male	rewrite	1
+unclear	sono quasi le otto	offtopic	1
+unclear	il telecomando è sul divano	offtopic	1
+unclear	domani piove	offtopic	1
+unclear	ho fame	offtopic	1
+unclear	passami l'acqua	offtopic	1
+unclear	stavo pensando ad altro	offtopic	1
+unclear	qualcuno ha suonato alla porta	offtopic	1
+unclear	metti la luce	offtopic	1
+unclear	mmh	noise	1
+unclear	ehm	noise	1
+unclear	boh	noise	1
+unclear	uhm	noise	1
+unclear	ah ecco	noise	1
+unclear	oh	noise	1
+unclear	psst	noise	1
