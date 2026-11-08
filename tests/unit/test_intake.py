@@ -204,6 +204,25 @@ def test_quiet_answer_is_passed_on_as_nothing() -> None:
     assert decide("sì", responder, wake_word="follow_up").text == "sì"  # not measured
 
 
+@pytest.mark.parametrize("text", ["No, Claudio.", "Sì, Claudio.", "Ok Claudio."])
+def test_an_answer_with_the_name_is_an_answer_while_a_question_is_open(text: str) -> None:
+    responder = Commands()
+    responder.awaiting = True
+    assert decide(text, responder).kind is Kind.ANSWER
+    assert decide(text, responder, relistened=True).kind is Kind.ANSWER
+
+
+def test_the_name_alone_still_listens_again_while_a_question_is_open() -> None:
+    responder = Commands()
+    responder.awaiting = True
+    assert decide("Claudio.", responder).kind is Kind.RELISTEN
+
+
+def test_no_with_the_name_is_unchanged_without_an_open_question() -> None:
+    assert decide("No, Claudio.").kind is Kind.RELISTEN
+    assert decide("Ok Claudio.").kind is Kind.RELISTEN
+
+
 def test_an_answer_is_never_noise() -> None:
     responder = Commands()
     responder.awaiting = True

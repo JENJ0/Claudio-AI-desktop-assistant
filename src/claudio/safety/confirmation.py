@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.router.matcher import Match
-from claudio.router.normalizer import is_wake_word, normalize, strip_wake_words
+from claudio.router.normalizer import GREETINGS, is_wake_word, normalize, strip_wake_words
 
 LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT = 1, 2, 3
 LEVELS = (LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT)
@@ -73,6 +73,23 @@ _PHRASES_LONGEST_FIRST = sorted((*YES_PHRASES, *YES_COURTESY_PHRASES), key=len, 
 _ALLOWED_PHRASES = re.compile(rf"\b(?:{'|'.join(_PHRASES_LONGEST_FIRST)})\b")
 
 
+_QUESTION_MARKS = "?？⁇‽"  # normalize drops them all, so they are read on the raw text
+
+
+def has_question_mark(text: str) -> bool:
+    """A "?" anywhere: "Sì?!" asks, it does not answer."""
+    return any(mark in text for mark in _QUESTION_MARKS)
+
+
+def words_without_name(heard: list[str]) -> list[str]:
+    """`strip_wake_words`, or, when it leaves nothing, what is not the name ("Sì, Claudio."
+    is a yes). A greeting means a new call, not an answer: "Ok. Hey Claudio." is neither."""
+    words = strip_wake_words(heard)
+    if words or GREETINGS.intersection(heard):
+        return words
+    return [w for w in heard if not is_wake_word(w)]
+
+
 class Answer(enum.Enum):
     YES = "yes"
     NO = "no"
@@ -86,9 +103,9 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     heard = normalize(text, drop_fillers=False).split()
     if NO_WORDS.intersection(heard):  # before the name is stripped: "no Claudio" is a no
         return Answer.NO
-    if text.rstrip().endswith("?"):  # "Sì?" asks, it does not answer (normalize drops the "?")
+    if has_question_mark(text):
         return Answer.UNCLEAR
-    words = strip_wake_words(heard)
+    words = words_without_name(heard)
     if not words:
         return Answer.UNCLEAR
     joined = " ".join(words)

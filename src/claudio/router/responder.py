@@ -41,6 +41,7 @@ from claudio.safety.confirmation import (
     YES_WORDS,
     Answer,
     Pending,
+    has_question_mark,
     parse_answer,
     question,
 )
@@ -565,13 +566,13 @@ def _yes_then_guess(text: str, words: list[str], guess: str) -> bool:
     """A yes word and exactly the guessed request ("sì, chiudi la finestra"): the answer to
     "Hai detto: chiudi la finestra?", not the question heard back."""
     same = words[1:] == normalize(guess, drop_fillers=False).split()
-    return bool(words) and words[0] in YES_WORDS and same and not text.rstrip().endswith("?")
+    return bool(words) and words[0] in YES_WORDS and same and not has_question_mark(text)
 
 
 def _after_no(words: list[str]) -> list[str]:
     """What follows a refusal: "no, abbassa il volume" is a new request. "non spegnerti adesso"
     refuses what it names: taking the "non" out would run it."""
-    rest = words[1:] if words[0] in ("no", "nope") else []
+    rest = words[1:] if words and words[0] in ("no", "nope") else []
     return [] if NO_WORDS.intersection(rest) else rest
 
 

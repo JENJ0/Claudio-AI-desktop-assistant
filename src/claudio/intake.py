@@ -17,6 +17,7 @@ from typing import Any, NamedTuple
 from claudio.config import NoiseSettings
 from claudio.protocols import Responder
 from claudio.router.normalizer import heard_wake_word, normalize, only_wake_words
+from claudio.safety.confirmation import Answer, parse_answer
 from claudio.wakeword.verifier import wake_confirmed
 
 CONVERSATION = "conversation"  # the wake_word of a phrase heard in the conversation window
@@ -214,7 +215,10 @@ class RequestFilter:
     def decide(self, text: str, language: str, heard: Heard, responder: Responder) -> Decision:
         """A FALSE_WAKE may still be a request said after a pause: the Assistant lets Whisper
         listen to the wake word itself and, if the name is there, decides again with
-        name_heard."""
+        name_heard. While a question is open, a yes or no that carries the name ("No,
+        Claudio.") is the answer, not the name alone."""
+        if self._is_answer(text, responder):  # "No, Claudio." is a no, not the name alone
+            return self._answer(text, heard)
         if only_wake_words(text) and not heard.relistened:
             return Decision(Kind.RELISTEN, text)
         if not text or only_wake_words(text):
@@ -235,6 +239,10 @@ class RequestFilter:
         ):
             return Decision(Kind.CONTINUE, text, "incomplete")
         return Decision(Kind.ANSWER, text)
+
+    @staticmethod
+    def _is_answer(text: str, responder: Responder) -> bool:
+        return responder.awaiting and parse_answer(text) is not Answer.UNCLEAR
 
     def is_request(self, text: str, language: str, responder: Responder) -> bool:
         """Heard in the conversation window: a command, or (with Claude) a phrase that sounds

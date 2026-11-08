@@ -500,6 +500,26 @@ async def test_a_yes_that_repeats_the_guess_answers_it(matcher: CommandMatcher) 
     assert rec.combos == [(VK_MENU, VK_F4)]
 
 
+@pytest.mark.parametrize("said", ["No, Claudio.", "Non Claudio.", "Mai Claudio."])
+async def test_a_refusal_with_the_name_refuses_the_guess(
+    matcher: CommandMatcher, said: str
+) -> None:
+    r, _, rec = responder(matcher, None)
+    r.propose("spegniti", "it")
+    assert await say(r, said) != ""
+    assert not r.actions.system.off and rec.combos == []
+    assert r.last_route["route"] == "guess_refused"
+
+
+async def test_a_question_mark_after_the_yes_does_not_run_the_guess(
+    matcher: CommandMatcher,
+) -> None:
+    r, _, rec = responder(matcher, None)
+    r.propose("chiudi la finestra", "it")
+    await say(r, "Sì? Chiudi la finestra.")
+    assert rec.combos == []
+
+
 async def test_a_yes_that_repeats_switching_off_switches_off(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, None)
     r.propose("spegniti", "it")
