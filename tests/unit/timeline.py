@@ -114,6 +114,7 @@ class PacedStream(ScriptedStream):
     def __init__(self, *args: Any, ticks: Ticks, wait: int, chunk_wait: int) -> None:
         super().__init__(*args)
         self.ticks, self.wait, self.chunk_wait = ticks, wait, chunk_wait
+        self.chunks_read = 0  # what the consumer took: the words that are paid for
 
     @property
     def text_stream(self) -> AsyncIterator[str]:
@@ -126,6 +127,7 @@ class PacedStream(ScriptedStream):
                 if not first:
                     await self.ticks.after(self.chunk_wait)
                 first = False
+                self.chunks_read += 1
                 yield chunk
 
         return gen()
@@ -140,12 +142,13 @@ class PacedClient(ScriptedClient):
     ):
         super().__init__(*replies)
         self.ticks, self.wait, self.chunk_wait = ticks, wait, chunk_wait
+        self.streams: list[PacedStream] = []
 
     def stream(self, **params: Any) -> PacedStream:
         self.calls.append(params)
         chunks, stop, content = self.replies.pop(0)
         wait = self.wait if len(self.calls) == 1 else 0
-        return PacedStream(
+        stream = PacedStream(
             chunks,
             stop,
             content,
@@ -154,6 +157,8 @@ class PacedClient(ScriptedClient):
             wait=wait,
             chunk_wait=self.chunk_wait,
         )
+        self.streams.append(stream)
+        return stream
 
 
 class SceneWake(FakeWake):

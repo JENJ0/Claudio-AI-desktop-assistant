@@ -258,6 +258,9 @@ EN: dict[str, str] = {
     "Ascolto durante la risposta non riuscito": "Listening while speaking failed",
     "Sentito mentre parlo, non è per me: %r": "Heard while speaking, not for me: %r",
     "Interrotto a voce: %r": "Interrupted by voice: %r",
+    "Sentito mentre elaboravo, non è un 'basta': lo ignoro: %r": (
+        "Heard while processing, not a 'basta': ignored: %r"
+    ),
     "Risposta interrotta": "Reply interrupted",
     "Controllo voce Jack fallito: %s": "Jack voice check failed: %s",
     "Voce Jack %s: f0 %s, melodia %s, salti %d, tremolii %d, %.1f LUFS, "
