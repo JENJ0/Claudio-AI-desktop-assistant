@@ -577,6 +577,24 @@ async def test_a_request_over_the_reply_gets_its_own_answer(
     assert not any("Confermi" in said for said in scene.speaker.spoken)
 
 
+async def test_certo_hey_claudio_cancels_the_question_and_opens_the_window(
+    make_scene, home: Path
+) -> None:
+    """A greeting after a yes word is a new call: the question is cancelled and the window
+    listens for the request that follows."""
+    desk = FakeDesktop()
+    call = ([], "tool_use", [use("type_text", text="ciao", **INTO_CHROME)])
+    scene = make_scene(call, desk=desk, home=home, window_s=5.0)
+    await scene.say(WRITE)
+    await scene.until(lambda: scene.brain.awaiting and scene.listening_again())
+    await scene.say("Certo. Hey Claudio.")
+    await scene.until(lambda: len(scene.rows) == 2 and scene.listening_again())
+    assert scene.speaker.spoken[-1] == "Va bene, non lo faccio."
+    assert scene.row(1)["outcome"] == "ok" and not scene.brain.awaiting
+    assert not typed_anything(desk)
+    assert scene.assistant.state is State.LISTENING  # the window is open for the request
+
+
 async def test_a_local_request_over_a_dropped_action_says_so_and_does_not_resume(
     make_scene, home: Path
 ) -> None:

@@ -32,6 +32,15 @@ ASK_LEVEL_3 = {
 }
 CANCELLED = {"it": "Va bene, non lo faccio.", "en": "Okay, I won't do it."}
 NOT_UNDERSTOOD = {"it": "Non ho capito: non lo faccio.", "en": "I didn't catch that: not doing it."}
+# The one second chance of an answer not heard: `what` is the action, read out.
+ASK_AGAIN = {
+    "it": "Non ho capito. {what}: sì o no?",
+    "en": "I didn't catch that. {what}: yes or no?",
+}
+ASK_AGAIN_EXPLICIT = {
+    "it": "Non ho capito. {what}. Per procedere dì: confermo.",
+    "en": "I didn't catch that. {what}. To go ahead, say: I confirm.",
+}
 
 # Normalised (lowercase, no accents or punctuation). A refusal anywhere, also in the name's
 # lead-in, wins over a yes.
@@ -105,7 +114,7 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
     heard = normalize(text, drop_fillers=False).split()
     if NO_WORDS.intersection(heard):  # before the name is stripped: "no Claudio" is a no
         return Answer.NO
-    if has_question_mark(text):
+    if has_question_mark(text) or _greeting_after_yes(heard):
         return Answer.UNCLEAR
     words = words_without_name(heard)
     if not words:
@@ -116,6 +125,15 @@ def parse_answer(text: str, level: int = LEVEL_CONFIRM) -> Answer:
         return Answer.YES if explicit and _only_yes(words) else Answer.UNCLEAR
     said_yes = YES_WORDS.intersection(words) or any(p in joined for p in YES_PHRASES)
     return Answer.YES if said_yes and _only_yes(words) else Answer.UNCLEAR
+
+
+def _greeting_after_yes(heard: list[str]) -> bool:
+    """A yes word, then a greeting ("Certo. Hey Claudio."): it is a new call, not an answer."""
+    first = next((i for i, w in enumerate(heard) if w in GREETINGS), None)
+    if first is None:
+        return False
+    before = " ".join(heard[:first])
+    return bool(YES_WORDS.intersection(heard[:first])) or any(p in before for p in YES_PHRASES)
 
 
 def _only_yes(words: list[str]) -> bool:
@@ -134,6 +152,7 @@ class Pending:
     match: Match
     language: str  # of the question: the answer is given in it
     asked: float  # the responder's clock when it was asked: ACTION_TTL_S from then
+    asked_again: bool = False  # the answer was not heard once: the second question is the last
 
     @property
     def level(self) -> int:

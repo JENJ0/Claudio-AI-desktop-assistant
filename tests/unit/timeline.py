@@ -278,6 +278,7 @@ class Scene:
             fallback_info=lambda: self.brain.last_call,
             fallback_awaiting=lambda: self.brain.awaiting,
             fallback_cancel=self.brain.cancel_pending,
+            fallback_repeats=self.brain.repeats_waiting,
             fallback_stop=self.brain.stop_acting,
             fallback_cut=self.brain.reply_cut,
             fallback_dropped=self.brain.dropped_action,

@@ -610,12 +610,15 @@ async def test_a_phrase_that_is_not_only_a_yes_does_not_run_the_tools(
 ) -> None:
     client = ScriptedClient(
         ([], "tool_use", [use("close_window", window="chrome")]),
-        (["Ok."], "end_turn", []),  # a long phrase is a new request
+        (["Ok."], "end_turn", []),  # never asked for: nothing is a new request
     )
     b = acting_brain(pricing, client, tools)
     await ask(b, "chiudi chrome")
     await ask(b, said)
-    assert not [d for d in desk.done if d[0] == "close"] and not b.awaiting
+    assert not closed(desk)
+    if b.awaiting:  # unclear: asked once more, then cancelled (a refusal cancels at once)
+        await ask(b, said)
+    assert not closed(desk) and not b.awaiting
 
 
 async def test_level_1_calls_wait_with_the_level_2_one(
@@ -3765,3 +3768,102 @@ async def test_a_cut_after_a_yes_keeps_the_question_heard_before(
     [(_, line)] = b._history
     assert line.startswith(asked.strip()) and "Confermi? Fatto, " + CUT_NOTE in line
     assert "ho scritto" not in line and line.endswith(f"{ACTIONS_NOTE}type_text ok]")
+
+
+# --- Task 3: an answer not heard is asked once more; the name cancels --------------------
+
+WINDOW_NAMED = 'Chiudo la finestra "YouTube - Google Chrome"'
+SECOND_QUESTION = f"Non ho capito. {WINDOW_NAMED}: sì o no?"
+
+
+def closing_chrome(pricing: Pricing, tools: PcTools, *later: Any) -> ClaudeBrain:
+    """Haiku asks to close Chrome, then says what `later` scripts."""
+    client = ScriptedClient(([], "tool_use", [CHROME_CLOSE]), *later)
+    return acting_brain(pricing, client, tools)
+
+
+DONE = (["Chiusa."], "end_turn", [text("Chiusa.")])
+
+
+def closed(desk: FakeDesktop) -> bool:
+    return any(step[0] == "close" for step in desk.done)
+
+
+async def test_describe_calls_is_the_part_of_the_question_that_reads_the_actions(
+    verbose: PcTools,
+) -> None:
+    calls = [call("close_window", window="chrome")]
+    assert await verbose.describe_calls(calls, "it") == WINDOW_NAMED
+    assert await verbose.question(calls, "it") == f"{WINDOW_NAMED}. Confermi?"
+    assert await verbose.describe_calls([call("press_keys", keys=["no_such_key"])], "it") == ""
+
+
+@pytest.mark.parametrize("blank", ["", "boh forse", "Si apre blocco note"])
+async def test_an_answer_not_heard_asks_once_more_then_cancels(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, blank: str
+) -> None:
+    b = closing_chrome(pricing, tools)
+    await ask(b, "chiudi chrome")
+    assert await ask(b, blank) == SECOND_QUESTION
+    assert b.awaiting and b.last_call["confirm"] == "asked_again"
+    assert b.last_call["asked_again"] is True  # the metrics row counts it
+    assert await ask(b, blank) == "Non ho capito: non lo faccio."
+    assert not b.awaiting and not closed(desk)
+
+
+async def test_the_second_question_is_in_the_turn_and_a_yes_after_it_runs(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop
+) -> None:
+    b = closing_chrome(pricing, tools, DONE)
+    await ask(b, "chiudi chrome")
+    await ask(b, "")
+    assert await ask(b, "sì") == "Chiusa."
+    assert b._history[-1][1].count("Non ho capito") == 1  # the question is in the history once
+    assert closed(desk)
+
+
+async def test_a_no_after_the_second_question_cancels(pricing: Pricing, tools: PcTools) -> None:
+    b = closing_chrome(pricing, tools)
+    await ask(b, "chiudi chrome")
+    await ask(b, "")
+    assert (await ask(b, "no")).startswith("Va bene")
+
+
+async def test_the_second_question_waits_a_full_ttl(pricing: Pricing, tools: PcTools) -> None:
+    b = closing_chrome(pricing, tools)
+    clock = b.clock
+    assert isinstance(clock, Monotonic)
+    await ask(b, "chiudi chrome")
+    clock.t += 50
+    await ask(b, "")
+    clock.t += 59
+    assert b.awaiting
+    clock.t += 2
+    assert not b.awaiting
+
+
+async def test_without_a_description_the_second_question_is_the_plain_one(
+    pricing: Pricing, tools: PcTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def nothing(calls: Any, language: str) -> str:
+        return ""
+
+    b = closing_chrome(pricing, tools)
+    await ask(b, "chiudi chrome")
+    monkeypatch.setattr(tools, "describe_calls", nothing)
+    assert await ask(b, "") == "Confermi?"
+
+
+async def test_level_3_asks_again_with_the_explicit_words(
+    pricing: Pricing, tools: PcTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tools, "level", lambda c: 3)
+    b = closing_chrome(pricing, tools)
+    await ask(b, "chiudi chrome")
+    assert await ask(b, "") == f"Non ho capito. {WINDOW_NAMED}. Per procedere dì: confermo."
+
+
+async def test_hey_claudio_si_confirms(pricing: Pricing, tools: PcTools) -> None:
+    b = closing_chrome(pricing, tools, DONE)
+    await ask(b, "chiudi chrome")
+    assert await ask(b, "Hey Claudio, sì.") == "Chiusa."

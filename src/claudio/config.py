@@ -383,6 +383,10 @@ class NoiseSettings(BaseModel):
     min_speech_dbfs: float = Field(-45.0, le=0)  # loudest 32 ms below this: not a request
     # The answer to "Confermi?": quieter than this is the TV, not JenJo (treated as unclear).
     answer_min_dbfs: float = Field(-35.0, le=0)
+    # A yes whose weakest segment is below this is not run: Claudio asks once more (Task 3).
+    answer_min_logprob: float = Field(-0.75, le=0)
+    # Voice heard while the window was deaf, at or above this: the head of the answer is lost.
+    answer_deaf_voice_ms: int = Field(100, ge=1)
 
 
 class GuessSettings(BaseModel):

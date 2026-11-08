@@ -8,7 +8,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from claudio.config import (
@@ -31,11 +31,20 @@ from claudio.intake import (
 )
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import Command, CommandMatcher, Match, Near
-from claudio.router.normalizer import extract_number, normalize, strip_wake_words
+from claudio.router.normalizer import (
+    after_wake_word,
+    extract_number,
+    heard_wake_word,
+    normalize,
+    strip_wake_words,
+)
 from claudio.safety.confirmation import (
     ACTION_TTL_S,
+    ASK_AGAIN,
+    ASK_AGAIN_EXPLICIT,
     CANCELLED,
     LEVEL_CONFIRM,
+    LEVEL_EXPLICIT,
     LEVEL_SAFE,
     NO_WORDS,
     NOT_UNDERSTOOD,
@@ -95,6 +104,7 @@ class LocalResponder:
         on_prepare: Callable[[], None] | None = None,
         fallback_awaiting: Callable[[], bool] | None = None,
         fallback_cancel: Callable[[bool], None] | None = None,
+        fallback_repeats: Callable[[str], bool] | None = None,
         fallback_stop: Callable[[], None] | None = None,
         fallback_note: Callable[[str, str], None] | None = None,
         fallback_cut: Callable[[Sequence[str], object | None], object | None] | None = None,
@@ -117,6 +127,7 @@ class LocalResponder:
         # Claude asked "Confermi?" before a PC action: the next phrase is its answer.
         self.fallback_awaiting = fallback_awaiting
         self.fallback_cancel = fallback_cancel
+        self.fallback_repeats = fallback_repeats  # the phrase says Claude's waiting command again
         self.fallback_stop = fallback_stop  # a new request cut Claude's reply: it no longer acts
         # A local command answered: Claude's history gets (request, reply), see NOTED_ROUTES.
         self.fallback_note = fallback_note
@@ -457,10 +468,12 @@ class LocalResponder:
             )
             self._pending = None  # the phrase is a normal request
         if self._pending is not None:
-            return self._answer(text)
+            return self._answer(text, language)
         if self._proposal is not None:
             return self._answer_proposal(text, language)
         if self._fallback_waits():
+            if self._name_over_question(text):
+                return self._cancel_by_name(text, language, "claude")
             # The answer to Claude's "Confermi?" goes to Claude, never to a local command, and
             # is answered in the language (and voice) of the question.
             log.info("Risposta alla conferma di Claude: %r", text, extra={"route": "claude"})
@@ -581,12 +594,30 @@ class LocalResponder:
         log.info("Ripeto: %r", text, extra={"route": "local"})
         yield text
 
-    async def _answer(self, text: str) -> AsyncIterator[str]:
+    async def _answer(self, text: str, language: str) -> AsyncIterator[str]:
         pending, self._pending = self._pending, None
         assert pending is not None
         match, level = pending.match, pending.level
         self.language = pending.language  # the answer is in the language of the question
         answer = parse_answer(text, level)
+        if self._name_over_question(
+            text
+        ):  # level 2 on purpose: "Claudio, sì" at level 3 asks again
+            async for chunk in self._cancel_by_name(text, language, match.command.id):
+                yield chunk
+            return
+        if answer is Answer.UNCLEAR and not pending.asked_again:
+            self._pending = replace(pending, asked_again=True, asked=self.clock())
+            self.last_route = {
+                "route": "confirm",
+                "command": match.command.id,
+                "level": level,
+                "language": self.language,
+                "asked_again": True,
+            }
+            log.info("Conferma non sentita: chiedo ancora (%s)", match.command.id)
+            yield self._ask_again(match, level)
+            return
         self.last_route = {
             "route": "confirmed" if answer is Answer.YES else "refused",
             "command": match.command.id,
@@ -605,6 +636,40 @@ class LocalResponder:
         else:
             log.info("Conferma non chiara (livello %d): %s non eseguito", level, match.command.id)
             yield in_language(NOT_UNDERSTOOD, self.language)
+
+    def _name_over_question(self, text: str) -> bool:
+        """Not a yes or no at level 2, with the name, and not Claude's waiting command said
+        again: a new call, for either kind of question."""
+        return (
+            parse_answer(text) is Answer.UNCLEAR
+            and heard_wake_word(text)
+            and not (self.fallback_repeats is not None and self.fallback_repeats(text))
+        )
+
+    async def _cancel_by_name(self, text: str, language: str, what: str) -> AsyncIterator[str]:
+        """A new call, not an answer ("Claudio, che idea hai?", 05/11 17:20): the open question
+        (Claude's or the router's) is cancelled and the words after the name are answered as a
+        request of their own, router first. Nothing after the name: only the cancel."""
+        log.info("Il nome sopra la domanda: %s annullato", what)
+        if what == "claude" and self.fallback_cancel is not None:
+            self.fallback_cancel(False)  # the brain notes the calls as not run
+        self.language = language if what == "claude" else self.language
+        self.last_route = {"route": "refused", "answer": "name"}
+        if what != "claude":
+            self.last_route["command"] = what
+        yield in_language(CANCELLED, self.language)
+        if rest := after_wake_word(text):
+            yield " "
+            async for chunk in self._respond(rest, language):
+                yield chunk
+            self.last_route["cancelled_by_name"] = True  # the new request's route replaced it
+
+    def _ask_again(self, match: Match, level: int) -> str:
+        """The second question: the command's own phrase, then yes/no (or "confermo")."""
+        phrases = match.command.phrases_in(self.language) or match.command.phrases
+        what = phrases[0][:1].upper() + phrases[0][1:]
+        ask = ASK_AGAIN_EXPLICIT if level >= LEVEL_EXPLICIT else ASK_AGAIN
+        return in_language(ask, self.language).format(what=what)
 
     async def _execute(self, match: Match) -> AsyncIterator[str]:
         try:

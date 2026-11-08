@@ -248,9 +248,10 @@ EN: dict[str, str] = {
     ),
     "Log: %d file più vecchi di %d giorni eliminati": "Logs: %d files older than %d days deleted",
     "Impossibile eliminare il vecchio log %s": "Could not delete the old log %s",
-    "Risposta troppo lontana dal microfono, non la conto: %r": (
-        "Answer too far from the microphone, not counted: %r"
-    ),
+    "Risposta non sentita (%s), la scarto: %r": "Answer not heard well (%s), discarded: %r",
+    "Conferma non sentita: chiedo ancora": "Confirmation not heard: asking again",
+    "Conferma non sentita: chiedo ancora (%s)": "Confirmation not heard: asking again (%s)",
+    "Il nome sopra la domanda: %s annullato": "Name over the question: %s cancelled",
     "Rumore scambiato per parole (%s), ignoro: %r": "Noise heard as words (%s), ignored: %r",
     "Frase vuota mentre aspetto una risposta: continuo ad ascoltare": (
         "Empty phrase while an answer is expected: still listening"
@@ -517,9 +518,6 @@ EN: dict[str, str] = {
     "[pc] safe_keys: tasto non valido ignorato: %r": "[pc] safe_keys: invalid key ignored: %r",
     "Azione PC fallita: %s": "PC action failed: %s",
     "Comando proposto: %s": "Command proposed: %s",
-    "Nuova richiesta al posto della conferma: azione annullata": (
-        "A new request instead of the confirmation: action dropped"
-    ),
     "Percorso %r non trovato: uso %s": "Path %r not found: using %s",
     "Elenco delle cartelle: %d in %d ms%s": "Folder list: %d in %d ms%s",
     "Elenco delle cartelle non letto": "Folder list not read",

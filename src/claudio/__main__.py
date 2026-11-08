@@ -155,6 +155,7 @@ def build_responder(
         on_prepare=brain.warm_up if brain else None,
         fallback_awaiting=(lambda: brain.awaiting) if brain else None,
         fallback_cancel=brain.cancel_pending if brain else None,
+        fallback_repeats=brain.repeats_waiting if brain else None,
         fallback_stop=brain.stop_acting if brain else None,
         fallback_note=brain.note_local if brain else None,
         fallback_cut=brain.reply_cut if brain else None,

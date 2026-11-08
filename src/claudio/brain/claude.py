@@ -55,9 +55,13 @@ from claudio.i18n import tr
 from claudio.intake import Hearing
 from claudio.memory.prompt import without_recalled
 from claudio.protocols import CUT_SHORT
-from claudio.router.normalizer import normalize, strip_wake_words
+from claudio.router.normalizer import normalize
 from claudio.safety.confirmation import (
     ACTION_TTL_S,
+    ASK_AGAIN,
+    ASK_AGAIN_EXPLICIT,
+    ASK_LEVEL_2,
+    ASK_LEVEL_3,
     CANCELLED,
     LEVEL_EXPLICIT,
     LEVEL_SAFE,
@@ -94,7 +98,6 @@ NOT_CONFIRMED_WHY = "JenJo did not confirm it"
 NOT_HEARD_WHY = "the question was not heard"
 # The result of a call that a new request stopped: every tool_use still needs one.
 STOPPED_RESULT = "Not run: JenJo said something else over the reply."
-NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
 # The bridges, in every language: said aloud, never in the history (Haiku copied them, 05/11).
@@ -419,19 +422,14 @@ class ClaudeBrain:
         return self._loop(messages, language, start, turn, 0, offer_from=messages)
 
     def _pending_action(self, text: str) -> _Action | None:
-        """The action `text` answers: None when none waits or `text` is another request."""
-        action = self._take_action()
-        if (
-            action is not None
-            and not self._repeats(action, text)
-            and _new_request(text, action.level)
-        ):
-            # Not an answer but another request (said with the wake word after the window
-            # closed): the action is dropped and the request answered.
-            log.info("Nuova richiesta al posto della conferma: azione annullata")
-            self._note_tools(action.calls, "refused")
-            return None
-        return action
+        """The action `text` answers: None when none waits. Whatever is not a clear yes or no
+        is asked about once more, then cancelled; a phrase with the name never gets here (the
+        responder cancels the action and answers it as a new request)."""
+        return self._take_action()
+
+    def repeats_waiting(self, text: str) -> bool:
+        """The waiting action is said again as a command ("Claudio, spegni"): a yes."""
+        return self._action is not None and self._repeats(self._action, text)
 
     def _repeats(self, action: _Action, text: str) -> bool:
         """The waiting system command said again ("Claudio, spegni", 02/11: 4 phrases and ~25 s
@@ -742,6 +740,9 @@ class ClaudeBrain:
         self._turn = action.turn
         answer = Answer.YES if self._repeats(action, text) else parse_answer(text, action.level)
         self.last_call["confirm"] = answer.value
+        if answer is Answer.UNCLEAR and not action.asked_again:
+            yield await self._ask_again(action)
+            return
         if answer is not Answer.YES:
             reply = CANCELLED if answer is Answer.NO else NOT_UNDERSTOOD
             log.info("Conferma %s: azione non eseguita", answer.value, extra={"route": "tool"})
@@ -778,6 +779,33 @@ class ClaudeBrain:
         ) as haiku:
             async for chunk in haiku:
                 yield chunk
+
+    async def _ask_again(self, action: _Action) -> str:
+        """The answer was not heard: the question is asked once more, for a full ACTION_TTL_S,
+        with the action read out (the first one may have been the brief "Confermi?")."""
+        assert self.tools is not None
+        self.last_call.update(confirm="asked_again", asked_again=True)
+        asked = [
+            c
+            for c in action.calls
+            if c.id not in action.refused and self.tools.level(c) > LEVEL_SAFE
+        ]
+        what = await self.tools.describe_calls(asked, action.language)
+        if what:
+            again = ASK_AGAIN_EXPLICIT if action.level >= LEVEL_EXPLICIT else ASK_AGAIN
+            said = in_language(again, action.language).format(what=what)
+        else:
+            plain = ASK_LEVEL_3 if action.level >= LEVEL_EXPLICIT else ASK_LEVEL_2
+            said = in_language(plain, action.language)
+        action.asked_again = True
+        action.asked = self.clock()
+        self._action = action
+        turn = action.turn
+        turn.reply_from = len(turn.parts)
+        turn.parts.append(" " + said)
+        turn.asked = said
+        log.info("Conferma non sentita: chiedo ancora", extra={"route": "confirm"})
+        return said
 
     async def _run_calls(
         self, calls: list[ToolCall], language: str, refused: dict[str, str], turn: _Turn
@@ -1376,6 +1404,7 @@ class _Action:
         self.round_no = round_no
         self.refused: dict[str, str] = {}  # calls answered with an error, never run
         self.asked = -float("inf")
+        self.asked_again = False  # the answer was not heard once: the second question is the last
         self.handoff = False  # Haiku also asked for Sonnet: Claude goes on after the calls
 
 
@@ -1450,13 +1479,6 @@ async def _said_text(chunks: AsyncIterable[str]) -> AsyncGenerator[str, None]:
             yield said
     if held := notes.flush():
         yield held
-
-
-def _new_request(text: str, level: int) -> bool:
-    """A phrase that is neither yes nor no and longer than any answer: a new request."""
-    if parse_answer(text, level) is not Answer.UNCLEAR:
-        return False
-    return len(strip_wake_words(normalize(text, drop_fillers=False).split())) > NEW_REQUEST_WORDS
 
 
 def _event_error(exc: Any) -> str:

@@ -169,6 +169,7 @@ class Heard:
     speech_dbfs: float | None = None  # loudest 32 ms of speech; None: not measured
     segments: Sequence[Segment] = ()  # empty: Whisper's confidence is not known
     continued: bool = False  # already waited once for the rest of a phrase left halfway
+    deaf_voice_ms: int = 0  # voice the window heard while deaf, before an answer (0: none)
 
 
 @dataclass
@@ -276,16 +277,19 @@ class RequestFilter:
         return "unsure" if unsure and words(text) <= noise.max_words else ""
 
     def _answer(self, text: str, heard: Heard) -> Decision:
-        """The answer to "Confermi?": one said far from the microphone (the TV's "sì") is
-        passed on as nothing, so the action is not run ("Non ho capito: non lo faccio.")."""
+        """The answer to "Confermi?": one said far from the microphone (the TV's "sì"), one whose
+        head was lost while deaf ("no, aspetta" heard from "aspetta") or a yes Whisper is unsure
+        of is passed on as nothing, so the action is not run: Claudio asks once more."""
         noise = self.noise
-        if (
-            noise is not None
-            and noise.enabled
-            and heard.speech_dbfs is not None
-            and heard.speech_dbfs < noise.answer_min_dbfs
-        ):
+        if noise is None or not noise.enabled:
+            return Decision(Kind.ANSWER, text)
+        if heard.speech_dbfs is not None and heard.speech_dbfs < noise.answer_min_dbfs:
             return Decision(Kind.ANSWER, "", "quiet_answer")
+        if heard.deaf_voice_ms >= noise.answer_deaf_voice_ms:
+            return Decision(Kind.ANSWER, "", "deaf_answer")
+        weakest = min((s.avg_logprob for s in heard.segments), default=0.0)
+        if weakest < noise.answer_min_logprob and parse_answer(text) is Answer.YES:
+            return Decision(Kind.ANSWER, "", "unsure_yes")  # a no, even weak, is a no
         return Decision(Kind.ANSWER, text)
 
     def _unnamed_answer(self, text: str, heard: Heard, responder: Responder) -> bool:

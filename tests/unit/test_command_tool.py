@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from claudio.__main__ import build_responder
-from claudio.brain.claude import CUT_NOTE
+from claudio.brain.claude import CUT_NOTE, NOT_RUN_NOTE, ClaudeBrain
 from claudio.config import PcSettings, load_settings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.pc.tools import PcTools
@@ -272,6 +272,13 @@ NOT_UNDERSTOOD_IT = "Non ho capito: non lo faccio."
 NOT_UNDERSTOOD_EN = "I didn't catch that: not doing it."
 
 
+async def unclear_twice(b: ClaudeBrain, said: str, language: str = "it") -> str:
+    """An answer not understood is asked once more (Task 3); the second time it cancels."""
+    first = "".join([c async for c in b.ask(said, language)])
+    assert first.startswith(("Non ho capito. ", "I didn't catch that. ")), first
+    return "".join([c async for c in b.ask(said, language)])
+
+
 def waiting(*calls: SimpleNamespace) -> ScriptedClient:
     """A reply that calls these tools, without a word."""
     return ScriptedClient(([], "tool_use", list(calls)))
@@ -299,13 +306,7 @@ async def test_the_repeat_reaches_the_brain_through_the_router(
 ) -> None:
     client = waiting(use(NAME, command="off", last=True))
     b = acting_brain(pricing, client, tools)
-    r = LocalResponder(
-        matcher,
-        ActionRunner(Recorder().ctx(), system=system),
-        fallback=b.ask,
-        fallback_info=lambda: b.last_call,
-        fallback_awaiting=lambda: b.awaiting,
-    )
+    r = routed(b, matcher, system)
     asked = "".join([c async for c in r.respond("Ehi Claudio, spenitri.", "it")])
     assert asked == "Spegniti. Confermi?"  # nothing said before it: the action is read out
     assert "".join([c async for c in r.respond("Claudio, spegni.", "it")]) == OFF_REPLY
@@ -352,7 +353,7 @@ async def test_the_waiting_command_said_again_is_a_yes(
         ("en", "Sure, go silent.", OFF_REPLY_EN, True),
         ("it", "Claudio, spegni.", OFF_REPLY, True),
         ("it", "Switch yourself off.", NOT_UNDERSTOOD_IT, False),
-        ("en", "Claudio, spegni.", NOT_UNDERSTOOD_EN, False),
+        ("en", "Spegni.", NOT_UNDERSTOOD_EN, False),  # an Italian repeat, English question
     ],
 )
 async def test_a_repeat_counts_only_in_the_language_of_the_question(
@@ -366,8 +367,25 @@ async def test_a_repeat_counts_only_in_the_language_of_the_question(
 ) -> None:
     b = acting_brain(pricing, waiting(use(NAME, command="off", last=True)), tools)
     [_ async for _ in b.ask("garbled words", asked_in)]
-    assert "".join([c async for c in b.ask(said, asked_in)]) == reply
+    if runs:
+        assert "".join([c async for c in b.ask(said, asked_in)]) == reply
+    else:
+        assert await unclear_twice(b, said, asked_in) == reply
     assert system.off is runs
+
+
+async def test_a_repeat_with_the_name_in_the_other_language_is_a_new_call(
+    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
+) -> None:
+    """The name over an open question cancels it and the words after it are answered."""
+    client = ScriptedClient(
+        ([], "tool_use", [use(NAME, command="off", last=True)]),
+        (["Non capisco."], "end_turn", []),
+    )
+    r = routed(acting_brain(pricing, client, tools), matcher, system)
+    await say(r, "garbled words", "en")
+    assert await say(r, "Claudio, spegni.", "en") == "Okay, I won't do it. Non capisco."
+    assert not system.off
 
 
 async def test_a_word_close_to_a_phrase_of_another_language_closes_nothing(
@@ -376,7 +394,7 @@ async def test_a_word_close_to_a_phrase_of_another_language_closes_nothing(
     """ "qui" is 85.7 from the English "quit": over an Italian question it is only "qui"."""
     b = acting_brain(pricing, waiting(use(NAME, command="shutdown", last=True)), tools)
     await ask(b, "parole confuse")
-    assert await ask(b, "qui") == NOT_UNDERSTOOD_IT
+    assert await unclear_twice(b, "qui") == NOT_UNDERSTOOD_IT
     assert not system.stopping
 
 
@@ -417,7 +435,6 @@ async def test_a_refusal_wins_over_a_repeat(
         "Spegniti? Grazie.",
         "Sì, spegniti?!",
         "Spegni?!",
-        "Claudio.",
     ],
 )
 async def test_what_is_not_the_waiting_command_is_no_yes(
@@ -426,22 +443,32 @@ async def test_what_is_not_the_waiting_command_is_no_yes(
     client = waiting(use(NAME, command="off", last=True))
     b = acting_brain(pricing, client, tools)
     await ask(b, "parole confuse")
-    assert await ask(b, said) == NOT_UNDERSTOOD_IT
+    assert await unclear_twice(b, said) == NOT_UNDERSTOOD_IT
     assert not system.off and not system.paused
     assert len(client.calls) == 1
 
 
-async def test_a_longer_request_still_replaces_the_waiting_command(
+async def test_the_name_alone_over_the_waiting_command_cancels_it(
+    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
+) -> None:
+    client = waiting(use(NAME, command="off", last=True))
+    r = routed(acting_brain(pricing, client, tools), matcher, system)
+    await say(r, "parole confuse")
+    assert await say(r, "Claudio.") == "Va bene, non lo faccio."
+    assert not system.off and len(client.calls) == 1 and not r.awaiting
+
+
+async def test_a_longer_phrase_without_the_name_no_longer_replaces_the_waiting_command(
     pricing: Pricing, tools: PcTools, system: SystemControl
 ) -> None:
-    client = ScriptedClient(
-        ([], "tool_use", [use(NAME, command="off", last=True)]),
-        (["Qui non ho luci."], "end_turn", []),
-    )
+    """It pinned the old rule (a long unclear phrase was a new request): now asked once, then
+    cancelled, and Claude is not called again."""
+    client = waiting(use(NAME, command="off", last=True))
     b = acting_brain(pricing, client, tools)
     await ask(b, "parole confuse")
-    assert await ask(b, "spegni la luce della cucina per favore") == "Qui non ho luci."
-    assert not system.off and len(client.calls) == 2
+    said = "spegni la luce della cucina per favore"
+    assert await unclear_twice(b, said) == NOT_UNDERSTOOD_IT
+    assert not system.off and len(client.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -457,14 +484,14 @@ async def test_an_action_of_several_calls_is_never_a_repeat(
 ) -> None:
     b = acting_brain(pricing, waiting(*calls), tools)
     await ask(b, "parole confuse")
-    assert await ask(b, "spegniti") == NOT_UNDERSTOOD_IT
+    assert await unclear_twice(b, "spegniti") == NOT_UNDERSTOOD_IT
     assert not system.off and not system.stopping
 
 
 async def test_saying_another_tool_again_is_no_yes(pricing: Pricing, tools: PcTools) -> None:
     b = acting_brain(pricing, waiting(use("close_window", window="chrome")), tools)
     await ask(b, "chiudi chrome")
-    assert await ask(b, "chiudi chrome") == NOT_UNDERSTOOD_IT
+    assert await unclear_twice(b, "chiudi chrome") == NOT_UNDERSTOOD_IT
     assert not [d for d in tools.desktop.done if d[0] == "close"]
     # Not even a tool whose argument is called "command" too and names one of ours.
     assert not tools.repeats([call("run_command", command="off")], "spegniti", "it")
@@ -481,7 +508,7 @@ async def test_a_repeat_never_stands_in_for_the_explicit_confirmation(
         call_off = ([], "tool_use", [use(NAME, command="off", last=True)])
         b = acting_brain(pricing, ScriptedClient(call_off, call_off), tools)
         await ask(b, "parole confuse")
-        assert await ask(b, "spegniti") == NOT_UNDERSTOOD_IT
+        assert await unclear_twice(b, "spegniti") == NOT_UNDERSTOOD_IT
         assert not system.off
         await ask(b, "parole confuse")
         assert await ask(b, "confermo") == OFF_REPLY  # it did wait for the explicit word
@@ -530,3 +557,115 @@ def test_the_clock_reaches_the_brain_through_build_responder(tmp_path: Path) -> 
         assert brain.clock is now
     finally:
         brain.tools.close()
+
+
+# --- Fix round 0: the name rule lives in the responder, for Claude's question too -------
+
+
+def routed(b: ClaudeBrain, matcher: CommandMatcher, system: SystemControl) -> LocalResponder:
+    return LocalResponder(
+        matcher,
+        ActionRunner(Recorder().ctx(), system=system),
+        fallback=b.ask,
+        fallback_info=lambda: b.last_call,
+        fallback_awaiting=lambda: b.awaiting,
+        fallback_cancel=b.cancel_pending,
+        fallback_repeats=b.repeats_waiting,
+    )
+
+
+async def say(r: LocalResponder, text: str, language: str = "it") -> str:
+    return "".join([c async for c in r.respond(text, language)])
+
+
+async def test_the_name_and_a_system_command_over_claudes_question_never_reach_claude(
+    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
+) -> None:
+    client = ScriptedClient(([], "tool_use", [use("close_window", window="chrome")]))
+    b = acting_brain(pricing, client, tools)
+    r = routed(b, matcher, system)
+    await say(r, "chiudi chrome")
+    assert r.awaiting
+    reply = await say(r, "Claudio, spegniti")
+    assert reply.startswith("Va bene, non lo faccio. ")
+    assert system.off and len(client.calls) == 1  # the router answered, Claude was not called
+    assert not b.awaiting and f"{NOT_RUN_NOTE}close_window" in b._history[-1][1]
+
+
+async def test_the_scene_of_17_20_17_cancels_and_reaches_claude_as_a_new_request(
+    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use("close_window", window="chrome")]),
+        (["Ho un'idea."], "end_turn", []),
+    )
+    r = routed(acting_brain(pricing, client, tools), matcher, system)
+    await say(r, "chiudi chrome")
+    assert await say(r, "Claudio, che idea hai?") == "Va bene, non lo faccio. Ho un'idea."
+    assert len(client.calls) == 2 and not r.awaiting
+
+
+async def test_a_long_unclear_phrase_without_the_name_asks_once_then_cancels(
+    pricing: Pricing, tools: PcTools, system: SystemControl
+) -> None:
+    """17:16:09, "Si apre il blocco note.": the TV is no new request that can act."""
+    client = waiting(use("close_window", window="chrome"))
+    b = acting_brain(pricing, client, tools)
+    await ask(b, "chiudi chrome")
+    assert await unclear_twice(b, "Si apre il blocco note.") == NOT_UNDERSTOOD_IT
+    assert len(client.calls) == 1
+
+
+async def test_the_name_over_the_second_question_cancels_it_too(
+    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use("close_window", window="chrome")]),
+        (["Alle tre."], "end_turn", []),
+    )
+    r = routed(acting_brain(pricing, client, tools), matcher, system)
+    await say(r, "chiudi chrome")
+    assert (await say(r, "boh forse")).startswith("Non ho capito. ")
+    reply = await say(r, "Claudio, che ore sono")
+    assert reply.startswith("Va bene, non lo faccio. ") and r.last_route["command"] == "tell_time"
+    assert len(client.calls) == 1 and not r.awaiting
+
+
+async def test_certo_hey_claudio_only_cancels_over_claudes_question(
+    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
+) -> None:
+    client = waiting(use("close_window", window="chrome"))
+    r = routed(acting_brain(pricing, client, tools), matcher, system)
+    await say(r, "chiudi chrome")
+    assert await say(r, "Certo. Hey Claudio.") == "Va bene, non lo faccio."
+    assert not r.awaiting and len(client.calls) == 1
+
+
+# --- Cleanup: the review's rulings ----------------------------------------------------------
+
+
+def test_build_responder_wires_the_repeat_hook(tmp_path: Path) -> None:
+    """Without it "Claudio, spegni" over Claude's "spegniti" question would be cancelled."""
+    settings = load_settings()
+    settings = settings.model_copy(
+        update={
+            "cost": settings.cost.model_copy(update={"db_file": tmp_path / "spend.db"}),
+            "memory": settings.memory.model_copy(update={"enabled": False}),
+        }
+    )
+    responder = build_responder(settings, Recorder().ctx())
+    brain = responder.fallback.__self__  # type: ignore[union-attr]
+    try:
+        assert responder.fallback_repeats == brain.repeats_waiting
+    finally:
+        brain.tools.close()
+
+
+async def test_the_row_keeps_the_name_cancel_and_claude_is_no_command(
+    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
+) -> None:
+    client = waiting(use("close_window", window="chrome"))
+    r = routed(acting_brain(pricing, client, tools), matcher, system)
+    await say(r, "chiudi chrome")
+    await say(r, "Certo. Hey Claudio.")
+    assert r.last_route["answer"] == "name" and "command" not in r.last_route

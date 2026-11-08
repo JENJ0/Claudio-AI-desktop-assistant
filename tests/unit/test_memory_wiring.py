@@ -283,7 +283,10 @@ async def test_forgetting_everything_needs_confermo(
         "Cancello tutti i ricordi, per sempre. Per procedere dì: confermo."
     )
     assert r.awaiting
-    assert await say(r, "sì") == "Non ho capito: non lo faccio."  # level 3: "sì" is not enough
+    assert await say(r, "sì") == (  # level 3: "sì" is not enough; asked once more
+        "Non ho capito. Dimentica tutto. Per procedere dì: confermo."
+    )
+    assert await say(r, "sì") == "Non ho capito: non lo faccio."
     assert len(store) == 1
     await say(r, "dimentica tutto")
     assert await say(r, "confermo") == "Fatto: ho dimenticato tutto."
@@ -297,6 +300,7 @@ async def test_a_sentence_with_confermo_does_not_forget_everything(
     r = responder(matcher, store)
     await say(r, "ricordati che il gatto si chiama Leo")
     await say(r, "dimentica tutto")
+    assert (await say(r, said)).startswith("Non ho capito. ")  # asked once more
     assert await say(r, said) == "Non ho capito: non lo faccio."
     assert len(store) == 1
 
