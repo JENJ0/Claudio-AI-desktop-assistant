@@ -93,6 +93,7 @@ class LocalResponder:
         fallback_awaiting: Callable[[], bool] | None = None,
         fallback_cancel: Callable[[bool], None] | None = None,
         fallback_stop: Callable[[], None] | None = None,
+        fallback_cut: Callable[[Sequence[str], object | None], object | None] | None = None,
         fallback_heard: Callable[[Hearing], None] | None = None,
         fallback_guess: GuessCall | None = None,
         fallback_guess_info: Callable[[], dict[str, Any]] | None = None,
@@ -112,6 +113,8 @@ class LocalResponder:
         self.fallback_awaiting = fallback_awaiting
         self.fallback_cancel = fallback_cancel
         self.fallback_stop = fallback_stop  # a new request cut Claude's reply: it no longer acts
+        self.fallback_cut = fallback_cut  # Claude's reply was cut: what was heard of it
+        self.claude_replied = False  # the reply being spoken came from Claude
         self.fallback_heard = fallback_heard  # how sure Whisper was, for Claude's next request
         # A phrase about to be dropped that sounds like a command: Claude guesses what JenJo
         # said (None: dropped as always). `guess` holds the thresholds.
@@ -297,6 +300,7 @@ class LocalResponder:
         the answer (awaiting): a yes answers `text` with no second "Confermi?" for a level 2
         command; "no, abbassa il volume" is a new request."""
         question = in_language(DID_YOU_SAY, language).format(text=quoted(text))
+        self.claude_replied = False  # a reply of its own, which never goes through respond()
         self._proposal = Proposal(text, language, question)
         self.language = language
         self.last_route = {"route": "guess", "guess": text, "language": language}
@@ -324,6 +328,13 @@ class LocalResponder:
             # forgotten, and a phrase much later is never taken for the answer.
             self.memory.cancel()
 
+    def reply_cut(self, played: Sequence[str], handle: object | None = None) -> object | None:
+        """The reply was cut after `played`: Claude's history keeps that much of it. Only a reply
+        of Claude's, or the one `handle` (from the first cut) names: None for any other."""
+        if self.fallback_cut is None or (handle is None and not self.claude_replied):
+            return None
+        return self.fallback_cut(played, handle)
+
     def stop_acting(self) -> None:
         """A new request was said over the reply: Claude's stream goes on, for "Dicevo", but
         it runs nothing more and asks nothing."""
@@ -342,6 +353,7 @@ class LocalResponder:
         Right after a confirmation question, `text` is its answer. The reply is kept for
         "ripeti"."""
         parts: list[str] = []
+        self.claude_replied = False
         async for chunk in self._respond(text, language):
             parts.append(chunk)
             yield chunk
@@ -504,6 +516,7 @@ class LocalResponder:
 
     async def _ask_fallback(self, text: str) -> AsyncIterator[str]:
         assert self.fallback is not None
+        self.claude_replied = True
         self.last_route = {"route": "claude", "language": self.language}
         try:
             async with contextlib.aclosing(self.fallback(text, self.language)) as reply:

@@ -236,6 +236,7 @@ EN: dict[str, str] = {
     "Conferma scaduta: %s non eseguito": "Confirmation expired: %s not run",
     "Nuova richiesta sopra la risposta: %s non eseguito": "New request over the reply: %s not run",
     "Offerta di Sonnet scaduta: interrotta": "Sonnet offer expired: interrupted",
+    "Offerta di Sonnet non sentita: annullata": "Sonnet offer not heard: cancelled",
     "Basta: fine della conversazione": "Stop: end of the conversation",
     "Ripeto: %r": "Repeating: %r",
     "Fine della conversazione: torno in attesa della wake word": (

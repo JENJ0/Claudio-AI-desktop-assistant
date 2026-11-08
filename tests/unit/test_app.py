@@ -7,7 +7,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 
 import numpy as np
 import pytest
@@ -70,6 +70,7 @@ class FakeResponder:
         self.awaiting = False
         self.asked_question = False
         self.answer_expected = False
+        self.claude_replied = False
         self.prepared = 0
 
     @property
@@ -90,6 +91,9 @@ class FakeResponder:
 
     def stop_acting(self) -> None:
         pass
+
+    def reply_cut(self, played: Sequence[str], handle: object | None = None) -> None:
+        return None
 
     async def respond(self, text: str, language: str = "it") -> AsyncIterator[str]:
         self.seen.append(text)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -54,6 +54,7 @@ class Transcriber(Protocol):
 class Responder(Protocol):
     language: str  # of the reply being streamed, known by its first chunk
     last_route: dict[str, Any]  # how the last request was handled ("route", "command"...)
+    claude_replied: bool  # the reply being streamed (or the last one) came from Claude
 
     @property
     def awaiting(self) -> bool:
@@ -95,6 +96,12 @@ class Responder(Protocol):
 
     def stop_acting(self) -> None:
         """A new request cut the reply: the rest of it may still be read, it starts nothing."""
+        ...
+
+    def reply_cut(self, played: Sequence[str], handle: object | None = None) -> object | None:
+        """The reply was cut after `played`, the pieces that started playing: the conversation
+        with Claude keeps that much of it. Returns a handle of the cut reply (None: not
+        Claude's), which a later call passes back to name that reply and no other."""
         ...
 
     def propose(self, text: str, language: str) -> str:

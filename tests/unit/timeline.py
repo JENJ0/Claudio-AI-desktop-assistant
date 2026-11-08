@@ -274,6 +274,7 @@ class Scene:
             fallback_awaiting=lambda: self.brain.awaiting,
             fallback_cancel=self.brain.cancel_pending,
             fallback_stop=self.brain.stop_acting,
+            fallback_cut=self.brain.reply_cut,
             fallback_heard=self.brain.heard,
         )
         self.assistant = Assistant(

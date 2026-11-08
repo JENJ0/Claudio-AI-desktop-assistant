@@ -176,6 +176,7 @@ Prima di toccare gli interrupt, per non scrivere test sopra finti che mentono.
 4. `type_text` e `press_keys` di livello 2 senza finestra: la domanda nomina sempre dove andrà il testo (titolo della finestra attiva), anche con `confirm_brief`. Copre la scheda «Blocco note online» davanti.
 5. Dopo il sì, un lancio dello stesso giro che batte un focus successivo: `_typing_target` controlla la finestra subito prima di scrivere, e se non è quella detta nella domanda non scrive e lo dice.
 6. Risposta sopra un «Confermi?» che sta suonando (`Claudio, sì`, `Claudio, no`): se il testo della domanda è in `played` vale come risposta, con la soglia del task 3; se non è ancora partito, Claudio ripete la domanda. Non arriva mai a Haiku senza contesto.
+7. Un messaggio scritto nella chat non risponde mai a una domanda armata a voce: la annulla, lo dice nella chat e risponde come a una richiesta nuova. Trovato nella revisione del task 6, già nel codice di base: un «sì» scritto dopo la finestra chiusa confermava un'azione di livello 2 entro 60 s.
 
 - [ ] Test che falliscono: un caso per regola, compreso «Claudio, confermo» a 59 s e a 61 s; «Che ore sono?» poi una domanda che ci si riferisce: la richiesta a Claude ha il comando locale in cronologia; da spento niente in cronologia.
 - [ ] Il gate: registra le cassette che mancano, dentro il budget.
