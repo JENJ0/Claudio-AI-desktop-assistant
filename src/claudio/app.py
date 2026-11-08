@@ -807,7 +807,7 @@ class Assistant:
             if outcome in ("paused", "stopped"):
                 await self._beep_now("cancel")
             # A confirmation question ("Confermi?"): the answer comes without the wake word.
-            follow_up = self.responder.awaiting and not self._interrupted
+            follow_up = self.responder.awaiting and not self._interrupted and not self._silenced()
             ok = outcome == "ok" and not follow_up and self._takeover is None
             await self._go_on(resume, decision.text, inter, route_before, ok)
         except Exception:
@@ -903,10 +903,13 @@ class Assistant:
         """The reply to the phrase, not started yet: the router only runs once it is read. The
         one place where a request reaches the router."""
         if decision.kind is Kind.ASK:  # "Hai detto: ...?": the answer comes next
+            if self._silenced():  # off or paused meanwhile: nothing is asked
+                self.responder.cancel_pending()
+                return _no_reply()
             return _fixed_reply(decision.text)
         if not self.system.off:  # off: nothing goes to Claude, no n-best pass for it
             await self._tell_hearing(audio, decision.text, heard, segments, inter)
-        return self.responder.respond(decision.text, heard)
+        return self.responder.respond(decision.text, heard, named=decision.named)
 
     def _reply_outcome(self, outcome: str) -> str:
         """`outcome`, unless the route or a barge-in says the reply ended another way."""
@@ -929,7 +932,9 @@ class Assistant:
         route = self.responder.last_route
         if route and route is not route_before:  # else it never reached the router
             inter.info.update(route)
-        if not follow_up:
+        if self._silenced():  # off or paused: no question survives, whoever armed it and when
+            self.responder.cancel_pending()
+        elif not follow_up:
             # An error or silence never leaves an action armed (a phrase said over the reply does:
             # it is the answer); a real cut also drops the offer.
             cut = outcome in ("interrupted", "stopped") and self._takeover is None
@@ -971,6 +976,9 @@ class Assistant:
         if decision.kind is Kind.FALSE_WAKE and await self._name_before(inter):
             heard = replace(heard, name_heard=True)
             decision = self.intake.decide(text, language, heard, self.responder)
+        # The name counts when the wake audio held it, not only the transcript (a lone "Claudio."
+        # before the request, a near miss Whisper heard, a check of the wake word).
+        named = heard.relistened or heard.name_heard or heard.second_chance
         echo = self._window_echo(text, decision, heard, info)
         if echo and not decision.dropped:
             log.info("La mia voce nel microfono dopo la risposta, la ignoro: %r", self._kept(text))
@@ -981,10 +989,11 @@ class Assistant:
         if not echo and self._may_recover(decision, heard, language):
             recovered = await self._recover_command(audio, decision.text, language, inter)
             if recovered is not None:
-                return recovered
+                return replace(recovered, named=named)
         if decision.dropped:
-            return await self._recover(decision, language, heard, inter) or decision
-        return decision
+            recovery = await self._recover(decision, language, heard, inter) or decision
+            return replace(recovery, named=named)
+        return replace(decision, named=named)
 
     def _window_echo(
         self, text: str, decision: Decision, heard: Heard, info: dict[str, Any]
@@ -1690,6 +1699,7 @@ class Assistant:
             outcome = "error"
             log.exception("Errore rispondendo al messaggio scritto")
         finally:
+            # shortcut: the rest is shown in the chat, never spoken; upgrade when it should be said.
             if self._typed_continue(route_before):  # silent in the chat: show the rest instead
                 rest, self._unsaid_rest = self._unsaid_rest, None
                 if rest is not None:
@@ -1797,6 +1807,9 @@ class Assistant:
     def _typed_continue(self, route_before: dict[str, Any]) -> bool:
         route = self.responder.last_route
         return route is not route_before and route.get("command") == CONTINUE_COMMAND
+
+    def _silenced(self) -> bool:
+        return self.system.off or self.system.paused
 
     def _end_questions_when_silenced(self, what: str) -> None:
         """Off or paused (voice or tray): a question still waiting is over, so a "sì" after
@@ -2146,6 +2159,11 @@ def _distinct(text: str, candidates: Sequence[str], limit: int) -> tuple[str, ..
             seen.add(key)
             out.append(candidate)
     return tuple(out[:limit])
+
+
+async def _no_reply() -> AsyncIterator[str]:
+    return
+    yield  # makes this an async generator
 
 
 async def _fixed_reply(text: str) -> AsyncIterator[str]:

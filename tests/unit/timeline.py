@@ -271,9 +271,11 @@ class Scene:
             tools=self.tools,
             pc=PcSettings(),
         )
+        actions = ActionRunner(self.recorder.ctx())
+        self.brain.silenced = lambda: actions.system.off or actions.system.paused
         self.responder = LocalResponder(
             matcher,
-            ActionRunner(self.recorder.ctx()),
+            actions,
             fallback=self.brain.ask,
             fallback_info=lambda: self.brain.last_call,
             fallback_awaiting=lambda: self.brain.awaiting,

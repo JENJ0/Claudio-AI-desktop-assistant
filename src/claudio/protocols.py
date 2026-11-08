@@ -117,9 +117,11 @@ class Responder(Protocol):
         detto: ...?"); the next phrase is its answer (awaiting)."""
         ...
 
-    def respond(self, text: str, language: str = DEFAULT_LANGUAGE) -> AsyncIterator[str]:
+    def respond(
+        self, text: str, language: str = DEFAULT_LANGUAGE, named: bool = False
+    ) -> AsyncIterator[str]:
         """Stream the reply to `text`, heard in `language`. Phase 1: one chunk. Phase 2:
-        Haiku tokens."""
+        Haiku tokens. `named`: the wake audio held the name, though `text` does not."""
         ...
 
 

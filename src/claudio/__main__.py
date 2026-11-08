@@ -139,6 +139,8 @@ def build_responder(
         home=home,
         clock=clock,
     )
+    if brain is not None:  # off or paused, Claude asks no question
+        brain.silenced = lambda: actions.system.off or actions.system.paused
     guesser = None
     if brain is not None and settings.guess.enabled:
         from claudio.brain.guess import Guesser

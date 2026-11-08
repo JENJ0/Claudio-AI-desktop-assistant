@@ -231,6 +231,12 @@ def heard_wake_word(text: str) -> bool:
     return any(w not in GREETINGS and is_wake_word(w) for w in words)
 
 
+def said_in(question: str, heard: str) -> bool:
+    """The last sentence of `question` is among the words `heard`."""
+    last = re.split(r"(?<=[.!?])\s+", question.strip())[-1]
+    return f" {normalize(last, drop_fillers=False)} " in f" {normalize(heard, drop_fillers=False)} "
+
+
 def after_wake_word(text: str) -> str:
     """What was said after the last time the name was (the new request in "Certo. Claudio, che
     ore sono"), as written; "" when the name ends the phrase."""
