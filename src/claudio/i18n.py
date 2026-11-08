@@ -281,9 +281,13 @@ EN: dict[str, str] = {
     "Non riprendo la risposta interrotta: rispondeva a una frase incerta": (
         "Not resuming the interrupted reply: it answered a phrase Whisper doubted"
     ),
-    "Non riprendo la risposta interrotta: breve o una domanda": (
-        "Not resuming the interrupted reply: short, or a question"
+    "Non riprendo la risposta interrotta: troppo breve": (
+        "Not resuming the interrupted reply: too short"
     ),
+    "Non riprendo la risposta interrotta: la sua azione è stata fermata": (
+        "Not resuming the interrupted reply: its action was stopped"
+    ),
+    "Continua: ridico il testo mancante": "Go on: saying the missing text again",
     "Seconda opinione di Whisper non riuscita": "Whisper's second opinion failed",
     "Seconda opinione di Whisper spenta: Whisper %s su %s": (
         "Whisper's second opinion off: Whisper %s on %s"

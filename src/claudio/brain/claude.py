@@ -96,6 +96,8 @@ STOPPED_RESULT = "Not run: JenJo said something else over the reply."
 NEW_REQUEST_WORDS = 4  # an unclear answer longer than this is a new request, not a "no"
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
+# The bridges, in every language: said aloud, never in the history (Haiku copied them, 05/11).
+_BRIDGES = frozenset(b.strip() for b in (*BRIDGE.values(), *BRIDGE_RUN.values()))
 # What the history keeps of a reply cut short (read by Claude, never said aloud).
 CUT_NOTE = "[cut off: JenJo interrupted here]"
 CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
@@ -254,13 +256,18 @@ class ClaudeBrain:
         if turn is None:
             return None
         before = "".join(turn.parts[: turn.reply_from]).strip()
-        now = " ".join(p.strip() for p in played if p.strip())
+        now = " ".join(p.strip() for p in played if p.strip() and p.strip() not in _BRIDGES)
         turn.heard = f"{before} {now}".strip()
         self._disarm_unheard(turn, now)
         index = self._index_of(turn.written)
         if index is not None:  # else it is not written yet, or the window dropped it
             self._history[index] = turn.written = (turn.question, _cut_line(turn))
         return turn
+
+    def dropped_action(self, handle: object | None) -> bool:
+        """The cut turn `handle` names has tools that never ran, for any reason (stopped, not
+        heard, cut at the limit): what it said ends in a promise or a question nobody answers."""
+        return isinstance(handle, _Turn) and bool(handle.not_run)
 
     def _disarm_unheard(self, turn: _Turn, heard: str) -> None:
         if not turn.asked or _said_in(turn.asked, heard):

@@ -94,6 +94,7 @@ class LocalResponder:
         fallback_cancel: Callable[[bool], None] | None = None,
         fallback_stop: Callable[[], None] | None = None,
         fallback_cut: Callable[[Sequence[str], object | None], object | None] | None = None,
+        fallback_dropped: Callable[[object | None], bool] | None = None,
         fallback_heard: Callable[[Hearing], None] | None = None,
         fallback_guess: GuessCall | None = None,
         fallback_guess_info: Callable[[], dict[str, Any]] | None = None,
@@ -114,6 +115,9 @@ class LocalResponder:
         self.fallback_cancel = fallback_cancel
         self.fallback_stop = fallback_stop  # a new request cut Claude's reply: it no longer acts
         self.fallback_cut = fallback_cut  # Claude's reply was cut: what was heard of it
+        self.fallback_dropped = fallback_dropped  # that cut reply's action was stopped
+        # "continua" has something to say again (set by the Assistant): else it goes to Claude.
+        self.can_resume: Callable[[], bool] | None = None
         self.claude_replied = False  # the reply being spoken came from Claude
         self.fallback_heard = fallback_heard  # how sure Whisper was, for Claude's next request
         # A phrase about to be dropped that sounds like a command: Claude guesses what JenJo
@@ -335,6 +339,10 @@ class LocalResponder:
             return None
         return self.fallback_cut(played, handle)
 
+    def action_dropped(self, handle: object | None) -> bool:
+        """The reply `handle` names was cut with an action that never ran."""
+        return self.fallback_dropped is not None and self.fallback_dropped(handle)
+
     def stop_acting(self) -> None:
         """A new request was said over the reply: Claude's stream goes on, for "Dicevo", but
         it runs nothing more and asks nothing."""
@@ -373,6 +381,8 @@ class LocalResponder:
                 yield chunk
             return
         match = self.matcher.match(text, language)
+        if match and match.command.action == "resume" and not self._has_rest():
+            match = None  # nothing to say again: "continua" is a request like any other
         if match:
             self.language = self._reply_language(
                 match.language, match.command.has_reply_in(match.language)
@@ -406,6 +416,9 @@ class LocalResponder:
             return
         async for chunk in self._run_command(match, confirmed):
             yield chunk
+
+    def _has_rest(self) -> bool:
+        return self.can_resume is not None and self.can_resume()
 
     def _open_question(self, text: str, language: str) -> AsyncIterator[str] | None:
         """The answer to a question waiting for one, not started yet (None: no question). Off
@@ -467,6 +480,9 @@ class LocalResponder:
         if match.command.action == "stop":
             log.info("Basta: fine della conversazione", extra={"route": "local"})
             return  # nothing to say: the assistant beeps and stops listening
+        if match.command.action == "resume":
+            log.info("Continua: ridico il testo mancante", extra={"route": "local"})
+            return  # nothing to say here: the assistant says the rest, with "Dicevo"
         if match.command.level > LEVEL_SAFE and not (
             confirmed and match.command.level <= LEVEL_CONFIRM
         ):

@@ -157,6 +157,7 @@ def build_responder(
         fallback_cancel=brain.cancel_pending if brain else None,
         fallback_stop=brain.stop_acting if brain else None,
         fallback_cut=brain.reply_cut if brain else None,
+        fallback_dropped=brain.dropped_action if brain else None,
         fallback_heard=brain.heard if brain else None,
         fallback_guess=guesser,
         fallback_guess_info=(lambda: guesser.last_call) if guesser else None,
@@ -567,6 +568,7 @@ def build_barge_in(settings: Settings, transcriber: Any) -> BargeIn:
         needs_name=c.barge_in_needs_name,
         echo_similarity=c.echo_similarity,
         resume_s=c.resume_s,
+        rest_s=settings.claude.history_reset_s,
         resume_min_chars=c.resume_min_chars,
     )
 

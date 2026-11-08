@@ -55,6 +55,7 @@ class Responder(Protocol):
     language: str  # of the reply being streamed, known by its first chunk
     last_route: dict[str, Any]  # how the last request was handled ("route", "command"...)
     claude_replied: bool  # the reply being streamed (or the last one) came from Claude
+    can_resume: Callable[[], bool] | None  # set by the Assistant: "continua" has a rest to say
 
     @property
     def awaiting(self) -> bool:
@@ -102,6 +103,10 @@ class Responder(Protocol):
         """The reply was cut after `played`, the pieces that started playing: the conversation
         with Claude keeps that much of it. Returns a handle of the cut reply (None: not
         Claude's), which a later call passes back to name that reply and no other."""
+        ...
+
+    def action_dropped(self, handle: object | None) -> bool:
+        """The cut reply `handle` names had an action that was stopped and never ran."""
         ...
 
     def propose(self, text: str, language: str) -> str:
