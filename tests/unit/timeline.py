@@ -7,10 +7,11 @@ same scene gives the same result alone or after other tests. Real time enters in
 that never change a result: the tools' own threads (PcTools' pool), which `until(poll_s=)`
 polls for, and `handle_typed`, which polls for an idle CLAUDIO with a real 50 ms sleep.
 
-shortcut: Whisper (the fixture's inline `to_thread`) takes no frames, so no frame ever arrives
-while it works: `_held`, `_barge_pending`, the `_since_cut` slice and the body of
-`_judge_stranded` are never reached (G2's 5.2 #5, a request lost during the Whisper check, cannot
-be red-tested here). Upgrade in G2 by giving Whisper a duration in frames.
+Whisper (the fixture's `inline_to_thread`) takes `whisper_frames` frames, 0 by default, both for
+the request and for the check of a phrase said over the reply: with 0 no frame arrives while it
+works, with more the microphone goes on feeding TRANSCRIBING and the barge-in check (the `_held`
+frames, `_barge_pending`, the `_since_cut` slice and `_judge_stranded` are reached). It hears
+what was said when it started, as the audio it was given.
 
 Not collected by pytest (the name does not start with test_)."""
 
@@ -170,6 +171,17 @@ class SceneWake(FakeWake):
         return None
 
 
+async def inline_to_thread(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    """Stands in for `asyncio.to_thread`: no worker thread, so the same frames at every run.
+    The scene's Whisper first lets its `whisper_frames` frames go by."""
+    await asyncio.sleep(0)  # a thread hands over: the caller does not run on at once
+    owner = getattr(fn, "__self__", None)
+    if isinstance(owner, SceneStt):
+        owner.heard = owner.scene.said  # the audio it was given, not what is said meanwhile
+        await owner.scene.ticks.after(owner.scene.whisper_frames)
+    return fn(*args, **kwargs)
+
+
 class SceneStt:
     """Whisper hears what the scene says; `fail` makes the next pass blow up; `samples`
     is the length of the audio of each pass."""
@@ -177,13 +189,18 @@ class SceneStt:
     def __init__(self, scene: Scene) -> None:
         self.scene, self.language, self.fail = scene, "it", False
         self.samples: list[int] = []
+        self.heard = ""  # what the pass in progress hears, fixed when it starts
 
     def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
         if self.fail:
             self.fail = False
             raise RuntimeError("CUDA esplosa")
         self.samples.append(len(audio))
-        return self.scene.said
+        return self.heard
+
+    def over(self, audio: np.ndarray) -> str:
+        """The listener over the reply: the same Whisper."""
+        return self.heard
 
 
 class GatedDesktop(FakeDesktop):
@@ -220,6 +237,7 @@ class Scene:
         *,
         sentence_frames: int = 0,
         start_frames: int = 0,
+        whisper_frames: int = 0,
         claude_wait: int = 0,
         chunk_wait: int = 0,
         window_s: float = 0.0,
@@ -228,6 +246,7 @@ class Scene:
         home: Path | None = None,
         speaker: Any = None,
     ) -> None:
+        self.whisper_frames = whisper_frames
         self.said = ""  # what Whisper hears, for the request and for what is said over a reply
         self.ticks = Ticks()
         self.clock = AudioClock()
@@ -279,7 +298,7 @@ class Scene:
 
     def _listener(self, vad_settings: VadSettings) -> BargeIn:
         over = barge(vad_settings, [])
-        over.transcribe = lambda audio: self.said  # type: ignore[assignment,misc]
+        over.transcribe = self.stt.over  # type: ignore[assignment,misc]
         return over
 
     # --- the microphone ---------------------------------------------------------------

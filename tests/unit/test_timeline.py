@@ -19,7 +19,7 @@ from claudio.brain.claude import CUT_NOTE
 from claudio.tts.speaker import StreamingSpeaker
 from tests.unit.test_pc_tools import FakeDesktop, text, use
 from tests.unit.test_speaker import FakePlayer, FakeSynth
-from tests.unit.timeline import GatedDesktop, Scene, text_reply
+from tests.unit.timeline import GatedDesktop, Scene, inline_to_thread, text_reply
 
 # --- the scenes ------------------------------------------------------------------------
 
@@ -43,11 +43,7 @@ async def make_scene(
     """Scenes whose Whisper runs inline (no worker thread: the same frames at every run)."""
     scenes: list[Scene] = []
 
-    async def inline(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-        await asyncio.sleep(0)  # a thread hands over: the caller does not run on at once
-        return fn(*args, **kwargs)
-
-    monkeypatch.setattr(asyncio, "to_thread", inline)
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
 
     def make(*replies: tuple[list[str], str, list[Any]], **kwargs: Any) -> Scene:
         scene = Scene(fake_vad, vad_settings, matcher, replies, **kwargs)
@@ -158,6 +154,61 @@ async def test_interrupted_row_keeps_its_first_audio(make_scene) -> None:
     assert row["m1_ms"] >= 800  # the 10 frames Claude took, then the voice
     assert row["audible_ms"] >= row["m1_ms"]
     assert row["tts_first_ms"] == pytest.approx(160, abs=1)  # the 2 frames of the voice
+
+
+@pytest.mark.parametrize("whisper_frames", [0, 5])
+async def test_frames_arrive_while_whisper_works(make_scene, whisper_frames: int) -> None:
+    """Whisper lasts `whisper_frames` microphone frames: at 0 it ends within the frame that
+    started it, as before; above 0 the microphone goes on feeding TRANSCRIBING."""
+    scene = make_scene(text_reply("Sono le tre."), whisper_frames=whisper_frames)
+    during: list[int] = []
+    tick = scene.ticks.tick
+
+    def counting() -> None:
+        tick()
+        if scene.assistant.state is State.TRANSCRIBING:
+            during.append(scene.ticks.count)
+
+    scene.ticks.tick = counting  # type: ignore[method-assign]
+    await scene.say("che ore sono")
+    await scene.advance(1.0)
+    assert len(during) == whisper_frames
+    assert scene.row(0)["outcome"] == "ok"
+
+
+async def test_whisper_hears_what_was_said_when_it_started(make_scene) -> None:
+    """A phrase said while Whisper works is not the text of the request it is working on."""
+    scene = make_scene(text_reply("Sono le tre."), whisper_frames=10)
+    await scene.say("che ore sono")
+    assert scene.assistant.state is State.TRANSCRIBING
+    scene.said = "un'altra frase detta mentre Whisper lavora"
+    await idle(scene)
+    assert scene.row(0)["text"] == "che ore sono"
+
+
+async def test_the_check_of_a_phrase_over_the_reply_lasts_whisper_frames(make_scene) -> None:
+    """The over-the-reply listener is a Whisper too: frames arrive during its check, and a
+    slice that comes meanwhile waits in `_barge_pending`."""
+    scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, whisper_frames=20)
+    checking: list[int] = []
+    pending: list[int] = []
+    tick = scene.ticks.tick
+
+    def counting() -> None:
+        tick()
+        if scene.assistant._barge_checking:
+            checking.append(scene.ticks.count)
+        if scene.assistant._barge_pending is not None:
+            pending.append(scene.ticks.count)
+
+    scene.ticks.tick = counting  # type: ignore[method-assign]
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.say_over("aspetta un momento per favore")
+    await scene.say_over("anzi no, continua pure")  # said while the first is still checked
+    await idle(scene)
+    assert len(checking) >= 10
+    assert pending
 
 
 # --- tools -----------------------------------------------------------------------------

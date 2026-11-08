@@ -188,7 +188,11 @@ def several(frame: np.ndarray, n: int) -> list[np.ndarray]:
 
 def asked(assistant: Assistant, speaker: FakeSpeaker) -> bool:
     """CLAUDIO has asked its question and listens for the answer."""
-    return assistant.state is State.LISTENING and bool(speaker.spoken)
+    return (
+        assistant.state is State.LISTENING
+        and bool(speaker.spoken)
+        and not assistant.own_sound.playing  # beep over; its echo tail may still deafen
+    )
 
 
 LEVEL_3 = Command(id="delete", phrases=("cancella tutto",), action="close_window", level=3)

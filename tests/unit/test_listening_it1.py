@@ -235,17 +235,13 @@ class CueSpeaker(LongSpeaker):
         super().__init__()
         self.done = asyncio.Event()
 
-    async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
-        text = "".join([c async for c in text_stream])
-        if on_first_audio:
-            on_first_audio()
-        if not self.spoken:
+    async def _during_sentence(self) -> None:
+        if len(self.played) == 1 and not self.spoken:
             stop = asyncio.ensure_future(self._stop.wait())
             cue = asyncio.ensure_future(self.done.wait())
             await asyncio.wait({stop, cue}, timeout=3.0, return_when=asyncio.FIRST_COMPLETED)
             stop.cancel()
             cue.cancel()
-        self.spoken.append(text)
 
 
 async def test_a_phrase_still_going_when_the_reply_ends_is_not_lost(

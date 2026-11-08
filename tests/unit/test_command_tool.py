@@ -510,3 +510,23 @@ def test_a_repeat_is_as_close_as_the_matcher_asks(
         assert brain.tools.repeats(off, "Claudio, spegni.", "it") is repeats
     finally:
         brain.tools.close()
+
+
+def test_the_clock_reaches_the_brain_through_build_responder(tmp_path: Path) -> None:
+    """The replay gate builds through `build_responder`: its clock must arrive at the brain."""
+    settings = load_settings()
+    settings = settings.model_copy(
+        update={
+            "cost": settings.cost.model_copy(update={"db_file": tmp_path / "spend.db"}),
+            "memory": settings.memory.model_copy(update={"enabled": False}),
+        }
+    )
+
+    def now() -> float:
+        return 1000.0
+
+    brain = build_responder(settings, Recorder().ctx(), clock=now).fallback.__self__  # type: ignore[union-attr]
+    try:
+        assert brain.clock is now
+    finally:
+        brain.tools.close()

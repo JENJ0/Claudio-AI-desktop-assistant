@@ -14,7 +14,7 @@ import pytest
 
 from claudio.app import Assistant, State
 from claudio.audio.vad import Endpointer
-from claudio.metrics import MetricsWriter
+from claudio.metrics import Interaction, MetricsWriter
 from claudio.system import SystemControl
 from claudio.tts.sentence_splitter import split_stream
 
@@ -274,6 +274,23 @@ async def test_audible_ms_adds_the_delay_to_m1(fake_vad, vad_settings, make_fram
     quiet, _wake, _speaker, _ = build(fake_vad, vad_settings, FakeStt(), {1})
     await run_frames(quiet, make_frames("silence", 3600))
     assert quiet.history[-1]["audible_ms"] is None  # nothing was said back
+
+
+async def test_first_audible_is_written_only_the_first_time(fake_vad, vad_settings) -> None:
+    """The first audio can be marked by the reply path and again by `_on_first_audio`: the
+    mark of the first sound stays, a later call does not move it."""
+    assistant, _wake, speaker, _ = build(fake_vad, vad_settings, FakeStt(), {3})
+    clock = assistant.clock
+    assert isinstance(clock, AudioClock)
+    inter = Interaction(clock=clock)
+    speaker.first_sound_delay_s = 0.125
+    assistant._mark_first_audio(inter)
+    first = inter.marks["first_audible"]
+    clock.t += 1.0
+    speaker.first_sound_delay_s = 0.5
+    assistant._mark_first_audio(inter)
+    assert first == pytest.approx(clock.t - 1.0 + 0.125)
+    assert inter.marks["first_audible"] == first
 
 
 async def test_timeout_without_speech(fake_vad, vad_settings, make_frames) -> None:
