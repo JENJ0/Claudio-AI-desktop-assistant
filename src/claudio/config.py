@@ -453,7 +453,7 @@ class ClaudeSettings(BaseModel):
     thinking: bool = False
     # Models that take {"type": "between_tools"} (only at effort high or below: `effort` is capped).
     between_tools_models: list[str] = Field(default_factory=lambda: ["claude-sonnet-5-5"])
-    thinking_max_tokens: int = Field(1024, ge=64, le=8192)  # max_tokens with thinking on
+    thinking_max_tokens: int = Field(850, ge=64, le=8192)  # max_tokens with thinking on
     timeout_s: float = Field(10.0, gt=0, le=120)
     history_turns: int = Field(6, ge=0, le=50)  # question/answer pairs sent back as context
     history_reset_s: float = Field(300.0, gt=0)  # silence after which the context starts over

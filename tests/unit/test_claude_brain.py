@@ -1957,14 +1957,14 @@ async def test_thinking_on_leaves_room_for_the_thinking(pricing: Pricing) -> Non
     client = ScriptedClient((["Ciao."], "end_turn", []))
     await ask(brain(pricing, client, model=SONNET, thinking=True), "ciao come va")
     assert "thinking" not in client.calls[0]
-    assert client.calls[0]["max_tokens"] == 1024
+    assert client.calls[0]["max_tokens"] == 850
 
 
 def test_between_tools_never_goes_with_a_higher_effort() -> None:
     with pytest.raises(ValueError):
         ClaudeSettings(model=SONNET, effort="xhigh")  # type: ignore[arg-type]
     assert ClaudeSettings().between_tools_models == [SONNET]
-    assert ClaudeSettings().thinking_max_tokens == 1024
+    assert ClaudeSettings().thinking_max_tokens == 850
 
 
 async def test_sonnet_as_main_model_has_no_second_sonnet(pricing: Pricing) -> None:
