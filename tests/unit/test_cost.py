@@ -50,9 +50,9 @@ def test_cache_write_multipliers_and_read(pricing: Pricing) -> None:
     )
     # Haiku: input 0.10 -> write 5m x1.25, write 1h x2, read x0.1 (no explicit cache_read)
     assert pricing.cost("claude-haiku-5-5", usage) == pytest.approx(0.125 + 0.20 + 0.01)
-    # Sonnet has an explicit cache_read price of 0.20
+    # Sonnet has an explicit cache_read price of 0.10
     assert pricing.cost("claude-sonnet-5-5", Usage(cache_read_input_tokens=1_000_000)) == (
-        pytest.approx(0.20)
+        pytest.approx(0.10)
     )
 
 
