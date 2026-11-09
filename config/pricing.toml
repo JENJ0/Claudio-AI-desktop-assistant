@@ -4,7 +4,7 @@
 #
 # A cache write costs the input price times the multiplier of its TTL; a cache read costs
 # `cache_read` (when a model leaves it out: input x cache_read_multiplier).
-# Haiku 5.5 doubles its prices above 100K input tokens: CLAUDIO's requests stay far below.
+# Haiku 5.5 costs 5 times as much above 100K input tokens (0.50 in / 2.50 out): CLAUDIO's requests stay far below.
 
 currency = "USD"
 cache_write_5m_multiplier = 1.25
@@ -18,7 +18,7 @@ output = 0.50
 [models.claude-sonnet-5-5]
 input = 2.00
 output = 10.00
-cache_read = 0.20
+cache_read = 0.10
 
 [models.claude-opus-5-5]
 input = 4.00
