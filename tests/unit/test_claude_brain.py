@@ -1333,6 +1333,7 @@ def test_sonnet_without_prices_is_turned_off(tmp_path: Any, monkeypatch: Any) ->
     )
     monkeypatch.setenv("CLAUDIO_COST__PRICING_FILE", str(prices))
     monkeypatch.setenv("CLAUDIO_COST__DB_FILE", str(tmp_path / "spend.db"))
+    monkeypatch.setenv("CLAUDIO_CLAUDE__MODEL", "claude-haiku-5-5")  # the one with prices
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     from claudio.__main__ import build_tracker
 
@@ -1929,3 +1930,81 @@ async def test_a_cut_guess_question_leaves_claudes_history_alone(
     r.propose("chiudi la finestra", "it")  # never goes through respond()
     r.reply_cut(["Hai detto"])
     assert list(b._history) == whole
+
+
+# --- G3c task 2: Sonnet 5.5 as the main model, thinking as a measured switch ---------------
+
+SONNET = "claude-sonnet-5-5"
+NOTE = SimpleNamespace(
+    type="thinking", thinking="Cerco la cartella, poi la apro.", signature="sig1"
+)
+EMPTY_NOTE = SimpleNamespace(type="thinking", thinking="", signature="sig0")
+
+
+@pytest.mark.parametrize(
+    ("model", "thinking"),
+    [(SONNET, {"type": "between_tools"}), ("claude-haiku-5-5", {"type": "disabled"})],
+)
+async def test_thinking_off_is_between_tools_only_where_the_model_takes_it(
+    pricing: Pricing, model: str, thinking: dict[str, str]
+) -> None:
+    client = ScriptedClient((["Ciao."], "end_turn", []))
+    await ask(brain(pricing, client, model=model, thinking=False), "ciao come va")
+    assert client.calls[0]["thinking"] == thinking
+
+
+async def test_thinking_on_leaves_room_for_the_thinking(pricing: Pricing) -> None:
+    client = ScriptedClient((["Ciao."], "end_turn", []))
+    await ask(brain(pricing, client, model=SONNET, thinking=True), "ciao come va")
+    assert "thinking" not in client.calls[0]
+    assert client.calls[0]["max_tokens"] == 1024
+
+
+def test_between_tools_never_goes_with_a_higher_effort() -> None:
+    with pytest.raises(ValueError):
+        ClaudeSettings(model=SONNET, effort="xhigh")  # type: ignore[arg-type]
+    assert ClaudeSettings().between_tools_models == [SONNET]
+    assert ClaudeSettings().thinking_max_tokens == 1024
+
+
+async def test_sonnet_as_main_model_has_no_second_sonnet(pricing: Pricing) -> None:
+    client = ScriptedClient((["Allora."], "end_turn", []), (["Ecco."], "end_turn", []))
+    b = brain(pricing, client, model=SONNET)
+    assert not b.wants_offer("spiegami in dettaglio la fotosintesi", "it")
+    assert not b.wants_smart("pensaci bene", "it")
+    await ask(b, "pensaci bene: quanto fa 17 per 23?")
+    assert [c["model"] for c in client.calls] == [SONNET]
+    assert "tools" not in client.calls[0]  # no ask_sonnet, and no PC tools in this brain
+    assert "escalated" not in b.last_call
+
+
+def test_thinking_blocks_are_kept_in_order_even_when_empty() -> None:
+    """An empty one (omitted display) still carries the signature the API checks."""
+    call = SimpleNamespace(type="tool_use", id="t1", name="x", input={})
+    assert _leg_content([EMPTY_NOTE, NOTE, call]) == [
+        {"type": "thinking", "thinking": "", "signature": "sig0"},
+        {"type": "thinking", "thinking": NOTE.thinking, "signature": "sig1"},
+        {"type": "tool_use", "id": "t1", "name": "x", "input": {}},
+    ]
+
+
+def _leg_content(blocks: list[Any]) -> list[dict[str, Any]]:
+    from claudio.brain.claude import _Leg, _Turn
+
+    leg = _Leg(_Turn("q"))
+    leg.read(SimpleNamespace(content=blocks, stop_reason="tool_use"))
+    return leg.content
+
+
+def test_a_redacted_thinking_block_goes_back_whole() -> None:
+    block = SimpleNamespace(type="redacted_thinking", data="opaque")
+    assert _leg_content([block]) == [{"type": "redacted_thinking", "data": "opaque"}]
+
+
+async def test_guess_stays_on_haiku_with_sonnet_as_main(pricing: Pricing) -> None:
+    from claudio.brain.guess import Guesser
+    from claudio.config import GuessSettings
+
+    assert GuessSettings().model == "claude-haiku-5-5"
+    g = Guesser(None, tracker(pricing, 1.0), ClaudeSettings(model=SONNET), GuessSettings(), [])
+    assert g.model == "claude-haiku-5-5"

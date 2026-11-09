@@ -402,6 +402,7 @@ class GuessSettings(BaseModel):
     act_at: float = Field(0.8, gt=0, le=1)  # Claude this sure: the request is answered at once
     ask_at: float = Field(0.5, gt=0, le=1)  # from here up to act_at: "Hai detto: ...?"
     candidates: int = Field(4, ge=1, le=10)  # closest commands told to Claude
+    model: str = "claude-haiku-5-5"  # not the main model: a short, cheap call; must be priced
     max_tokens: int = Field(120, ge=32, le=512)
     timeout_s: float = Field(3.0, gt=0, le=30)  # then the phrase is dropped as before
 
@@ -447,7 +448,12 @@ class ClaudeSettings(BaseModel):
     model: str = "claude-haiku-5-5"  # must be in the prices file
     max_tokens: int = Field(300, ge=16, le=4096)  # a spoken reply: a few sentences
     effort: Literal["low", "medium", "high"] = "low"  # low: fastest first word
-    thinking: bool = False  # Haiku thinks by default: off saves latency and tokens
+    # False: Haiku is told not to think ("disabled"), Sonnet 5.5 gets "between_tools" (no extended
+    # thinking; "disabled" is a 400 there). True: adaptive thinking, capped by thinking_max_tokens.
+    thinking: bool = False
+    # Models that take {"type": "between_tools"} (only at effort high or below: `effort` is capped).
+    between_tools_models: list[str] = Field(default_factory=lambda: ["claude-sonnet-5-5"])
+    thinking_max_tokens: int = Field(1024, ge=64, le=8192)  # max_tokens with thinking on
     timeout_s: float = Field(10.0, gt=0, le=120)
     history_turns: int = Field(6, ge=0, le=50)  # question/answer pairs sent back as context
     history_reset_s: float = Field(300.0, gt=0)  # silence after which the context starts over
@@ -456,7 +462,8 @@ class ClaudeSettings(BaseModel):
     tell_time: bool = True  # the local date and time go with every request (after the cache)
     keepalive_s: float = Field(60.0, ge=0, le=600)  # keep the HTTPS connection open between turns
     # Sonnet for what needs reasoning: Haiku hands a request over with the `ask_sonnet` tool,
-    # or JenJo asks for it ("pensaci bene"). Empty smart_model: Haiku only.
+    # or JenJo asks for it ("pensaci bene"). Empty smart_model: Haiku only. When `model` is
+    # smart_model there is no hand-over, no offer and "pensaci bene" is a normal request.
     smart_model: str = "claude-sonnet-5-5"  # must be in the prices file
     smart_max_tokens: int = Field(1024, ge=64, le=8192)  # its thinking counts here too
     smart_effort: Literal["low", "medium", "high"] = "low"
@@ -520,7 +527,8 @@ class PcSettings(BaseModel):
     )  # level 1; every other combination asks first. [] = always ask
     type_max_chars: int = Field(6000, ge=1, le=10000)  # must fit retry_max_tokens (3 chars a token)
     # A tool call cut at max_tokens is asked again once, with the first tool forced. Only models
-    # in retry_models take a forced tool_choice (Sonnet and Opus 5.5 answer 400).
+    # in retry_models take a forced tool_choice (Sonnet and Opus 5.5 answer 400): any other main
+    # model is never retried and sends retry_max_tokens as max_tokens from the first round.
     retry_max_tokens: int = Field(2048, ge=64, le=8192)
     retry_timeout_s: float = Field(60.0, gt=0, le=300)  # a long tool input can arrive in one block
     retry_models: list[str] = Field(default_factory=lambda: ["claude-haiku-5-5"])

@@ -981,6 +981,9 @@ async def test_a_call_cut_at_max_tokens_survives_record_and_replay(tmp_path: Pat
 def test_a_cut_then_a_retry_records_and_replays_only_what_ran(
     settings: Settings, tmp_path: Path
 ) -> None:
+    # The forced retry runs only on Haiku (Sonnet answers 400 to tool_choice): pin it.
+    haiku = settings.claude.model_copy(update={"model": "claude-haiku-5-5"})
+    settings = settings.model_copy(update={"claude": haiku})
     expect = {"route": "claude", "tools": ["open_app"], "args": [["open_app", {"name": "Chrome"}]]}
     say = SimpleNamespace(type="text", text="Apro.")
     script = ScriptedClient(
