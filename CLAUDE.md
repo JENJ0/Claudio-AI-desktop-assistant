@@ -29,7 +29,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 - **Audio**: cattura con sounddevice, nessuna riduzione rumore (scelta approvata: Silero VAD basta), rilevamento voce con Silero VAD per capire subito quando ho finito di parlare.
 - **Speech-to-text**: faster-whisper in locale, usando la GPU se c'è.
 - **Router locale**: i comandi frequenti ("apri Chrome", "apri Download", "volume su") vengono riconosciuti senza LLM, a costo zero.
-- **LLM**: API Anthropic. Haiku fa da smistatore e risponde alle richieste semplici, Sonnet solo per ragionamenti e compiti complessi. Usa il tool use e permetti più azioni in una sola risposta.
+- **LLM**: API Anthropic. Sonnet 5.5 è il modello principale (thinking adattivo, effort basso); Haiku solo per le letture brevi e veloci (frasi incerte, ipotesi sui comandi). Usa il tool use e permetti più azioni in una sola risposta.
 - **Azioni sul PC**: subprocess, pyautogui e pywinauto (UI Automation). Si leggono le finestre come testo; lo screenshot, rimpicciolito, si usa solo come ultima risorsa.
 - **Text-to-speech**: Piper in locale, voce italiana, con streaming frase per frase.
 - **Memoria persistente**: SQLite locale con preferenze, fatti e riassunti delle conversazioni. A ogni richiesta si recuperano solo le parti rilevanti.
@@ -49,7 +49,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 
 ## Regole per i costi
 
-- Prima il router locale, poi Haiku, Sonnet solo se necessario.
+- Prima il router locale (gratis), poi Sonnet; Haiku solo per le letture brevi a basso costo.
 - Prompt caching su system prompt, CLAUDIO.md e definizioni dei tool.
 - Cronologia breve con riassunto automatico; `max_tokens` sempre limitato.
 - Screenshot solo se pywinauto non basta, a bassa risoluzione.
