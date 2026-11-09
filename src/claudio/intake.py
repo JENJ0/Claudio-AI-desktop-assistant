@@ -45,6 +45,7 @@ class Hearing(NamedTuple):
     unsure: bool = False
     alternatives: tuple[str, ...] = ()
     addressed: bool = True
+    reading: str = ""  # Haiku's pre-call reading of the request, when it made one
 
 
 def unsure(segments: Sequence[Segment], below_logprob: float) -> bool:
@@ -82,6 +83,8 @@ class Decision:
 # to Claudio, noise Whisper was unsure of. Never the echo of Claudio's own voice, a voice far
 # from the microphone ("quiet") or silence: those are not JenJo talking to Claudio.
 GUESSED_DROPS = frozenset({Kind.FALSE_WAKE, Kind.NOT_REQUEST, Kind.NOISE})
+# Doubt.reason of a request Whisper was unsure of and no command understands (not a drop).
+PRECALL = "precall"
 NEVER_GUESSED = frozenset({"echo", "quiet"})
 
 
@@ -100,6 +103,8 @@ class Doubt:
     close: bool | None = None  # loud, at the microphone (None: the level is not known)
     logprob: float | None = None  # Whisper's lowest segment confidence (None: not known)
     said_before: str = ""  # Claudio's reply just before (the conversation window)
+    nearby: str = ""  # folder, program and open window names (PRECALL only)
+    last_command: str = ""  # id of the last local command (PRECALL only)
 
 
 @dataclass(frozen=True)

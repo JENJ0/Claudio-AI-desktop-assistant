@@ -264,6 +264,7 @@ no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "
 # phrases cost a call (~0.0001 $).
 [guess]
 enabled = true                 # false: such phrases are dropped, as before (zero cost)
+precall = false               # true: Haiku also reads a request Whisper was unsure of that no command understands, before the main model (+1-1.5 s, ~0.0002 $)
 near_floor = 65                # 0-100: how close (letters or sound) to a command to ask Claude
 act_at = 0.8                   # Claude this sure: the command runs at once
 ask_at = 0.5                   # from here up to act_at: "Hai detto: ...?" ("basta": stops at once); below: ignored

@@ -1,4 +1,5 @@
-"""Claude guesses what JenJo said when Whisper's phrase was about to be dropped.
+"""Claude guesses what JenJo said when Whisper's phrase was about to be dropped (and, with
+[guess] precall, when Whisper was unsure of a request no command understands: PRECALL).
 
 A false wake, a phrase in the conversation window that did not look addressed to Claudio, or
 noise Whisper was unsure of: dropped for free, unless it sounds like a command ("Prossima."
@@ -21,11 +22,11 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from claudio.brain.prompts import GUESS_PROMPT
+from claudio.brain.prompts import GUESS_PROMPT, PRECALL_PROMPT
 from claudio.config import DEFAULT_LANGUAGE, ClaudeSettings, GuessSettings
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
-from claudio.intake import BARGE_IN, CONVERSATION, Doubt, Guess
+from claudio.intake import BARGE_IN, CONVERSATION, PRECALL, Doubt, Guess
 from claudio.router.matcher import Command, Near
 
 log = logging.getLogger(__name__)
@@ -73,9 +74,16 @@ def describe(doubt: Doubt, near: Sequence[Near]) -> str:
     lines = [f"Heard: {_quote(doubt.text)}"]
     if doubt.alternatives:
         lines.append("Other hearings: " + " / ".join(_quote(a) for a in doubt.alternatives))
-    lines.append(f"About to be ignored because {REASONS.get(doubt.reason, doubt.reason)}.")
+    if doubt.reason == PRECALL:
+        lines.append("Recognition was unsure of it and no local command understood it.")
+    else:
+        lines.append(f"About to be ignored because {REASONS.get(doubt.reason, doubt.reason)}.")
     lines.append(f"How: {_how(doubt)}.")
     lines.append(f"Name at the start: {'yes' if doubt.name_heard else 'no'}.")
+    if doubt.nearby:
+        lines.append(f"Names on the PC: {' '.join(doubt.nearby.split())}")
+    if doubt.last_command:
+        lines.append(f"Last local command: {doubt.last_command}")
     if doubt.said_before.strip():
         before = " ".join(doubt.said_before.split())
         if len(before) > SAID_BEFORE_CHARS:
@@ -149,7 +157,9 @@ class Guesser:
         self.settings = settings
         self.clock = clock
         # Frozen for the run: the same text at every call.
-        self.system = GUESS_PROMPT.format(commands=catalog(commands))
+        listed = catalog(commands)
+        self.system = GUESS_PROMPT.format(commands=listed)
+        self.precall_system = PRECALL_PROMPT.format(commands=listed)
         self.known = {cmd.id for cmd in commands}
         self.last_call: dict[str, Any] = {}  # for metrics.jsonl: time, tokens, cost
 
@@ -163,7 +173,7 @@ class Guesser:
         params = {
             "model": self.model,
             "max_tokens": self.settings.max_tokens,
-            "system": self.system,
+            "system": self.precall_system if doubt.reason == PRECALL else self.system,
             "messages": [{"role": "user", "content": describe(doubt, near)}],
             "thinking": {"type": "disabled"},
             "output_config": {

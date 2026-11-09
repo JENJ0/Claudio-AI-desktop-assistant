@@ -7,9 +7,11 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
 from claudio.app import Assistant
@@ -18,12 +20,15 @@ from claudio.config import ClaudeSettings, GuessSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
 from claudio.intake import (
     CONVERSATION,
+    PRECALL,
     Decision,
     Doubt,
     Guess,
     Heard,
+    Hearing,
     Kind,
     Recovery,
+    Segment,
     Verdict,
     verdict,
 )
@@ -35,7 +40,7 @@ from claudio.wakeword.verifier import after_clipped_name
 from tests.conftest import COMMANDS_FILE
 from tests.unit.test_actions import Recorder
 from tests.unit.test_conversation import build as build_conversation
-from tests.unit.test_conversation import talk
+from tests.unit.test_conversation import claude_says, talk
 from tests.unit.test_cost import PRICES, tracker
 from tests.unit.test_safety import NOT_A_YES
 
@@ -755,3 +760,315 @@ async def test_own_voice_and_silence_are_never_guessed(
 
 def _commands(matcher: CommandMatcher) -> list[Command]:
     return load_commands(COMMANDS_FILE)
+
+
+# --- G3c Task 4: Haiku's pre-call on a request Whisper was unsure of ---------------------
+
+
+UNSURE = Segment(0.05, -0.65)
+PRECALL_DOUBT = Doubt(
+    "Claudio, chi udite?",
+    "it",
+    PRECALL,
+    alternatives=("Claudio, chiuditi.",),
+    close=True,
+    nearby="Cartelle: Tesi. Finestre aperte: Blocco note.",
+    last_command="volume_up",
+)
+
+
+def test_describe_precall_gives_the_names_and_the_last_command(matcher: CommandMatcher) -> None:
+    text = describe(PRECALL_DOUBT, matcher.nearest(["Claudio, chiuditi."]))
+    assert "no local command understood it" in text and "ignored" not in text
+    assert 'Other hearings: "Claudio, chiuditi."' in text
+    assert "Names on the PC: Cartelle: Tesi." in text
+    assert "Last local command: volume_up" in text
+
+
+async def test_the_precall_uses_the_guess_model_and_its_own_prompt(
+    pricing: Pricing, matcher: CommandMatcher
+) -> None:
+    client = GuessClient({"why": "x", "command": "", "said": "apri Tesi", "probability": 0.7})
+    g = guesser(pricing, matcher, client, model="claude-haiku-5-5")
+    assert await g(PRECALL_DOUBT, []) == Guess("apri Tesi", 0.7, "", "x")
+    params = client.calls[0]
+    assert params["model"] == "claude-haiku-5-5"
+    assert params["thinking"] == {"type": "disabled"}
+    assert "Claudio was about to ignore" not in params["system"]
+    assert "- off: spegniti" in params["system"]
+    await g(DOUBT, [])
+    assert client.calls[1]["system"] != params["system"]  # a dropped phrase keeps its prompt
+
+
+@pytest.mark.parametrize(
+    ("settings", "paused", "off", "doubt"),
+    [
+        ({"precall": False}, False, False, PRECALL_DOUBT),
+        ({"precall": True}, True, False, PRECALL_DOUBT),
+        ({"precall": True}, False, True, PRECALL_DOUBT),
+        ({"precall": True}, False, False, replace(PRECALL_DOUBT, close=False)),
+        ({"precall": True, "enabled": False}, False, False, PRECALL_DOUBT),
+    ],
+)
+async def test_no_precall(
+    matcher: CommandMatcher, settings: dict[str, Any], paused: bool, off: bool, doubt: Doubt
+) -> None:
+    r, fake, _ = responder(matcher, Guess("chiuditi", 0.99, "shutdown"), **settings)
+    r.actions.system.paused, r.actions.system.off = paused, off
+    assert await r.guess(doubt) is None
+    assert fake.calls == []
+
+
+async def test_no_precall_while_a_question_waits(matcher: CommandMatcher) -> None:
+    r, fake, _ = responder(matcher, Guess("chiuditi", 0.99, "shutdown"), precall=True)
+    await say(r, "chiudi la finestra")  # "Confermi?"
+    assert await r.guess(PRECALL_DOUBT) is None
+    assert fake.calls == []
+
+
+async def test_the_precall_asks_without_a_closeness_floor(matcher: CommandMatcher) -> None:
+    r, fake, _ = responder(matcher, Guess("chiuditi", 0.99, "shutdown"), precall=True)
+    recovery = await r.guess(Doubt("Qualcosa di strano.", "it", PRECALL, close=True))
+    assert recovery is not None and recovery.verdict is Verdict.ASK
+    assert recovery.question == "Hai detto: chiuditi?"
+    assert len(fake.calls) == 1
+
+
+async def test_a_reading_no_command_matches_goes_to_claude_not_to_the_router(
+    matcher: CommandMatcher,
+) -> None:
+    r, _, rec = responder(matcher, Guess("apri la cartella Tesi", 0.7), precall=True)
+    recovery = await r.guess(PRECALL_DOUBT)
+    assert recovery is not None and recovery.verdict is Verdict.DROP
+    assert recovery.said == "apri la cartella Tesi"
+    assert not r.awaiting and rec.keys == []
+
+
+@pytest.mark.parametrize(
+    "guess", [Guess("", 0.0), Guess("apri Tesi", 0.3), Guess("alza", 0.3, "volume_up")]
+)
+async def test_a_precall_that_is_not_clear_leaves_no_reading(
+    matcher: CommandMatcher, guess: Guess
+) -> None:
+    r, _, _ = responder(matcher, guess, precall=True)
+    recovery = await r.guess(PRECALL_DOUBT)
+    assert recovery is not None and recovery.verdict is Verdict.DROP and recovery.said == ""
+
+
+def precalling(
+    fake_vad, vad_settings, matcher, guess: Guess | None, texts=("Claudio, chi udite?",), **settings
+):
+    """A conversation whose first request Whisper is unsure of; Claude answers what no command
+    understands. Returns the pieces plus the fake Haiku and the hearings Claude is told."""
+    assistant, speaker, rec, r = build_conversation(fake_vad, vad_settings, matcher, list(texts))
+    claude_says(r, "Risposta di Claude.")
+    r.guess_settings = GuessSettings(**{"precall": True, **settings})
+    fake = guessing(r, assistant, guess)
+    told: list[Hearing] = []
+    assistant.on_heard = lambda h: (told.append(h), r.heard(h))[0]
+    assistant.unsure_logprob = -0.2
+    assistant.stt_segments = lambda: [UNSURE]
+    assistant.alternatives = 2
+    assistant.closed_list = lambda audio, language: ["Claudio, chi udite?", "Claudio, chiuditi."]
+    return assistant, speaker, rec, r, fake, told
+
+
+async def test_chi_udite_asks_hai_detto_chiuditi_and_closes_nothing_without_a_yes(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, rec, r, fake, _ = precalling(
+        fake_vad, vad_settings, matcher, Guess("chiuditi", 0.99, "shutdown")
+    )
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert speaker.spoken == ["Hai detto: chiuditi?"]
+    assert not r.actions.system.stopping and rec.keys == []
+    doubt = fake.calls[0][0]
+    assert doubt.reason == PRECALL and doubt.alternatives == ("Claudio, chiuditi.",)
+    row = assistant.history[0]
+    assert row["guess_verdict"] == "ask" and row["guessed_from"] == "Claudio, chi udite?"
+
+
+async def test_a_no_to_the_precalls_question_closes_nothing(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, _, r, *_ = precalling(
+        fake_vad,
+        vad_settings,
+        matcher,
+        Guess("chiuditi", 0.99, "shutdown"),
+        texts=("Claudio, chi udite?", "no"),
+    )
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert not r.actions.system.stopping and not r.awaiting
+
+
+async def test_a_sure_level_1_reading_is_done_at_once(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, rec, *_ = precalling(
+        fake_vad,
+        vad_settings,
+        matcher,
+        Guess("canzone successiva", 0.9, "media_next"),
+        texts=("Claudio, prosima?",),
+    )
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert rec.keys == [MEDIA_KEYS["next_track"]]
+    assert assistant.history[0]["guess_verdict"] == "act"
+
+
+async def test_a_level_2_reading_never_becomes_a_yes(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    # A phrase the router does not understand: only the pre-call can read it as a command.
+    assert matcher.match("Audio, chiuda fenestra?") is None
+    assistant, speaker, rec, r, fake, _ = precalling(
+        fake_vad,
+        vad_settings,
+        matcher,
+        Guess("chiudi la finestra", 0.95, "close_window"),
+        texts=("Audio, chiuda fenestra?",),
+    )
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert len(fake.calls) == 1 and assistant.history[0]["guess_verdict"] == "act"
+    assert rec.combos == [] and r.awaiting  # the router's own "Confermi?", nothing pressed
+    assert any("Confermi" in s for s in speaker.spoken)
+
+
+async def test_a_reading_no_command_matches_is_told_to_claude_first(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, _, _, _, told = precalling(
+        fake_vad, vad_settings, matcher, Guess("apri la cartella Tesi", 0.7)
+    )
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert told[0].unsure and told[0].reading == "apri la cartella Tesi"
+    assert told[0].alternatives == ("Claudio, chiuditi.",)
+    assert speaker.spoken == ["Risposta di Claude."]
+
+
+@pytest.mark.parametrize("guess", [None, Guess("", 0.0)])
+async def test_a_failed_or_unclear_precall_leaves_todays_path(
+    fake_vad, vad_settings, make_frames, matcher, guess: Guess | None
+) -> None:
+    assistant, speaker, _, _, fake, told = precalling(fake_vad, vad_settings, matcher, guess)
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert len(fake.calls) == 1
+    assert told[0] == Hearing(True, ("Claudio, chiuditi.",))
+    assert speaker.spoken == ["Risposta di Claude."]
+
+
+async def test_a_slow_haiku_times_out_and_the_request_goes_to_claude(
+    fake_vad, vad_settings, make_frames, matcher, pricing: Pricing
+) -> None:
+    assistant, speaker, _, r, _, told = precalling(fake_vad, vad_settings, matcher, None)
+    r.fallback_guess = guesser(pricing, matcher, GuessClient(delay=1.0), timeout_s=0.05)
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert told[0] == Hearing(True, ("Claudio, chiuditi.",))
+    assert speaker.spoken == ["Risposta di Claude."]
+
+
+async def test_precall_off_makes_no_call(fake_vad, vad_settings, make_frames, matcher) -> None:
+    assistant, speaker, _, _, fake, _ = precalling(
+        fake_vad, vad_settings, matcher, Guess("chiuditi", 0.99, "shutdown"), precall=False
+    )
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert fake.calls == [] and speaker.spoken == ["Risposta di Claude."]
+
+
+async def test_a_phrase_a_command_understands_makes_no_call(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, _, _, fake, _ = precalling(
+        fake_vad,
+        vad_settings,
+        matcher,
+        Guess("chiuditi", 0.99, "shutdown"),
+        texts=("che ore sono",),
+    )
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert fake.calls == []
+
+
+def _heard(**more) -> Heard:
+    return Heard(CONVERSATION, segments=(UNSURE,), **more)
+
+
+async def _precall_doubt(
+    fake_vad, vad_settings, matcher, heard: Heard, text: str = "chi udite?", vocabulary=None
+) -> Doubt:
+    assistant, _, _, _, fake, _ = precalling(
+        fake_vad, vad_settings, matcher, Guess("", 0.0), texts=(text,)
+    )
+    if vocabulary is not None:
+        assistant.transcriber.vocabulary = vocabulary
+    inter = Interaction(clock=assistant.clock)
+    decision = Decision(Kind.ANSWER, text)
+    await assistant._precall(np.zeros(1600, dtype=np.int16), decision, "it", heard, inter)
+    return fake.calls[0][0]
+
+
+async def test_the_name_heard_in_the_wake_audio_counts_for_the_precall(
+    fake_vad, vad_settings, matcher
+) -> None:
+    doubt = await _precall_doubt(fake_vad, vad_settings, matcher, _heard(name_heard=True))
+    assert doubt.name_heard
+    doubt = await _precall_doubt(fake_vad, vad_settings, matcher, _heard())
+    assert not doubt.name_heard
+
+
+async def test_the_window_names_survive_the_cut(fake_vad, vad_settings, matcher) -> None:
+    # The live list is ~460 characters with the windows last (the first cut at 400 dropped them).
+    names = (
+        "Cartelle: "
+        + ", ".join(f"Cartella{n}" for n in range(40))
+        + ". Finestre aperte: Blocco note."
+    )
+    doubt = await _precall_doubt(
+        fake_vad, vad_settings, matcher, _heard(), vocabulary=lambda language: names
+    )
+    assert len(names) > 400 and doubt.nearby.endswith("Finestre aperte: Blocco note.")
+
+
+async def test_a_failing_guess_leaves_the_precall_path(fake_vad, vad_settings, matcher) -> None:
+    assistant, *_ = precalling(fake_vad, vad_settings, matcher, Guess("", 0.0))
+
+    async def broken(doubt: Doubt) -> Recovery | None:
+        raise RuntimeError("boom")
+
+    assistant.guess = broken
+    inter = Interaction(clock=assistant.clock)
+    decision = Decision(Kind.ANSWER, "chi udite?")
+    audio = np.zeros(1600, dtype=np.int16)
+    assert await assistant._precall(audio, decision, "it", _heard(), inter) is None
+
+
+async def test_sure_whisper_makes_no_precall(fake_vad, vad_settings, make_frames, matcher) -> None:
+    assistant, speaker, _, _, fake, _ = precalling(
+        fake_vad, vad_settings, matcher, Guess("chiuditi", 0.99, "shutdown")
+    )
+    assistant.stt_segments = lambda: [Segment(0.05, -0.05)]
+    await talk(assistant, make_frames, speaker, requests=1)
+    assert fake.calls == [] and speaker.spoken == ["Risposta di Claude."]
+
+
+async def test_an_unsure_answer_to_claudes_question_goes_to_claude(
+    fake_vad, vad_settings, make_frames, matcher
+) -> None:
+    assistant, speaker, _, r, fake, _ = precalling(
+        fake_vad,
+        vad_settings,
+        matcher,
+        Guess("chiuditi", 0.99, "shutdown"),
+        texts=("Claudio, che tempo fa?", "Claudio, sono a Roma vicino al Colosseo"),
+    )
+    claude_says(r, "Dove ti trovi?")  # a plain question: its answer is the next phrase
+    assistant.claude_min_words = 3  # the window lets longer phrases through to Claude
+    assistant.closed_list = lambda audio, language: ["Claudio, sono a Roma"]
+    heard_so_far = []  # the first request is sure, the answer to the question is not
+    assistant.stt_segments = lambda: [Segment(0.05, -0.05 if not heard_so_far else -0.65)]
+    assistant.on_heard = lambda h: (heard_so_far.append(h), r.heard(h))[0]
+    await talk(assistant, make_frames, speaker, requests=2)
+    assert [c[0].reason for c in fake.calls if c[0].reason == PRECALL] == []
+    assert len(heard_so_far) == 2 and heard_so_far[1].unsure
+    assert speaker.spoken == ["Dove ti trovi?"] * 2

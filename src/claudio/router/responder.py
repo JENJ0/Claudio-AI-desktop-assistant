@@ -21,6 +21,7 @@ from claudio.config import (
 from claudio.echo import WORD_SHARE, word_share
 from claudio.intake import (
     NEVER_ASKED,
+    PRECALL,
     Doubt,
     Guess,
     Hearing,
@@ -252,9 +253,11 @@ class LocalResponder:
         then, for free)."""
         settings = self.guess_settings
         system = self.actions.system
+        precall = doubt.reason == PRECALL
         if (
             self.fallback_guess is None
             or not settings.enabled
+            or (precall and not settings.precall)
             or doubt.close is False
             or system.paused
             or system.off
@@ -264,11 +267,11 @@ class LocalResponder:
         texts = [doubt.text, *doubt.alternatives]
         texts += [rest for t in texts if (rest := after_clipped_name(t))]  # "Audio, alsa..."
         near = self.matcher.nearest(texts, doubt.language, settings.candidates)
-        if not near or near[0].score < settings.near_floor:
-            return None
+        if not precall and (not near or near[0].score < settings.near_floor):
+            return None  # a pre-call is asked whatever the closeness: the request is for Claude
         guess = await self.fallback_guess(doubt, near)
         info: dict[str, Any] = dict(self.fallback_guess_info()) if self.fallback_guess_info else {}
-        info["guess_near"] = f"{near[0].command.id} {near[0].score:.0f}"
+        info["guess_near"] = f"{near[0].command.id} {near[0].score:.0f}" if near else "-"
         if guess is None:
             return Recovery(Verdict.DROP, "", info)
         command = self._guessed_command(guess)
@@ -279,6 +282,8 @@ class LocalResponder:
             if command is None
             else verdict(guess, doubt, settings.act_at, settings.ask_at, self._action(command))
         )
+        if precall:
+            said = self._precall_reading(result, command, said, guess.probability)
         info.update(guess=said, guess_p=round(guess.probability, 2), guess_verdict=result.value)
         log.info(
             "Frase incerta %r: forse %r (%d%%, %s) -> %s",
@@ -292,6 +297,18 @@ class LocalResponder:
         if result is Verdict.ASK:
             return Recovery(result, said, info, self.propose(said, doubt.language))
         return Recovery(result, said, info)
+
+    def _precall_reading(
+        self, result: Verdict, command: Command | None, said: str, probability: float
+    ) -> str:
+        """What a dropped pre-call leaves for the main model: Haiku's own words when no command
+        matches them and it is sure enough to ask; nothing otherwise (a command it read but the
+        verdict dropped is no reading to hand over)."""
+        if result is Verdict.DROP and (
+            command is not None or probability < self.guess_settings.ask_at
+        ):
+            return ""
+        return said
 
     def _action(self, command: Command) -> str:
         """The command's action as the verdict sees it. Right after Claude asked something a

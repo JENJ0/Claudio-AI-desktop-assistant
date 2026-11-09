@@ -27,6 +27,7 @@ from claudio.intake import (
     FOLLOW_UP,
     GUESSED_DROPS,
     NEVER_GUESSED,
+    PRECALL,
     Decision,
     Doubt,
     Heard,
@@ -90,6 +91,7 @@ ECHO_GRACE_MS = 300
 # the reply were dropped as its echo).
 ECHO_VOICE_MS = 1000
 OTHER_HEARINGS = 3  # of Whisper's other guesses, given to Claude with a phrase to guess
+NEARBY_CHARS = 1000  # of the PC's folder, program and window names given to the pre-call
 # A phrase said over the reply is judged whole: its slices are only checked for "basta" while
 # the voice goes on, up to this long (then it is judged anyway: the TV never pauses).
 BARGE_PHRASE_MAX_S = 8.0
@@ -264,6 +266,7 @@ class Assistant:
         # Whisper's second opinion, local and free, before Claude's guess (stt/recovery.py).
         self.command_recovery = command_recovery
         self._candidates: list[str] | None = None  # the closed list's n-best, when it ran
+        self._reading = ""  # Haiku's pre-call reading of a request no command matches
         self._barge_checking = False
         # A phrase heard over the reply while Whisper was busy (audio, loudest dBFS).
         self._barge_pending: tuple[np.ndarray, float] | None = None
@@ -864,6 +867,7 @@ class Assistant:
         """The phrase as Whisper heard it: its text, its language and Whisper's confidence in
         it. The Whisper lock is free again on return (_decide's passes take it themselves)."""
         self._candidates = None
+        self._reading = ""
         continued, self._continued = self._continued, None
         if not self.endpointer.extended:
             continued = None  # left over from a phrase that ended another way
@@ -994,6 +998,10 @@ class Assistant:
         if decision.dropped:
             recovery = await self._recover(decision, language, heard, inter) or decision
             return replace(recovery, named=named)
+        if decision.kind is Kind.ANSWER:
+            precalled = await self._precall(audio, decision, language, heard, inter)
+            if precalled is not None:
+                return replace(precalled, named=named)
         return replace(decision, named=named)
 
     def _relistened_sure(self, info: dict[str, Any], heard: Heard) -> bool:
@@ -1089,12 +1097,72 @@ class Assistant:
         ):
             return None
         text = decision.text
+        doubt = self._doubt(
+            text, language, decision.reason, heard, inter, self._other_hearings(text)
+        )
+        return (await self._guess_decision(doubt, "guessed", inter))[0]
+
+    async def _precall(
+        self,
+        audio: np.ndarray,
+        decision: Decision,
+        language: str,
+        heard: Heard,
+        inter: Interaction,
+    ) -> Decision | None:
+        """A request Whisper was unsure of and no command understands, before it goes to the
+        main model: Haiku reads it (brain/guess.py, [guess] precall). A command it reads is
+        decided as a guess is (done, or "Hai detto: ...?"; levels 2-3 ask by themselves), any
+        other reading goes to Claude with the request in `_reading`. None: nothing changes."""
+        text = decision.text
+        if (
+            self.guess is None
+            or self.on_heard is None
+            or self.unsure_logprob is None
+            or not text
+            or self._silenced()
+            or not unsure(heard.segments, self.unsure_logprob)
+            or self.responder.awaiting
+            or self.responder.answer_expected  # Claude just asked: this is its answer
+            or self.responder.understands(text, language)
+        ):
+            return None
+        alternatives = await self._alternatives(audio, text, language, inter)
+        names = getattr(self.transcriber, "vocabulary", None)  # Whisper's prompt names
+        doubt = self._doubt(
+            text,
+            language,
+            PRECALL,
+            heard,
+            inter,
+            alternatives,
+            nearby=(names(language) if names else "")[:NEARBY_CHARS],
+            # shortcut: the last request's command, empty after a Claude reply; upgrade when
+            # the pre-call needs the last local command whatever came between
+            last_command=str(self.responder.last_route.get("command", "")),
+        )
+        decided, recovery = await self._guess_decision(doubt, "precall", inter)
+        if decided is None and recovery is not None:
+            self._reading = recovery.said
+        return decided
+
+    def _doubt(
+        self,
+        text: str,
+        language: str,
+        reason: str,
+        heard: Heard,
+        inter: Interaction,
+        alternatives: tuple[str, ...],
+        **more: str,
+    ) -> Doubt:
+        """What is known about a phrase Claude is asked to read (a drop's guess, the pre-call)."""
         noise = self.intake.noise
-        doubt = Doubt(
+        return Doubt(
             text=text,
             language=language,
-            reason=decision.reason,
-            alternatives=self._other_hearings(text),
+            reason=reason,
+            alternatives=alternatives,
             wake_word=str(inter.info.get("wake_word", "")),
             wake_score=float(inter.info.get("wake_score", 0.0)),
             name_heard=heard.name_heard or heard_wake_word(text) or clipped_name(text),
@@ -1105,22 +1173,31 @@ class Assistant:
             ),
             logprob=min((s.avg_logprob for s in heard.segments), default=None),
             said_before=self._said,
+            **more,
         )
+
+    async def _guess_decision(
+        self, doubt: Doubt, reason: str, inter: Interaction
+    ) -> tuple[Decision | None, Recovery | None]:
+        """Haiku's reading of `doubt` as a Decision: the command done (ANSWER) or asked about
+        first (ASK). None when it fails or the verdict is a drop; the Recovery is also returned
+        (None: no call), for a reading no command matches."""
+        assert self.guess is not None
         try:
             recovery = await self.guess(doubt)
         except Exception:
             log.exception("Ipotesi sulla frase incerta non riuscita")
-            return None
+            return None, None
         if recovery is None:
-            return None
+            return None, None
         inter.info.update(recovery.info)
         if recovery.verdict is Verdict.ACT:
-            inter.info["guessed_from"] = text
-            return Decision(Kind.ANSWER, recovery.said, "guessed")
+            inter.info["guessed_from"] = doubt.text
+            return Decision(Kind.ANSWER, recovery.said, reason), recovery
         if recovery.verdict is Verdict.ASK:
-            inter.info["guessed_from"] = text
-            return Decision(Kind.ASK, recovery.question, "guessed")
-        return None
+            inter.info["guessed_from"] = doubt.text
+            return Decision(Kind.ASK, recovery.question, reason), recovery
+        return None, recovery
 
     def _other_hearings(self, text: str) -> tuple[str, ...]:
         """Whisper's other guesses from the closed list, when it ran (no extra pass)."""
@@ -1210,7 +1287,7 @@ class Assistant:
             and not self.responder.understands(text, heard)
         ):
             alternatives = await self._alternatives(audio, text, heard, inter)
-            hearing = Hearing(True, alternatives, addressed)
+            hearing = Hearing(True, alternatives, addressed, self._reading)
             inter.info["stt_unsure"] = True
             if hearing.alternatives:
                 inter.info["stt_alternatives"] = list(hearing.alternatives)
@@ -1234,6 +1311,7 @@ class Assistant:
                 log.exception("Trascrizioni alternative non riuscite")
                 return ()
             inter.info["alternatives_ms"] = round((self.clock() - start) * 1000)
+            self._candidates = candidates  # the pre-call and the note to Claude share one pass
         return _distinct(text, candidates, self.alternatives)
 
     def _keeps_conversation(self, outcome: str, inter: Interaction) -> bool:
