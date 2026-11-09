@@ -234,7 +234,7 @@ enabled = true                 # false: local commands only, zero cost
 model = "claude-sonnet-5-5"    # main model; must be in config/pricing.toml (Haiku 5.5 before G3c)
 max_tokens = 300               # a spoken reply: 2-4 sentences
 effort = "low"                 # low | medium | high: low = fastest first word
-thinking = false               # false: Haiku "disabled", Sonnet 5.5 "between_tools" (no extended thinking); true: adaptive
+thinking = true                # true: adaptive thinking, reply cap = thinking_max_tokens; false: "between_tools" on Sonnet, "disabled" on other models
 between_tools_models = ["claude-sonnet-5-5"]  # models that take "between_tools" (effort high or below)
 thinking_max_tokens = 850      # max_tokens when thinking = true: 2 x the measured p99 (406) of Sonnet adaptive-low, rounded up; it caps Haiku with thinking too (p99 793 there): not a supported mix
 timeout_s = 10.0
@@ -331,7 +331,7 @@ max_age_s = 120                # messages written while Claudio was off are drop
 [memory]
 enabled = true
 db_file = "data/memory.db"
-block_chars = 2000             # facts always sent to Claude (~600 tokens); 0 = only the ones that match the request
+block_chars = 6000             # facts always sent to Claude (~1,800 tokens, cached); 0 = only the ones that match the request
 relevant = 3                   # facts beyond the block sent with a request that shares their words
 max_items = 500
 max_chars = 300                # one memory: one spoken sentence
