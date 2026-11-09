@@ -236,7 +236,7 @@ max_tokens = 300               # a spoken reply: 2-4 sentences
 effort = "low"                 # low | medium | high: low = fastest first word
 thinking = false               # false: Haiku "disabled", Sonnet 5.5 "between_tools" (no extended thinking); true: adaptive
 between_tools_models = ["claude-sonnet-5-5"]  # models that take "between_tools" (effort high or below)
-thinking_max_tokens = 1024     # max_tokens when thinking = true (the thinking counts against it)
+thinking_max_tokens = 850      # max_tokens when thinking = true: 2 x the measured p99 (406) of Sonnet adaptive-low, rounded up; it caps Haiku with thinking too (p99 793 there): not a supported mix
 timeout_s = 10.0
 history_turns = 6              # question/answer pairs sent back as context (0 = none)
 history_reset_s = 300          # after 5 minutes of silence the context starts over
