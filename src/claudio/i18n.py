@@ -443,10 +443,10 @@ EN: dict[str, str] = {
     ),
     "Il motivo è nel log.": "The reason is in the log.",
     # Claude (brain/, Phase 2)
-    "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno, "
-    "personalità %d caratteri": (
-        "Claude: %s (reasoning: %s), max %d tokens, cache %s, budget %.2f a day, "
-        "personality %d characters"
+    "Claude: %s (ragionamenti: %s), max %d token (con strumenti %d), thinking %s, "
+    "cache %s, budget %.2f al giorno, personalità %d caratteri": (
+        "Claude: %s (reasoning: %s), max %d tokens (with tools %d), thinking %s, "
+        "cache %s, budget %.2f a day, personality %d characters"
     ),
     "Personalità creata in %s (modificala quando vuoi)": (
         "Personality created in %s (edit it whenever you like)"

@@ -4,6 +4,8 @@ the dispatcher, the Claude tool loop and the spoken yes."""
 from __future__ import annotations
 
 import asyncio
+import copy
+import itertools
 import json
 import re
 import ssl
@@ -28,7 +30,7 @@ from claudio.brain.claude import (
     _Turn,
 )
 from claudio.brain.prompts import NOT_RUN_CUT, REFUSED, SYSTEM_PROMPT_TOOLS
-from claudio.config import ClaudeSettings, PcSettings
+from claudio.config import DEFAULT_CONFIG, ClaudeSettings, PcSettings, load_settings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.pc.files import Found
 from claudio.pc.keys import parse_combos, to_send_keys
@@ -4472,43 +4474,100 @@ def sonnet_brain(pricing: Pricing, client: Any, tools: PcTools) -> ClaudeBrain:
     )
 
 
+EMPTY_NOTE = SimpleNamespace(type="thinking", thinking="", signature="sig0")
+REPLAYED_EMPTY = {"type": "thinking", "thinking": "", "signature": "sig0"}
+
+
+class CopyingClient(ScriptedClient):
+    """Keeps a deep copy of each request, so an in-place edit of an earlier round shows."""
+
+    def stream(self, **params: Any) -> Any:
+        snapshot = copy.deepcopy(params)
+        stream = super().stream(**params)
+        self.calls[-1] = snapshot
+        return stream
+
+
+def sonnet_with(pricing: Pricing, client: Any, tools: PcTools, thinking: bool) -> ClaudeBrain:
+    return ClaudeBrain(
+        client,
+        tracker(pricing, 1.0),
+        ClaudeSettings(tell_time=False, model=SONNET, thinking=thinking),
+        clock=Monotonic(),
+        tools=tools,
+        pc=PcSettings(),
+    )
+
+
+def assert_one_turn_prefix(calls: list[dict[str, Any]]) -> None:
+    """Preserved thinking: `system`, `tools` and the earlier messages never change in a turn."""
+    for before, after in itertools.pairwise(calls):
+        assert after["system"] == before["system"]
+        assert after["tools"] == before["tools"]
+        assert after["messages"][: len(before["messages"])] == before["messages"]
+
+
+def test_the_shipped_settings_are_sonnet_with_adaptive_thinking_at_low_effort() -> None:
+    claude = load_settings(DEFAULT_CONFIG).claude
+    assert (claude.model, claude.thinking, claude.effort) == (SONNET, True, "low")
+
+
+@pytest.mark.parametrize("thinking", [True, False])
 async def test_sonnet_rounds_resend_system_tools_and_thinking_unchanged(
-    pricing: Pricing, tools: PcTools
+    pricing: Pricing, tools: PcTools, thinking: bool
 ) -> None:
     """Preserved thinking: the API refuses a replayed thinking block when `system`, `tools` or an
     earlier message changed. The note is never said and never reaches the history."""
-    note = SimpleNamespace(type="thinking", thinking="Prima le finestre.", signature="sig")
-    client = ScriptedClient(
-        ([], "tool_use", [note, use("list_windows")]),
+    client = CopyingClient(
+        ([], "tool_use", [EMPTY_NOTE, use("list_windows")]),
         (["Fatto."], "end_turn", [text("Fatto.")]),
     )
-    b = sonnet_brain(pricing, client, tools)
+    b = sonnet_with(pricing, client, tools, thinking)
     assert await ask(b, "che finestre ho") == "Fatto."
     first, second = client.calls
-    assert first["thinking"] == {"type": "between_tools"}
-    assert first["system"] == second["system"] and first["tools"] == second["tools"]
+    assert ("thinking" in first) is (not thinking)
+    assert first.get("thinking", {"type": "between_tools"}) == {"type": "between_tools"}
+    assert_one_turn_prefix(client.calls)
     assert all(t["name"] != "ask_sonnet" for t in first["tools"])
-    assert second["messages"][: len(first["messages"])] == first["messages"]  # append-only
-    replayed = second["messages"][len(first["messages"])]
-    assert replayed["content"][0] == {
-        "type": "thinking",
-        "thinking": "Prima le finestre.",
-        "signature": "sig",
-    }
-    assert "Prima le finestre." not in b._history[-1][1]
+    assert second["messages"][len(first["messages"])]["content"][0] == REPLAYED_EMPTY
+    assert "sig0" not in b._history[-1][1]
 
 
+@pytest.mark.parametrize("thinking", [True, False])
 async def test_sonnet_never_calls_without_tools_inside_a_turn(
-    pricing: Pricing, tools: PcTools
+    pricing: Pricing, tools: PcTools, thinking: bool
 ) -> None:
-    client = ScriptedClient(
-        ([], "tool_use", [use("list_windows")]),
-        ([], "tool_use", [use("list_windows")]),
-        (["Basta così."], "end_turn", []),
+    client = CopyingClient(
+        ([], "tool_use", [EMPTY_NOTE, use("list_windows")]),
+        ([], "tool_use", [EMPTY_NOTE, use("list_windows")]),
+        ([], "tool_use", [EMPTY_NOTE, use("list_windows")]),
+        (["Basta così."], "end_turn", [text("Basta così.")]),
     )
-    await ask(sonnet_brain(pricing, client, tools), "fai tante cose")
+    await ask(sonnet_with(pricing, client, tools, thinking), "fai tante cose")
+    assert len(client.calls) == 4
     assert all("tools" in c for c in client.calls)
     assert all(c["model"] == SONNET for c in client.calls)
+    assert_one_turn_prefix(client.calls)
+    assert client.calls[-1]["tool_choice"] == {"type": "none"}
+    assistant = [m for m in client.calls[-1]["messages"] if m["role"] == "assistant"]
+    assert [m["content"][0] for m in assistant[-3:]] == [REPLAYED_EMPTY] * 3
+
+
+@pytest.mark.parametrize("thinking", [True, False])
+async def test_sonnet_yes_to_a_level_2_question_keeps_the_prefix_and_the_block(
+    pricing: Pricing, tools: PcTools, desk: FakeDesktop, thinking: bool
+) -> None:
+    """ "Confermi?" then "sì": the round after the yes resumes the same turn."""
+    client = CopyingClient(
+        ([], "tool_use", [EMPTY_NOTE, use("type_text", text="ciao", window="chrome")]),
+        (["Scritto."], "end_turn", [text("Scritto.")]),
+    )
+    b = sonnet_with(pricing, client, tools, thinking)
+    assert (await ask(b, "scrivi ciao su chrome")).endswith("Confermi?")
+    assert await ask(b, "sì") == "Scritto."
+    first, second = client.calls
+    assert_one_turn_prefix(client.calls)
+    assert second["messages"][len(first["messages"])]["content"][0] == REPLAYED_EMPTY
 
 
 async def test_a_thinking_note_that_promises_is_not_a_promise(
@@ -4530,8 +4589,10 @@ async def test_a_thinking_note_that_promises_is_not_a_promise(
     [
         ({"model": SONNET}, True, 2048),  # no forced retry there: the room is given at once
         ({"model": "claude-haiku-5-5"}, True, 400),  # Haiku keeps its forced retry
-        ({"model": SONNET, "thinking": True}, True, 2048),  # max(thinking_max_tokens, 2048)
-        ({"model": SONNET, "thinking": True, "thinking_max_tokens": 4096}, True, 4096),
+        ({"model": SONNET, "thinking": True}, True, 2898),  # retry room + thinking room
+        ({"model": SONNET, "thinking": True, "thinking_max_tokens": 4096}, True, 6144),
+        ({"model": "claude-haiku-5-5", "thinking": True}, True, 850),  # Haiku: max(), as before
+        ({"model": SONNET, "thinking": True}, False, 850),  # no tools: unchanged
         ({"model": SONNET}, False, 300),  # no tools: settings.max_tokens
     ],
 )
@@ -4549,3 +4610,29 @@ async def test_a_model_without_the_forced_retry_gets_the_retry_room_at_once(
     )
     await ask(b, "come va")
     assert client.calls[0]["max_tokens"] == expected
+
+
+@pytest.mark.parametrize(
+    ("model", "with_tools", "long_read"),
+    [(SONNET, True, True), ("claude-haiku-5-5", True, False), (SONNET, False, False)],
+)
+async def test_only_a_round_with_no_retry_gets_the_long_read_timeout(
+    pricing: Pricing, tools: PcTools, model: str, with_tools: bool, long_read: bool
+) -> None:
+    """A long tool input can arrive in one block: Sonnet has no cut-and-retry, so its first
+    round already waits the retry's 60 s (read only; connecting still fails fast)."""
+    client = ScriptedClient((["Ok."], "end_turn", [text("Ok.")]))
+    b = ClaudeBrain(
+        client,
+        tracker(pricing, 1.0),
+        ClaudeSettings(tell_time=False, model=model),
+        clock=Monotonic(),
+        tools=tools if with_tools else None,
+        pc=PcSettings(),
+    )
+    await ask(b, "come va")
+    timeout = client.calls[0].get("timeout")
+    if long_read:
+        assert timeout == anthropic.Timeout(10.0, read=60.0)
+    else:
+        assert timeout is None

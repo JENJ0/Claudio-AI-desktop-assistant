@@ -1598,14 +1598,15 @@ def print_result(result: GateResult) -> None:
 
 def upper_bound_usd(requests: int, max_chars: int, settings: Settings, pricing: Any) -> float:
     """A ceiling for `requests` requests of `max_chars` characters: each priced at the dearest
-    model it can reach (Haiku, or Sonnet when Haiku hands over) with that model's output
-    limit, at the dearest cache write and 2 characters per token, for every round of the
-    request ([pc] max_rounds)."""
+    model it can reach (the main model, or Sonnet when it hands over) with the output limit
+    the brain really sends (`reply_cap`, with tools), at the dearest cache write and 2
+    characters per token, for every round of the request ([pc] max_rounds)."""
+    from claudio.brain.claude import reply_cap
     from claudio.cost.pricing import PricingError, Usage
 
     claude = settings.claude
-    models = [(claude.model, max(claude.max_tokens, settings.pc.max_tokens))]
-    if claude.smart_model and claude.escalate:
+    models = [(claude.model, reply_cap(claude, settings.pc, with_tools=True))]
+    if claude.smart_model and claude.escalate and claude.smart_model != claude.model:
         models.append((claude.smart_model, claude.smart_max_tokens))
     tokens = math.ceil(max_chars / TOKEN_CHARS_FLOOR)
     dearest = 0.0

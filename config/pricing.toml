@@ -1,5 +1,5 @@
 # Claude API prices, in US dollars per million tokens (Anthropic bills in USD).
-# Checked on 2026-10-19 against Anthropic's model table; update here when they change,
+# Checked on 2026-11-09 against Anthropic's model table; update here when they change,
 # never in the code. The spending counter (src/claudio/cost/) reads this file at start.
 #
 # A cache write costs the input price times the multiplier of its TTL; a cache read costs
