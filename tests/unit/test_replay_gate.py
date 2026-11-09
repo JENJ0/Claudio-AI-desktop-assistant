@@ -1224,6 +1224,25 @@ def test_the_console_names_what_the_constraints_require(
     assert f"| fallita | {quiet} |" in report or f"| fallite | {quiet} |" in report
 
 
+def test_the_estimate_prices_every_round_at_the_cap_the_brain_sends(
+    settings: Settings, tmp_path: Path
+) -> None:
+    """Sonnet main with thinking and tools sends 2048 + 850 output tokens a round."""
+    from claudio.cost.pricing import Usage
+
+    pricing = gate_harness(settings, tmp_path / "p").tracker.pricing
+    claude = settings.claude.model_copy(
+        update={"model": "claude-sonnet-5-5", "thinking": True, "escalate": False}
+    )
+    pc = settings.pc.model_copy(update={"max_rounds": 1})
+    shipped = settings.model_copy(update={"claude": claude, "pc": pc})
+    tokens = math.ceil(10_000 / rg.TOKEN_CHARS_FLOOR)
+    expected = pricing.cost(
+        "claude-sonnet-5-5", Usage(cache_write_1h_tokens=tokens, output_tokens=2898)
+    )
+    assert rg.upper_bound_usd(1, 10_000, shipped, pricing) == pytest.approx(expected)
+
+
 def test_the_estimate_is_a_real_upper_bound(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,

@@ -232,29 +232,29 @@ warn_at = 0.8                         # local commands keep working when the bud
 [claude]
 enabled = true                 # false: local commands only, zero cost
 model = "claude-sonnet-5-5"    # main model; must be in config/pricing.toml (Haiku 5.5 before G3c)
-max_tokens = 300               # a spoken reply: 2-4 sentences
+max_tokens = 300               # a spoken reply: 2-4 sentences (the cap with tools is higher: see thinking and [pc] retry_max_tokens)
 effort = "low"                 # low | medium | high: low = fastest first word
-thinking = true                # true: adaptive thinking, reply cap = thinking_max_tokens; false: "between_tools" on Sonnet, "disabled" on other models
+thinking = true                # true: adaptive thinking, reply cap = retry_max_tokens + thinking_max_tokens with tools (thinking_max_tokens alone without); false: "between_tools" on Sonnet, "disabled" on other models
 between_tools_models = ["claude-sonnet-5-5"]  # models that take "between_tools" (effort high or below)
-thinking_max_tokens = 850      # max_tokens when thinking = true: 2 x the measured p99 (406) of Sonnet adaptive-low, rounded up; it caps Haiku with thinking too (p99 793 there): not a supported mix
+thinking_max_tokens = 850      # thinking room added to the cap when thinking = true: 2 x the measured p99 (406) of Sonnet adaptive-low, rounded up; it caps Haiku with thinking too (p99 793 there): not a supported mix
 timeout_s = 10.0
 history_turns = 6              # question/answer pairs sent back as context (0 = none)
 history_reset_s = 300          # after 5 minutes of silence the context starts over
 conversation_min_words = 3     # without the wake word: shorter phrases are not sent to Claude
-cache = true                   # prompt caching: from the 2nd turn the conversation costs 10 %
+cache = true                   # prompt caching: from the 2nd turn the conversation is read at 5 % (Sonnet; 10 % on Haiku)
 tell_time = true               # Claude gets the local date and time with each request
 keepalive_s = 60               # the connection to the API stays open this long between requests
 personality_file = "data/CLAUDIO.md"  # Claudio's personality, yours to edit (made from config/CLAUDIO.md)
 personality_max_chars = 3000   # it goes with every request (cached): keep it short; 0 = none
-# Sonnet for reasoning: Haiku hands a request over by itself (escalate), or say "pensaci bene".
-smart_model = "claude-sonnet-5-5"  # must be in config/pricing.toml; "" = Haiku only
+# Second model for reasoning: when the main model is Haiku it hands a request over by itself (escalate); with Sonnet as main there is no second model and "pensaci bene" only asks it to think harder.
+smart_model = "claude-sonnet-5-5"  # must be in config/pricing.toml; "" = no second model (the main model alone)
 smart_effort = "low"           # low | medium | high
 smart_max_tokens = 1024        # its thinking counts here too
 escalate = true
 smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"], en = ["think hard", "think carefully", "think it through"] }
-# A request for detail: Claudio asks "Lo uso?" for Sonnet at once (no Haiku call).
+# A request for detail: with Haiku as main, Claudio asks "Lo uso?" for Sonnet at once (no Haiku call); unused while Sonnet is the main model.
 offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"], en = ["in detail", "in depth", "explain thoroughly"] }
-# Stories, jokes, poems: Haiku tells them itself, never "Lo uso?" (even if it asks for Sonnet).
+# Stories, jokes, poems: the main model tells them itself, never "Lo uso?" (only matters with Haiku as main).
 no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "barzelletta", "barzellette", "poesia", "filastrocca", "racconta", "raccontami"], en = ["story", "stories", "joke", "jokes", "poem", "fairy tale"] }
 
 # A phrase Claudio was about to ignore (a false wake, not addressed to it, noise) that sounds
@@ -264,7 +264,7 @@ no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "
 # phrases cost a call (~0.0001 $).
 [guess]
 enabled = true                 # false: such phrases are dropped, as before (zero cost)
-precall = false               # true: Haiku also reads a request Whisper was unsure of that no command understands, before the main model (+1-1.5 s, ~0.0002 $)
+precall = false               # true: Haiku also reads a request Whisper was unsure of that no command understands, before the main model (+1-1.5 s, ~0.00038 $ measured)
 near_floor = 65                # 0-100: how close (letters or sound) to a command to ask Claude
 act_at = 0.8                   # Claude this sure: the command runs at once
 ask_at = 0.5                   # from here up to act_at: "Hai detto: ...?" ("basta": stops at once); below: ignored
@@ -311,7 +311,7 @@ search_limit = 8
 web_search_url = "https://www.google.com/search?q={query}"   # web_search (no confirmation): results page
 folders_refresh_s = 900        # folder names listed in the background, read again every 15 min (0 = off)
 private_windows = ["keepass", "bitwarden", "1password", "lastpass", "password", ".env", ".pem", ".key", ".ssh", "id_rsa", "id_ed25519", "id_ecdsa", "credentials"]
-screenshot_side = 1024         # last-resort screenshot to Haiku: long side in pixels (~1000 tokens)
+screenshot_side = 1024         # last-resort screenshot to the main model: long side in pixels (~1000 tokens, ~0.002 $ on Sonnet)
 commands = true                # PowerShell commands: always "confermo" said aloud, never as admin
 command_timeout_s = 30
 command_output_chars = 2000    # command output sent back to Claude
@@ -327,7 +327,7 @@ max_age_s = 120                # messages written while Claudio was off are drop
 
 # Long-term memory: "ricordati che...", "da ora in poi...", "dimentica...", "cosa ricordi?"
 # (understood locally, free). Kept in db_file, sent to Claude after the system prompt (cached:
-# ~0.00001 $ a request). Passwords, PINs, cards and IBANs are never kept.
+# ~0.00018 $ a read on Sonnet, ~0.0045 $ when the memory is rewritten). Passwords, PINs, cards and IBANs are never kept.
 [memory]
 enabled = true
 db_file = "data/memory.db"

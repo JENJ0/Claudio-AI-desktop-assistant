@@ -218,7 +218,7 @@ def build_brain(
     still builds it: Claudio then says where the key goes instead of "I can't do that".
     With a `memory`, Claude sees the memories and may save and forget them. `client`,
     `desktop`, `home`, `clock`: the replay gate's edges (None: the real ones)."""
-    from claudio.brain.claude import ClaudeBrain, make_client
+    from claudio.brain.claude import ClaudeBrain, make_client, reply_cap
     from claudio.brain.personality import load_personality
     from claudio.cost.pricing import PricingError
     from claudio.memory.prompt import MemoryPrompt
@@ -269,12 +269,15 @@ def build_brain(
         except PricingError as exc:
             log.error("Sonnet spento, solo Haiku: %s", exc)
             brain.smart_model = None
+    second = brain.smart_model if brain.smart_model not in (None, claude.model) else None
     log.info(
-        "Claude: %s (ragionamenti: %s), max %d token, cache %s, budget %.2f al giorno, "
-        "personalità %d caratteri",
+        "Claude: %s (ragionamenti: %s), max %d token (con strumenti %d), thinking %s, "
+        "cache %s, budget %.2f al giorno, personalità %d caratteri",
         claude.model,
-        brain.smart_model or "-",
-        claude.max_tokens,
+        second or "-",
+        reply_cap(claude, settings.pc, with_tools=False),
+        reply_cap(claude, settings.pc, with_tools=True),
+        "on" if claude.thinking else "off",
         "on" if claude.cache else "off",
         tracker.daily_budget,
         len(personality),

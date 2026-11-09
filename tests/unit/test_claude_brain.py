@@ -1360,6 +1360,26 @@ def test_build_brain_passes_the_clock_on(tmp_path: Any, monkeypatch: Any) -> Non
     assert with_clock.clock is now and without.clock is time.monotonic
 
 
+def test_the_start_up_log_shows_the_real_caps_and_the_thinking_mode(
+    tmp_path: Any, monkeypatch: Any, caplog: Any
+) -> None:
+    """Prova J reads latency and cost against this line: 850 without tools, 2898 with tools,
+    thinking on, and the one model is not named twice."""
+    import logging
+
+    from claudio.__main__ import build_brain, build_tracker
+    from claudio.config import load_settings
+
+    monkeypatch.setenv("CLAUDIO_COST__DB_FILE", str(tmp_path / "spend.db"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    settings = load_settings()
+    with caplog.at_level(logging.INFO):
+        build_brain(settings, build_tracker(settings), client=ScriptedClient())
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Claude:"))
+    assert "claude-sonnet-5-5 (ragionamenti: -)" in line
+    assert "max 850 token (con strumenti 2898), thinking on" in line
+
+
 async def test_the_yes_reaches_claude_through_the_router(
     matcher: CommandMatcher, pricing: Pricing
 ) -> None:

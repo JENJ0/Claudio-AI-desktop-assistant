@@ -1136,21 +1136,14 @@ class ClaudeBrain:
         then the PC tools): it is the start of the cached prefix, and within a turn `system` and
         `tools` must not change (preserved thinking). On the last round: words only."""
         s = self.settings
-        max_tokens = s.max_tokens
-        if self.tools:
-            # No forced retry for a cut call on this model: it gets the retry's room at once.
-            retry_room = s.model not in self.pc.retry_models
-            max_tokens = (
-                self.pc.retry_max_tokens if retry_room else max(max_tokens, self.pc.max_tokens)
-            )
-        params = self._common(s.model, max_tokens, messages)
+        params = self._common(s.model, reply_cap(s, self.pc, bool(self.tools)), messages)
         params["output_config"] = {"effort": s.effort}
-        if s.thinking:
-            params["max_tokens"] = max(s.thinking_max_tokens, max_tokens)  # thinking counts in it
-        elif s.model in s.between_tools_models:
-            params["thinking"] = {"type": "between_tools"}  # Sonnet 5.5 answers 400 to "disabled"
-        else:
-            params["thinking"] = {"type": "disabled"}
+        if tools and self.tools and s.model not in self.pc.retry_models:
+            # Same room as the retry would have: a long tool input can arrive in one block.
+            params["timeout"] = _retry_timeout(s, self.pc)
+        if not s.thinking:  # thinking on is the default: no `thinking` key
+            off = "between_tools" if s.model in s.between_tools_models else "disabled"
+            params["thinking"] = {"type": off}  # Sonnet 5.5 answers 400 to "disabled"
         listed: list[dict[str, Any]] = []
         if tools and s.escalate and self.smart_model is not None and not self.sonnet_is_main:
             listed.append(ASK_SONNET_TOOL)
@@ -1632,6 +1625,25 @@ def _ms_since(start: float, now: float) -> int:
 
 def _quoted(text: str) -> str:
     return text.replace('"', "'").strip()
+
+
+def reply_cap(settings: ClaudeSettings, pc: PcSettings, with_tools: bool) -> int:
+    """The max_tokens of a main-model request (thinking counts in it). With tools, a model
+    outside `retry_models` has no forced retry and gets the retry's room at once, plus the
+    thinking room when thinking is on."""
+    cap = settings.max_tokens
+    if with_tools:
+        if settings.model not in pc.retry_models:
+            cap = pc.retry_max_tokens
+            return cap + settings.thinking_max_tokens if settings.thinking else cap
+        cap = max(cap, pc.max_tokens)
+    return max(settings.thinking_max_tokens, cap) if settings.thinking else cap
+
+
+def _retry_timeout(settings: ClaudeSettings, pc: PcSettings) -> Any:
+    import anthropic
+
+    return anthropic.Timeout(settings.timeout_s, read=pc.retry_timeout_s)
 
 
 def _space(turn: _Turn | _Leg) -> str:
