@@ -335,6 +335,27 @@ Dopo la H1 parte la corsia B.
 
 ---
 
+## Adesso: G3c
+
+### J. Sonnet come modello principale (circa 10 minuti, circa 5 centesimi)
+
+**Perché:** da G3c risponde Sonnet 5.5 con il thinking adattivo, non più Haiku. L'A/B ha misurato solo le risposte dell'API: qui si sente cosa arriva all'altoparlante. **Claudio riavviato con la versione nuova** (va bene anche sul portatile). Un Blocco note vuoto aperto. Se un passo non torna, fermati e scrivimi quale.
+
+1. All'avvio guarda la riga di Claude nel log. Atteso: `claude-sonnet-5-5`, «thinking on», «con strumenti 2898».
+2. «Claudio, quanto dista la Luna?», poi «Claudio, cos'è un buco nero, in due frasi?». Atteso: la prima parola in circa un secondo e mezzo. Dimmi se ti sembra troppo lenta rispetto a Haiku.
+3. «Claudio, come stai?». Atteso: è sempre Jack. Sonnet dice in media una frase in più: dimmi se è troppo.
+4. «Claudio, cerca il file del mio CV e aprilo». Atteso: lo apre senza chiedere e non dice «lo faccio» senza farlo.
+5. Blocco note davanti. «Claudio, chiudi la finestra del Blocco note». Atteso: «Confermi?» nominando il Blocco note; «sì» e si chiude. Riaprilo.
+6. «Claudio, apri il brocconote e scrivi una poesia», detto un po' storpiato. Atteso: capisce, chiede prima di scrivere, poi scrive **tutta** la poesia.
+7. «Claudio, pensaci bene: per i giochi è meglio un SSD o un HDD?». Atteso: **nessun «Lo uso?»**, risponde subito.
+8. «Claudio, scrivi nel Blocco note una lettera lunga almeno una pagina a un amico». Atteso: chiede, poi scrive tutta la lettera, **senza errore di rete**. Dimmi quanto ha aspettato prima di scrivere.
+
+**Noto, non è un errore:** se Claude ti ha appena fatto una domanda, un comando senza nome («Spegniti.») viene preso come risposta. Con il nome funziona. Si sistema in G5.
+
+**Scrivimi:** J, i passi che non tornano, l'attesa al passo 2 e al passo 8.
+
+---
+
 ## Dopo: si preparano quando il gruppo è pronto
 
 | Gruppo | Prova dal vivo |
