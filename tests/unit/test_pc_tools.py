@@ -4454,3 +4454,98 @@ async def test_a_failed_named_call_stops_a_later_safe_key_by_itself(
     desk.open_windows = [w for w in desk.open_windows if w.handle != 2]
     await ask(b, "sì")
     assert not typed(desk)
+
+
+# --- G3c task 2: Sonnet 5.5 as the main model, two rounds of tools ---------------------------
+
+SONNET = "claude-sonnet-5-5"
+
+
+def sonnet_brain(pricing: Pricing, client: Any, tools: PcTools) -> ClaudeBrain:
+    return ClaudeBrain(
+        client,
+        tracker(pricing, 1.0),
+        ClaudeSettings(tell_time=False, model=SONNET),
+        clock=Monotonic(),
+        tools=tools,
+        pc=PcSettings(),
+    )
+
+
+async def test_sonnet_rounds_resend_system_tools_and_thinking_unchanged(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    """Preserved thinking: the API refuses a replayed thinking block when `system`, `tools` or an
+    earlier message changed. The note is never said and never reaches the history."""
+    note = SimpleNamespace(type="thinking", thinking="Prima le finestre.", signature="sig")
+    client = ScriptedClient(
+        ([], "tool_use", [note, use("list_windows")]),
+        (["Fatto."], "end_turn", [text("Fatto.")]),
+    )
+    b = sonnet_brain(pricing, client, tools)
+    assert await ask(b, "che finestre ho") == "Fatto."
+    first, second = client.calls
+    assert first["thinking"] == {"type": "between_tools"}
+    assert first["system"] == second["system"] and first["tools"] == second["tools"]
+    assert all(t["name"] != "ask_sonnet" for t in first["tools"])
+    assert second["messages"][: len(first["messages"])] == first["messages"]  # append-only
+    replayed = second["messages"][len(first["messages"])]
+    assert replayed["content"][0] == {
+        "type": "thinking",
+        "thinking": "Prima le finestre.",
+        "signature": "sig",
+    }
+    assert "Prima le finestre." not in b._history[-1][1]
+
+
+async def test_sonnet_never_calls_without_tools_inside_a_turn(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    client = ScriptedClient(
+        ([], "tool_use", [use("list_windows")]),
+        ([], "tool_use", [use("list_windows")]),
+        (["Basta così."], "end_turn", []),
+    )
+    await ask(sonnet_brain(pricing, client, tools), "fai tante cose")
+    assert all("tools" in c for c in client.calls)
+    assert all(c["model"] == SONNET for c in client.calls)
+
+
+async def test_a_thinking_note_that_promises_is_not_a_promise(
+    pricing: Pricing, tools: PcTools
+) -> None:
+    """The promise detector reads what was said; a note in a `thinking` block is not said."""
+    note = SimpleNamespace(
+        type="thinking", thinking="Cerco la cartella, poi la apro.", signature="sig"
+    )
+    client = ScriptedClient((["Ok."], "end_turn", [note, text("Ok.")]))
+    b = sonnet_brain(pricing, client, tools)
+    assert await ask(b, "come va") == "Ok."
+    assert "promised" not in b.last_call
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("settings", "with_tools", "expected"),
+    [
+        ({"model": SONNET}, True, 2048),  # no forced retry there: the room is given at once
+        ({"model": "claude-haiku-5-5"}, True, 400),  # Haiku keeps its forced retry
+        ({"model": SONNET, "thinking": True}, True, 2048),  # max(thinking_max_tokens, 2048)
+        ({"model": SONNET, "thinking": True, "thinking_max_tokens": 4096}, True, 4096),
+        ({"model": SONNET}, False, 300),  # no tools: settings.max_tokens
+    ],
+)
+async def test_a_model_without_the_forced_retry_gets_the_retry_room_at_once(
+    pricing: Pricing, tools: PcTools, settings: dict[str, Any], with_tools: bool, expected: int
+) -> None:
+    client = ScriptedClient((["Ok."], "end_turn", [text("Ok.")]))
+    b = ClaudeBrain(
+        client,
+        tracker(pricing, 1.0),
+        ClaudeSettings(tell_time=False, **settings),
+        clock=Monotonic(),
+        tools=tools if with_tools else None,
+        pc=PcSettings(),
+    )
+    await ask(b, "come va")
+    assert client.calls[0]["max_tokens"] == expected

@@ -346,15 +346,26 @@ class ClaudeBrain:
         if self._asked_at < start:
             self._rtt = (_ms_since(start, self.clock()), new, start)
 
+    @property
+    def sonnet_is_main(self) -> bool:
+        """The main model is Sonnet itself: there is no one to hand over to, no offer, no
+        `ask_sonnet`, and "pensaci bene" is an ordinary request."""
+        return self.smart_model is not None and self.smart_model == self.settings.model
+
     def wants_smart(self, text: str, language: str) -> bool:
         """JenJo asked for Sonnet in words ("pensaci bene...")."""
-        return self.smart_model is not None and _says(text, language, self._smart_phrases)
+        return (
+            self.smart_model is not None
+            and not self.sonnet_is_main
+            and _says(text, language, self._smart_phrases)
+        )
 
     def wants_offer(self, text: str, language: str) -> bool:
         """JenJo asked for detail ("spiegami in dettaglio..."): Sonnet is proposed at once,
         without a Haiku call (Haiku at low effort often answered these itself)."""
         return (
             self.smart_model is not None
+            and not self.sonnet_is_main
             and _says(text, language, self._offer_phrases)
             and not self.never_offer(text, language)
         )
@@ -695,7 +706,7 @@ class ClaudeBrain:
             log.info("Sonnet chiesto per una storia: risponde Haiku")
             self.last_call["escalated"] = "skipped"
             return self._haiku(offer_from, language, start, tools=False)
-        if self.smart_model:
+        if self.smart_model and not self.sonnet_is_main:
             # Never Sonnet without a yes (JenJo, 23/10): ask, keep the question.
             log.info("Haiku propone Sonnet: chiedo conferma")
             return self._propose(offer_from, language, _space(turn), turn)
@@ -1119,16 +1130,27 @@ class ClaudeBrain:
     def _params(
         self, messages: list[dict[str, Any]], tools: bool = True, last_round: bool = False
     ) -> dict[str, Any]:
-        """The tool list is always the same (ask_sonnet first, then the PC tools): it is the
-        start of the cached prefix. On the last round Haiku must answer in words."""
+        """The tool list is always the same (ask_sonnet first unless Sonnet is the main model,
+        then the PC tools): it is the start of the cached prefix, and within a turn `system` and
+        `tools` must not change (preserved thinking). On the last round: words only."""
         s = self.settings
-        max_tokens = max(s.max_tokens, self.pc.max_tokens) if self.tools else s.max_tokens
+        max_tokens = s.max_tokens
+        if self.tools:
+            # No forced retry for a cut call on this model: it gets the retry's room at once.
+            retry_room = s.model not in self.pc.retry_models
+            max_tokens = (
+                self.pc.retry_max_tokens if retry_room else max(max_tokens, self.pc.max_tokens)
+            )
         params = self._common(s.model, max_tokens, messages)
         params["output_config"] = {"effort": s.effort}
-        if not s.thinking:
+        if s.thinking:
+            params["max_tokens"] = max(s.thinking_max_tokens, max_tokens)  # thinking counts in it
+        elif s.model in s.between_tools_models:
+            params["thinking"] = {"type": "between_tools"}  # Sonnet 5.5 answers 400 to "disabled"
+        else:
             params["thinking"] = {"type": "disabled"}
         listed: list[dict[str, Any]] = []
-        if tools and s.escalate and self.smart_model is not None:
+        if tools and s.escalate and self.smart_model is not None and not self.sonnet_is_main:
             listed.append(ASK_SONNET_TOOL)
         if tools and self.tools is not None:
             listed.extend(self.tools.definitions())
@@ -1404,6 +1426,17 @@ class _Leg:
             kind = getattr(block, "type", None)
             if kind == "text":
                 self.content.append({"type": "text", "text": block.text})
+            elif kind == "thinking":
+                # Never spoken; sent back unchanged (also an empty one: it has the signature).
+                self.content.append(
+                    {
+                        "type": "thinking",
+                        "thinking": getattr(block, "thinking", ""),
+                        "signature": getattr(block, "signature", ""),
+                    }
+                )
+            elif kind == "redacted_thinking":
+                self.content.append({"type": "redacted_thinking", "data": block.data})
             elif kind == "tool_use":
                 args = dict(getattr(block, "input", None) or {})
                 self.content.append(

@@ -145,7 +145,7 @@ def build_responder(
     if brain is not None and settings.guess.enabled:
         from claudio.brain.guess import Guesser
 
-        # Same client and model as the replies: a misheard command costs ~0.0001 $.
+        # Same client as the replies, its own cheap model ([guess] model): ~0.0001 $ a call.
         guesser = Guesser(brain.client, tracker, settings.claude, settings.guess, commands)
     return LocalResponder(
         matcher,

@@ -231,10 +231,12 @@ warn_at = 0.8                         # local commands keep working when the bud
 # never here. Every call is counted in [cost]: warning at warn_at, blocked at 100 %.
 [claude]
 enabled = true                 # false: local commands only, zero cost
-model = "claude-haiku-5-5"     # must be in config/pricing.toml
+model = "claude-sonnet-5-5"    # main model; must be in config/pricing.toml (Haiku 5.5 before G3c)
 max_tokens = 300               # a spoken reply: 2-4 sentences
 effort = "low"                 # low | medium | high: low = fastest first word
-thinking = false               # Haiku thinks by default: off saves latency and tokens
+thinking = false               # false: Haiku "disabled", Sonnet 5.5 "between_tools" (no extended thinking); true: adaptive
+between_tools_models = ["claude-sonnet-5-5"]  # models that take "between_tools" (effort high or below)
+thinking_max_tokens = 1024     # max_tokens when thinking = true (the thinking counts against it)
 timeout_s = 10.0
 history_turns = 6              # question/answer pairs sent back as context (0 = none)
 history_reset_s = 300          # after 5 minutes of silence the context starts over
@@ -266,6 +268,7 @@ near_floor = 65                # 0-100: how close (letters or sound) to a comman
 act_at = 0.8                   # Claude this sure: the command runs at once
 ask_at = 0.5                   # from here up to act_at: "Hai detto: ...?" ("basta": stops at once); below: ignored
 candidates = 4                 # closest commands shown to Claude
+model = "claude-haiku-5-5"    # not the main model: a short, cheap call; must be in config/pricing.toml
 max_tokens = 120
 timeout_s = 3.0                # no answer by then: the phrase is ignored, as before
 
@@ -297,9 +300,9 @@ max_tokens = 400
 confirm_brief = true           # level 2 asks only "Confermi?"; false: it reads the action out first
 roots = ["~"]                  # folders Claudio may search, open and move in ("~" = C:\Users\you)
 type_max_chars = 6000          # longest text type_text accepts; must fit retry_max_tokens (3 chars a token)
-retry_max_tokens = 2048        # a tool call cut at max_tokens is asked again once, with this limit
+retry_max_tokens = 2048        # a tool call cut at max_tokens is asked again once, with this limit; a main model not in retry_models (Sonnet) has no retry and gets it as max_tokens at once
 retry_timeout_s = 60           # a long tool input can arrive in one block
-retry_models = ["claude-haiku-5-5"]   # only these accept a forced tool_choice
+retry_models = ["claude-haiku-5-5"]   # only these accept a forced tool_choice (and keep max_tokens = 400 + the retry)
 read_chars = 1500              # window text sent to Claude (~500 tokens)
 read_timeout_s = 2.0
 observe_wait_s = 1.0           # how long a tool waits to see its effect (window opened, text typed)

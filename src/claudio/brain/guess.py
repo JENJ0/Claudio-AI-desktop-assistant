@@ -145,7 +145,7 @@ class Guesser:
     ) -> None:
         self.client = client
         self.tracker = tracker
-        self.model = claude.model
+        self.model = settings.model
         self.settings = settings
         self.clock = clock
         # Frozen for the run: the same text at every call.
