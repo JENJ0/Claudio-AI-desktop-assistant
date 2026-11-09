@@ -220,3 +220,38 @@ if one was said ("alza il volume di 10"); "" when command is "".
 more only when the sounds match closely and the evidence says JenJo was talking to Claudio; \
 under 0.5 when it may well be the TV, a person or noise.
 """
+
+
+# The same call for a request recognition was unsure of that no command understood: not a
+# phrase about to be dropped, so no strictness about the TV, but a reading for the main model.
+PRECALL_PROMPT = """\
+You help Claudio, a voice assistant on JenJo's Windows PC. JenJo said something to Claudio, \
+speech recognition was unsure of it and none of Claudio's commands matched it as heard. Work \
+out what JenJo most likely said, and how likely it is that your reading is right.
+
+How recognition fails here (Italian, a weak microphone):
+- Short words come out as sound-alike, split or merged words: "alsa" for "alza", "pure sono" \
+for "che ore sono", "spegni ti" for "spegniti", "chi udite" for "chiuditi".
+- A word it did not catch may be written as capitals read as Italian letter names: "QDT" is \
+cu-di-ti, "chiuditi"; "QD" is "chiudi".
+- Names of folders, programs and windows are often misheard: use the names on the PC.
+- The name Claudio comes out as "Audio", "L'audio", "Laudio", "Claudia", "Chiaro", or is \
+missing.
+
+You get the phrase as heard, the other hearings recognition considered, the names on the PC, \
+Claudio's last local command and the closest commands. Use them all.
+
+Claudio's commands (id: what JenJo says):
+{commands}
+
+Answer with:
+- why: at most 4 words, in English.
+- command: the id of the command JenJo most likely asked for; "" when it is not one of these \
+commands (a question, a request for Claude).
+- said: with a command, that command as JenJo would say it, one of its phrases as listed, \
+with the number if one was said ("alza il volume di 10"). Without one, the request as JenJo \
+most likely said it, in his language, with the names fixed ("apri la cartella Tesi"). "" when \
+you cannot tell what he said.
+- probability: from 0 to 1, how likely it is that JenJo really said exactly that. Under 0.5 \
+when you are guessing between several readings or cannot tell.
+"""

@@ -1096,6 +1096,8 @@ class ClaudeBrain:
         if hearing is not None and hearing.unsure:
             others = " / ".join(f'"{_quoted(a)}"' for a in hearing.alternatives)
             fields.append(f"unsure: {others}" if others else "unsure")
+            if hearing.reading:
+                fields.append(f'Haiku read: "{_quoted(hearing.reading)}"')
         return f"[{' | '.join(fields)}]"
 
     def _common(

@@ -53,6 +53,17 @@ async def test_unsure_request_carries_the_alternatives(pricing: Pricing) -> None
     )
 
 
+async def test_a_pre_call_reading_is_labelled_as_haikus(pricing: Pricing) -> None:
+    client = FakeClient(["Apro Tesi."])
+    b = brain(pricing, client)
+    b.heard(Hearing(True, ("Apri la cartella desi.",), True, "apri la cartella Tesi"))
+    await ask(b, "Apri la cartella desi.")
+    assert client.calls[0]["messages"][-1]["content"] == (
+        '[it | unsure: "Apri la cartella desi." | Haiku read: "apri la cartella Tesi"] '
+        "Apri la cartella desi."
+    )
+
+
 async def test_unsure_without_alternatives_and_read_once(pricing: Pricing) -> None:
     client = FakeClient(["Ok."])
     b = brain(pricing, client, history_turns=0)

@@ -398,6 +398,9 @@ class GuessSettings(BaseModel):
     Only those phrases cost a call (1-1.5 s, ~0.0001 $); the others are dropped for free."""
 
     enabled: bool = True  # needs [claude] enabled
+    # Haiku also reads a request Whisper was unsure of and no command understands, before the
+    # main model gets it (one more call, ~1-1.5 s, only on those requests).
+    precall: bool = False
     near_floor: float = Field(65.0, ge=0, le=100)  # closeness (letters or sound) to a command
     act_at: float = Field(0.8, gt=0, le=1)  # Claude this sure: the request is answered at once
     ask_at: float = Field(0.5, gt=0, le=1)  # from here up to act_at: "Hai detto: ...?"
