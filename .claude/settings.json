@@ -41,5 +41,13 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "brightdata-plugin@synced": false,
+    "cowork-plugin-management@synced": false,
+    "data@synced": false,
+    "design@synced": false,
+    "engineering@synced": false,
+    "productivity@synced": false
   }
 }
