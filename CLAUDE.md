@@ -10,7 +10,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 
 - si avvia da solo all'accensione del PC e resta attivo nella system tray finché non lo chiudo;
 - si attiva con la parola chiave "Hey Claudio" oppure solo "Claudio";
-- ascolta, capisce e risponde a voce in italiano, con poca latenza e audio pulito;
+- ascolta, capisce e risponde a voce solo in italiano, con poca latenza e audio pulito (decisione D5 di `piani/ROADMAP.md`; il codice inglese rimasto si toglie in F1);
 - controlla il PC: apre programmi e cartelle, cerca file, digita tasti, esegue comandi, legge le finestre e, solo se serve, guarda lo schermo;
 - ricorda preferenze e contesto tra una sessione e l'altra;
 - in futuro si collega anche all'iPhone tramite Comandi Rapidi.
@@ -29,19 +29,19 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 - **Audio**: cattura con sounddevice, nessuna riduzione rumore (scelta approvata: Silero VAD basta), rilevamento voce con Silero VAD per capire subito quando ho finito di parlare.
 - **Speech-to-text**: faster-whisper in locale, usando la GPU se c'è.
 - **Router locale**: i comandi frequenti ("apri Chrome", "apri Download", "volume su") vengono riconosciuti senza LLM, a costo zero.
-- **LLM**: API Anthropic. Sonnet 5.5 è il modello principale (thinking adattivo, effort basso); Haiku solo per le letture brevi e veloci (frasi incerte, ipotesi sui comandi). Usa il tool use e permetti più azioni in una sola risposta.
-- **Azioni sul PC**: subprocess, pyautogui e pywinauto (UI Automation). Si leggono le finestre come testo; lo screenshot, rimpicciolito, si usa solo come ultima risorsa.
-- **Text-to-speech**: Piper in locale, voce italiana, con streaming frase per frase.
-- **Memoria persistente**: SQLite locale con preferenze, fatti e riassunti delle conversazioni. A ogni richiesta si recuperano solo le parti rilevanti.
-- **CLAUDIO.md**: file di istruzioni base (personalità, tono, regole, abitudini), caricato a ogni avvio nel system prompt con prompt caching. Modificabile a mano, a voce ("ricordati che da ora in poi...") e da Claudio stesso quando impara qualcosa su di me.
+- **LLM**: API Anthropic. Sonnet 5.5 è il modello principale (thinking adattivo, effort basso), in prova fino al verdetto D6 di `piani/ROADMAP.md`. Haiku solo per le letture brevi e veloci: oggi le ipotesi sui comandi (`[guess]`); la lettura delle frasi incerte prima di Sonnet (`[guess] precall`) c'è ma è spenta. Usa il tool use e permetti più azioni in una sola risposta.
+- **Azioni sul PC**: subprocess, pywinauto (UI Automation e `send_keys`), pywin32 per le finestre, ctypes per i tasti multimediali e l'Alt+F4 del router. Il testo lungo o con a capo (`paste_min_chars`) si incolla con Ctrl+V dagli appunti, che poi tornano come prima. Si leggono le finestre come testo; per lo screenshot vedi «Regole per i costi».
+- **Text-to-speech**, tutto in locale: parla Jack (Qwen3-TTS, in un processo separato sulla GPU). Mentre Jack si carica, le risposte lo aspettano fino a `jack_first_wait_s` dal suo avvio, poi parla Kokoro; se Jack non risponde parla subito Kokoro, e Piper solo se Kokoro non si carica. Il pacchetto `piper-tts` serve comunque: Kokoro usa parti private del suo espeak-ng. Con `engine = "jack"` il testo va a gruppi di frasi (`jack_group_chars`), anche quando parla la voce di riserva; con Kokoro o Piper come `engine`, frase per frase. Il motore lo sceglie `config/claudio.toml`: nel codice il default è ancora `kokoro`.
+- **Memoria persistente**: SQLite locale, `data/memory.db`, con fatti e regole (tabella `memories`). A ogni richiesta va un blocco fisso con le regole e i fatti più recenti; solo i fatti che non ci stanno si cercano per pertinenza. Le conversazioni si salvano in `data/claudio.db` (le mostra `claudio --ui`), ma Claude non le rilegge: riceve solo la cronologia breve (vedi «Regole per i costi»). Come allungare il contesto lo sceglie F7.
+- **CLAUDIO.md** (personalità e tono): `config/CLAUDIO.md` si copia in `data/CLAUDIO.md`, fuori da Git, solo se manca. Si legge all'avvio e va in coda al system prompt. Si modifica a mano e la modifica vale dal riavvio. Le regole dette a voce ("ricordati che da ora in poi...") e quello che Claudio impara vanno in `data/memory.db`, non in questo file.
 - **Avvio**: Utilità di pianificazione di Windows all'accesso, icona nella system tray.
-- **Aggiornamenti**: all'avvio Claudio controlla le release sul mio repo GitHub (solo versioni taggate e passate in CI). Se ce n'è una nuova chiede conferma a voce con il riepilogo delle novità, la installa, si riavvia e, se la nuova versione non supera il controllo all'avvio, torna da solo alla precedente. Non sovrascrive mai CLAUDIO.md, i comandi personalizzati e `.env`.
-- **Server locale (fase finale)**: FastAPI per ricevere comandi dall'iPhone.
+- **Aggiornamenti** (da fare, non ancora pianificati): all'avvio Claudio controllerà le release sul mio repo GitHub (solo versioni taggate e passate in CI). Se ce n'è una nuova chiederà conferma a voce con il riepilogo delle novità, la installerà, si riavvierà e, se la nuova versione non supera il controllo all'avvio, tornerà da solo alla precedente. Non sovrascriverà mai `data/CLAUDIO.md`, i comandi personalizzati e `.env`; oggi però `config/commands.toml` è in Git, e va risolto prima.
+- **Server locale**: `src/claudio/chat/server.py` è già un server FastAPI, ma serve solo la finestra della chat: parte con `claudio --ui`, ascolta solo su 127.0.0.1 e resta acceso finché la finestra è aperta. Per l'iPhone (da fare) servono un server sempre acceso raggiungibile con Tailscale, un token in `.env` e un endpoint che riceve un comando e restituisce la risposta.
 - **Casa smart (dopo l'iPhone)**: controllo diretto dei dispositivi, non tramite Alexa, con Home Assistant in locale come hub (gratis, funziona anche senza internet); Claudio usa la sua API con un token in `.env`. Dispositivi: luci e LED Tapo (integrazione ufficiale TP-Link, locale), luci AwoX (integrazione della community via Bluetooth mesh), robot aspirapolvere Lefant (basato su Tuya, da verificare sul modello). Accendere luci e aspirapolvere è livello 1, serrature e allarmi livello 3. I timer li gestisce Claudio da solo, senza hub.
 
 ## Comandi vocali di sistema
 
-- "Claudio, vai in pausa": smette di elaborare richieste e ascolta solo il comando di risveglio, in locale e a costo zero.
+- "Claudio, vai in pausa": ascolta solo i comandi di sistema; a ogni altra richiesta risponde con un bip basso, in locale e a costo zero.
 - "Claudio, svegliati": torna attivo.
 - "Claudio, spegniti": si spegne senza chiudersi: niente bip, risposte né Claude; ascolta solo "Claudio, accenditi", in locale e a costo zero.
 - "Claudio, accenditi": si riaccende (vale anche dalla pausa).
@@ -50,11 +50,11 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 ## Regole per i costi
 
 - Prima il router locale (gratis), poi Sonnet; Haiku solo per le letture brevi a basso costo.
-- Prompt caching su system prompt, CLAUDIO.md e definizioni dei tool.
-- Cronologia breve con riassunto automatico; `max_tokens` sempre limitato.
-- Screenshot solo se pywinauto non basta, a bassa risoluzione.
+- Prompt caching su definizioni dei tool, system prompt (con CLAUDIO.md) e blocco della memoria.
+- Cronologia breve e senza riassunti: le ultime domande e risposte (`history_turns`), azzerata dopo un silenzio (`history_reset_s`) e al riavvio; `max_tokens` sempre limitato.
+- Screenshot solo se leggere la finestra non basta o se chiedo qualcosa di visivo, a bassa risoluzione. La regola sta solo nel prompt (prompt di sistema e descrizione di `look_at_screen`): il codice non la impone.
 - Contatore di spesa per ogni richiesta, salvato su SQLite, con budget giornaliero configurabile, avviso vocale all'80% e blocco al 100%.
-- Modelli e prezzi in un file di configurazione, mai scritti nel codice.
+- Modelli in `config/claudio.toml`, prezzi in `config/pricing.toml`, mai scritti nel codice. I default di `ClaudeSettings` in `config.py` sono ancora Haiku con thinking spento: vale la configurazione, e si sistemano al verdetto D6 (R2).
 
 ## Sicurezza
 
@@ -66,19 +66,13 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 
 ## Fasi
 
-1. **Base**: struttura del progetto, configurazione, logging, wake word, cattura audio, STT, TTS, router locale con 10 comandi. Nessuna chiamata API.
-2. **Cervello**: integrazione con Claude, smistamento Haiku/Sonnet, tool use base, streaming della voce, contatore di spesa.
-3. **Controllo PC**: pywinauto, tastiera, ricerca file, livelli di sicurezza, screenshot di riserva.
-4. **Memoria**: SQLite, CLAUDIO.md, riassunti e recupero del contesto.
-5. **Sempre attivo**: avvio automatico, system tray, comandi di pausa, risveglio, spegnimento, accensione e chiusura, ripresa dagli errori, aggiornamento automatico con conferma e ritorno alla versione precedente.
-6. **iPhone**: server FastAPI, accesso remoto con Tailscale, comando rapido "Hey Claudio".
-7. **Casa**: Home Assistant; accendere e spegnere luci, colore dei LED (Tapo, AwoX), aspirapolvere Lefant; timer.
+Ordine e perimetro dei lavori: `piani/ROADMAP.md`; dove un piano dice un ordine diverso, vale la roadmap. Il dettaglio di ogni gruppo sta nei piani elencati nella sezione 5 della roadmap.
 
 ## Metodo di lavoro
 
 - Una fase alla volta. Prima di scrivere codice proponi un piano breve e aspetta la mia approvazione.
-- Ogni iterazione si chiude con test automatici (pytest), un test manuale descritto passo passo, un commit Git e un tag di versione (v0.1, v0.2...).
-- Dopo ogni iterazione fermati: riassumi cosa è stato fatto, i costi stimati, la latenza misurata e i rischi, poi aspetta la mia revisione.
+- Ogni gruppo si chiude con test automatici (pytest) e la sua prova a mano. Mostra diff e test e aspetta il mio ok; poi commit e push sul ramo. Al rilascio: gate di rilascio, PR verso `main` con CI verde, poi il tag di versione (v0.4.2, v0.4.3...).
+- Dopo ogni gruppo fermati: riassumi cosa è stato fatto, i costi stimati, la latenza misurata e i rischi, poi aspetta la mia revisione.
 - Mantieni aggiornati README.md e CHANGELOG.md.
 - Un agente in esecuzione da oltre 30 minuti va controllato a 30 minuti e poi ogni 10: processi attivi (anche shell, non solo Python), file cambiati, report. Un messaggio che dice «sta aspettando» non è una prova.
 - Le prove a mano di JenJo stanno tutte in un file del passo (`piani/<passo>-prove.md`), passo passo con comandi ed esito atteso, aggiornato a ogni gruppo.
@@ -87,14 +81,14 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 
 ## Ambiente
 
-- Windows, Python 3.11 o superiore, ambiente virtuale, VS Code con Claude Code.
-- Dipendenze in `requirements.txt` con versioni fissate.
+- Windows, Python da 3.11 a 3.13 (`requires-python`), ambiente virtuale gestito con uv, VS Code con Claude Code.
+- Dipendenze in `pyproject.toml`, versioni fissate in `uv.lock`; `requirements.txt` si genera con `uv export`.
 - Codice con type hints, ruff per lo stile, struttura modulare in `src/claudio/`.
 
 ## Uso dei token
 
 - Non leggere file grossi (`.wav`, `models/`, `uv.lock`, log interi): usa `grep`/`tail` o le righe precise.
-- Un thread o una sessione per compito; il contesto passa tramite i piani e la memoria.
+- Un thread per fase di `piani/ROADMAP.md`; il contesto passa tramite i piani e la memoria.
 
 ## graphify
 
