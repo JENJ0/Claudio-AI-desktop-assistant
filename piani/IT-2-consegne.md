@@ -1,5 +1,11 @@
 # IT-2 – Piano completo e consegna per i prossimi thread
 
+> **Nota dell'11/11/2026.** Ordine e perimetro dei lavori stanno in `piani/ROADMAP.md`: dove
+> questo file dice altro, vale la roadmap. Il prossimo passo lo dà la roadmap, non la tabella di
+> «Come lavorare». Questo piano dà ancora per scontato Haiku come modello principale e cita righe
+> di `claude.py` che si sono spostate: il Passo 1 si riscrive al verdetto D6 (roadmap, sezione 4,
+> riga V).
+
 Piano deciso con JenJo il 04/11/2026, dopo la lettura dei log e una ricerca verificata. Parte da
 `main` = `110d023` (v0.4.0): i numeri di riga valgono per quel commit, le funzioni restano il
 riferimento se il codice si è spostato.
