@@ -167,9 +167,9 @@ Il ciclo di un gruppo è già scritto in «Come lavorare» del piano 0b e nel `C
 - Ogni pack nuovo e ogni aggiornamento passa da `supermatt:dependency-vetting` e dalla lettura dei `SKILL.md`, compreso `allowed-tools`.
 
 **Compito B6:**
-1. Aggiorna superpowers alla 7.0.2. Essendo sincronizzato da claude.ai, l'aggiornamento parte da lì; `claude plugin update superpowers@synced` è da provare e non è verificato su un plugin sincronizzato.
+1. Aggiorna superpowers alla 7.0.2 da claude.ai: provato l'11/11, `claude plugin update superpowers@synced` rifiuta un plugin sincronizzato («cannot be updated here»). Controllo della 7.0.2 (11/11): nessuna skill dichiara `allowed-tools`, l'unico hook è locale, l'unica chiamata di rete è il logo del visual companion, che manda la versione e si spegne con `SUPERPOWERS_DISABLE_TELEMETRY`.
 2. Spegni per questo progetto i plugin estranei con `claude plugin disable <nome> --scope local` (oppure `project`: guarda quale file cambia e mostra il diff). Chiedi a JenJo se desktop-commander gli serve qui.
-3. Lancia `/doctor` e riporta cosa dice sul costo delle skill.
+3. Lancia `/doctor` e riporta cosa dice sul costo delle skill. `claude doctor` da riga di comando (11/11) controlla solo l'installazione; il costo di ogni plugin si legge con `claude plugin details <nome>@synced`.
 
 **Fatto quando:** `claude plugin list` mostra superpowers 7.0.2; nel progetto restano attivi solo i plugin scelti da JenJo; l'esito di `/doctor` è riportato.
 
