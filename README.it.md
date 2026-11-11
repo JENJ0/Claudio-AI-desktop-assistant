@@ -3,12 +3,13 @@
 [English](README.md) | **Italiano**
 
 Assistente vocale per Windows: wake word, trascrizione, comandi e voce girano **sul PC**, gratis.
-A quello che nessun comando locale capisce risponde Claude (API Anthropic, Haiku), con un budget
-giornaliero. Capisce italiano e inglese e risponde nella lingua in cui gli parli.
+A quello che nessun comando locale capisce risponde Claude (API Anthropic: Sonnet 5.5 come modello
+principale, in prova; Haiku 5.5 per indovinare i comandi capiti male), con un budget giornaliero.
+Capisce e parla italiano; l'inglese è un'opzione (`[stt] languages`).
 
 ```
 Microfono ─► openWakeWord ("Hey Claudio", "Claudio") ─► bip
-         └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale o Claude ─► voce di Jack (Qwen3-TTS, frase per frase; Kokoro se non parte)
+         └─► Silero VAD (fine frase) ─► faster-whisper (GPU) ─► router locale o Claude ─► voce di Jack (Qwen3-TTS, a gruppi di frasi; Kokoro se non parte)
 ```
 
 Stato: **v0.4.0** (30/10/2026): fasi 1-3 (comandi locali, Claude, controllo del PC) e i comandi
@@ -90,14 +91,15 @@ possibilità di sentire il nome (vedi `wakeword.second_chance`).
 | "ripeti", "non ho capito" | ripete l'ultima risposta |
 | "basta", "stop" | chiude la conversazione; detto mentre Claudio parla, lo interrompe |
 
-Ogni comando funziona anche in inglese: "open Chrome", "open my downloads", "turn up the volume by
-10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Per ogni
-richiesta Whisper decide se è italiano o inglese, e Claudio risponde in quella lingua con una voce
+Con `[stt] languages = ["it", "en"]` (la configurazione di serie ha solo l'italiano) ogni comando
+funziona anche in inglese: "open Chrome", "open my downloads", "turn up the volume by 10", "mute",
+"what time is it", "what day is it", "go to sleep", "wake up", "shut down". Per ogni richiesta
+Whisper decide allora se è italiano o inglese, e Claudio risponde in quella lingua con una voce
 inglese.
 
 Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice
-(`phrases_en` e `reply_en` sono quelle inglesi). Tutte le altre richieste ricevono "Questo non lo
-so ancora fare" o "I can't do that yet" (in Fase 2 andranno a Claude Haiku).
+(`phrases_en` e `reply_en` sono quelle inglesi). Tutte le altre richieste vanno a Claude; con
+`[claude] enabled = false` ricevono "Questo non lo so ancora fare" o "I can't do that yet".
 
 Ogni azione ha un livello di sicurezza (`level` in `commands.toml`). Il livello 1 parte subito.
 Il livello 2 chiede "Confermi?" e Claudio ascolta subito la risposta, senza wake word: "sì",
@@ -127,13 +129,25 @@ le cuffie va meglio. Tutto sta in `[conversation]` (`window_s = 0` spegne la fin
    scrivi la chiave dopo `ANTHROPIC_API_KEY=`. `.env` è in `.gitignore`: non arriva mai su GitHub.
 3. Provalo senza microfono: `uv run claudio --text "chi era Leonardo da Vinci"`.
 
-I comandi locali vengono sempre prima e non costano nulla; Claude risponde al resto, frase per
-frase. Ogni chiamata è registrata con token (cache inclusa) e costo in `data/spend.db`;
+I comandi locali vengono sempre prima e non costano nulla; Claude risponde al resto in
+streaming (Jack lo dice a gruppi di frasi). Ogni chiamata è registrata con token (cache inclusa) e costo in `data/spend.db`;
 `[cost] daily_budget` (2,58 USD) avvisa all'80 % e blocca Claude al 100 %. Nella finestra di
 conversazione (senza wake word) una frase va a Claude solo se sembra rivolta a lui (una domanda,
 "dimmi...", "spiegami...", o il nome): la TV non costa nulla. "basta" ferma la risposta e chiude
 lo stream; "ripeti" la ripete. Impostazioni: `[claude]` in `config/claudio.toml`
-(`enabled = false` per solo comandi locali). Una domanda a Haiku costa circa 0,0002 USD.
+(`enabled = false` per solo comandi locali).
+
+Il modello principale è **Sonnet 5.5** (thinking adattivo, effort basso), in prova: se nell'uso
+reale costa troppo, si torna a Haiku 5.5 come modello principale, come in tutte le versioni
+pubblicate finora. A cache fredda una risposta di Sonnet è costata 0,017 USD nell'unica chiamata
+misurata finora, quasi tutta per scrivere in cache il prompt di circa 6.500 token (2,50 USD per
+milione di token). Entro 5 minuti dalla chiamata precedente il prompt si legge invece dalla cache,
+a 0,10 USD per milione (il 5 % del prezzo d'ingresso): circa 0,002 USD a risposta, da calcolo.
+"pensaci bene" non richiede un secondo modello: Sonnet lo legge come parte della richiesta.
+
+Con Haiku come modello principale (`model = "claude-haiku-5-5"`, `thinking = false`), Sonnet è un
+secondo modello, mai usato senza il tuo sì: Haiku lo propone e Claudio chiede "Lo uso?", oppure
+cominci la richiesta con "pensaci bene".
 
 **Comandi capiti male.** Una frase breve che nessun comando capisce (fino a 6 parole, anche una
 domanda: "Scaniti.", "Chi ce l'ha fatta?" detto per "chiudi la chat") riceve prima la seconda
@@ -178,7 +192,7 @@ PC). Queste frasi le capisce in locale, gratis, anche senza internet o a budget 
 | "Dimentica tutto" | chiede "confermo", poi dimentica tutto |
 
 Claude vede tutte le regole e i fatti più recenti dopo il prompt di sistema (in cache: circa
-0,00001 $ a richiesta); i fatti che non stanno in `[memory] block_chars` vanno con una richiesta
+0,0002 $ a richiesta su Sonnet); i fatti che non stanno in `[memory] block_chars` vanno con una richiesta
 solo se ne condividono le parole. Claude può anche salvare ("segnatelo", un "ricordati" capito
 male) e dimenticare con i suoi strumenti: una regola o una cancellazione proposta da lui vuole il
 tuo sì. Salva anche da solo una preferenza duratura che gli dici, e lo dice ("Me lo segno"):
@@ -195,8 +209,8 @@ testo, chiude finestre e sposta file. Più azioni in una risposta, fino a 4 giri
 Dalla v0.3.2: nel Blocco note scrive senza chiedere (`free_typing`), il testo lungo viene
 incollato (Ctrl+V, gli appunti tornano come prima), una cartella detta per nome viene cercata in
 Scrivania, Documenti e Download, e prima di un'azione lenta dice "Ci guardo". Se una finestra
-non si legge come testo, Claude guarda uno screenshot piccolo (1024 px, ~0,0001 USD, mai
-salvato). Comandi PowerShell: sempre livello 3, scopo detto a voce, comando esatto nella chat,
+non si legge come testo, Claude guarda uno screenshot piccolo (1024 px, ~0,002 USD su Sonnet con
+uno schermo 16:9, mai salvato). Comandi PowerShell: sempre livello 3, scopo detto a voce, comando esatto nella chat,
 eseguito solo dopo "confermo" detto a voce; mai da amministratore, stop dopo 30 s, lista nera
 in `src/claudio/pc/terminal.py` (formattare, cancellare dischi o cartelle di sistema, registro
 di sistema, Defender e firewall, scaricare ed eseguire). La lista nera è una rete di
@@ -209,7 +223,8 @@ Claudio solo "Confermi?" (`confirm_brief = false` gli fa prima dire cosa farà).
 File: solo dentro la tua cartella utente (`roots = ["~"]`), mai sovrascritti; programmi e
 script non si aprono come file. I gestori di password non vengono mai letti. Ogni azione
 finisce nei log (`tools` in `metrics.jsonl`, "Azioni" in `conversazione.md`). Un'azione con un
-tool costa circa 0,0003-0,0007 USD.
+tool costava circa 0,0003-0,0007 USD con Haiku come modello principale; su Sonnet non è ancora
+misurata.
 
 ## Finestra con la chat
 
@@ -268,24 +283,26 @@ al giorno dopo, mentre i comandi locali continuano a funzionare.
 
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 
-Lingue: `[stt] languages = ["it", "en"]` sono quelle tra cui Whisper sceglie. Il riconoscimento
+Lingue: di serie `[stt] languages = ["it"]`, solo italiano; con `["it", "en"]` Whisper sceglie
+tra le due. Il riconoscimento
 riusa il passaggio dell'encoder della trascrizione, quindi non costa quasi nulla; quando Whisper è
-incerto (sotto `language_confidence`, 0.6; per l'inglese `other_confidence`, 0.8, perché l'italiano
+incerto (sotto `language_confidence`, 0.6; per l'inglese `other_confidence`, 0.9, perché l'italiano
 veloce a Whisper sembra spesso inglese) Claudio tiene la lingua della richiesta precedente. Una
 richiesta sentita come inglese che nessun comando capisce viene ritrascritta in italiano (circa
 0,2 s, solo in quel caso): "cue the calculator" diventa "apri la calcolatrice".
 `retry_in_first_language = false` lo disattiva. Con
-una lingua sola (`CLAUDIO_STT__LANGUAGES=it` in `.env`) il riconoscimento non c'è proprio. Il prompt di
+una lingua sola, come di serie, il riconoscimento non c'è proprio. Il prompt di
 Whisper è per lingua, in `[stt.prompts]`. I messaggi del programma (console, log, `--check`) sono
 in italiano; con `language = "en"` (o `CLAUDIO_LANGUAGE=en`) passano all'inglese.
 
-La voce è Nicola (Kokoro, maschile); `CLAUDIO_TTS__ENGINE=piper` torna a Paola (Piper), che resta
-anche come ripiego automatico (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` per Riccardo, maschile e
-la più veloce). Le risposte in inglese usano Michael con Kokoro e Ryan (`en_US-ryan-low`) con
-Piper, impostate in `[tts.voices.en]`, con lo stesso effetto. La velocità si regola per entrambe con `CLAUDIO_TTS__LENGTH_SCALE`
-(più basso = più veloce, 0.77 = +30%, il valore predefinito). Il tono robotico è
-`CLAUDIO_TTS__EFFECT`: `ultron_estremo` (predefinito), `estremo`, `ultron`, `jarvis` o `none` per
-la voce pulita. L'effetto costa circa 5 ms a frase.
+La voce è Jack (Qwen3-TTS, in un processo separato sulla GPU). Il suo modello addestrato non è nel
+repo: se manca, Claudio lo dice all'avvio e parla Nicola (Kokoro, maschile), o Paola (Piper) se
+Kokoro non si carica. Come installarlo: README inglese, sezione "Jack's voice". `CLAUDIO_TTS__ENGINE=kokoro` o `piper` ne fa la voce principale
+(`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` per Riccardo con Piper, maschile e la più veloce). Le risposte in inglese usano Michael con Kokoro e Ryan (`en_US-ryan-low`) con
+Piper, impostate in `[tts.voices.en]`, con lo stesso effetto. La velocità di Kokoro e Piper si regola con `CLAUDIO_TTS__LENGTH_SCALE`
+(più basso = più veloce, 0.77 = +30%, il valore di serie); quella di Jack con `jack_speed`. Il tono robotico è
+`CLAUDIO_TTS__EFFECT`: `none` (predefinito: la voce pulita), `ultron_estremo`, `estremo`, `ultron`
+o `jarvis`. L'effetto costa circa 5 ms a frase.
 
 ## Avvio all'accesso
 
@@ -377,9 +394,9 @@ richiesta è un comando locale, così "Hey, ciao, come stai?" finisce nel silenz
 non costa mai una chiamata a Claude.
 
 Quando Whisper è insicuro di una richiesta che va a Claude (un segmento con `avg_logprob` sotto
-`stt.unsure_logprob`, -0.2), Haiku lo sa dall'etichetta della richiesta, con fino a
+`stt.unsure_logprob`, -0.2), Claude lo sa dall'etichetta della richiesta, con fino a
 `stt.alternatives` (2) trascrizioni alternative dall'n-best di Whisper: `[it | unsure: "Apri la
-cartella Tesi."] Apri la cartella desi.` Il prompt di sistema chiede a Haiku di dedurre cosa è
+cartella Tesi."] Apri la cartella desi.` Il prompt di sistema chiede a Claude di dedurre cosa è
 stato detto più probabilmente. Si riusa l'n-best della lista chiusa; altrimenti parte un'altra
 passata di Whisper (~0,2 s), solo su queste richieste. `alternatives = 0` lascia solo la nota.
 

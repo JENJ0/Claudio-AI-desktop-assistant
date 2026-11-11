@@ -3,12 +3,13 @@
 **English** | [Italiano](README.it.md)
 
 A voice assistant for Windows: wake word, transcription, commands and voice run **on the PC**
-for free. What no local command understands is answered by Claude (Anthropic API, Haiku), with
-a daily budget. It understands Italian and English and answers in the language you spoke.
+for free. What no local command understands is answered by Claude (Anthropic API: Sonnet 5.5 as
+the main model, on trial; Haiku 5.5 to guess misheard commands), with a daily budget. It
+understands and speaks Italian; English is an option (`[stt] languages`).
 
 ```
 Microphone ─► openWakeWord ("Hey Claudio", "Claudio") ─► beep
-           └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router or Claude ─► Jack's voice (Qwen3-TTS, sentence by sentence; Kokoro if it fails)
+           └─► Silero VAD (end of speech) ─► faster-whisper (GPU) ─► local router or Claude ─► Jack's voice (Qwen3-TTS, sentences in groups; Kokoro if it fails)
 ```
 
 Status: **v0.4.1** (05/11/2026, IT-2 step 0: fixes, see the changelog). v0.4.0 (30/10/2026): Phases 1-3 (local commands, Claude, PC control) and the voice
@@ -88,14 +89,15 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "ripeti", "non ho capito" | says the last reply again |
 | "basta", "stop", "non parlare" | ends the conversation; said while CLAUDIO speaks, cuts it short; also at the end of a phrase that names Claudio ("No, Claudio, non parlare. Claudio, stop."), with no API call |
 
-Every command works in English too: "open Chrome", "open my downloads", "turn up the volume by
-10", "mute", "what time is it", "what day is it", "go to sleep", "wake up", "shut down". Whisper
-decides for each request whether it is Italian or English, and CLAUDIO answers in that language
-with an English voice.
+With `[stt] languages = ["it", "en"]` (the shipped config has Italian only) every command works
+in English too: "open Chrome", "open my downloads", "turn up the volume by 10", "mute", "what
+time is it", "what day is it", "go to sleep", "wake up", "shut down". Whisper then decides for
+each request whether it is Italian or English, and CLAUDIO answers in that language with an
+English voice.
 
 The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code
-(`phrases_en` and `reply_en` are the English ones). Every other request gets "Questo non lo so
-ancora fare" or "I can't do that yet"; in Phase 2 they will go to Claude Haiku.
+(`phrases_en` and `reply_en` are the English ones). Every other request goes to Claude; with
+`[claude] enabled = false` it gets "Questo non lo so ancora fare" or "I can't do that yet".
 
 Actions have a safety level (`level` in `commands.toml`). Level 1 runs at once. Level 2 asks
 "Confermi?" and CLAUDIO listens for the answer right away, without the wake word: "sì", "ok",
@@ -128,20 +130,26 @@ off, `barge_in = false` the listening while speaking, `barge_in_mode` how it rea
    key after `ANTHROPIC_API_KEY=`. `.env` is in `.gitignore`: it never reaches GitHub.
 3. Try it without the microphone: `uv run claudio --text "chi era Leonardo da Vinci"`.
 
-Local commands always come first and cost nothing; Claude answers the rest, streamed sentence by
-sentence. Each call is logged with its tokens (cache included) and cost in `data/spend.db`;
+Local commands always come first and cost nothing; Claude answers the rest, streamed
+(Jack speaks it in groups of sentences). Each call is logged with its tokens (cache included) and cost in `data/spend.db`;
 `[cost] daily_budget` (2.58 USD) is announced at 80 % and blocks Claude at 100 %. In the
 conversation window (no wake word) a phrase goes to Claude only when it sounds addressed to it
 (a question, "dimmi...", "spiegami...", or the name), so the TV costs nothing. "basta" stops a
 reply and closes the API stream; "ripeti" repeats it. Settings: `[claude]` in
-`config/claudio.toml` (`enabled = false` for local only). A Haiku question costs about
-0.0002 USD.
+`config/claudio.toml` (`enabled = false` for local only).
 
-What needs reasoning can go to **Sonnet**, never without your yes: Haiku proposes it and Claudio
-asks "Lo uso?" ("sì" / "no"), or start the request with "pensaci bene" / "think hard". A Sonnet answer costs about
-0.004 USD. From the second turn of a conversation the history is read from the prompt cache
-(10 % of the price). Claude also knows the current date and time. `smart_model = ""` keeps
-Haiku only.
+The main model is **Sonnet 5.5** (adaptive thinking, low effort), on trial: if real use costs
+too much, Haiku 5.5 goes back to being the main model, as in every release so far. A Sonnet
+reply with a cold cache cost 0.017 USD in the one call measured so far, almost all of it for
+writing the ~6,500-token prompt to the cache (2.50 USD per million tokens). Within 5 minutes of
+the previous call the prompt is read from the cache instead, at 0.10 USD per million (5 % of the
+input price): about 0.002 USD a reply, by calculation. "pensaci bene" / "think hard" need no
+second model: Sonnet reads them as part of the request. Claude also knows the current date and
+time.
+
+With Haiku as the main model (`model = "claude-haiku-5-5"`, `thinking = false`), Sonnet is a
+second model, never used without your yes: Haiku proposes it and Claudio asks "Lo uso?" ("sì" / "no"), or start the
+request with "pensaci bene". `smart_model = ""` keeps Haiku only.
 
 **Misheard commands.** A short phrase no command understands (up to 6 words, a question too:
 "Scaniti.", "Chi ce l'ha fatta?" said for "chiudi la chat") first gets Whisper's second opinion,
@@ -183,8 +191,8 @@ These phrases are understood locally, for free, also offline or with the budget 
 | "Dimenticalo" | forgets the memory just talked about (within a minute) |
 | "Dimentica tutto" | asks for "confermo", then forgets everything |
 
-Claude sees every rule and the newest facts after the system prompt (cached: about 0.00001 $ a
-request); the facts that do not fit in `[memory] block_chars` go with a request only when they
+Claude sees every rule and the newest facts after the system prompt (cached: about 0.0002 $ a
+request on Sonnet); the facts that do not fit in `[memory] block_chars` go with a request only when they
 share its words. Claude can also save ("segnatelo", a misheard "ricordati") and forget with its
 tools: a rule or a forget it proposes needs your yes. It also keeps, by itself, a lasting
 preference you mention, and says so ("Me lo segno"): `[memory] learn = false` turns that off. Passwords, PINs, cards and IBANs are never
@@ -204,15 +212,15 @@ typing, closing a window, moving a file and every other key make Claudio ask jus
 (`confirm_brief = false` reads the action out first). Only a short spoken yes runs it (never from the chat window).
 Files: only inside your user folder (`roots = ["~"]`), never overwritten; programs and scripts
 are never opened as files. Password managers are never read. Every action is logged
-(`metrics.jsonl` field `tools`, "Azioni" in `conversazione.md`). An action with one tool costs
-about 0.0003-0.0007 USD.
+(`metrics.jsonl` field `tools`, "Azioni" in `conversazione.md`). An action with one tool cost
+about 0.0003-0.0007 USD with Haiku as the main model; on Sonnet it is not measured yet.
 
 Since v0.3.2: typing in Notepad needs no yes (`free_typing`, by the window's process, not its title), long text is pasted (one Ctrl+V,
 your clipboard is put back), and a folder said by name ("apri la cartella Progetti") is found on
 the Desktop, in Documents or Downloads. Before a slow action Claudio says "Ci guardo".
 
 **Screen (last resort):** when a window cannot be read as text, Claude may look at a small
-screenshot (long side 1024 px, JPEG, ~0.0001 USD with Haiku; never saved). Password managers are
+screenshot (long side 1024 px, JPEG, ~0.002 USD on Sonnet for a 16:9 screen; never saved). Password managers are
 never photographed.
 
 **Terminal:** Claude may run one PowerShell command per reply, always at level 3: Claudio says
@@ -225,23 +233,27 @@ and system folders, machine registry writes, Defender/firewall changes, download
 encoded commands and elevation. It is a safety net, not a sandbox: read the command before
 saying "confermo". `commands = false` in `[pc]` removes the tool.
 
-## Jack's voice (optional, personal use)
+## Jack's voice (default engine, personal use; model not included)
 
-`engine = "jack"` in `[tts]` speaks with a Qwen3-TTS model fine-tuned on Handsome Jack's Italian
-lines, passed through RVC. It needs an NVIDIA GPU (~1.2 GB VRAM) and runs in a **separate
-worker process** with its own venv, so Claudio itself does not depend on torch.
+The shipped config has `engine = "jack"` in `[tts]`: a Qwen3-TTS model fine-tuned on Handsome
+Jack's Italian lines (RVC is loaded but not applied, `jack_rvc = "none"`: the worker still needs Applio and
+the RVC model from step 1). It needs an NVIDIA
+GPU (~1.2 GB VRAM) and runs in a **separate worker process** with its own venv, so Claudio itself
+does not depend on torch. Without the trained voice Claudio says "La voce di Jack non è partita"
+at start and Kokoro speaks; `engine = "kokoro"` skips the attempt.
 
 1. The trained voice is not in the repo. Put it under `models/voices/jack/`: the Qwen3
    checkpoint (`ft/1.7B-calmo/checkpoint-epoch-7`, `jack_finetune.py` round 4: calm lines only, joined up to 12 s), Applio 3.7.0 with the RVC model
    (`rvc/Applio/logs/jack/jack_100e_2800s.pth`); other paths: `jack_*` keys in `[tts]`.
 2. Build the worker venv once: `powershell -File scripts\setup_jack_worker.ps1`.
 3. Try it alone: `models\voices\jack\worker\env\Scripts\python.exe scripts\try_jack.py --play`.
-4. In `.env`: `CLAUDIO_TTS__ENGINE=jack` and `CLAUDIO_TTS__EFFECT=none`.
+4. Nothing to set: the shipped `config/claudio.toml` already has `engine = "jack"` and
+   `effect = "none"`.
 5. Pick the pronunciation settings by ear: `uv run python scripts/jack_variants.py` (close
    Claudio first) makes every variant speak the same replies and writes the WAVs plus a
    report (Whisper's word error rate, first audio, longest pause) to `logs/jack-variants/`.
-   The keys: `jack_temperature` (lower = steadier), `jack_rvc` ("blocks", "sentence" or
-   "auto"). Qwen3 is always told "Italian" (with "Auto" it guessed the language per sentence).
+   The keys: `jack_temperature` (lower = steadier), `jack_rvc` (`"none"` in the shipped config; or
+   `"blocks"`, `"sentence"`, `"auto"`). Qwen3 is always told "Italian" (with "Auto" it guessed the language per sentence).
 
 Before Jack speaks, symbols, acronyms, Markdown and emoji become Italian words ("50%" ->
 "cinquanta per cento") and the words in `[tts.jack_words]` are respelled ("file" -> "fàiil"):
@@ -331,22 +343,23 @@ day; at 100 % it stops calling Claude until the next day, while local commands k
 
 If the GPU cannot be used, CLAUDIO switches to Whisper `small` on the CPU by itself and logs it.
 
-Languages: `[stt] languages = ["it", "en"]` are the ones Whisper chooses from. Detection reuses
+Languages: the shipped `[stt] languages = ["it"]` is Italian only; with `["it", "en"]` Whisper
+chooses between the two. Detection reuses
 the encoder pass of the transcription, so it costs almost nothing; when Whisper is unsure (below
-`language_confidence`, 0.6; for English `other_confidence`, 0.8, because fast Italian often sounds
+`language_confidence`, 0.6; for English `other_confidence`, 0.9, because fast Italian often sounds
 English to Whisper) CLAUDIO keeps the language of the previous request. A request heard as English
 that no command understands is transcribed again in Italian (about 0.2 s, only then): "cue the
-calculator" becomes "apri la calcolatrice". `retry_in_first_language = false` turns it off. With one language
-(`CLAUDIO_STT__LANGUAGES=it` in `.env`) there is no detection at all. Whisper's prompt is per language,
+calculator" becomes "apri la calcolatrice". `retry_in_first_language = false` turns it off. With one language,
+the shipped default, there is no detection at all. Whisper's prompt is per language,
 in `[stt.prompts]`. CLAUDIO's own messages (console, log, `--check`) are Italian by default;
 `language = "en"` (or `CLAUDIO_LANGUAGE=en`) switches them to English.
 
-The voice is Nicola (Kokoro, male); `CLAUDIO_TTS__ENGINE=piper` switches to Paola (Piper),
-which is also the automatic fallback (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` for Riccardo,
-male and the fastest). English replies use Michael with Kokoro and Ryan (`en_US-ryan-low`) with
+The voice is Jack (see "Jack's voice"); the fallback is Nicola (Kokoro, male), and Paola (Piper)
+when Kokoro does not load. `CLAUDIO_TTS__ENGINE=kokoro` or `piper` makes one of them the main
+voice (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` for Riccardo with Piper, male and the fastest). English replies use Michael with Kokoro and Ryan (`en_US-ryan-low`) with
 Piper, set in `[tts.voices.en]`, with the same effect. `CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
-both (lower = faster; 0.77 = +30%, the default). The robotic tone is `CLAUDIO_TTS__EFFECT`:
-`ultron_estremo` (default), `estremo`, `ultron`, `jarvis`, or `none` for the clean voice. The
+Kokoro and Piper (lower = faster; 0.77 = +30%, the shipped value; Jack's is `jack_speed`). The robotic tone is `CLAUDIO_TTS__EFFECT`:
+`none` (default: the clean voice), `ultron_estremo`, `estremo`, `ultron` or `jarvis`. The
 effect costs about 5 ms per sentence.
 
 ## Start at login
@@ -459,9 +472,9 @@ only when Whisper heard the name at the start or the request is a local command,
 come stai?" ends in silence and, from v0.2.0, never costs a Claude call.
 
 When Whisper is unsure of a request that goes to Claude (a segment's `avg_logprob` below
-`stt.unsure_logprob`, -0.2), Haiku is told so in the request's tag, with up to
+`stt.unsure_logprob`, -0.2), Claude is told so in the request's tag, with up to
 `stt.alternatives` (2) other transcriptions from Whisper's n-best: `[it | unsure: "Apri la
-cartella Tesi."] Apri la cartella desi.` The system prompt asks Haiku to work out what was
+cartella Tesi."] Apri la cartella desi.` The system prompt asks Claude to work out what was
 most likely said. The n-best of the closed list is reused; otherwise one more Whisper pass
 (~0.2 s) runs, only on these requests. `alternatives = 0` keeps only the note.
 
