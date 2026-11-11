@@ -75,7 +75,7 @@ Ordine e perimetro dei lavori: `piani/ROADMAP.md`; dove un piano dice un ordine 
 - Dopo ogni gruppo fermati: riassumi cosa è stato fatto, i costi stimati, la latenza misurata e i rischi, poi aspetta la mia revisione.
 - Mantieni aggiornati README.md e CHANGELOG.md.
 - Un agente in esecuzione da oltre 30 minuti va controllato a 30 minuti e poi ogni 10: processi attivi (anche shell, non solo Python), file cambiati, report. Un messaggio che dice «sta aspettando» non è una prova.
-- Le prove a mano di JenJo stanno tutte in un file del passo (`piani/<passo>-prove.md`), passo passo con comandi ed esito atteso, aggiornato a ogni gruppo.
+- Le prove a mano di JenJo stanno tutte in un file del passo (`piani/<passo>-prove.md`), passo passo con comandi ed esito atteso, aggiornato a ogni gruppo. Quelle aperte sono elencate in `piani/prove-da-fare.md`: tienilo allineato.
 - Se una scelta tecnica ha alternative valide, presentale con pro, contro e costi prima di decidere.
 - Misura sempre la latenza (fine del parlato → primo campione udibile, per percorso: locale, conferma, Claude; `m1_ms` e `m2_ms` restano per continuità) e il costo per richiesta.
 

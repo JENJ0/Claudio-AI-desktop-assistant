@@ -339,7 +339,7 @@ Dopo la H1 parte la corsia B.
 
 ### J. Sonnet come modello principale (circa 10 minuti, circa 5 centesimi)
 
-**Perché:** da G3c risponde Sonnet 5.5 con il thinking adattivo, non più Haiku. L'A/B ha misurato solo le risposte dell'API: qui si sente cosa arriva all'altoparlante. **Claudio riavviato con la versione nuova** (va bene anche sul portatile). Un Blocco note vuoto aperto. Se un passo non torna, fermati e scrivimi quale.
+**Perché:** da G3c risponde Sonnet 5.5 con il thinking adattivo, non più Haiku. L'A/B ha misurato solo le risposte dell'API: qui si sente cosa arriva all'altoparlante. **Claudio riavviato con la versione nuova**, sul PC fisso (D3 di `piani/ROADMAP.md`). Un Blocco note vuoto aperto. Se un passo non torna, fermati e scrivimi quale.
 
 1. All'avvio guarda la riga di Claude nel log. Atteso: `claude-sonnet-5-5`, «thinking on», «con strumenti 2898».
 2. «Claudio, quanto dista la Luna?», poi «Claudio, cos'è un buco nero, in due frasi?». Atteso: la prima parola in circa un secondo e mezzo. Dimmi se ti sembra troppo lenta rispetto a Haiku.
