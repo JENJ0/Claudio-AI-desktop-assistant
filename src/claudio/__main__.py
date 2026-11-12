@@ -24,6 +24,7 @@ from claudio.config import (
 from claudio.gpu import GpuMemory, GpuSampler, has_room, read_gpu
 from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
+from claudio.session_log import drop_old_lines
 
 if TYPE_CHECKING:
     from claudio.app import Assistant, BargeIn
@@ -892,11 +893,20 @@ def main(argv: list[str] | None = None) -> int:
         print(tr("Errore di configurazione: {error}", error=exc), file=sys.stderr)
         return 2
     set_language(settings.language)
-    setup_logging(
-        settings.resolve(settings.logs_dir),
-        settings.logging.level,
-        "chat-window.log.jsonl" if args.ui else "claudio.log.jsonl",
+    logs_dir = settings.resolve(settings.logs_dir)
+    log_name = "chat-window.log.jsonl" if args.ui else "claudio.log.jsonl"
+    # Before setup_logging: Windows will not replace a file our own handler holds open.
+    trimmed = drop_old_lines(
+        logs_dir / log_name, time.time() - settings.logging.retention_days * 86400
     )
+    setup_logging(logs_dir, settings.logging.level, log_name)
+    if trimmed:
+        log.info(
+            "Log: %d righe più vecchie di %d giorni tolte da %s",
+            trimmed,
+            settings.logging.retention_days,
+            log_name,
+        )
     if args.ui:
         from claudio.chat.window import open_window
 

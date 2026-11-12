@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime
+import os
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +17,9 @@ from claudio.session_log import (
     CONSOLE_FILE,
     CONVERSATION_FILE,
     ConversationLog,
+    drop_old_lines,
     format_row,
+    purge_old_logs,
     start_session,
 )
 
@@ -264,3 +269,111 @@ def test_each_claude_call_shows_its_first_word_and_headers() -> None:
     assert "TTFT 610 · 560 ms (rete 220 ms)" in format_row({**row, "api_rtt_ms": 220})
     new = {**row, "api_rtt_ms": 305, "api_rtt_new_connection": True}
     assert "(rete 305 ms, connessione nuova)" in format_row(new)
+
+
+NOW_TS = 1_792_000_000.0
+CUTOFF = NOW_TS - 30 * 86400
+
+
+def _iso_line(ts: float, msg: str = "x") -> bytes:
+    stamp = datetime.fromtimestamp(ts, UTC).isoformat(timespec="milliseconds")
+    return (json.dumps({"ts": stamp, "level": "INFO", "msg": msg}) + "\n").encode()
+
+
+def _metrics_line(ts: float) -> bytes:
+    return (json.dumps({"ts": ts, "outcome": "ok"}) + "\n").encode()
+
+
+def test_drop_old_lines_cuts_the_old_head(tmp_path: Path) -> None:
+    path = tmp_path / "claudio.log.jsonl"
+    recent = _iso_line(NOW_TS - 86400, "recent")
+    path.write_bytes(_iso_line(CUTOFF - 200000) + _iso_line(CUTOFF - 100) + recent)
+    assert drop_old_lines(path, CUTOFF) == 2
+    assert path.read_bytes() == recent
+
+
+def test_drop_old_lines_reads_metrics_rows(tmp_path: Path) -> None:
+    path = tmp_path / "metrics.jsonl"
+    recent = _metrics_line(NOW_TS - 100)
+    path.write_bytes(_metrics_line(CUTOFF - 5) + recent)
+    assert drop_old_lines(path, CUTOFF) == 1
+    assert path.read_bytes() == recent
+
+
+def test_drop_old_lines_drops_a_broken_line_among_old_ones(tmp_path: Path) -> None:
+    path = tmp_path / "claudio.log.jsonl"
+    recent = _iso_line(NOW_TS - 100)
+    path.write_bytes(_iso_line(CUTOFF - 9) + b"garbage{\n" + _iso_line(CUTOFF - 5) + recent)
+    assert drop_old_lines(path, CUTOFF) == 3
+    assert path.read_bytes() == recent
+
+
+def test_drop_old_lines_keeps_unreadable_files(tmp_path: Path) -> None:
+    path = tmp_path / "claudio.log.jsonl"
+    content = b"garbage{\nmore garbage\n"
+    path.write_bytes(content)
+    assert drop_old_lines(path, CUTOFF) == 0
+    assert path.read_bytes() == content
+
+
+def test_drop_old_lines_leaves_recent_and_missing_files_alone(tmp_path: Path) -> None:
+    path = tmp_path / "claudio.log.jsonl"
+    path.write_bytes(_iso_line(NOW_TS - 100))
+    before = path.stat().st_mtime_ns
+    assert drop_old_lines(path, CUTOFF) == 0
+    assert path.stat().st_mtime_ns == before
+    assert drop_old_lines(tmp_path / "missing.jsonl", CUTOFF) == 0
+
+
+def test_drop_old_lines_survives_a_file_held_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "claudio.log.jsonl"
+    content = _iso_line(CUTOFF - 5) + _iso_line(NOW_TS)
+    path.write_bytes(content)
+
+    def locked(*args: object, **kwargs: object) -> None:
+        raise PermissionError("held open")
+
+    monkeypatch.setattr(os, "replace", locked)
+    assert drop_old_lines(path, CUTOFF) == 0
+    assert path.read_bytes() == content
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_purge_old_logs_removes_rotated_logs_and_trims_metrics(tmp_path: Path) -> None:
+    old_age = NOW_TS - 40 * 86400
+    old_rotated = tmp_path / "claudio.log.jsonl.1"
+    new_rotated = tmp_path / "claudio.log.jsonl.2"
+    old_rotated.write_text("old")
+    new_rotated.write_text("new")
+    os.utime(old_rotated, (old_age, old_age))
+    os.utime(new_rotated, (NOW_TS, NOW_TS))
+    metrics = tmp_path / "metrics.jsonl"
+    recent = _metrics_line(NOW_TS - 100)
+    metrics.write_bytes(_metrics_line(old_age) + recent)
+    purge_old_logs(tmp_path, 30, now=NOW_TS)
+    assert not old_rotated.exists()
+    assert new_rotated.exists()
+    assert metrics.read_bytes() == recent
+
+
+def test_main_trims_the_log_before_logging_opens_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claudio import __main__ as entry
+
+    log_file = tmp_path / "claudio.log.jsonl"
+    recent = _iso_line(time.time() - 100, "recent")
+    log_file.write_bytes(_iso_line(time.time() - 40 * 86400, "old") + recent)
+    seen: list[bytes] = []
+
+    def stub(*args: object, **kwargs: object) -> None:
+        seen.append(log_file.read_bytes())
+        raise RuntimeError("stop here")
+
+    monkeypatch.setenv("CLAUDIO_LOGS_DIR", str(tmp_path))
+    monkeypatch.setattr(entry, "setup_logging", stub)
+    with pytest.raises(RuntimeError, match="stop here"):
+        entry.main(["--check"])
+    assert seen == [recent]

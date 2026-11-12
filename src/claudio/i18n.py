@@ -251,6 +251,13 @@ EN: dict[str, str] = {
     ),
     "Log: %d file più vecchi di %d giorni eliminati": "Logs: %d files older than %d days deleted",
     "Impossibile eliminare il vecchio log %s": "Could not delete the old log %s",
+    "Impossibile tagliare il vecchio log %s": "Could not trim the old log %s",
+    "Metriche: %d righe vecchie tolte da metrics.jsonl": (
+        "Metrics: %d old rows removed from metrics.jsonl"
+    ),
+    "Log: %d righe più vecchie di %d giorni tolte da %s": (
+        "Log: %d lines older than %d days removed from %s"
+    ),
     "Risposta non sentita (%s), la scarto: %r": "Answer not heard well (%s), discarded: %r",
     "Conferma non sentita: chiedo ancora": "Confirmation not heard: asking again",
     "Conferma non sentita: chiedo ancora (%s)": "Confirmation not heard: asking again (%s)",
