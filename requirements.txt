@@ -355,7 +355,9 @@ pywin32==312 ; sys_platform == 'win32' \
     --hash=sha256:c53e878d15a1c44788082bfe712a905433473aa38f86375b7cf8b45e3acbaaf9 \
     --hash=sha256:d11417d84412f859b722fad0841b3614459ed0047f7542d8362e77884f6b6e8a \
     --hash=sha256:dab4f65ac9c4e48400a2a0530c46c3c579cd5905ecd11b80692373915269208b
-    # via pywinauto
+    # via
+    #   claudio
+    #   pywinauto
 pywinauto==0.6.9 ; sys_platform == 'win32' \
     --hash=sha256:5924b3072864a1d730c5546bbeb17cf4063ba518b618dbc5e43c18276c7c9356 \
     --hash=sha256:94d710bfa796df245250f952ffa65d97233d9807bcd42e052b71b81af469b6de
