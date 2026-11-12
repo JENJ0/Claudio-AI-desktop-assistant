@@ -100,3 +100,15 @@ def test_the_natural_prompt_is_the_shipped_one() -> None:
     from claudio.config import DEFAULT_CONFIG, load_settings
 
     assert load_settings(DEFAULT_CONFIG).stt.prompts["it"] == cs.NATURAL_PROMPT
+
+
+@pytest.mark.parametrize(
+    ("candidates", "expected"),
+    [
+        (["cue the calculator", "apri la calcolatrice"], "apri la calcolatrice"),
+        (["cue the calculator", "grazie a tutti"], "cue the calculator"),  # none known: the best
+        ([], ""),
+    ],
+)
+def test_first_known(candidates: list[str], expected: str) -> None:
+    assert cs._first_known(candidates, lambda text: "apri" in text) == expected
