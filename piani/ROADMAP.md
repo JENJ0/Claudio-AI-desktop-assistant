@@ -43,7 +43,7 @@ JenJo vuole chiuderle. Non aspettano i Passi B e C: proponile appena Claudio è 
 | B6 | Skill: vedi sezione 7 | vedi sezione 7 |
 | B7 | Prova Sonnet (D6): scrivi qui la data di inizio, cioè il giorno della prova J | data scritta nella sezione 3, riga D6 |
 
-**Fatto quando:** B1-B7 chiusi, commit `docs:` approvati e spinti, CI verde.
+**Fatto quando:** B1-B7 chiusi, commit `docs:` approvati e spinti, CI verde. **Chiuso il 12/11/2026.**
 
 ### Passo C — F1: pulizia piccola, 0 $ di API
 
@@ -167,7 +167,7 @@ Il ciclo di un gruppo è già scritto in «Come lavorare» del piano 0b e nel `C
 - Ogni pack nuovo e ogni aggiornamento passa da `supermatt:dependency-vetting` e dalla lettura dei `SKILL.md`, compreso `allowed-tools`.
 
 **Compito B6:**
-1. Aggiorna superpowers alla 7.0.2 da claude.ai: provato l'11/11, `claude plugin update superpowers@synced` rifiuta un plugin sincronizzato («cannot be updated here»). Controllo della 7.0.2 (11/11): nessuna skill dichiara `allowed-tools`, l'unico hook è locale, l'unica chiamata di rete è il logo del visual companion, che manda la versione e si spegne con `SUPERPOWERS_DISABLE_TELEMETRY`.
+1. Superpowers 7.0.2 installato il 12/11 dal marketplace dell'autore, `superpowers@superpowers-marketplace`, a livello utente: claude.ai offre solo la 6.4.2, ora spenta (`superpowers@synced`). Il marketplace segue il ramo principale del repo senza una versione fissata: ogni aggiornamento va ricontrollato. Sul portatile va rifatto. `claude plugin update superpowers@synced` rifiuta un plugin sincronizzato (provato l'11/11). Controllo della 7.0.2 (11/11): nessuna skill dichiara `allowed-tools`, l'unico hook è locale, l'unica chiamata di rete è il logo del visual companion, che manda la versione e si spegne con `SUPERPOWERS_DISABLE_TELEMETRY`.
 2. Spegni per questo progetto i plugin estranei con `claude plugin disable <nome> --scope local` (oppure `project`: guarda quale file cambia e mostra il diff). Chiedi a JenJo se desktop-commander gli serve qui.
 3. Lancia `/doctor` e riporta cosa dice sul costo delle skill. `claude doctor` da riga di comando (11/11) controlla solo l'installazione; il costo di ogni plugin si legge con `claude plugin details <nome>@synced`.
 
