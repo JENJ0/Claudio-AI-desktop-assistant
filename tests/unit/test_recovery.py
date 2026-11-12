@@ -61,13 +61,12 @@ def recovery(whisper: FakeWhisper, matcher: CommandMatcher, **settings: float) -
 
 def test_the_prompt_has_the_first_phrase_of_every_command_worth_proposing() -> None:
     commands = load_commands(COMMANDS_FILE)
-    prompt = command_prompt(commands, "it")
+    prompt = command_prompt(commands)
     assert prompt.startswith("Claudio, Apri chrome. Apri la cartella download.")
     assert "Chiudi la chat." in prompt and "Spegniti." in prompt and prompt.endswith("Chiuditi.")
     # Awake and on, "svegliati" and "accenditi" change nothing: never proposed.
     assert "Svegliati." not in prompt and "Accenditi." not in prompt
     assert prompt.count(".") == len(commands) - 2
-    assert command_prompt(commands, "en").startswith("Claudio, Open chrome.")
 
 
 @pytest.mark.parametrize(
@@ -142,7 +141,6 @@ def test_ask_gap_cannot_be_above_act_gap() -> None:
         ("Claudio.", "it", False),  # only the name: the request is still to come
         ("", "it", False),
         ("Raccontami una storia lunga di draghi e cavalieri.", "it", False),  # for Claude
-        ("Scaniti.", "fr", False),  # no command has French phrases
     ],
 )
 def test_wants(matcher: CommandMatcher, text: str, language: str, wanted: bool) -> None:

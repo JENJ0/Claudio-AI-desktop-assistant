@@ -85,12 +85,10 @@ def recoverable(command: Command) -> bool:
     return not (command.action == "system" and command.params.get("do") in IDLE_WHEN_AWAKE)
 
 
-def command_prompt(commands: Sequence[Command], language: str) -> str:
+def command_prompt(commands: Sequence[Command]) -> str:
     """ "Claudio, Apri chrome. Apri la cartella download. ...": the first phrase of every
-    command worth proposing, in `language`, as if JenJo had said them one after the other."""
-    firsts = [
-        phrases[0] for cmd in commands if recoverable(cmd) and (phrases := cmd.phrases_in(language))
-    ]
+    command worth proposing, as if JenJo had said them one after the other."""
+    firsts = [cmd.phrases[0] for cmd in commands if recoverable(cmd)]
     return f"{NAME}, " + " ".join(f"{p[:1].upper()}{p[1:]}." for p in firsts)
 
 
@@ -119,14 +117,12 @@ class CommandRecovery:
         self.whisper = whisper
         self.matcher = matcher
         self.settings = settings
-        self._prompts = {lang: command_prompt(commands, lang) for lang in matcher.languages}
+        self._prompt = command_prompt(commands)
 
     def wants(self, text: str, language: str) -> bool:
-        """Worth a try: a short phrase (a question too) that no command understands, in a
-        language the commands have phrases in."""
+        """Worth a try: a short phrase (a question too) that no command understands."""
         return (
             self.settings.enabled
-            and language in self._prompts
             and bool(text.strip())
             and not only_wake_words(text)
             and words(text) <= self.settings.max_words
@@ -139,7 +135,7 @@ class CommandRecovery:
         from a worker thread, holding the lock of every Whisper use."""
         if not self.wants(text, language):
             return None
-        heard = self.whisper.listen_again(audio, self._prompts[language], language)
+        heard = self.whisper.listen_again(audio, self._prompt, language)
         proposal = heard.text
         match = self.matcher.match(proposal, language) if proposal else None
         if match is None or not recoverable(match.command):

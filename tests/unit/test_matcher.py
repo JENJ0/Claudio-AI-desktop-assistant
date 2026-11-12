@@ -145,6 +145,8 @@ NEGATIVE = [
     "",
     "Sì",
     "Grazie",
+    "Chiuditi di dieci",  # an exact-only command followed by a number
+    "Spegniti tre volte",
 ]
 
 
@@ -196,178 +198,30 @@ def test_duplicate_id_is_rejected(tmp_path: Path) -> None:
         load_commands(f)
 
 
-POSITIVE_EN = [
-    ("Open Chrome.", "open_chrome"),
-    ("Hey Claudio, open the browser, please", "open_chrome"),
-    ("Could you open Google Chrome?", "open_chrome"),
-    ("Launch Chrome", "open_chrome"),
-    ("Open Crome", "open_chrome"),
-    ("Open my downloads", "open_downloads"),
-    ("Open the Downloads folder.", "open_downloads"),
-    ("Go to downloads", "open_downloads"),
-    ("Show my downloads", "open_downloads"),
-    ("Open download", "open_downloads"),
-    ("Open documents", "open_documents"),
-    ("Open the documents folder", "open_documents"),
-    ("Open my documents.", "open_documents"),
-    ("Go to documents", "open_documents"),
-    ("Open document", "open_documents"),
-    ("Open File Explorer", "open_explorer"),
-    ("Open Explorer.", "open_explorer"),
-    ("Open Windows Explorer", "open_explorer"),
-    ("Open the file manager", "open_explorer"),
-    ("Open my files", "open_explorer"),
-    ("Open Notepad.", "open_notepad"),
-    ("Open the notepad", "open_notepad"),
-    ("Start Notepad", "open_notepad"),
-    ("Launch notepad please", "open_notepad"),
-    ("Open note pad", "open_notepad"),
-    ("Open the calculator", "open_calculator"),
-    ("Open calculator.", "open_calculator"),
-    ("Start the calculator", "open_calculator"),
-    ("Calculator", "open_calculator"),
-    ("Open the calculater", "open_calculator"),
-    ("Turn up the volume", "volume_up"),
-    ("Turn the volume up.", "volume_up"),
-    ("Volume up", "volume_up"),
-    ("Turn up the volume by 10", "volume_up"),
-    ("Louder", "volume_up"),
-    ("Turn down the volume", "volume_down"),
-    ("Turn the volume down", "volume_down"),
-    ("Volume down.", "volume_down"),
-    ("Lower the volume three times", "volume_down"),
-    ("Quieter", "volume_down"),
-    ("Mute", "mute"),
-    ("Unmute.", "mute"),
-    ("Mute the sound", "mute"),
-    ("Turn off the sound", "mute"),
-    ("Mute the audio", "mute"),
-    ("What time is it?", "tell_time"),
-    ("What's the time?", "tell_time"),
-    ("Tell me the time", "tell_time"),
-    ("Claudio, what time is it now?", "tell_time"),
-    ("Do you know what time it is?", "tell_time"),
-    ("What day is it today?", "tell_date"),
-    ("What day is it?", "tell_date"),
-    ("What's the date?", "tell_date"),
-    ("What's today's date?", "tell_date"),
-    ("Tell me the date", "tell_date"),
-    ("Claudio, go to sleep", "pause"),
-    ("Pause.", "pause"),
-    ("Take a break", "pause"),
-    ("Sleep", "pause"),
-    ("Go to sleep now", "pause"),
-    ("Claudio, wake up!", "resume"),
-    ("Wake up", "resume"),
-    ("Resume", "resume"),
-    ("Are you awake?", "resume"),
-    ("Come back", "resume"),
-    ("Claudio, shut down.", "shutdown"),
-    ("Shut yourself down", "shutdown"),
-    ("Turn yourself off, please", "off"),
-    ("Switch yourself off", "off"),
-    ("Shut down", "shutdown"),
-    ("Quit", "shutdown"),
-    ("Claudio, close yourself.", "shutdown"),
-    ("Stop listening", "off"),
-    ("Go silent", "off"),
-    ("Go deaf", "off"),
-    ("Turn yourself on", "on"),
-    ("Switch yourself on", "on"),
-    ("Start listening", "on"),
-    ("Start listening again", "on"),
-    ("Turn yourself back on", "on"),
-    ("Open the chat", "open_chat"),
-    ("Chat", "open_chat"),
-    ("Let me type", "open_chat"),
-    ("Show the chat", "open_chat"),
-    ("Open the chat window, please", "open_chat"),
-    ("Close the chat", "close_chat"),
-    ("Close chat", "close_chat"),
-    ("Hide the chat", "close_chat"),
-    ("Close the chat window", "close_chat"),
-    ("Claudio, close the chat", "close_chat"),
-    ("Turn the volume on", "volume_up"),
-    ("Volume on", "volume_up"),
-    ("Turn the volume off", "mute"),
-    ("Wake up, Claudio.", "resume"),  # the name after the command
-    ("Mute, Claudio", "mute"),
-]
-
-NEGATIVE_EN = [
-    "Shut down the computer",  # shutting CLAUDIO down needs the exact phrase
-    "Shut down the...",  # a pause after "the": the rest of the sentence is still to come
-    "Shut down by ten",
-    "What's the weather today?",  # close to "what's the date today", but no "date"
-    "What's the rate today?",
-    "What's the tide?",
-    "What's the title?",
-    "Turn off the lights",
-    "Shut the door",
-    "Open Spotify",
-    "What's the weather tomorrow?",
-    "Book a flight to Rome",
-    "Pause the game",  # media keys need music, a video or a song
-    "Tell me a joke",
-    "Thank you",
-    "Yes",
-]
-
-
-@pytest.mark.parametrize(("text", "command_id"), POSITIVE_EN)
-def test_positive_english(matcher: CommandMatcher, text: str, command_id: str) -> None:
-    match = matcher.match(text, "en")
-    assert match is not None, f"nessun comando per {text!r}"
-    assert match.command.id == command_id and match.language == "en"
-
-
-@pytest.mark.parametrize("text", NEGATIVE_EN)
-def test_negative_english(matcher: CommandMatcher, text: str) -> None:
-    assert matcher.match(text, "en") is None
-
-
-def test_every_english_command_has_five_variants(matcher: CommandMatcher) -> None:
-    counts: dict[str, int] = {}
-    for _, cid in POSITIVE_EN:
-        counts[cid] = counts.get(cid, 0) + 1
-    assert set(counts) == {cid for _, cid in POSITIVE}
-    assert all(n >= 5 for n in counts.values()), counts
-    assert matcher.languages == ["it", "en"]
-
-
-def test_the_language_of_the_phrase_wins(matcher: CommandMatcher) -> None:
-    """Whisper picked the wrong language: the phrase is still found, in its own language."""
-    match = matcher.match("open the calculator", "it")
-    assert match is not None and match.command.id == "open_calculator" and match.language == "en"
-    match = matcher.match("Apri la calcolatrice", "en")
-    assert match is not None and match.language == "it"
-    match = matcher.match("Turn up the volume by 10", "en")
-    assert match is not None and match.number == 10
-
-
-def test_translations_are_loaded(tmp_path: Path) -> None:
-    f = tmp_path / "c.toml"
-    f.write_text(
-        '[[command]]\nid="a"\nphrases=["apri x"]\nphrases_en=["open x"]\naction="open_app"\n'
-        'reply="Apro X."\nreply_en="Opening X."\nparams={ already="Già.", already_en="Done." }\n',
-        encoding="utf-8",
-    )
-    (cmd,) = load_commands(f)
-    assert cmd.languages == ("it", "en") and cmd.phrases_in("en") == ("open x",)
-    assert cmd.reply == "Apro X." and cmd.params == {"already": "Già.", "already_en": "Done."}
-
-
 def test_keywords_gate_fuzzy_matches(tmp_path: Path) -> None:
     f = tmp_path / "c.toml"
     f.write_text(
-        '[[command]]\nid="t"\nphrases=["che ore sono"]\nphrases_en=["what s the time"]\n'
-        'keywords=["ore"]\nkeywords_en=["Time"]\naction="tell_time"\n',
+        '[[command]]\nid="t"\nphrases=["che ore sono"]\nkeywords=["Ore"]\naction="tell_time"\n',
         encoding="utf-8",
     )
     (cmd,) = load_commands(f)
-    assert cmd.keywords == {"it": frozenset({"ore"}), "en": frozenset({"time"})}
-    matcher = CommandMatcher([cmd])
-    assert matcher.match("what's the tide", "en") is None
-    match = matcher.match("what's the time?", "en")
+    assert cmd.keywords == frozenset({"ore"})
+    matcher = CommandMatcher([cmd], threshold=75)
+    assert matcher.match("che ora sono") is None  # close, but no keyword
+    match = matcher.match("che ore sono?")
     assert match is not None and match.score == 100.0
-    assert matcher.match("what is the time", "en") is not None  # fuzzy, with the keyword
+    assert matcher.match("che ore son") is not None  # fuzzy, with the keyword
+
+
+@pytest.mark.parametrize(
+    ("text", "command_id"),
+    [("stop", "stop"), ("play", "media_play_pause"), ("chat", "open_chat")],
+)
+def test_italian_loanwords_still_match(matcher: CommandMatcher, text: str, command_id: str) -> None:
+    match = matcher.match(text)
+    assert match is not None and match.command.id == command_id
+
+
+@pytest.mark.parametrize("text", ["skip", "quit"])
+def test_english_only_words_find_nothing(matcher: CommandMatcher, text: str) -> None:
+    assert matcher.match(text) is None

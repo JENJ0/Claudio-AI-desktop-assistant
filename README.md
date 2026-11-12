@@ -95,8 +95,8 @@ ancora fare".
 
 Actions have a safety level (`level` in `commands.toml`). Level 1 runs at once. Level 2 asks
 "Confermi?" and CLAUDIO listens for the answer right away, without the wake word: "sì", "ok",
-"va bene" (or "yes") run it, anything else (a "no", silence, a word it does not get) cancels. A yes holds nothing else: "sì, grazie mille" counts, "si chiama Anna", "sì, ma dopo" and "Sì?" do not. At a "Confermi?" asked by Claude, repeating Claudio's own command ("Claudio, spegni") also counts.
-Level 3 reads a summary of what will happen and only "confermo" / "I confirm" runs it. Every
+"va bene" run it, anything else (a "no", silence, a word it does not get) cancels. A yes holds nothing else: "sì, grazie mille" counts, "si chiama Anna", "sì, ma dopo" and "Sì?" do not. At a "Confermi?" asked by Claude, repeating Claudio's own command ("Claudio, spegni") also counts.
+Level 3 reads a summary of what will happen and only "confermo" runs it. Every
 question and answer goes to the log.
 
 After a reply CLAUDIO keeps listening for 6 seconds without the wake word (a beep says so):

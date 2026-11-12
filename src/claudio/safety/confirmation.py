@@ -2,7 +2,7 @@
 
 Level 1: runs at once (open, search, read). Level 2: CLAUDIO asks and a yes runs it (type,
 close an app, move a file). Level 3: CLAUDIO reads a summary of what will happen and only an
-explicit "confermo" / "confirm" runs it (delete, terminal, install, network).
+explicit "confermo" runs it (delete, terminal, install, network).
 
 Anything that is not a clear yes cancels: a TV in the background, a cough or a wrong word
 never confirms an action. A level 2 yes also holds nothing else (_only_yes), and the
@@ -36,17 +36,15 @@ ASK_AGAIN_EXPLICIT = "Non ho capito. {what}. Per procedere dì: confermo."
 # lead-in, wins over a yes.
 NO_WORDS = frozenset(
     {"no", "non", "annulla", "annullare", "ferma", "fermo", "basta", "stop", "niente", "mai"}
-    | {"nope", "dont", "don", "cancel", "abort", "nevermind", "never", "negative", "wait"}
     | {"aspetta", "lascia", "lascialo", "ferme"}
 )
 YES_WORDS = frozenset(
     {"si", "sii", "certo", "certamente", "ok", "okay", "esatto", "procedi", "avanti", "fallo"}
-    | {"confermo", "conferma", "confermato", "yes", "yeah", "yep", "sure", "confirm"}
-    | {"confirmed", "proceed", "affirmative"}
+    | {"confermo", "conferma", "confermato"}
 )
 # Level 3 accepts only the explicit words (a plain "sì" is too easy to say by accident).
-EXPLICIT_WORDS = frozenset({"confermo", "conferma", "confirm", "confirmed"})
-YES_PHRASES = ("va bene", "fai pure", "go ahead", "do it", "i confirm")
+EXPLICIT_WORDS = frozenset({"confermo", "conferma"})
+YES_PHRASES = ("va bene", "fai pure")
 # All a level 2 yes may hold besides yes words, whole yes phrases and the name: "sì, grazie
 # mille" is a yes, "si chiama Anna" has a yes word and says something else.
 YES_COURTESY_PHRASES = (
@@ -54,22 +52,17 @@ YES_COURTESY_PHRASES = (
     "per favore",
     "per piacere",
     "per cortesia",
-    "thank you very much",
-    "thank you",
     "d accordo",
     "certo che si",
-    "of course",
-    "sure thing",
-    "please do",
 )
 YES_COURTESY_WORDS = frozenset(
-    {"grazie", "davvero", "pure", "gentilmente", "dai", "please", "thanks"}
+    {"grazie", "davvero", "pure", "gentilmente", "dai"}
     | {"ehm", "eh", "uhm", "um", "uh", "ah"}
     | {"vai", "perfetto", "giusto", "assolutamente", "adesso", "subito", "cosi", "usalo", "fine"}
 )
 # Words that may open a yes ("ma sì", "allora sì"); after it they start something else ("sì ma").
 YES_OPENERS = frozenset({"ma", "allora"})
-EXPLICIT_PHRASES = ("i confirm", "yes i confirm", "si confermo")
+EXPLICIT_PHRASES = ("si confermo",)
 _PHRASES_LONGEST_FIRST = sorted((*YES_PHRASES, *YES_COURTESY_PHRASES), key=len, reverse=True)
 _ALLOWED_PHRASES = re.compile(rf"\b(?:{'|'.join(_PHRASES_LONGEST_FIRST)})\b")
 

@@ -97,9 +97,9 @@ ancora fare".
 
 Ogni azione ha un livello di sicurezza (`level` in `commands.toml`). Il livello 1 parte subito.
 Il livello 2 chiede "Confermi?" e Claudio ascolta subito la risposta, senza wake word: "sì",
-"ok", "va bene" (o "yes") la eseguono, tutto il resto (un "no", il silenzio, una parola che non
-capisce) la annulla. Il livello 3 legge un riepilogo di cosa succederà e solo "confermo" / "I
-confirm" la esegue. Ogni domanda e risposta finisce nel log.
+"ok", "va bene" la eseguono, tutto il resto (un "no", il silenzio, una parola che non
+capisce) la annulla. Il livello 3 legge un riepilogo di cosa succederà e solo "confermo" la
+esegue. Ogni domanda e risposta finisce nel log.
 
 Dopo una risposta Claudio resta in ascolto per 6 secondi senza wake word (lo dice un bip): un
 altro comando non richiede "Hey Claudio". La finestra si chiude con il silenzio, con "basta" o

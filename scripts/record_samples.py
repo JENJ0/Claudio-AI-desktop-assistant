@@ -8,9 +8,8 @@ Ordinary sentences without the wake word (about 3 minutes), and the room's own n
     uv run python scripts/record_samples.py noise
 The zip to upload to Colab (recordings + training scripts):
     uv run python scripts/record_samples.py pack
-Commands (the first phrase of every command, x2, for benchmark_latency.py), in Italian or English:
+Commands (the first phrase of every command, x2, for benchmark_latency.py):
     uv run python scripts/record_samples.py commands --repeat 2
-    uv run python scripts/record_samples.py commands --repeat 2 --language en
 Safety phrases (a yes and near-yes phrases, x2, for tests/integration/test_safety_audio.py):
     uv run python scripts/record_samples.py safety --repeat 2
 The 145-take safety set for the final test (one stream open for the whole session, about 25 min):
@@ -293,9 +292,7 @@ def command_prompts(
     in `out` (benchmark_latency.py reads the command id before the first "__")."""
     prompts = []
     for c in commands:
-        if not c.phrases_in(language):
-            continue
-        phrase = c.phrases_in(language)[0]
+        phrase = c.phrases[0]
         prefix = f"{c.id}__{slug(phrase)}"
         start = next_index(out, f"{prefix}_")
         for r in range(repeat):
@@ -424,7 +421,7 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=2)
     parser.add_argument("--seconds", type=float, default=None)
     parser.add_argument("--out", type=Path, default=PROJECT_ROOT / "samples")
-    parser.add_argument("--language", default="it", help="commands: lingua delle frasi (it, en)")
+    parser.add_argument("--language", default="it", help="commands: lingua delle frasi")
     args = parser.parse_args()
 
     if args.mode == "pack":

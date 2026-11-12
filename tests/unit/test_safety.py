@@ -25,18 +25,18 @@ NOT_A_YES = [
     "si mica tanto",
     "certo neanche per sogno",
     "si nemmeno per idea",
-    "yes but not now",
-    "sure not now",
-    "yes I won't",
+    "sì ma più tardi",
+    "certo magari domani",
+    "sì lo faccio io",
     "si forse",
     "certo ci penso",
     "si vede",
     "si fa tardi",
-    "yes open chrome",
+    "sì apri chrome",
     "si apri chrome",
-    "ok later",
+    "ok più tardi",
     "ok ci penso",
-    "ok not now",
+    "ok forse domani",
     "ok apri chrome",
     "ok che ore sono",
     "certo che non voglio dimenticarlo",
@@ -44,12 +44,12 @@ NOT_A_YES = [
     "si va",
     "ok senti",
     "ok scusa",
-    "ok so now",
-    "you can do it",
-    "i will do it",
-    "can you do it",
-    "go ahead and open chrome",
-    "do it later",
+    "ok quindi adesso",
+    "puoi farlo tu",
+    "lo faccio io",
+    "puoi farlo",
+    "fai pure e apri chrome",
+    "fallo dopo",
     "per favore apri chrome",
     "Sì, ma...",  # "ma" and "allora" open a yes ("ma sì"), they never follow it
     "Va bene, ma",
@@ -72,18 +72,12 @@ NOT_A_YES = [
         "va bene",
         "ok",
         "Okay!",
-        "yes",
-        "Yes, go ahead",
         "procedi",
         "Hey Claudio, sì",
     ],
 )
 def test_yes(text: str) -> None:
     assert parse_answer(text) is Answer.YES
-
-
-def test_go_alone_is_not_a_yes() -> None:
-    assert parse_answer("go away") is not Answer.YES
 
 
 @pytest.mark.parametrize(
@@ -106,13 +100,6 @@ def test_go_alone_is_not_a_yes() -> None:
         "ok",
         "ok grazie",
         "sì fallo",
-        "yes",
-        "yes please",
-        "yes thank you very much",
-        "go ahead",
-        "do it",
-        "sure",
-        "sure thanks",
         "ma sì",
         "ma certo",
         "dai sì",
@@ -121,7 +108,6 @@ def test_go_alone_is_not_a_yes() -> None:
         "sì sì sì",
         "sì, grazie mille, Clodio",  # as Whisper may spell it
         "sì, va bene, va bene",
-        "go ahead go ahead",
         "sì vai",
         "ok vai",
         "sì, usalo",
@@ -132,9 +118,6 @@ def test_go_alone_is_not_a_yes() -> None:
         "sì d'accordo",
         "sì adesso",
         "va bene così",
-        "yes of course",
-        "sure thing",
-        "yes please do",
         "okay fine",
     ],
 )
@@ -161,10 +144,7 @@ def test_courtesy_without_a_yes_word_is_not_a_yes(text: str) -> None:
         "Non farlo",
         "lascia stare",
         "stop",
-        "cancel",
-        "don't",
         "sì, anzi no",
-        "yes, no wait",
         "no Claudio, va bene",  # the name after the "no" is stripped with it: no still wins
         "no Claudio sì",
         "no Claudio",
@@ -244,14 +224,10 @@ def test_anything_else_is_unclear(text: str) -> None:
     [
         "confermo",
         "Sì, confermo.",
-        "I confirm",
-        "confirm",
         "sì confermo",
         "confermo grazie",
         "ok confermo",
         "conferma",
-        "yes I confirm",
-        "confirm please",
     ],
 )
 def test_level_3_needs_an_explicit_confirmation(text: str) -> None:
@@ -305,8 +281,6 @@ def test_invalid_level_is_refused(tmp_path: Path) -> None:
 def test_shipped_close_window_is_level_2(matcher: CommandMatcher) -> None:
     match = matcher.match("chiudi la finestra")
     assert match is not None and match.command.level == 2
-    en = matcher.match("close the window", "en")
-    assert en is not None and en.command.id == "close_window"
 
 
 def responder(matcher: CommandMatcher, rec: Recorder) -> LocalResponder:

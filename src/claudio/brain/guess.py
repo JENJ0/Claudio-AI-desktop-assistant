@@ -64,7 +64,7 @@ def catalog(commands: Sequence[Command], language: str = DEFAULT_LANGUAGE) -> st
     """One line per command: "- volume_up: alza il volume / volume su / aumenta il volume"."""
     lines = []
     for cmd in commands:
-        phrases = cmd.phrases_in(language)[:PHRASES_SHOWN] or cmd.phrases[:PHRASES_SHOWN]
+        phrases = cmd.phrases[:PHRASES_SHOWN]
         lines.append(f"- {cmd.id}: {' / '.join(phrases)}")
     return "\n".join(lines)
 

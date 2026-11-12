@@ -858,8 +858,9 @@ def test_command_takes_never_overwrite(tmp_path: Path) -> None:
         def __init__(self, id_: str, phrase: str) -> None:
             self.id, self.phrase = id_, phrase
 
-        def phrases_in(self, language: str) -> list[str]:
-            return [self.phrase] if language == "it" else []
+        @property
+        def phrases(self) -> list[str]:
+            return [self.phrase]
 
     commands = [Command("open_chrome", "apri chrome"), Command("mute", "muto")]
     (tmp_path / "open_chrome__apri_chrome__1.wav").write_bytes(b"")
@@ -870,7 +871,6 @@ def test_command_takes_never_overwrite(tmp_path: Path) -> None:
         "mute__muto__0",
         "mute__muto__1",
     ]
-    assert record_samples.command_prompts(commands, "en", 2, 3.5, tmp_path) == []
 
 
 def test_safety_prompts_read_the_phrases_file(tmp_path: Path) -> None:

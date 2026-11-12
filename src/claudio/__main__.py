@@ -118,7 +118,7 @@ def build_responder(
 
     commands = load_commands(settings.resolve(settings.router.commands_file))
     matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
-    log.info("Router: %d comandi locali (%s)", len(commands), ", ".join(matcher.languages))
+    log.info("Router: %d comandi locali", len(commands))
     if tracker is None:
         tracker = build_tracker(settings)
     store = build_memory(settings, memory_clock)

@@ -219,6 +219,7 @@ class TtsSettings(BaseModel):
     # before the whole first sentence has arrived from Claude (0 = whole sentences only).
     first_clause_chars: int = Field(25, ge=0, le=200)
 
+
 UNKNOWN_REPLY = "Questo non lo so ancora fare."
 ERROR_REPLY = "Non ci sono riuscito."
 
