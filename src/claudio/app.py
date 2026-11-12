@@ -328,8 +328,6 @@ class Assistant:
         # Finished interactions (for tests/benchmarks). Bounded: always-on runs last for weeks.
         self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_MAX)
 
-    # The request filter's settings, as attributes of the Assistant.
-
     @property
     def retry_language(self) -> str | None:
         """A request heard in another language that no command understands is transcribed

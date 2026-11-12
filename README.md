@@ -363,11 +363,14 @@ Kokoro and Piper (lower = faster; 0.77 = +30%, the shipped value; Jack's is `jac
 
 CLAUDIO can start by itself 30 s after you log in to Windows (Task Scheduler, your user only,
 no admin rights, no console window: `pythonw.exe`, logs in `logs/`). Nothing is registered
-until you run this from the project folder (`install` is safe to run twice; `--dry-run` only
-shows what it would do):
+until you run one of these from the project folder (`install` and `uninstall` are safe to run
+twice):
 
 ```powershell
-uv run python -m claudio.autostart install|uninstall|status [--dry-run]
+uv run python -m claudio.autostart install --dry-run   # show only
+uv run python -m claudio.autostart install
+uv run python -m claudio.autostart status
+uv run python -m claudio.autostart uninstall
 ```
 
 The task runs `python -m claudio.supervisor`, which starts CLAUDIO and starts it again after a

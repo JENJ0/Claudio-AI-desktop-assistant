@@ -306,11 +306,14 @@ Piper, impostate in `[tts.voices.en]`. La velocità di Kokoro e Piper si regola 
 
 CLAUDIO può partire da solo 30 s dopo l'accesso a Windows (Utilità di pianificazione, solo il
 tuo utente, senza diritti di amministratore, senza finestra: `pythonw.exe`, log in `logs/`).
-Non si registra niente finché non esegui, dalla cartella del progetto (`install` si può
-ripetere; `--dry-run` mostra soltanto cosa farebbe):
+Non si registra niente finché non esegui, dalla cartella del progetto (`install` e
+`uninstall` si possono ripetere):
 
 ```powershell
-uv run python -m claudio.autostart install|uninstall|status [--dry-run]
+uv run python -m claudio.autostart install --dry-run   # solo mostra
+uv run python -m claudio.autostart install
+uv run python -m claudio.autostart status
+uv run python -m claudio.autostart uninstall
 ```
 
 Il task esegue `python -m claudio.supervisor`, che avvia CLAUDIO e lo riavvia dopo un crash:
