@@ -145,9 +145,15 @@ def build_responder(
     guesser = None
     if brain is not None and settings.guess.enabled:
         from claudio.brain.guess import Guesser
+        from claudio.cost.pricing import PricingError
 
-        # Same client as the replies, its own cheap model ([guess] model): ~0.0001 $ a call.
-        guesser = Guesser(brain.client, tracker, settings.claude, settings.guess, commands)
+        try:
+            tracker.pricing.price(settings.guess.model)  # no price: the spend would not count
+        except PricingError as exc:
+            log.error("Ipotesi di Claude spente: %s", exc)
+        else:
+            # Same client as the replies, its own cheap model ([guess] model): ~0.0001 $ a call.
+            guesser = Guesser(brain.client, tracker, settings.claude, settings.guess, commands)
     return LocalResponder(
         matcher,
         actions,
