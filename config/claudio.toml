@@ -344,4 +344,4 @@ save_audio = true          # keep a WAV of what CLAUDIO heard after each wake wo
 save_voice = true          # keep every piece Jack says (logs/sessions/<run>/jack/NNN.wav) and flag robotic / too high takes in the log
 keep_audio = 8000          # how many to keep: about 670 MB at 84 KB each
 keep_rejected = 4000       # WAVs of what the second chance rejected and of what was heard over a reply (logs/audio/rejected/), about 340 MB; 0 = none
-retention_days = 30        # the chat (data/claudio.db), logs/sessions/ and logs/audio/ (rejected/ too) forget what is older (at startup)
+retention_days = 30        # the chat (data/claudio.db), logs/sessions/, logs/audio/ (rejected/ too), the JSON logs (claudio.log.jsonl, chat-window.log.jsonl, rotated too) and metrics.jsonl forget what is older (at startup)

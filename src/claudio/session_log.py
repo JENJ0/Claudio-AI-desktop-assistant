@@ -4,6 +4,7 @@ read as it is (Claude reads the folder) instead of being copied into the chat.""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import logging.handlers
@@ -121,7 +122,8 @@ def drop_old_lines(path: Path, cutoff: float) -> int:
         os.replace(tmp, path)
     except OSError:
         log.warning("Impossibile tagliare il vecchio log %s", path)
-        tmp.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):  # a privacy trim must never stop startup
+            tmp.unlink(missing_ok=True)
         return 0
     return cut
 

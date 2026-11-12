@@ -308,6 +308,14 @@ def test_drop_old_lines_drops_a_broken_line_among_old_ones(tmp_path: Path) -> No
     assert path.read_bytes() == recent
 
 
+def test_drop_old_lines_keeps_an_unreadable_line_after_the_old_ones(tmp_path: Path) -> None:
+    path = tmp_path / "claudio.log.jsonl"
+    rest = b"garbage{\n" + _iso_line(NOW_TS - 100)
+    path.write_bytes(_iso_line(CUTOFF - 5) + rest)
+    assert drop_old_lines(path, CUTOFF) == 1
+    assert path.read_bytes() == rest
+
+
 def test_drop_old_lines_keeps_unreadable_files(tmp_path: Path) -> None:
     path = tmp_path / "claudio.log.jsonl"
     content = b"garbage{\nmore garbage\n"
@@ -373,6 +381,7 @@ def test_main_trims_the_log_before_logging_opens_it(
         raise RuntimeError("stop here")
 
     monkeypatch.setenv("CLAUDIO_LOGS_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDIO_LOGGING__RETENTION_DAYS", "30")
     monkeypatch.setattr(entry, "setup_logging", stub)
     with pytest.raises(RuntimeError, match="stop here"):
         entry.main(["--check"])

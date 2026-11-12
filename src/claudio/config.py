@@ -622,8 +622,9 @@ class LoggingSettings(BaseModel):
     # log: the robotic or too high takes are flagged there (local only).
     save_voice: bool = True
     keep_sessions: int = Field(30, ge=1)  # logs/sessions/<date_time>/: console + conversation
-    # Privacy: the chat (data/claudio.db), logs/sessions/ and logs/audio/ forget what is older
-    # than this many days (at startup).
+    # Privacy: the chat (data/claudio.db), logs/sessions/, logs/audio/, the JSON logs
+    # (claudio.log.jsonl, chat-window.log.jsonl, rotated too) and metrics.jsonl forget what is
+    # older than this many days (at startup).
     retention_days: int = Field(30, ge=1)
 
 
