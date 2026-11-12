@@ -10,7 +10,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 
 - si avvia da solo all'accensione del PC e resta attivo nella system tray finché non lo chiudo;
 - si attiva con la parola chiave "Hey Claudio" oppure solo "Claudio";
-- ascolta, capisce e risponde a voce solo in italiano, con poca latenza e audio pulito (decisione D5 di `piani/ROADMAP.md`; il codice inglese rimasto si toglie in F1);
+- ascolta, capisce e risponde a voce solo in italiano, con poca latenza e audio pulito (decisione D5 di `piani/ROADMAP.md`);
 - controlla il PC: apre programmi e cartelle, cerca file, digita tasti, esegue comandi, legge le finestre e, solo se serve, guarda lo schermo;
 - ricorda preferenze e contesto tra una sessione e l'altra;
 - in futuro si collega anche all'iPhone tramite Comandi Rapidi.

@@ -76,7 +76,7 @@
 
 **File:** `src/claudio/stt/transcriber.py`, `scripts/compare_stt.py`, `src/claudio/pc/tools.py`, `src/claudio/pc/files.py`, `src/claudio/app.py`, `src/claudio/autostart.py`, `scripts/install_autostart.ps1`, `README.md`, `README.it.md`; test indicati sotto.
 
-- [ ] M8: `first_known` si sposta in `scripts/compare_stt.py`, il suo unico utente; via da `transcriber.py` e via `test_first_known` (`tests/unit/test_closed_list.py`).
+- [ ] M8: `first_known` si sposta in `scripts/compare_stt.py`, il suo unico utente; via da `transcriber.py`; `test_first_known` passa da `tests/unit/test_closed_list.py` a `tests/unit/test_compare_stt.py` (la funzione è spostata, non tolta).
 - [ ] M9: via le chiavi `"type_text"` e `"press_keys"` di `_SAY` (mai lette). Via `files.walk_search`: il chiamante (`pc/tools.py`, ricerca della cartella) usa `files.walk(...).found`; `test_walk_search` si riscrive su `walk(...).found` con le stesse asserzioni.
 - [ ] M9: via le proprietà `verify_wake`, `closed_list_max_words`, `claude_min_words`, `only_addressed`, `echo_tail_ms` di `Assistant` (lettura e setter). `app.py` legge `self.intake.verify_wake`; i test (anche `tests/unit/timeline.py`) scrivono `assistant.intake.<nome>` e `assistant.own_sound.tail_ms`. Via `test_states_are_strings`.
 - [ ] Autostart: via `scripts/install_autostart.ps1` e la sua menzione in `autostart.py`; nei README restano solo `uv run python -m claudio.autostart install|uninstall|status [--dry-run]`.
