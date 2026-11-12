@@ -333,6 +333,8 @@ Dopo la H1 parte la corsia B.
 
 **Scrivimi:** H2, i passi che non tornano, cosa ha detto al passo 3 e cosa ha detto al passo 13.
 
+**Esito H2 (12/11):** conferme (passi 6-10), contesto e azioni fermate (11-12) e tasti (13-15) giusti. **«Dicevo» e «continua» (passi 1-3) no.** Nel `console.log` della sessione `2026-11-12_19-07` il filtro dell'eco ha scartato 6 volte la voce di JenJo sopra la storia («La mia voce nel microfono, la ignoro: 'Claudio, che ore sono?'», 19:08:12-19:09:15): l'interruzione non è mai partita, e «stop» ferma senza riprendere, per scelta. «Continua» non è arrivato. **Va a G2, che si riapre:** prima un test a timeline sul filtro dell'eco.
+
 ---
 
 ## Adesso: G3c
@@ -353,6 +355,8 @@ Dopo la H1 parte la corsia B.
 **Noto, non è un errore:** se Claude ti ha appena fatto una domanda, un comando senza nome («Spegniti.») viene preso come risposta. Con il nome funziona. Si sistema in G5.
 
 **Scrivimi:** J, i passi che non tornano, l'attesa al passo 2 e al passo 8.
+
+**Esito J (12/11), giorno d'inizio della prova D6:** passo 2 con attesa breve. **Passo 4:** Claude ha proposto un secondo CV, in iCloud; al «sì» ha chiamato `open_path(~\iCloudDrive\Downloads\CV_EN.pdf)`, lo strumento ha risposto «ok» ma la finestra non si è mai vista, e Claude ha supposto una scheda di Chrome invece di controllare (sessione `2026-11-12_18-58`, 19:00:27-19:00:46) → **G6**: causa da verificare, scheda nascosta di Chrome o file iCloud solo online. **Passo 8:** JenJo ha chiesto «in una nuova finestra»; Claude ha chiamato `open_app(Blocco note)` e poi `press_keys(ctrl+shift+n)`, e le finestre nuove sono state due (19:03:16) → **G6**. Attesa di circa 8 s prima della scrittura (prima voce udibile a 5,2 s) → **G7**.
 
 ---
 

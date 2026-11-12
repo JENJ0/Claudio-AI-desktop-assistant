@@ -86,7 +86,7 @@ Test prima del codice per S8 e S9. Per le rimozioni vale il test della cancellaz
 | D3 | **Portatile:** solo sviluppo. Claudio e il gate di replay girano solo sul fisso |
 | D4 | **Capacità nuove:** web vero, poi osservatore e sessione lunga (I3, I4), poi i momenti giusti (I5). Telefono (I8), app e agenti (I9), casa: dopo |
 | D5 | **Pulizia:** via multilingua, catalogo inglese, effetti voce. Pre-call di Haiku (M3): se G5 non lo accende, si toglie |
-| D6 | **Sonnet principale è in prova** per circa 10 giorni d'uso reale. Resta se la proiezione è entro **50 $ al mese**; sopra, torna Haiku principale. Fino al verdetto M1, M2 e R2 non si toccano. Inizio prova: _da scrivere (B7)_ |
+| D6 | **Sonnet principale è in prova** per circa 10 giorni d'uso reale. Resta se la proiezione è entro **50 $ al mese**; sopra, torna Haiku principale. Fino al verdetto M1, M2 e R2 non si toccano. Inizio prova: 12/11/2026, giorno della prova J. |
 | D7 | **Diario dell'osservatore:** su disco in `claudio.db`, cancellato dopo `retention_days` |
 | D8 | **Git:** push a fine di ogni gruppo approvato; in `main` solo con PR a CI verde, al rilascio |
 | D9 | **Skill:** vedi sezione 7 |
