@@ -26,8 +26,6 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-from claudio.i18n import tr
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "claudio.toml"
 DEFAULT_LANGUAGE = "it"  # commands.toml's plain `phrases` and `reply`, the first fallback
@@ -638,7 +636,6 @@ class Settings(BaseSettings):
     # Set by load_settings() before instantiation.
     _toml_path: ClassVar[Path] = DEFAULT_CONFIG
 
-    language: Literal["it", "en"] = "it"  # the program's own messages (console, --check)
     models_dir: Path = Path("models")
     logs_dir: Path = Path("logs")
     data_dir: Path = Path("data")  # what Claudio learns and keeps (e.g. the microphone level)
@@ -683,40 +680,16 @@ def load_settings(path: Path | None = None, **overrides: Any) -> Settings:
     """Load settings; raise ConfigError with a readable message on problems."""
     path = path or Path(os.environ.get("CLAUDIO_CONFIG", DEFAULT_CONFIG))
     if not path.is_file():
-        raise ConfigError(tr("File di configurazione non trovato: {path}", path=path))
+        raise ConfigError(f"File di configurazione non trovato: {path}")
     Settings._toml_path = path
     try:
         return Settings(**overrides)
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(tr("{path}: TOML non valido ({error})", path=path, error=exc)) from exc
+        raise ConfigError(f"{path}: TOML non valido ({exc})") from exc
     except SettingsError as exc:  # a value in .env or the environment that cannot be read
-        raise ConfigError(
-            tr("{path}: valori non validi -> {problems}", path=path, problems=exc)
-        ) from exc
+        raise ConfigError(f"{path}: valori non validi -> {exc}") from exc
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in exc.errors()
         )
-        raise ConfigError(
-            tr("{path}: valori non validi -> {problems}", path=path, problems=problems)
-        ) from exc
-
-
-def configured_language(path: Path | None = None) -> str:
-    """The `language` setting read without validating anything (environment, .env, TOML),
-    so that even a configuration error is reported in it."""
-    if value := os.environ.get("CLAUDIO_LANGUAGE"):
-        return value.strip()
-    try:
-        for line in (PROJECT_ROOT / ".env").read_text(encoding="utf-8").splitlines():
-            key, _, value = line.partition("=")
-            if key.strip() == "CLAUDIO_LANGUAGE":
-                return value.strip().strip("\"'")
-    except OSError:
-        pass
-    path = path or Path(os.environ.get("CLAUDIO_CONFIG", DEFAULT_CONFIG))
-    try:
-        with path.open("rb") as fh:
-            return str(tomllib.load(fh).get("language", DEFAULT_LANGUAGE))
-    except (OSError, tomllib.TOMLDecodeError):
-        return DEFAULT_LANGUAGE
+        raise ConfigError(f"{path}: valori non validi -> {problems}") from exc

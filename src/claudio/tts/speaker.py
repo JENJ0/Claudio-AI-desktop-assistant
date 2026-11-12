@@ -16,7 +16,6 @@ import numpy as np
 from claudio.audio.earcons import make_earcons
 from claudio.audio.player import AudioPlayer
 from claudio.config import DEFAULT_LANGUAGE, TtsSettings
-from claudio.i18n import tr
 from claudio.tts.sentence_splitter import group_stream, split_stream
 
 log = logging.getLogger(__name__)
@@ -26,12 +25,8 @@ def voice_path(piper_dir: Path, voice: str) -> Path:
     path = piper_dir / f"{voice}.onnx"
     if not path.is_file() or not path.with_suffix(".onnx.json").is_file():
         raise FileNotFoundError(
-            tr(
-                "Voce Piper '{voice}' mancante in {folder}. Esegui: "
-                "uv run python scripts/download_models.py",
-                voice=voice,
-                folder=piper_dir,
-            )
+            f"Voce Piper '{voice}' mancante in {piper_dir}. Esegui: "
+            "uv run python scripts/download_models.py"
         )
     return path
 

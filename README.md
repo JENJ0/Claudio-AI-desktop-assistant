@@ -350,8 +350,7 @@ English to Whisper) CLAUDIO keeps the language of the previous request. A reques
 that no command understands is transcribed again in Italian (about 0.2 s, only then): "cue the
 calculator" becomes "apri la calcolatrice". `retry_in_first_language = false` turns it off. With one language,
 the shipped default, there is no detection at all. Whisper's prompt is per language,
-in `[stt.prompts]`. CLAUDIO's own messages (console, log, `--check`) are Italian by default;
-`language = "en"` (or `CLAUDIO_LANGUAGE=en`) switches them to English.
+in `[stt.prompts]`.
 
 The voice is Jack (see "Jack's voice"); the fallback is Nicola (Kokoro, male), and Paola (Piper)
 when Kokoro does not load. `CLAUDIO_TTS__ENGINE=kokoro` or `piper` makes one of them the main

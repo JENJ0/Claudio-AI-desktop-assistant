@@ -9,8 +9,6 @@ import threading
 import time
 from typing import Any
 
-from claudio.i18n import tr
-
 log = logging.getLogger(__name__)
 
 AUTO = "auto"  # input_device: the microphone with the most signal (probe_inputs)
@@ -149,12 +147,8 @@ def resolve_device(
     ]
     if not matches:
         raise ValueError(
-            tr(
-                "Nessun dispositivo di {kind} contiene '{spec}'. Elencali con: "
-                "uv run python scripts/list_audio_devices.py",
-                kind=kind,
-                spec=spec,
-            )
+            f"Nessun dispositivo di {kind} contiene '{spec}'. Elencali con: "
+            "uv run python scripts/list_audio_devices.py"
         )
     for index in matches:
         if PREFERRED_HOST_API in str(hostapis[devices[index]["hostapi"]]["name"]):

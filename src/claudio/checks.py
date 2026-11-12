@@ -8,7 +8,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 from claudio.config import Settings, SttSettings
-from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -63,20 +62,13 @@ def find_whisper_model(name: str, root: Path) -> Path:
         try:
             folder = Path(download_model(name, local_files_only=True, cache_dir=str(root)))
         except FileNotFoundError as exc:
-            raise FileNotFoundError(
-                tr("modello Whisper {name} non scaricato in {folder}", name=name, folder=root)
-            ) from exc
+            raise FileNotFoundError(f"modello Whisper {name} non scaricato in {root}") from exc
     missing = [f for f in WHISPER_FILES if not (folder / f).is_file()]
     if not any((folder / f).is_file() for f in WHISPER_VOCABULARIES):
         missing.append(WHISPER_VOCABULARIES[0])
     if missing:
         raise FileNotFoundError(
-            tr(
-                "modello Whisper {name} incompleto in {folder}: mancano {files}",
-                name=name,
-                folder=folder,
-                files=", ".join(missing),
-            )
+            f"modello Whisper {name} incompleto in {folder}: mancano {', '.join(missing)}"
         )
     return folder
 
@@ -86,22 +78,22 @@ def check_whisper(settings: Settings, gpus: int, report: Callable[[bool, str], N
     download ~3 GB at startup); the fallback one only gets a warning."""
     root = settings.resolve(settings.models_dir) / "whisper"
     if settings.stt.device == "cuda" and not gpus:  # "cuda" never falls back to the CPU
-        report(False, tr('[stt] device = "cuda" senza GPU CUDA: Whisper non partirà'))
+        report(False, '[stt] device = "cuda" senza GPU CUDA: Whisper non partirà')
     needed, other = whisper_models(settings.stt, gpus)
     try:
         folder = find_whisper_model(needed, root)
         size = (folder / "model.bin").stat().st_size / 1e9
-        report(True, tr("modello Whisper {name} ({size} GB)", name=needed, size=f"{size:.1f}"))
+        report(True, f"modello Whisper {needed} ({size:.1f} GB)")
     # OSError: missing, or a cache it cannot read; ImportError: faster_whisper is broken (its
     # own ERR line is above), and the rest of the report must still be printed.
     except (OSError, ValueError, ImportError) as exc:
-        report(False, f"{exc}. {tr('Scaricalo con')}: {download_hint(needed)}")
+        report(False, f"{exc}. Scaricalo con: {download_hint(needed)}")
     if other is None:
         return
     try:
         find_whisper_model(other, root)
     except (OSError, ValueError, ImportError) as exc:
-        when = tr("senza GPU") if other == settings.stt.fallback_model else tr("con la GPU")
+        when = "senza GPU" if other == settings.stt.fallback_model else "con la GPU"
         log.warning("WARN %s: serve solo %s (%s)", exc, when, download_hint(other))
 
 
@@ -125,15 +117,10 @@ def check_commands(settings: Settings, report: Callable[[bool, str], None]) -> N
         commands = load_commands(settings.resolve(settings.router.commands_file))
         matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
         languages = ", ".join(matcher.languages)
-        what = tr(
-            "{count} comandi in {file} ({languages})",
-            count=len(commands),
-            file=settings.router.commands_file,
-            languages=languages,
-        )
+        what = f"{len(commands)} comandi in {settings.router.commands_file} ({languages})"
         report(True, what)
     except Exception as exc:
-        report(False, tr("comandi: {error}", error=exc))
+        report(False, f"comandi: {exc}")
 
 
 def check_model_files(
@@ -152,7 +139,7 @@ def check_model_files(
         wanted += [models / "kokoro" / name for name in KOKORO_FILES]
     wanted += [models / "wakeword" / f for f in FEATURE_MODELS]
     for path in wanted:
-        report(path.exists(), tr("modello {path}", path=path.relative_to(models)))
+        report(path.exists(), f"modello {path.relative_to(models)}")
 
 
 def check_jack(settings: Settings, models: Path, report: Callable[[bool, str], None]) -> None:
@@ -162,7 +149,7 @@ def check_jack(settings: Settings, models: Path, report: Callable[[bool, str], N
     tts = settings.tts
     for rel in (tts.jack_python, tts.jack_checkpoint, tts.jack_rvc_model, tts.jack_applio):
         if (models / rel).exists():
-            report(True, tr("modello {path}", path=rel))
+            report(True, f"modello {rel}")
         else:
             log.warning("WARN voce di Jack non installata (%s): parlerà Kokoro", rel)
 
@@ -198,11 +185,7 @@ def check_wake_words(settings: Settings, models: Path, report: Callable[[bool, s
             path = find_wakeword_model(wake.name, models / "wakeword")
             report(
                 True,
-                tr(
-                    "wake word {name} (soglia {threshold})",
-                    name=path.name,
-                    threshold=wake.threshold,
-                ),
+                f"wake word {path.name} (soglia {wake.threshold})",
             )
         except FileNotFoundError as exc:
             report(False, str(exc))
@@ -220,9 +203,7 @@ def check_gpu(settings: Settings, report: Callable[[bool, str], None]) -> int:
         gpus = ctranslate2.get_cuda_device_count()
         if gpus:
             types = sorted(ctranslate2.get_supported_compute_types("cuda"))
-            report(
-                True, tr("GPU CUDA: {count} (tipi: {types})", count=gpus, types=", ".join(types))
-            )
+            report(True, f"GPU CUDA: {gpus} (tipi: {', '.join(types)})")
         else:
             log.warning(
                 "WARN nessuna GPU CUDA: lo STT userà la CPU (%s)", settings.stt.fallback_model
@@ -241,8 +222,8 @@ def check_audio(settings: Settings, report: Callable[[bool, str], None]) -> None
     )
 
     for kind, spec, label in (
-        ("input", settings.audio.input_device, tr("microfono")),
-        ("output", settings.audio.output_device, tr("uscita audio")),
+        ("input", settings.audio.input_device, "microfono"),
+        ("output", settings.audio.output_device, "uscita audio"),
     ):
         try:
             if kind == "output":
@@ -250,7 +231,7 @@ def check_audio(settings: Settings, report: Callable[[bool, str], None]) -> None
             else:
                 index = resolve_device(spec, kind)
             follows = (
-                tr(" (segue l'uscita predefinita di Windows)")
+                " (segue l'uscita predefinita di Windows)"
                 if kind == "output" and spec == ""
                 else ""
             )

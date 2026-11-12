@@ -82,7 +82,7 @@ def test_resolve_relative_to_project_root() -> None:
 
 def test_languages_voices_and_replies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     s = load_settings(DEFAULT_CONFIG)
-    assert s.stt.languages == ["it"] and s.language == "it"  # Italian only for now (JenJo)
+    assert s.stt.languages == ["it"]  # Italian only for now (JenJo)
     assert "Ehi Claudio" in s.stt.prompt("it") and "Open Chrome" in s.stt.prompt("en")
     assert s.tts.piper_voice_for("en") == "en_US-ryan-low"
     assert s.tts.piper_voice_for("it") == s.tts.voice == s.tts.piper_voice_for("de")
@@ -128,22 +128,6 @@ def test_initial_prompt_from_env_replaces_the_shipped_one(monkeypatch: pytest.Mo
     s = load_settings(DEFAULT_CONFIG)
     assert s.stt.prompt("it") == "Hey Claudio, apri Spotify."
     assert "Open Chrome" in s.stt.prompt("en")
-
-
-def test_configuration_errors_follow_the_language_setting(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from claudio import i18n
-    from claudio.__main__ import main
-
-    f = tmp_path / "c.toml"
-    f.write_text('language = "en"\n[stt]\nbeam_size = 0\n', encoding="utf-8")
-    monkeypatch.delenv("CLAUDIO_LANGUAGE", raising=False)
-    try:
-        assert main(["--config", str(f), "--check"]) == 2
-        assert "Configuration error" in capsys.readouterr().err
-    finally:
-        i18n.set_language("it")
 
 
 def test_kokoro_voices_are_read_from_its_file(tmp_path: Path) -> None:

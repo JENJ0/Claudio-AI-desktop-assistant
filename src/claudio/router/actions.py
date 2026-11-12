@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 from claudio.chat.launcher import ChatLauncher
 from claudio.config import DEFAULT_LANGUAGE
 from claudio.cost.tracker import CostTracker
-from claudio.i18n import tr
 from claudio.router.matcher import Match
 from claudio.system import SystemControl
 
@@ -239,13 +238,7 @@ class ActionRunner:
         cmd = match.command
         handler = self._handlers.get(cmd.action)
         if handler is None:
-            raise ValueError(
-                tr(
-                    "Azione sconosciuta '{action}' nel comando '{command}'",
-                    action=cmd.action,
-                    command=cmd.id,
-                )
-            )
+            raise ValueError(f"Azione sconosciuta '{cmd.action}' nel comando '{cmd.id}'")
         spoken = handler(match, language)
         log.info(
             "Azione eseguita: %s",
@@ -289,7 +282,7 @@ class ActionRunner:
             return str(match.command.param_in("unavailable", language) or "")
         what = match.command.params["do"]
         if what not in ("open", "close"):
-            raise ValueError(tr("Comando chat sconosciuto '{command}'", command=what))
+            raise ValueError(f"Comando chat sconosciuto '{what}'")
         changed = self.chat.open() if what == "open" else self.chat.close()
         return None if changed else str(match.command.param_in("already", language) or "")
 

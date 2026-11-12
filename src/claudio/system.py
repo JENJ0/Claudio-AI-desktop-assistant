@@ -12,8 +12,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from claudio.i18n import tr
-
 log = logging.getLogger(__name__)
 
 PAUSE, RESUME, SHUTDOWN, OFF, ON = "pause", "resume", "shutdown", "off", "on"
@@ -49,7 +47,7 @@ class SystemControl:
         elif what == SHUTDOWN:
             changed, self.stopping = not self.stopping, True
         else:
-            raise ValueError(tr("Comando di sistema sconosciuto '{command}'", command=what))
+            raise ValueError(f"Comando di sistema sconosciuto '{what}'")
         if changed:
             log.info("Sistema: %s", what, extra={"system": what})
             for listener in self._listeners:

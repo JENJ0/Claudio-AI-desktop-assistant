@@ -15,7 +15,6 @@ from typing import Any
 import numpy as np
 
 from claudio.config import DEFAULT_LANGUAGE, TtsSettings
-from claudio.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -40,12 +39,8 @@ def kokoro_files(kokoro_dir: Path) -> tuple[Path, Path, Path]:
     missing = [p.name for p in (model, voices, config) if not p.is_file()]
     if missing:
         raise FileNotFoundError(
-            tr(
-                "Kokoro: mancano {files} in {folder}. Esegui: "
-                "uv run python scripts/download_models.py",
-                files=", ".join(missing),
-                folder=kokoro_dir,
-            )
+            f"Kokoro: mancano {', '.join(missing)} in {kokoro_dir}. Esegui: "
+            "uv run python scripts/download_models.py"
         )
     return model, voices, config
 
@@ -121,13 +116,7 @@ class KokoroSynth:
         if voice not in self._voices.files:
             prefixes = VOICE_PREFIXES.get(language, ("",))
             known = ", ".join(sorted(v for v in self._voices.files if v.startswith(prefixes)))
-            raise ValueError(
-                tr(
-                    "Voce Kokoro '{voice}' sconosciuta (disponibili: {known})",
-                    voice=voice,
-                    known=known,
-                )
-            )
+            raise ValueError(f"Voce Kokoro '{voice}' sconosciuta (disponibili: {known})")
         self.language, self.voice = language, voice
         self._styles = self._voices[voice]  # one style per phoneme count
 

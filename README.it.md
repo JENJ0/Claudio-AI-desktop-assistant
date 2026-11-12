@@ -292,8 +292,7 @@ richiesta sentita come inglese che nessun comando capisce viene ritrascritta in 
 0,2 s, solo in quel caso): "cue the calculator" diventa "apri la calcolatrice".
 `retry_in_first_language = false` lo disattiva. Con
 una lingua sola, come di serie, il riconoscimento non c'è proprio. Il prompt di
-Whisper è per lingua, in `[stt.prompts]`. I messaggi del programma (console, log, `--check`) sono
-in italiano; con `language = "en"` (o `CLAUDIO_LANGUAGE=en`) passano all'inglese.
+Whisper è per lingua, in `[stt.prompts]`.
 
 La voce è Jack (Qwen3-TTS, in un processo separato sulla GPU). Il suo modello addestrato non è nel
 repo: se manca, Claudio lo dice all'avvio e parla Nicola (Kokoro, maschile), o Paola (Piper) se

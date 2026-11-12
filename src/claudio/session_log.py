@@ -15,8 +15,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from claudio.i18n import TranslateFilter
-
 log = logging.getLogger(__name__)
 
 CONSOLE_FILE = "console.log"
@@ -42,7 +40,6 @@ def start_session(logs_dir: Path, keep: int, now: datetime | None = None) -> Pat
         folder / CONSOLE_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
     )
     handler.setFormatter(logging.Formatter(CONSOLE_FORMAT, datefmt="%H:%M:%S"))
-    handler.addFilter(TranslateFilter())
     logging.getLogger().addHandler(handler)
     (folder / CONVERSATION_FILE).write_text(
         f"# CLAUDIO, sessione del {now:%d/%m/%Y %H:%M}\n", encoding="utf-8"

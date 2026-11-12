@@ -9,8 +9,6 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from claudio.i18n import TranslateFilter
-
 _RESERVED = set(vars(logging.makeLogRecord({}))) | {"message", "asctime"}
 
 
@@ -48,14 +46,12 @@ def setup_logging(
                 "%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S"
             )
         )
-        console.addFilter(TranslateFilter())
         root.addHandler(console)
 
     file_handler = logging.handlers.RotatingFileHandler(
         logs_dir / file_name, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
     )
     file_handler.setFormatter(JsonFormatter())
-    file_handler.addFilter(TranslateFilter())
     root.addHandler(file_handler)
 
     # Third-party libraries are chatty at INFO.

@@ -19,7 +19,6 @@ from collections.abc import Callable
 from typing import Any
 
 from claudio import __version__
-from claudio.i18n import tr
 from claudio.system import OFF, ON, PAUSE, RESUME, SHUTDOWN, SystemControl
 
 log = logging.getLogger(__name__)
@@ -49,11 +48,11 @@ def tray_state(system: SystemControl, ready: bool) -> str:
 def tooltip(state: str) -> str:
     """The text shown when the mouse rests on the icon."""
     texts = {
-        STARTING: tr("si avvia..."),
-        ON_STATE: tr("acceso"),
-        PAUSED: tr('in pausa: di\' "Claudio, svegliati"'),
-        OFF_STATE: tr('spento: di\' "Claudio, accenditi"'),
-        CLOSING: tr("si chiude..."),
+        STARTING: "si avvia...",
+        ON_STATE: "acceso",
+        PAUSED: 'in pausa: di\' "Claudio, svegliati"',
+        OFF_STATE: 'spento: di\' "Claudio, accenditi"',
+        CLOSING: "si chiude...",
     }
     return f"CLAUDIO {__version__}: {texts[state]}"
 
@@ -163,17 +162,17 @@ class Tray:
     def _menu(self, pystray: Any) -> Any:
         item, separator = pystray.MenuItem, pystray.Menu.SEPARATOR
         items = [
-            item(lambda _: tr("Accendi") if self.system.off else tr("Spegni"), self._on_off),
+            item(lambda _: "Accendi" if self.system.off else "Spegni", self._on_off),
             item(
-                tr("Pausa"),
+                "Pausa",
                 self._pause,
                 checked=lambda _: self.system.paused,
                 enabled=lambda _: not self.system.off,
             ),
         ]
         if self.chat is not None:
-            items.append(item(tr("Apri la chat"), self._open_chat, default=True))
-        items += [separator, item(tr("Chiudi CLAUDIO"), self._close)]
+            items.append(item("Apri la chat", self._open_chat, default=True))
+        items += [separator, item("Chiudi CLAUDIO", self._close)]
         return pystray.Menu(*items)
 
     def _on_off(self) -> None:

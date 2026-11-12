@@ -2,7 +2,6 @@
 # variable or .env entry: CLAUDIO_<SECTION>__<KEY>, e.g. CLAUDIO_STT__DEVICE=cpu.
 # Relative paths are resolved from the project root.
 
-language = "it"            # it | en: CLAUDIO's own messages (console, --check)
 models_dir = "models"
 logs_dir = "logs"
 data_dir = "data"          # what Claudio keeps between runs (microphone level...)

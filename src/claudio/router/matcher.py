@@ -21,7 +21,6 @@ from typing import Any
 from rapidfuzz import fuzz, process
 
 from claudio.config import DEFAULT_LANGUAGE
-from claudio.i18n import tr
 from claudio.router.normalizer import extract_number, last_clauses, normalize
 from claudio.router.normalizer import language as language_rules
 from claudio.router.phonetic import sound_key, spell_capitals
@@ -127,19 +126,12 @@ def load_commands(path: Path) -> list[Command]:
         )
         if cmd.level not in (1, 2, 3):
             raise ValueError(
-                tr(
-                    "{path}: il comando '{command}' ha un livello non valido ({level})",
-                    path=path,
-                    command=cmd.id,
-                    level=cmd.level,
-                )
+                f"{path}: il comando '{cmd.id}' ha un livello non valido ({cmd.level})"
             )
         if cmd.id in seen:
-            raise ValueError(tr("{path}: comando duplicato '{command}'", path=path, command=cmd.id))
+            raise ValueError(f"{path}: comando duplicato '{cmd.id}'")
         if not cmd.phrases:
-            raise ValueError(
-                tr("{path}: il comando '{command}' non ha frasi", path=path, command=cmd.id)
-            )
+            raise ValueError(f"{path}: il comando '{cmd.id}' non ha frasi")
         seen.add(cmd.id)
         commands.append(cmd)
     return commands
@@ -162,14 +154,7 @@ class CommandMatcher:
                     self._written.setdefault(language, {}).setdefault(norm, phrase)
                     other = table.get(norm)
                     if other and other.id != cmd.id:
-                        raise ValueError(
-                            tr(
-                                "Frase '{phrase}' ambigua: {first} e {second}",
-                                phrase=phrase,
-                                first=other.id,
-                                second=cmd.id,
-                            )
-                        )
+                        raise ValueError(f"Frase '{phrase}' ambigua: {other.id} e {cmd.id}")
                     table[norm] = cmd
         self._choices = {
             language: [p for p, cmd in table.items() if not cmd.exact]
