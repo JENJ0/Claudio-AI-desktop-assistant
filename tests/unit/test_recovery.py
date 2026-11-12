@@ -391,7 +391,7 @@ async def test_a_request_for_claude_can_be_a_misheard_command(
     # 30/10 14:08: "Chi ce l'ha fatta?" went to Claude; it was "chiudi la chat".
     asked: list[str] = []
 
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         asked.append(text)
         yield "Non è chiaro cosa intendi, socio."
 
@@ -472,7 +472,7 @@ async def test_no_second_opinion_while_a_question_waits(fake_vad, vad_settings, 
 async def test_no_second_opinion_on_the_answer_to_claudes_question(
     fake_vad, vad_settings, make_frames, matcher
 ) -> None:
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         yield "Che piatto vuoi stasera?"
 
     whisper = FakeWhisper("Basta.", {"Pasta.": -9.0, "Basta.": -2.0})  # a likelier "basta"
@@ -494,7 +494,7 @@ async def test_the_answer_to_claudes_question_is_never_stopped_on_a_guess(
     # guess: a 0.6 "basta" there is asked, not done (decision 1 is for phrases said to Claudio).
     from claudio.config import NoiseSettings
 
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         yield "Che piatto vuoi stasera?"
 
     whisper = FakeWhisper("Basta.", {"Pasta.": -9.0, "Basta.": -2.0})

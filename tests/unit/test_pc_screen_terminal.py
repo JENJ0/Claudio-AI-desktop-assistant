@@ -242,7 +242,7 @@ async def test_a_cut_at_the_question_keeps_the_words_and_the_action(
     client = ScriptedClient((["Controllo. "], "tool_use", [text("Controllo. "), command()]))
     b = acting_brain(pricing, client, tools)
     b.on_show = lambda: opened.append(True)
-    stream = b.ask("quali programmi usano più memoria?", "it")
+    stream = b.ask("quali programmi usano più memoria?")
     # Task 10: "Controllo. " was held, and goes out with the question
     first = await anext(stream)
     assert first.startswith("Controllo. Per vedere") and first.endswith("confermo.")
@@ -250,7 +250,7 @@ async def test_a_cut_at_the_question_keeps_the_words_and_the_action(
     assert opened == [True] and b.awaiting
     await stream.aclose()
     question, reply = b._history[-1]
-    assert question == "[it] quali programmi usano più memoria?"
+    assert question == "quali programmi usano più memoria?"
     assert reply.startswith("Controllo. Per vedere")
     assert reply.endswith(f"confermo. {claude.CUT_NOTE}")
     assert not [d for d in desk.done if d[0] == "command"]

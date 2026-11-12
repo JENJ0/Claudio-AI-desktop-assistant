@@ -77,7 +77,7 @@ async def test_every_call_sends_the_same_frozen_prompt(pricing: Pricing) -> None
         personality="Sei Jack.",
     )
     for _ in range(2):
-        "".join([c async for c in b.ask("ciao come va", "it")])
+        "".join([c async for c in b.ask("ciao come va")])
     assert (
         client.calls[0]["system"][0]["text"]
         == client.calls[1]["system"][0]["text"]

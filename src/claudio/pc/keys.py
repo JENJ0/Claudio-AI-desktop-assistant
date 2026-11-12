@@ -123,7 +123,7 @@ def escape_text(text: str) -> str:
     return "".join(out)
 
 
-def spoken(combo: str, language: str) -> str:
+def spoken(combo: str) -> str:
     """ "ctrl+shift+t" -> "control maiuscolo T": how the confirmation question says it."""
     words = {"ctrl": "control", "shift": "maiuscolo", "win": "Windows", "plus": "più"}
     out = []

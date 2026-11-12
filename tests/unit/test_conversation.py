@@ -144,7 +144,7 @@ def brain() -> tuple[Callable[[str, str], AsyncGenerator[str, None]], list[str]]
     """Claude as the responder sees it, and what it was asked."""
     asked: list[str] = []
 
-    async def fallback(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def fallback(text: str) -> AsyncGenerator[str, None]:
         asked.append(text)
         yield "Zitto come una tomba."
 
@@ -738,7 +738,7 @@ QUESTION = (
 def claude_says(r: LocalResponder, reply: str) -> None:
     """Claude's reply to whatever no command understands."""
 
-    async def fallback(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def fallback(text: str) -> AsyncGenerator[str, None]:
         yield reply
 
     r.fallback = fallback
@@ -837,7 +837,7 @@ async def test_a_resumed_story_cut_again_goes_on_again(
     )
     replies = iter([STORY])
 
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         yield next(replies)
 
     r.fallback = claude
@@ -1293,7 +1293,7 @@ async def test_a_story_cut_with_the_real_speaker_goes_on_from_the_sentence_it_wa
     stt = assistant.transcriber
     assert isinstance(stt, FakeStt)
 
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         yield f"{first} {second} "
         for _ in range(1000):
             if len(stt.heard) == 2:
@@ -1328,7 +1328,7 @@ async def test_a_reply_still_arriving_stops_when_the_phrase_that_cut_it_is_dropp
         barge_in=barge(vad_settings, ["che giorno è oggi"]),
     )
 
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         yield "C'era una volta un drago. "
         try:
             await asyncio.Event().wait()  # the rest never comes: only a cancel ends this

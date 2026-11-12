@@ -492,12 +492,12 @@ class PcTools:
             return LEVEL_SAFE  # nothing will be pressed: the run reports the error
         return LEVEL_SAFE if all(c in self.safe_keys for c in combos) else LEVEL_CONFIRM
 
-    def repeats(self, calls: Sequence[ToolCall], text: str, language: str) -> bool:
+    def repeats(self, calls: Sequence[ToolCall], text: str) -> bool:
         """`text` says again the one claudio_command waiting for its yes: never with other
-        calls beside it, which nobody said again. `language`: the question's."""
+        calls beside it, which nobody said again."""
         if self.commands is None or len(calls) != 1 or calls[0].name != command_tool.NAME:
             return False
-        return self.commands.said_again(calls[0].args, text, language)
+        return self.commands.said_again(calls[0].args, text, DEFAULT_LANGUAGE)
 
     async def prepare(self, calls: Sequence[ToolCall]) -> dict[str, str]:
         """Before the levels are read: which type_text calls should land in a window of
@@ -557,9 +557,7 @@ class PcTools:
         name = name.casefold()
         return any(free.casefold() in name for free in self.settings.free_typing)
 
-    async def question(
-        self, calls: Sequence[ToolCall], language: str, read_out: bool = False
-    ) -> str:
+    async def question(self, calls: Sequence[ToolCall], read_out: bool = False) -> str:
         """What Claudio says before running `calls` (those of level 2-3): what will happen,
         then "Confermi?" (or, at level 3, how to confirm). Brief: level 2 asks only "Confermi?",
         except for a memory, which is always read out (JenJo must hear what is kept or lost).
@@ -570,22 +568,22 @@ class PcTools:
         read_out = read_out or any(keys_for_the_front(c) for c in calls)
         if top <= LEVEL_CONFIRM and self.settings.confirm_brief and not memory and not read_out:
             return ASK_LEVEL_2
-        what = await self.describe_calls(calls, language)
+        what = await self.describe_calls(calls)
         ask = ASK_LEVEL_3 if top > LEVEL_CONFIRM else ASK_LEVEL_2
         return f"{what}. {ask}" if what else ask  # a bad call describes as ""
 
-    async def describe_calls(self, calls: Sequence[ToolCall], language: str) -> str:
+    async def describe_calls(self, calls: Sequence[ToolCall]) -> str:
         """What `calls` will do, read out ("Chiudo la finestra ..., poi premo enter"); the
         second question says it too. "" when no call has a description."""
         say = _SAY
         ids = {c.id for c in self._reply}
         reply = self._reply if all(c.id in ids for c in calls) else list(calls)
-        parts = [await self._describe(call, say, language, reply) for call in calls]
+        parts = [await self._describe(call, say, reply) for call in calls]
         what = say["then"].join(p for p in parts if p)
         return what[:1].upper() + what[1:]
 
     async def _describe(
-        self, call: ToolCall, say: dict[str, str], language: str, reply: Sequence[ToolCall]
+        self, call: ToolCall, say: dict[str, str], reply: Sequence[ToolCall]
     ) -> str:
         a = call.args
         if call.name == "type_text":
@@ -599,7 +597,7 @@ class PcTools:
                 combos = keys.parse_combos(list(a.get("keys") or []))
             except (keys.BadKey, TypeError):
                 return ""
-            spoken = ", ".join(keys.spoken(c, language) for c in combos)
+            spoken = ", ".join(keys.spoken(c) for c in combos)
             window = await self._front_title(call, say, reply)
             return say["press_keys_into"].format(keys=spoken, window=window)
         if call.name == "close_window":
@@ -619,9 +617,9 @@ class PcTools:
             purpose = purpose[:1].lower() + purpose[1:]
             return say["run_command"].format(purpose=purpose)
         if call.name == command_tool.NAME and self.commands is not None:
-            return say["claudio_command"].format(phrase=self.commands.phrase(a, language))
+            return say["claudio_command"].format(phrase=self.commands.phrase(a))
         if call.name in memory_tools.NAMES and self.memory is not None:
-            return self.memory.describe(call.name, a, language)
+            return self.memory.describe(call.name, a)
         return call.name
 
     async def _front_title(
@@ -688,15 +686,14 @@ class PcTools:
             return query or say["active"]
         return window.title
 
-    async def run(self, call: ToolCall, language: str = DEFAULT_LANGUAGE) -> ToolOutcome:
-        """Run one call. Never raises: an error becomes a tool_result with is_error.
-        `language`: the request's, for a reply Claudio says itself."""
+    async def run(self, call: ToolCall) -> ToolOutcome:
+        """Run one call. Never raises: an error becomes a tool_result with is_error."""
         start = self.clock()
         try:
             if call.name == command_tool.NAME:
                 # Claudio's own commands run here, like the router's: the spending ledger
                 # (SQLite) only works on the thread that opened it.
-                done: str | ToolOutcome = self._own_command(call, language)
+                done: str | ToolOutcome = self._own_command(call)
             elif call.name in memory_tools.NAMES:
                 done = self._memory_call(call)  # quick, and the same thread as the router's
             else:
@@ -727,11 +724,11 @@ class PcTools:
             )
         return outcome
 
-    def _own_command(self, call: ToolCall, language: str) -> ToolOutcome:
+    def _own_command(self, call: ToolCall) -> ToolOutcome:
         if self.commands is None:
             raise ToolFailed(f"unknown tool: {call.name}")
         try:
-            reply = self.commands.run(call.args, language)
+            reply = self.commands.run(call.args)
         except command_tool.UnknownCommand as exc:
             raise ToolFailed(str(exc)) from exc
         last = call.args.get("last") is True  # Claude has nothing to add (IT-1 5.3)

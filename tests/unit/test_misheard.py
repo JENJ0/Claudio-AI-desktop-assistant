@@ -48,8 +48,7 @@ async def test_unsure_request_carries_the_alternatives(pricing: Pricing) -> None
     await ask(b, "Apri la cartella desi.")
     content = client.calls[0]["messages"][-1]["content"]
     assert content == (
-        '[it | unsure: "Apri la cartella Tesi." / "Apri la \'cartella\' tesi"] '
-        "Apri la cartella desi."
+        '[unsure: "Apri la cartella Tesi." / "Apri la \'cartella\' tesi"] Apri la cartella desi.'
     )
 
 
@@ -59,7 +58,7 @@ async def test_a_pre_call_reading_is_labelled_as_haikus(pricing: Pricing) -> Non
     b.heard(Hearing(True, ("Apri la cartella desi.",), True, "apri la cartella Tesi"))
     await ask(b, "Apri la cartella desi.")
     assert client.calls[0]["messages"][-1]["content"] == (
-        '[it | unsure: "Apri la cartella desi." | Haiku read: "apri la cartella Tesi"] '
+        '[unsure: "Apri la cartella desi." | Haiku read: "apri la cartella Tesi"] '
         "Apri la cartella desi."
     )
 
@@ -70,8 +69,8 @@ async def test_unsure_without_alternatives_and_read_once(pricing: Pricing) -> No
     b.heard(Hearing(True))
     await ask(b, "pure sono")
     await ask(b, "che ore sono")  # the next request was not doubted: no stale note
-    assert client.calls[0]["messages"][-1]["content"] == "[it | unsure] pure sono"
-    assert client.calls[1]["messages"][-1]["content"] == "[it] che ore sono"
+    assert client.calls[0]["messages"][-1]["content"] == "[unsure] pure sono"
+    assert client.calls[1]["messages"][-1]["content"] == "che ore sono"
 
 
 async def test_sure_request_has_the_plain_tag(pricing: Pricing) -> None:
@@ -79,7 +78,7 @@ async def test_sure_request_has_the_plain_tag(pricing: Pricing) -> None:
     b = brain(pricing, client)
     b.heard(Hearing())
     await ask(b, "che ore sono")
-    assert client.calls[0]["messages"][-1]["content"] == "[it] che ore sono"
+    assert client.calls[0]["messages"][-1]["content"] == "che ore sono"
 
 
 def test_system_prompt_explains_misheard_requests(pricing: Pricing) -> None:
@@ -121,7 +120,7 @@ async def test_request_cut_before_the_answer_stays_in_the_history(pricing: Prici
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert list(b._history) == [("[it] raccontami una storia lunga", CUT_BEFORE_NOTE)]
+    assert list(b._history) == [("raccontami una storia lunga", CUT_BEFORE_NOTE)]
 
 
 # -- in the Assistant --

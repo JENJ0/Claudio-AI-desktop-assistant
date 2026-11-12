@@ -981,7 +981,7 @@ async def test_a_question_armed_before_the_tray_switched_off_leaves_nothing_on_d
     disk."""
     asked: list[str] = []
 
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         asked.append(text)
         yield f"Hai detto {WORD}."
 
@@ -1084,7 +1084,7 @@ async def test_while_off_an_open_question_is_dropped_not_answered(
     armed = [True] if asked_by == "claude" else []
     asked: list[str] = []
 
-    async def claude(text: str, language: str) -> AsyncGenerator[str, None]:
+    async def claude(text: str) -> AsyncGenerator[str, None]:
         asked.append(text)
         yield "Ok."
 

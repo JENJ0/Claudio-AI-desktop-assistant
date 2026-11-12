@@ -120,8 +120,8 @@ def brain(pricing: Pricing, client: Any, budget: float = 1.0, **settings: Any) -
     )
 
 
-async def ask(b: ClaudeBrain, text: str, language: str = "it") -> str:
-    return "".join([c async for c in b.ask(text, language)])
+async def ask(b: ClaudeBrain, text: str) -> str:
+    return "".join([c async for c in b.ask(text)])
 
 
 def cached(system: str) -> list[dict[str, Any]]:
@@ -137,7 +137,7 @@ async def test_streams_the_reply_and_records_the_cost(pricing: Pricing) -> None:
     assert params["system"] == cached(SYSTEM_PROMPT)  # tools + system: always read back
     assert params["thinking"] == {"type": "disabled"}
     assert params["output_config"] == {"effort": "low"}
-    assert params["messages"] == [{"role": "user", "content": "[it] qual è la capitale d'Italia"}]
+    assert params["messages"] == [{"role": "user", "content": "qual è la capitale d'Italia"}]
     assert b.tracker.calls_today() == 1
     # 400 x 0.10 + 30 x 0.50 per million
     assert b.tracker.spent_today() == pytest.approx(0.000055)
@@ -247,9 +247,9 @@ async def test_history_is_sent_back_and_trimmed(pricing: Pricing) -> None:
     for q in ("uno", "due", "tre"):
         await ask(b, q)
     sent = [m["content"] for m in client.calls[-1]["messages"]]
-    assert sent == ["[it] uno", "Risposta.", "[it] due", "Risposta.", "[it] tre"]
+    assert sent == ["uno", "Risposta.", "due", "Risposta.", "tre"]
     await ask(b, "quattro")
-    assert client.calls[-1]["messages"][0]["content"] == "[it] due"
+    assert client.calls[-1]["messages"][0]["content"] == "due"
 
 
 async def test_history_starts_over_after_a_long_silence(pricing: Pricing) -> None:
@@ -258,7 +258,7 @@ async def test_history_starts_over_after_a_long_silence(pricing: Pricing) -> Non
     await ask(b, "prima domanda")
     b.clock.t += 301  # type: ignore[attr-defined]
     await ask(b, "seconda domanda")
-    assert client.calls[-1]["messages"] == [{"role": "user", "content": "[it] seconda domanda"}]
+    assert client.calls[-1]["messages"] == [{"role": "user", "content": "seconda domanda"}]
 
 
 async def test_no_history_when_turned_off(pricing: Pricing) -> None:
@@ -269,10 +269,10 @@ async def test_no_history_when_turned_off(pricing: Pricing) -> None:
     assert len(client.calls[-1]["messages"]) == 1
 
 
-async def test_reply_language_is_tagged(pricing: Pricing) -> None:
-    client = FakeClient(["Rome."])
-    await ask(brain(pricing, client), "what is the capital of Italy", "en")
-    assert client.calls[0]["messages"][-1]["content"].startswith("[en] ")
+async def test_without_clock_or_doubt_the_message_has_no_tag(pricing: Pricing) -> None:
+    client = FakeClient(["Roma."])
+    await ask(brain(pricing, client), "qual è la capitale d'Italia")
+    assert client.calls[0]["messages"][-1]["content"] == "qual è la capitale d'Italia"
 
 
 async def test_budget_blocked_sends_nothing(pricing: Pricing) -> None:
@@ -346,19 +346,19 @@ async def test_a_reply_cut_at_the_token_limit_ends_with_a_closing_sentence(
     marker tells the voice to drop the fragment; the closing sentence after it stays in the
     history, so "continua" makes sense to Claude."""
     b = brain(pricing, FakeClient(CUT_STORY, stop="max_tokens"))
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     assert chunks[: len(CUT_STORY)] == CUT_STORY
     marker, closing = chunks[len(CUT_STORY) :]
     assert marker is CUT_SHORT and marker == ""  # found by identity, nothing when joined
     assert closing == CLOSING
     assert b.last_call["cut"] == "max_tokens"  # in metrics.jsonl
     assert b.tracker.calls_today() == 1
-    assert b._history[-1] == ("[it] raccontami una storia", "".join(CUT_STORY) + CLOSING)
+    assert b._history[-1] == ("raccontami una storia", "".join(CUT_STORY) + CLOSING)
 
 
 async def test_a_finished_reply_has_no_marker(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(["Fine."]))
-    assert [c async for c in b.ask("dimmi una cosa", "it")] == ["Fine."]
+    assert [c async for c in b.ask("dimmi una cosa")] == ["Fine."]
     assert "cut" not in b.last_call
 
 
@@ -366,7 +366,7 @@ async def test_cut_short_still_counts_the_tokens(pricing: Pricing) -> None:
     """ "basta" while Claude speaks: the speaker closes the stream after the first sentence."""
     client = FakeClient(["Prima frase lunga. ", "Seconda frase. ", "Terza frase."])
     b = brain(pricing, client)
-    stream = b.ask("raccontami una storia", "it")
+    stream = b.ask("raccontami una storia")
     first = await anext(stream)
     await stream.aclose()
     assert first == "Prima frase lunga. "
@@ -375,7 +375,7 @@ async def test_cut_short_still_counts_the_tokens(pricing: Pricing) -> None:
     assert b.last_call["output_tokens"] == len(first) // 3  # estimate from the text
     # A reply cut short stays as context, marked: "continua la storia" must know the story.
     assert list(b._history) == [
-        ("[it] raccontami una storia", f"Prima frase lunga. {CUT_NOTE}"),
+        ("raccontami una storia", f"Prima frase lunga. {CUT_NOTE}"),
     ]
 
 
@@ -547,7 +547,7 @@ async def test_answer_to_claudes_question_needs_no_wake_word(
     with_claude(assistant, r, brain(pricing, client))
     await talk(assistant, make_frames, speaker, requests=2)
     assert len(client.calls) == 2
-    assert client.calls[1]["messages"][-1]["content"] == "[it] Milano."
+    assert client.calls[1]["messages"][-1]["content"] == "Milano."
     assert assistant.history[0]["reply"] == "Da dove parti?"
 
 
@@ -697,8 +697,8 @@ async def test_no_offer_for_a_story(pricing: Pricing) -> None:
 async def test_detail_words_do_not_offer_sonnet_for_a_joke(pricing: Pricing) -> None:
     client = ScriptedClient((["Allora."], "end_turn", []))
     b = brain(pricing, client)
-    assert not b.wants_offer("dimmi una barzelletta nel dettaglio", "it")
-    assert b.wants_offer("spiegami nel dettaglio il mutuo variabile", "it")
+    assert not b.wants_offer("dimmi una barzelletta nel dettaglio")
+    assert b.wants_offer("spiegami nel dettaglio il mutuo variabile")
     assert await ask(b, "dimmi una barzelletta nel dettaglio") == "Allora."
     assert b._offer is None
 
@@ -733,7 +733,7 @@ async def test_sonnet_and_the_second_haiku_pass_the_cut_marker_on(
     pricing: Pricing, replies: list[tuple[list[str], str, list[Any]]], text: str
 ) -> None:
     b = brain(pricing, ScriptedClient(*replies))
-    chunks = [c async for c in b.ask(text, "it")]
+    chunks = [c async for c in b.ask(text)]
     assert chunks[-2] is CUT_SHORT and chunks[-1] == CLOSING
     assert b.last_call["cut"] == "max_tokens"
     assert b._history[-1][1].endswith(CLOSING)
@@ -751,12 +751,12 @@ TWO_SENTENCES = (["Prima frase. ", "Seconda frase."], "end_turn", [])
 @pytest.mark.parametrize(
     ("replies", "before", "text", "question"),
     [
-        ([TWO_SENTENCES], [], "Pensaci bene: 17 per 23?", "[it] Pensaci bene: 17 per 23?"),
+        ([TWO_SENTENCES], [], "Pensaci bene: 17 per 23?", "Pensaci bene: 17 per 23?"),
         (  # the "no" to the offer: Haiku answers without its tools
             [([], "tool_use", HANDOFF), TWO_SENTENCES],
             ["fammi un confronto tra treno e auto"],
             "no",
-            "[it] fammi un confronto tra treno e auto",
+            "fammi un confronto tra treno e auto",
         ),
     ],
 )
@@ -771,7 +771,7 @@ async def test_a_cut_through_the_model_that_answers_is_recorded_at_once(
     b = brain(pricing, ScriptedClient(*replies))
     for said in before:
         await ask(b, said)
-    stream = b.ask(text, "it")
+    stream = b.ask(text)
     assert await anext(stream) == "Prima frase. "
     await stream.aclose()
     assert list(b._history) == [(question, f"Prima frase. {CUT_NOTE}")]
@@ -784,14 +784,14 @@ async def test_a_cut_in_the_story_haiku_tells_itself_keeps_its_words_and_tokens(
 ) -> None:
     client = ScriptedClient(([], "tool_use", HANDOFF), TWO_SENTENCES)
     b = brain(pricing, client)
-    stream = b.ask("raccontami una storia lunga sui pirati", "it")
+    stream = b.ask("raccontami una storia lunga sui pirati")
     assert await anext(stream) == "Prima frase. "
     await stream.aclose()
     await settled()
     # What "continua la storia" reads. The "no answer" entry before it is the doubled cut
     # bookkeeping: a known bug, not pinned here.
     assert b._history[-1] == (
-        "[it] raccontami una storia lunga sui pirati",
+        "raccontami una storia lunga sui pirati",
         f"Prima frase. {CUT_NOTE}",
     )
     assert b.tracker.calls_today() == 2
@@ -799,7 +799,7 @@ async def test_a_cut_in_the_story_haiku_tells_itself_keeps_its_words_and_tokens(
 
 async def test_a_cut_at_the_offer_keeps_the_words(pricing: Pricing) -> None:
     b = brain(pricing, ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF)))
-    stream = b.ask("spiegami il mutuo variabile", "it")
+    stream = b.ask("spiegami il mutuo variabile")
     assert await anext(stream) == "Domanda complessa."
     assert (await anext(stream)).endswith("Lo uso?")
     # Ready by the time the voice says it; the cut itself reaches the brain through
@@ -807,9 +807,7 @@ async def test_a_cut_at_the_offer_keeps_the_words(pricing: Pricing) -> None:
     assert b._offer is not None
     await stream.aclose()
     assert b._offer is not None
-    assert list(b._history) == [
-        ("[it] spiegami il mutuo variabile", f"Domanda complessa. {CUT_NOTE}")
-    ]
+    assert list(b._history) == [("spiegami il mutuo variabile", f"Domanda complessa. {CUT_NOTE}")]
 
 
 async def test_a_handoff_with_no_sonnet_to_offer_ends_the_reply_as_it_is(pricing: Pricing) -> None:
@@ -817,7 +815,7 @@ async def test_a_handoff_with_no_sonnet_to_offer_ends_the_reply_as_it_is(pricing
     b = brain(pricing, client, smart_model="")
     assert await ask(b, "spiegami il mutuo variabile") == "Il mutuo."
     assert b._offer is None and len(client.calls) == 1
-    assert list(b._history) == [("[it] spiegami il mutuo variabile", "Il mutuo.")]
+    assert list(b._history) == [("spiegami il mutuo variabile", "Il mutuo.")]
 
 
 NETWORK_SAID = "Non riesco a collegarmi a Claude. Controlla la connessione."
@@ -917,13 +915,13 @@ async def test_a_connection_lost_during_a_reply_is_said_once_and_keeps_the_words
 ) -> None:
     """ask() raised: an error beep, no sentence, and the turn was lost."""
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     # Two markers: the break and the retry that broke at once (it said nothing).
     assert chunks == ["Prima frase. ", "Seconda fra", "", "", NETWORK_SAID]
     assert chunks[2] is CUT_SHORT
     assert b.last_call["claude_error"] == "network"
     # The history keeps what the voice said: the unfinished "Seconda fra" is dropped.
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase.")]
+    assert list(b._history) == [("raccontami una storia", "Prima frase.")]
     # What was generated is billed, the break and the retry: 400 in each, the 24 characters said
     # at 3 per token on the first.
     assert b.tracker.calls_today() == 2
@@ -935,7 +933,7 @@ async def test_the_voice_says_the_network_error_without_the_unfinished_sentence(
 ) -> None:
     client = BreakingClient(httpx2.ReadError("reset"), (["Prima frase. Attra"], "end_turn", []))
     b = brain(pricing, client)
-    assert [s async for s in split_stream(b.ask("raccontami una storia", "it"))] == [
+    assert [s async for s in split_stream(b.ask("raccontami una storia"))] == [
         "Prima frase.",
         "Non riesco a collegarmi a Claude.",
         "Controlla la connessione.",
@@ -949,13 +947,13 @@ async def test_the_voice_says_the_network_error_without_the_unfinished_sentence(
             [(["Prima frase. Seconda fra"], "end_turn", [])],
             [],
             "Pensaci bene: 17?",
-            "[it] Pensaci bene: 17?",
+            "Pensaci bene: 17?",
         ),
         (  # the "no" to the offer: Haiku answers without its tools
             [([], "tool_use", HANDOFF), (["Prima frase. Seconda fra"], "end_turn", [])],
             ["fammi un confronto tra treno e auto"],
             "no",
-            "[it] fammi un confronto tra treno e auto",
+            "fammi un confronto tra treno e auto",
         ),
     ],
 )
@@ -990,7 +988,7 @@ async def test_a_broken_stream_is_retried_once(pricing: Pricing) -> None:
         Break(["Prima frase. ", "Seconda fra"], SSL_BREAK), (["Ecco."], "end_turn", [])
     )
     b = brain(pricing, client)
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     assert chunks == ["Prima frase. ", "Seconda fra", CUT_SHORT, "Ecco."]
     assert NETWORK_SAID not in "".join(chunks)
     assert len(client.calls) == 2 and client.calls[0]["messages"] == client.calls[1]["messages"]
@@ -1015,7 +1013,7 @@ async def test_the_history_keeps_only_the_words_that_were_said(pricing: Pricing)
     )
     b = brain(pricing, client)
     await ask(b, "cerca il blocco note")
-    assert list(b._history) == [("[it] cerca il blocco note", "Ci guardo. Cerco il Blocco note.")]
+    assert list(b._history) == [("cerca il blocco note", "Ci guardo. Cerco il Blocco note.")]
 
 
 async def test_the_log_row_has_what_was_said_after_a_stream_retry(
@@ -1038,7 +1036,7 @@ async def test_a_second_break_says_the_error(pricing: Pricing) -> None:
         Break(["Uno. "], SSL_BREAK), Break(["Due. "], SSL_BREAK), (["Tre."], "end_turn", [])
     )
     b = brain(pricing, client)
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     assert len(client.calls) == 2 and len(client.replies) == 1
     assert chunks[-1] == NETWORK_SAID and chunks[-2] is CUT_SHORT
     assert b.last_call["claude_error"] == "network"
@@ -1066,7 +1064,7 @@ async def test_no_stream_retry_after_a_new_request_over_the_reply(pricing: Prici
     client = FlakyClient(Break(["Prima. "], SSL_BREAK), (["Ecco."], "end_turn", []))
     b = brain(pricing, client)
     chunks = []
-    async for chunk in b.ask("raccontami una storia", "it"):
+    async for chunk in b.ask("raccontami una storia"):
         b.stop_acting()  # a new request came over the reply
         chunks.append(chunk)
     assert len(client.calls) == 1 and "stream_retry" not in b.last_call
@@ -1100,11 +1098,11 @@ async def test_a_status_error_during_a_reply_is_said_once_and_keeps_the_words(
 ) -> None:
     """ "Seconda fraClaude non ha risposto": glued to the fragment, and the turn was lost."""
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     assert chunks == ["Prima frase. ", "Seconda fra", "", f" {API_SAID}"]
     assert chunks[2] is CUT_SHORT
     assert b.last_call["claude_error"] == status
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+    assert list(b._history) == [("raccontami una storia", "Prima frase. Seconda fra")]
 
 
 async def test_the_voice_says_the_status_error_without_the_unfinished_sentence(
@@ -1112,7 +1110,7 @@ async def test_the_voice_says_the_status_error_without_the_unfinished_sentence(
 ) -> None:
     client = BreakingClient(OVERLOADED_MID_REPLY, (["Prima frase. Attra"], "end_turn", []))
     b = brain(pricing, client)
-    assert [s async for s in split_stream(b.ask("raccontami una storia", "it"))] == [
+    assert [s async for s in split_stream(b.ask("raccontami una storia"))] == [
         "Prima frase.",
         "Claude non ha risposto.",
         "Riprova tra poco.",
@@ -1142,7 +1140,7 @@ async def test_an_overload_inside_the_stream_is_named(pricing: Pricing) -> None:
     )
     assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra {API_SAID}"
     assert b.last_call["claude_error"] == "overloaded_error"
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase. Seconda fra")]
+    assert list(b._history) == [("raccontami una storia", "Prima frase. Seconda fra")]
 
 
 def real_sdk_brain(pricing: Pricing, *events: bytes) -> ClaudeBrain:
@@ -1185,15 +1183,13 @@ async def test_a_broken_event_mid_stream_is_a_spoken_error(pricing: Pricing, eve
     assert await ask(b, "raccontami una storia") == f"{both} {NETWORK_SAID}"
     assert b.last_call["claude_error"] == "bad_stream"
     # The history has what the voice said: the first "Prima frase." once, then the retry's.
-    assert list(b._history) == [
-        ("[it] raccontami una storia", "Prima frase. Prima frase. Seconda fra")
-    ]
+    assert list(b._history) == [("raccontami una storia", "Prima frase. Prima frase. Seconda fra")]
 
 
 async def test_invalid_json_mid_stream_is_a_spoken_error(pricing: Pricing) -> None:
     error = json.JSONDecodeError("Expecting value", "{", 1)
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     assert chunks == ["Prima frase. ", "Seconda fra", "", "", NETWORK_SAID]
     assert b.last_call["claude_error"] == "bad_stream"
 
@@ -1203,7 +1199,7 @@ async def test_invalid_utf8_mid_stream_is_a_spoken_error(pricing: Pricing) -> No
     b = brain(pricing, BreakingClient(error, (["Prima frase. ", "Seconda fra"], "end_turn", [])))
     assert await ask(b, "raccontami una storia") == f"Prima frase. Seconda fra{NETWORK_SAID}"
     assert b.last_call["claude_error"] == "bad_stream"
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase.")]
+    assert list(b._history) == [("raccontami una storia", "Prima frase.")]
 
 
 async def test_a_cancel_during_a_reply_is_not_a_network_error(pricing: Pricing) -> None:
@@ -1211,19 +1207,19 @@ async def test_a_cancel_during_a_reply_is_not_a_network_error(pricing: Pricing) 
     b = brain(pricing, client)
     chunks = []
     with pytest.raises(asyncio.CancelledError):
-        async for chunk in b.ask("raccontami una storia", "it"):
+        async for chunk in b.ask("raccontami una storia"):
             chunks.append(chunk)
     assert chunks == ["Prima frase. "]  # nothing is said on the way out of a cut
     assert "claude_error" not in b.last_call
-    assert list(b._history) == [("[it] raccontami una storia", f"Prima frase. {CUT_NOTE}")]
+    assert list(b._history) == [("raccontami una storia", f"Prima frase. {CUT_NOTE}")]
 
 
 async def test_think_phrases(pricing: Pricing) -> None:
     b = brain(pricing, ScriptedClient())
-    assert b.wants_smart("pensaci bene su questo", "it")
-    assert not b.wants_smart("pensa che bello", "it")
+    assert b.wants_smart("pensaci bene su questo")
+    assert not b.wants_smart("pensa che bello")
     b.smart_model = None
-    assert not b.wants_smart("pensaci bene", "it")
+    assert not b.wants_smart("pensaci bene")
 
 
 async def test_no_sonnet_when_the_budget_runs_out_before_the_yes(pricing: Pricing) -> None:
@@ -1247,7 +1243,7 @@ async def test_the_time_goes_after_the_cached_prefix(pricing: Pricing) -> None:
     await ask(b, "che ore sono in Thailandia")
     assert client.calls[0]["system"] == cached(SYSTEM_PROMPT)  # frozen: cacheable
     content = client.calls[0]["messages"][-1]["content"]
-    assert content == "[it | Fri 2026-10-23 17:15] che ore sono in Thailandia"
+    assert content == "[Fri 2026-10-23 17:15] che ore sono in Thailandia"
 
 
 async def test_warm_up_opens_the_connection_once(pricing: Pricing) -> None:
@@ -1479,7 +1475,7 @@ async def test_a_note_split_anywhere_reaches_neither_the_voice_nor_the_history(
     assert await ask(b, ASKED_01_11) == SAID_01_11
     assert list(b._history) == [
         (
-            f"[it] {ASKED_01_11}",
+            f"{ASKED_01_11}",
             "Va bene, socio, lo cerco per te. Dai, un attimo di pazienza da genio.",
         )
     ]
@@ -1497,7 +1493,7 @@ async def test_a_copied_local_note_is_never_spoken(pricing: Pricing, split: int 
 
 async def test_the_voice_says_only_the_sentences_around_a_note(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(list(REPLY_01_11)))
-    assert [s async for s in split_stream(b.ask(ASKED_01_11, "it"))] == [
+    assert [s async for s in split_stream(b.ask(ASKED_01_11))] == [
         "Va bene, socio, lo cerco per te.",
         "Dai, un attimo di pazienza da genio.",
     ]
@@ -1532,7 +1528,7 @@ async def test_only_the_notes_are_taken_out_of_a_reply(
 ) -> None:
     b = brain(pricing, FakeClient(chunks))
     assert await ask(b, "dimmi una cosa") == said
-    assert list(b._history) == [("[it] dimmi una cosa", said.strip())]
+    assert list(b._history) == [("dimmi una cosa", said.strip())]
 
 
 async def test_an_unclosed_note_loses_only_itself(pricing: Pricing) -> None:
@@ -1600,7 +1596,7 @@ async def test_normal_text_is_said_the_moment_it_arrives(pricing: Pricing) -> No
     """The first word's latency: only a "[" that may still become a note waits, one chunk."""
     client = WatchedClient(["Prima ", "[1", "] vedi", " [", "nota] poi", " fine"])
     b = brain(pricing, client)
-    seen = [(chunk, client.opened.sent) async for chunk in b.ask("dimmi una cosa", "it")]
+    seen = [(chunk, client.opened.sent) async for chunk in b.ask("dimmi una cosa")]
     assert seen == [
         ("Prima ", 1),
         ("[1", 2),  # no note opens like this: no waiting for its "]"
@@ -1659,7 +1655,7 @@ async def test_the_first_word_is_timed_on_what_is_really_said(pricing: Pricing) 
 async def test_a_note_is_taken_out_of_sonnets_reply_too(pricing: Pricing) -> None:
     b = brain(pricing, ScriptedClient((["Fa 391. [Claudio ran: read_window ok]"], "end_turn", [])))
     assert await ask(b, "Pensaci bene: 17 per 23?") == "Fa 391. "
-    assert list(b._history) == [("[it] Pensaci bene: 17 per 23?", "Fa 391.")]
+    assert list(b._history) == [("Pensaci bene: 17 per 23?", "Fa 391.")]
 
 
 async def test_the_model_cannot_write_a_not_run_note(pricing: Pricing) -> None:
@@ -1683,7 +1679,7 @@ async def test_a_cut_closes_every_generator_and_the_stream_at_once(pricing: Pric
 
     sys.set_asyncgen_hooks(firstiter=first_iteration)
     try:
-        stream = b.ask("raccontami una storia", "it")
+        stream = b.ask("raccontami una storia")
         assert await anext(stream) == "Prima frase. "
         assert not client.opened.closed
         await stream.aclose()
@@ -1733,12 +1729,12 @@ async def test_a_cut_through_the_real_sdk_closes_the_http_body_at_once(pricing: 
     http = anthropic.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(answer))
     client = anthropic.AsyncAnthropic(api_key="not-a-key", max_retries=0, http_client=http)
     b = brain(pricing, client)
-    stream = b.ask("raccontami una storia", "it")
+    stream = b.ask("raccontami una storia")
     assert await anext(stream) == "Prima frase. "
     assert not body.closed
     await stream.aclose()
     assert body.closed
-    assert list(b._history) == [("[it] raccontami una storia", f"Prima frase. {CUT_NOTE}")]
+    assert list(b._history) == [("raccontami una storia", f"Prima frase. {CUT_NOTE}")]
     assert b.last_call["input_tokens"] == 400
 
 
@@ -1749,24 +1745,24 @@ async def test_a_cut_while_a_bracket_waits_says_and_keeps_only_what_was_said(
     b = brain(pricing, client)
     chunks = []
     with pytest.raises(asyncio.CancelledError):
-        async for chunk in b.ask("raccontami una storia", "it"):
+        async for chunk in b.ask("raccontami una storia"):
             chunks.append(chunk)
     assert chunks == ["Prima frase. "]  # nothing is said on the way out of a cut
-    assert list(b._history) == [("[it] raccontami una storia", f"Prima frase. {CUT_NOTE}")]
+    assert list(b._history) == [("raccontami una storia", f"Prima frase. {CUT_NOTE}")]
 
 
 async def test_a_connection_lost_while_a_bracket_waits_drops_it(pricing: Pricing) -> None:
     error = httpx2.RemoteProtocolError("peer closed")
     b = brain(pricing, BreakingClient(error, (["Prima frase. [Cla"], "end_turn", [])))
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     assert chunks[0] == "Prima frase. " and chunks[1] is CUT_SHORT
     assert chunks[2:] == [CUT_SHORT, NETWORK_SAID]
-    assert list(b._history) == [("[it] raccontami una storia", "Prima frase.")]
+    assert list(b._history) == [("raccontami una storia", "Prima frase.")]
 
 
 async def test_the_cut_marker_still_follows_a_note_at_the_token_limit(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(["C'era un re. Attra", "[Claudio ran: web"], stop="max_tokens"))
-    chunks = [c async for c in b.ask("raccontami una storia", "it")]
+    chunks = [c async for c in b.ask("raccontami una storia")]
     assert chunks[0] == "C'era un re. Attra" and chunks[1] is CUT_SHORT
     assert chunks[2:] == [CLOSING]
 
@@ -1804,30 +1800,30 @@ async def test_reply_cut_rewrites_a_written_turn_with_what_was_heard(pricing: Pr
     await ask(b, "raccontami")
     assert b._history[-1][1] == "Prima frase. Seconda frase. Terza frase."
     b.reply_cut(["Prima frase.", "Seconda frase."])
-    assert list(b._history) == [("[it] raccontami", f"Prima frase. Seconda frase. {CUT_NOTE}")]
+    assert list(b._history) == [("raccontami", f"Prima frase. Seconda frase. {CUT_NOTE}")]
 
 
 async def test_reply_cut_before_the_first_word_writes_the_no_answer_note(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(STORY_CHUNKS))
     await ask(b, "raccontami")
     b.reply_cut([])
-    assert list(b._history) == [("[it] raccontami", CUT_BEFORE_NOTE)]
+    assert list(b._history) == [("raccontami", CUT_BEFORE_NOTE)]
 
 
 async def test_a_reply_heard_to_its_end_is_not_marked_cut(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(STORY_CHUNKS))
     await ask(b, "raccontami")
     b.reply_cut(["Prima frase.", "Seconda frase.", "Terza frase."])
-    assert list(b._history) == [("[it] raccontami", "Prima frase. Seconda frase. Terza frase.")]
+    assert list(b._history) == [("raccontami", "Prima frase. Seconda frase. Terza frase.")]
 
 
 async def test_text_that_arrives_after_the_cut_never_reaches_the_history(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(STORY_CHUNKS))
-    stream = b.ask("raccontami", "it")
+    stream = b.ask("raccontami")
     first = await anext(stream)
     b.reply_cut([first])
     assert [c async for c in stream] == STORY_CHUNKS[1:]  # still read: "Dicevo" needs it
-    assert list(b._history) == [("[it] raccontami", f"Prima frase. {CUT_NOTE}")]
+    assert list(b._history) == [("raccontami", f"Prima frase. {CUT_NOTE}")]
 
 
 async def test_a_history_pruned_or_cleared_before_the_cut_is_not_rewritten(
@@ -1835,9 +1831,9 @@ async def test_a_history_pruned_or_cleared_before_the_cut_is_not_rewritten(
 ) -> None:
     b = brain(pricing, FakeClient(STORY_CHUNKS), history_turns=1)
     await ask(b, "uno")
-    b._history.append(("[it] altro", "risposta"))  # the window drops "uno"
+    b._history.append(("altro", "risposta"))  # the window drops "uno"
     b.reply_cut(["Prima frase."])
-    assert list(b._history) == [("[it] altro", "risposta")]
+    assert list(b._history) == [("altro", "risposta")]
     b.reset()
     b.reply_cut([])
     assert not b._history
@@ -1891,8 +1887,8 @@ async def test_dicevo_rewrites_the_turn_that_was_cut_and_no_other(pricing: Prici
     await ask(b, "qual è la capitale della Francia")
     b.reply_cut(["Prima frase.", "Seconda frase.", "Terza frase."], handle=handle)
     assert list(b._history) == [
-        ("[it] raccontami", "Prima frase. Seconda frase. Terza frase."),
-        ("[it] qual è la capitale della Francia", "Parigi."),
+        ("raccontami", "Prima frase. Seconda frase. Terza frase."),
+        ("qual è la capitale della Francia", "Parigi."),
     ]
 
 
@@ -1952,8 +1948,8 @@ def test_between_tools_never_goes_with_a_higher_effort() -> None:
 async def test_sonnet_as_main_model_has_no_second_sonnet(pricing: Pricing) -> None:
     client = ScriptedClient((["Allora."], "end_turn", []), (["Ecco."], "end_turn", []))
     b = brain(pricing, client, model=SONNET)
-    assert not b.wants_offer("spiegami in dettaglio la fotosintesi", "it")
-    assert not b.wants_smart("pensaci bene", "it")
+    assert not b.wants_offer("spiegami in dettaglio la fotosintesi")
+    assert not b.wants_smart("pensaci bene")
     await ask(b, "pensaci bene: quanto fa 17 per 23?")
     assert [c["model"] for c in client.calls] == [SONNET]
     assert "tools" not in client.calls[0]  # no ask_sonnet, and no PC tools in this brain

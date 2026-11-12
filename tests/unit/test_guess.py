@@ -480,7 +480,7 @@ async def test_a_phrase_that_is_not_only_a_yes_is_a_new_request(
     """The same path as any request: Claude hears it, word for word."""
     asked: list[str] = []
 
-    async def claude(text: str, language: str) -> AsyncIterator[str]:
+    async def claude(text: str) -> AsyncIterator[str]:
         asked.append(text)
         yield "Ok."
 
@@ -536,7 +536,7 @@ async def test_the_guess_repeated_without_a_yes_is_still_the_echo(matcher: Comma
 async def test_a_yes_and_another_request_is_a_new_request(matcher: CommandMatcher) -> None:
     asked: list[str] = []
 
-    async def claude(text: str, language: str) -> AsyncIterator[str]:
+    async def claude(text: str) -> AsyncIterator[str]:
         asked.append(text)
         yield "Ok."
 
