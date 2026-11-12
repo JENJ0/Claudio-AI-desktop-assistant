@@ -45,9 +45,8 @@ class Transcriber(Protocol):
     # True while no transcribed word may be logged (CLAUDIO is off); the Assistant sets it.
     hides_text: Callable[[], bool] | None
 
-    def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
-        """Transcribe 16 kHz float32 mono audio; returns "" when nothing was said.
-        `language`: skip the detection and use that one."""
+    def transcribe(self, audio: np.ndarray) -> str:
+        """Transcribe 16 kHz float32 mono audio; returns "" when nothing was said."""
         ...
 
 

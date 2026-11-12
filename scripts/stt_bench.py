@@ -9,13 +9,14 @@ how many commands come out right and the time per sentence.
 A variant is a "+"-joined list of changes from how CLAUDIO transcribes today ("live"):
     live      about the gain CLAUDIO learns on that microphone (its sentences' typical loudest
               32 ms at -20 dBFS, soft limiter), the names on this PC and the sentences of
-              [stt.prompts] as Whisper's prompt, Silero's cut of the sentence ([vad] settings).
+              [stt] initial_prompt as Whisper's prompt, Silero's cut of the sentence ([vad]
+              settings).
               What comes after the transcription live (the closed list, waiting for the rest
               of a phrase left halfway) is not in it: compare_stt.py measures the closed list
     recupero  then, as live, a phrase no command understands goes through the closed list and
               Whisper's second opinion ([recovery]): the command proposed counts, asked or done
     grezzo    the recording as the microphone gives it, no gain
-    frasi     prompt: only the sentences of [stt.prompts], no names
+    frasi     prompt: only the sentences of [stt] initial_prompt, no names
     vuoto     no prompt at all
     beam1     beam size 1 instead of [stt] beam_size: faster
     large     Whisper large-v3 instead of [stt] model

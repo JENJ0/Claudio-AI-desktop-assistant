@@ -678,10 +678,8 @@ class Harness:
         self.wake_vad.reset()
         self.detections.count, self.detections.second_chances = 0, 0
         self.detections.peak = 0.0
-        self.stt.last_language = self.settings.stt.languages[
-            0
-        ]  # shortcut: Whisper's private state,
-        self.stt._encoded = None  # no public reset; upgrade if WhisperTranscriber gets one
+        # shortcut: Whisper's private state, no public reset; upgrade if WhisperTranscriber gets one
+        self.stt._encoded = None
         self.assistant = entry.build_assistant(
             settings,
             wake=self.wake,

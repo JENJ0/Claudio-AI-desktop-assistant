@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import tomllib
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
@@ -122,18 +121,6 @@ class SttSettings(BaseModel):
     compute_type: str = "float16"
     fallback_model: str = "small"
     fallback_compute_type: str = "int8"
-    # Whisper picks the language of every request among these; a single one is fixed.
-    # In .env: CLAUDIO_STT__LANGUAGES=it,en (or ["it", "en"]).
-    languages: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: [DEFAULT_LANGUAGE], min_length=1
-    )
-    language: str = ""  # one fixed language (overrides `languages`)
-    language_confidence: float = Field(0.6, ge=0, le=1)  # below this: the last language spoken
-    # A language other than the first must be this sure (fast Italian often sounds English).
-    other_confidence: float = Field(0.9, ge=0, le=1)
-    # A request in another language that no command understands is transcribed again in the
-    # first one (~0.2 s on the GPU, only then): "cue the calculator" -> "apri la calcolatrice".
-    retry_in_first_language: bool = True
     # A request no command understands: Whisper proposes 5 transcriptions and the first known
     # command wins (one more Whisper pass, only on requests not understood).
     closed_list: bool = True
@@ -145,8 +132,7 @@ class SttSettings(BaseModel):
     unsure_logprob: float = Field(-0.2, le=0)
     alternatives: int = Field(2, ge=0, le=4)
     beam_size: int = Field(1, ge=1)
-    initial_prompt: str = ""  # the first language's prompt, in place of prompts.<lang>
-    prompts: dict[str, str] = Field(default_factory=dict)  # Whisper's prompt, per language
+    initial_prompt: str = ""  # Whisper's prompt, read as the words said just before
     # The names on the PC in Whisper's prompt (stt/vocabulary.py): the most recent folders of
     # Desktop and Documents and the programs of the Desktop and Start menu, so "Tesi" is not
     # written "desi". vocabulary_words: JenJo's own names, always first.
@@ -157,24 +143,6 @@ class SttSettings(BaseModel):
     vocabulary_windows: int = Field(8, ge=0, le=20)
     no_speech_threshold: float = Field(0.6, ge=0, le=1)
     cpu_threads: int = Field(4, ge=1)
-
-    @field_validator("languages", mode="before")
-    @classmethod
-    def _languages(cls, value: Any) -> Any:
-        return _json_or(value, lambda text: [p for p in re.split(r"[\s,]+", text) if p])
-
-    @model_validator(mode="after")
-    def _fixed_language(self) -> SttSettings:
-        if self.language:
-            self.languages = [self.language]
-        return self
-
-    def prompt(self, language: str) -> str:
-        """Whisper's prompt for `language`. initial_prompt (v0.1.0, often set in .env)
-        replaces the first language's shipped prompt."""
-        if self.initial_prompt and language == self.languages[0]:
-            return self.initial_prompt
-        return self.prompts.get(language, "")
 
 
 class VoiceSettings(BaseModel):

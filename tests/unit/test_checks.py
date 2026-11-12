@@ -214,7 +214,7 @@ def machine(monkeypatch: pytest.MonkeyPatch) -> Machine:
     return m
 
 
-def settings_for(models: Path, engine: str = "piper", languages: tuple[str, ...] = ("it",)):
+def settings_for(models: Path, engine: str = "piper"):
     from claudio.config import WakeWordModel
 
     base = load_settings()
@@ -222,7 +222,6 @@ def settings_for(models: Path, engine: str = "piper", languages: tuple[str, ...]
         update={
             "models_dir": models,
             "tts": base.tts.model_copy(update={"engine": engine}),
-            "stt": base.stt.model_copy(update={"languages": list(languages)}),
             "wakeword": base.wakeword.model_copy(
                 update={"models": [WakeWordModel(name="hey_jarvis")]}
             ),
@@ -360,55 +359,6 @@ def test_jack_files_are_optional_and_a_missing_one_is_only_a_warning(
     assert sum("Jack non installata" in line for line in lines) == 3
     _, others = run(settings_for(tmp_path, engine="kokoro"), caplog)
     assert not any("Jack" in line for line in others)
-
-
-def test_an_unknown_kokoro_voice_for_a_language_is_a_warning(
-    tmp_path: Path,
-    machine: Machine,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    from claudio import checks
-    from claudio.config import VoiceSettings
-
-    install_everything(tmp_path)
-    base = settings_for(tmp_path, engine="kokoro", languages=("it", "en", "de"))
-    voices = {
-        "en": VoiceSettings(kokoro_voice="am_michael", voice="en_US-ryan-low"),  # in the file
-        "de": VoiceSettings(kokoro_voice="zz_nobody"),  # not in the file
-    }
-    settings = base.model_copy(update={"tts": base.tts.model_copy(update={"voices": voices})})
-    known = {"am_michael"}  # not even the main voice: it is never warned about
-    monkeypatch.setattr(checks, "kokoro_voices", lambda folder: known)
-    _, lines = run(settings, caplog)
-    voice_warnings = [line for line in lines if "voce Kokoro" in line]
-    assert voice_warnings == [
-        "WARNING WARN voce Kokoro zz_nobody (de) sconosciuta: risponderò con quella principale"
-    ]
-    assert not any("mancante" in line for line in lines)  # Piper's voices are not asked for
-    monkeypatch.setattr(checks, "kokoro_voices", lambda folder: None)  # the file cannot be read
-    _, lines = run(settings, caplog)
-    assert not any("voce Kokoro" in line for line in lines)
-
-
-def test_a_missing_piper_voice_for_a_language_is_a_warning(
-    tmp_path: Path, machine: Machine, caplog: pytest.LogCaptureFixture
-) -> None:
-    install_everything(tmp_path)
-    settings = settings_for(tmp_path, languages=("it", "en"))
-    english = settings.tts.piper_voice_for("en")
-    ok, lines = run(settings, caplog)
-    assert ok is True
-    assert (
-        lines.count(
-            f"WARNING WARN voce {english} (en) mancante: risponderò con quella principale. "
-            "Scaricala con: uv run python scripts/download_models.py --skip-whisper"
-        )
-        == 1
-    )
-    install(tmp_path, f"piper/{english}.onnx")
-    _, lines = run(settings, caplog)
-    assert not any("mancante" in line for line in lines)
 
 
 def test_each_wake_word_is_reported_apart(

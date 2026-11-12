@@ -189,22 +189,10 @@ class RequestFilter:
     claude_min_words: int | None = None
     only_addressed: bool = True
     closed_list_max_words: int = 0  # 0: no limit
-    retry_language: str | None = None
     noise: NoiseSettings | None = None  # None: noise is never judged
     continue_incomplete: bool = False  # a phrase left halfway waits for its end
 
     # -- before decide(): is another Whisper pass worth it? --
-
-    def wants_retry(self, text: str, heard: str, responder: Responder) -> bool:
-        """Transcribe again in retry_language: heard in another one and not understood."""
-        return (
-            self.retry_language is not None
-            and heard != self.retry_language
-            and bool(text)
-            and not only_wake_words(text)
-            and not responder.awaiting  # a yes/no: no command to match
-            and not responder.understands(text, heard)
-        )
 
     def wants_closed_list(self, text: str, heard: str, responder: Responder) -> bool:
         """Ask Whisper for its n-best: not understood, short and not a question. Whisper

@@ -368,7 +368,7 @@ def build_voices(settings: Settings, synth: Any) -> dict[str, tuple[Any, str]]:
 
     piper_dir = settings.resolve(settings.models_dir) / "piper"
     voices: dict[str, tuple[Any, str]] = {}
-    for language in settings.stt.languages:
+    for language in (DEFAULT_LANGUAGE,):  # shortcut: no other language; Task 8 removes this loop
         if language == DEFAULT_LANGUAGE:
             continue
         try:
@@ -490,7 +490,7 @@ async def run_text(settings: Settings, text: str) -> None:
     start = time.perf_counter()
     first: list[float] = []
     await speaker.speak(
-        responder.respond(text, settings.stt.languages[0]),  # as if Whisper heard it
+        responder.respond(text, DEFAULT_LANGUAGE),  # as if Whisper heard it
         on_first_audio=lambda: first.append(time.perf_counter()),
         language=lambda: responder.language,
     )
@@ -617,16 +617,11 @@ def build_assistant(
             if settings.wakeword.second_chance
             else None
         ),
-        retry_language=(
-            settings.stt.languages[0]
-            if settings.stt.retry_in_first_language and len(settings.stt.languages) > 1
-            else None
-        ),
         conversation_s=settings.conversation.window_s,
         barge_in=build_barge_in(settings, transcriber) if settings.conversation.barge_in else None,
         verify_wake=settings.wakeword.verify,
         closed_list=(
-            (lambda audio, language: transcriber.candidates(audio, language=language))
+            (lambda audio, _language: transcriber.candidates(audio))
             if settings.stt.closed_list
             else None
         ),
@@ -717,10 +712,9 @@ async def run_assistant(
     responder: LocalResponder = loaded["claude"]
     speaker.player.start()
     log.info(
-        "STT: %s su %s, lingue %s",
+        "STT: %s su %s",
         transcriber.model_name,
         transcriber.device.upper(),
-        ", ".join(settings.stt.languages),
     )
     responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}  # no English text in Italian voice
     resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
@@ -861,8 +855,8 @@ async def announce_ready(
 
 async def serve_inbox(assistant: Any, chat: Any, settings: Settings) -> None:
     """Answer what is written in the chat window (`claudio --ui`), one message at a time.
-    Typed text has no detected language: the first configured one is used."""
-    language = settings.stt.languages[0] if settings.stt.languages else DEFAULT_LANGUAGE
+    Typed text has no detected language: Italian is used."""
+    language = DEFAULT_LANGUAGE
     while True:
         try:
             pending = await asyncio.to_thread(chat.take_pending, settings.chat.max_age_s)

@@ -5,7 +5,7 @@
 A voice assistant for Windows: wake word, transcription, commands and voice run **on the PC**
 for free. What no local command understands is answered by Claude (Anthropic API: Sonnet 5.5 as
 the main model, on trial; Haiku 5.5 to guess misheard commands), with a daily budget. It
-understands and speaks Italian; English is an option (`[stt] languages`).
+understands and speaks Italian.
 
 ```
 Microphone ─► openWakeWord ("Hey Claudio", "Claudio") ─► beep
@@ -89,11 +89,9 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "ripeti", "non ho capito" | says the last reply again |
 | "basta", "stop", "non parlare" | ends the conversation; said while CLAUDIO speaks, cuts it short; also at the end of a phrase that names Claudio ("No, Claudio, non parlare. Claudio, stop."), with no API call |
 
-With `[stt] languages = ["it", "en"]` (the shipped config has Italian only) every command works
-in English too: "open Chrome", "open my downloads", "turn up the volume by 10", "mute", "what
-time is it", "what day is it", "go to sleep", "wake up", "shut down". Whisper then decides for
-each request whether it is Italian or English, and CLAUDIO answers in that language with an
-English voice.
+Whisper listens in Italian only, so the English phrases still in
+[config/commands.toml](config/commands.toml) ("open Chrome", "mute"...) are in practice reached only by
+text typed in the chat window; they are being removed.
 
 The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code
 (`phrases_en` and `reply_en` are the English ones). Every other request goes to Claude; with
@@ -342,15 +340,9 @@ day; at 100 % it stops calling Claude until the next day, while local commands k
 
 If the GPU cannot be used, CLAUDIO switches to Whisper `small` on the CPU by itself and logs it.
 
-Languages: the shipped `[stt] languages = ["it"]` is Italian only; with `["it", "en"]` Whisper
-chooses between the two. Detection reuses
-the encoder pass of the transcription, so it costs almost nothing; when Whisper is unsure (below
-`language_confidence`, 0.6; for English `other_confidence`, 0.9, because fast Italian often sounds
-English to Whisper) CLAUDIO keeps the language of the previous request. A request heard as English
-that no command understands is transcribed again in Italian (about 0.2 s, only then): "cue the
-calculator" becomes "apri la calcolatrice". `retry_in_first_language = false` turns it off. With one language,
-the shipped default, there is no detection at all. Whisper's prompt is per language,
-in `[stt.prompts]`.
+Language: Whisper always transcribes in Italian: there is no language detection and no second
+transcription in another language. Its prompt, the sentences it reads as the words said just
+before, is `[stt] initial_prompt`.
 
 The voice is Jack (see "Jack's voice"); the fallback is Nicola (Kokoro, male), and Paola (Piper)
 when Kokoro does not load. `CLAUDIO_TTS__ENGINE=kokoro` or `piper` makes one of them the main

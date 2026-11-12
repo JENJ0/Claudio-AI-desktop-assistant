@@ -196,7 +196,7 @@ class SceneStt:
         self.samples: list[int] = []
         self.heard = ""  # what the pass in progress hears, fixed when it starts
 
-    def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
+    def transcribe(self, audio: np.ndarray) -> str:
         if self.fail:
             self.fail = False
             raise RuntimeError("CUDA esplosa")

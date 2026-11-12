@@ -132,26 +132,3 @@ def test_one_kokoro_model_speaks_every_language() -> None:
     with pytest.raises(ValueError, match="am_michael"):
         synth._settings = TtsSettings(voices={"en": {"kokoro_voice": "am_nobody"}})
         synth.for_language("en")
-
-
-def test_every_language_gets_a_voice_or_falls_back(monkeypatch, tmp_path, caplog) -> None:
-    import claudio.tts.speaker as speaker
-    from claudio.__main__ import build_voices
-    from claudio.config import load_settings
-
-    def piper(path, tts):
-        if "ryan" not in path.name:
-            raise FileNotFoundError(path.name)
-        return ("piper", path.name)
-
-    monkeypatch.setattr(speaker, "voice_path", lambda folder, voice: folder / voice)
-    monkeypatch.setattr(speaker, "PiperSynth", piper)
-    settings = load_settings(models_dir=tmp_path)
-    settings.stt.languages = ["it", "en"]  # English is off in claudio.toml for now
-    assert build_voices(settings, object()) == {
-        "en": (("piper", "en_US-ryan-low"), "en_US-ryan-low")
-    }
-    settings.tts.voices["en"].voice = "en_US-missing-low"
-    with caplog.at_level("WARNING"):
-        assert build_voices(settings, object()) == {}
-    assert "uso quella principale" in caplog.text

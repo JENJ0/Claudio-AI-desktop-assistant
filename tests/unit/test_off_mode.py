@@ -504,9 +504,8 @@ class WhisperModel:
 
 def real_whisper(phrases: Sequence[object], names: Sequence[object], prompt: str = ""):
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
-    stt.settings = SttSettings(languages=["it"], prompts={"it": prompt})
-    stt.language, stt.language_confidence, stt._encoded, stt._reused = "it", 1.0, None, 0
-    stt.last_language, stt.last_segments = "it", []
+    stt.settings = SttSettings(initial_prompt=prompt)
+    stt.language, stt._encoded, stt._reused, stt.last_segments = "it", None, 0, []
     stt._model = WhisperModel(phrases, names)
     return stt
 
@@ -652,11 +651,6 @@ THEN_ON = f"Claudio, una ricetta col {SAID_ON}."
             id="noise, dropped",
         ),
         pytest.param([f"Claudio, lo {WORD} e"], {"continue_s": 0.2}, id="left halfway, then over"),
-        pytest.param(
-            [f"Claudio, lo {WORD}.", f"Ancora lo {WORD}."],
-            {"retry_language": "en"},
-            id="tried again in another language",
-        ),
         pytest.param(["Claudio."], {}, id="only the name, then nothing"),
     ],
 )
@@ -751,13 +745,6 @@ async def test_what_the_turn_on_was_first_heard_as_does_not_stay(
             {},
             "second_chance",
             id="the second chance heard the name and more",
-        ),
-        pytest.param(
-            [TURNS_OFF, f"Lo {WORD}.", TURNS_ON],
-            None,
-            {"retry_language": "en"},
-            "retried_from",
-            id="the retry found it",
         ),
     ],
 )

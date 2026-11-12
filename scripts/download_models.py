@@ -55,7 +55,7 @@ def main() -> int:
     )
     parser.add_argument("--skip-whisper", action="store_true")
     parser.add_argument("--skip-kokoro", action="store_true")
-    voices = [settings.tts.piper_voice_for(lang) for lang in ("it", *settings.stt.languages)]
+    voices = [settings.tts.piper_voice_for(lang) for lang in ("it",)]
     parser.add_argument("--voices", nargs="*", default=list(dict.fromkeys(voices)))
     args = parser.parse_args()
     models = settings.resolve(settings.models_dir)

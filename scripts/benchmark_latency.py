@@ -9,7 +9,6 @@ Again on the requests saved in logs/audio, through the live pipeline (no action 
 to compare settings on your own voice:
     uv run python scripts/benchmark_latency.py --replay
     uv run python scripts/benchmark_latency.py --replay --beam 1 --model large-v3
-    uv run python scripts/benchmark_latency.py --replay --languages it   # without detection
 --lead-in is how much of the audio before the wake word fired reaches Whisper: seconds,
 "full" (all of it, wake word included) or "none".
 
@@ -184,7 +183,6 @@ def replay(
     lead_in: str | None,
     beam: int | None,
     model: str | None,
-    languages: list[str] | None = None,
 ) -> None:
     import asyncio
 
@@ -209,8 +207,6 @@ def replay(
     update: dict[str, object] = {"beam_size": beam} if beam else {}
     if model:
         update["model"] = model
-    if languages:
-        update.update(languages=languages, language="")
     stt_settings = settings.stt.model_copy(update=update)
     stt = WhisperTranscriber(stt_settings, models / "whisper")
     vad = SileroVad(models / "vad" / "silero_vad.onnx")
@@ -236,10 +232,7 @@ def replay(
             pass
 
     beam_size = stt_settings.beam_size
-    print(
-        f"lead-in {app.LEAD_IN_S:.2f} s, beam {beam_size}, {stt.model_name} su {stt.device}, "
-        f"lingue {', '.join(stt_settings.languages)}"
-    )
+    print(f"lead-in {app.LEAD_IN_S:.2f} s, beam {beam_size}, {stt.model_name} su {stt.device}")
     changed = understood = 0
     stt_ms: list[float] = []
     for wav in wavs:
@@ -288,7 +281,6 @@ def main() -> None:
     parser.add_argument("--lead-in", help='secondi, "full" o "none" (predefinito: come dal vivo)')
     parser.add_argument("--beam", type=int)
     parser.add_argument("--model", dest="stt_model", help="modello Whisper per --replay")
-    parser.add_argument("--languages", nargs="+", help="lingue tra cui scegliere, per --replay")
     args = parser.parse_args()
     if args.replay:
         replay(
@@ -297,7 +289,6 @@ def main() -> None:
             args.lead_in,
             args.beam,
             args.stt_model,
-            args.languages,
         )
     elif args.log:
         from_log(args.log)

@@ -131,7 +131,7 @@ class EchoStt:
         self.heard: list[str] = []
         self.samples: list[int] = []  # how much audio each phrase had
 
-    def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> str:
+    def transcribe(self, audio: np.ndarray) -> str:
         text = self.echo if float(np.abs(audio).max()) < ECHO_PEAK else next(self.texts, "")
         self.heard.append(text)
         self.samples.append(len(audio))

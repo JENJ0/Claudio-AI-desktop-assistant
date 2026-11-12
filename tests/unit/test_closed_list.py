@@ -56,9 +56,8 @@ def make_stt(hypotheses: list[str], prompt: str = "comandi"):
     from claudio.stt.transcriber import WhisperTranscriber
 
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
-    stt.settings = SttSettings(languages=["it"], initial_prompt=prompt)
-    stt.language, stt.language_confidence, stt._encoded, stt._reused = "it", 1.0, None, 0
-    stt.last_language = "it"
+    stt.settings = SttSettings(initial_prompt=prompt)
+    stt.language, stt._encoded, stt._reused = "it", None, 0
     stt._model = FakeModel(hypotheses)
     return stt
 
@@ -73,7 +72,7 @@ def test_candidates_in_order_without_duplicates() -> None:
     assert kwargs["num_hypotheses"] == 3 and kwargs["beam_size"] >= 3
 
 
-def test_candidates_carry_the_prompt_and_language() -> None:
+def test_candidates_carry_the_prompt_and_italian() -> None:
     stt = make_stt(["apri la calcolatrice"])
     stt.candidates(SPEECH)
     hf = stt._model.hf_tokenizer

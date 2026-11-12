@@ -160,21 +160,20 @@ def test_invented_endings_also_repeated_or_after_a_thanks(text: str, expected: b
     assert is_hallucination(text) is expected
 
 
-def test_every_end_of_the_shipped_prompts_is_heard_again_without_them() -> None:
+def test_every_end_of_the_shipped_prompt_is_heard_again_without_it() -> None:
     """On unclear audio Whisper repeats the end of its prompt ("Basta, grazie." for "Claudio,
-    chiudi il Blocco note", 29/10), and the prompts end in a command ("poi alza il volume"):
+    chiudi il Blocco note", 29/10), and the prompt ends in a command ("poi alza il volume"):
     every end of 2+ words is caught as an echo, so it is transcribed again, never run."""
     from claudio.config import DEFAULT_CONFIG, load_settings
     from claudio.stt.transcriber import ECHO_END_WORDS, is_prompt_echo
 
-    prompts = load_settings(DEFAULT_CONFIG).stt.prompts
-    assert prompts
-    for prompt in prompts.values():
-        words = re.split(r"(?<=[.?!])\s+", prompt.strip())[-1].split()
-        assert len(words) > ECHO_END_WORDS
-        for start in range(len(words) - ECHO_END_WORDS + 1):
-            end = " ".join(words[start:])
-            assert is_prompt_echo(end, prompt) and is_hallucination(end, prompt), end
+    prompt = load_settings(DEFAULT_CONFIG).stt.initial_prompt
+    assert prompt
+    words = re.split(r"(?<=[.?!])\s+", prompt.strip())[-1].split()
+    assert len(words) > ECHO_END_WORDS
+    for start in range(len(words) - ECHO_END_WORDS + 1):
+        end = " ".join(words[start:])
+        assert is_prompt_echo(end, prompt) and is_hallucination(end, prompt), end
 
 
 def test_a_piece_of_the_prompt_is_transcribed_again_without_it() -> None:
@@ -195,7 +194,7 @@ def test_a_piece_of_the_prompt_is_transcribed_again_without_it() -> None:
             return super().transcribe(audio, **kwargs)
 
     stt = make_stt()
-    stt.settings = SttSettings(prompts={"it": "Ehi Claudio. Apri Chrome, poi alza il volume."})
+    stt.settings = SttSettings(initial_prompt="Ehi Claudio. Apri Chrome, poi alza il volume.")
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     stt._model = EchoingWhisper(" Chiudi il blocco note.")
     assert stt.transcribe(speech) == "Chiudi il blocco note."
@@ -213,7 +212,7 @@ def test_last_prompt_is_the_request_prompt_not_the_quick_one() -> None:
 
     stt = make_stt()
     stt.vocabulary = lambda language: "Cartelle: Tesi."
-    stt.settings = SttSettings(prompts={"it": "Apri Chrome."})
+    stt.settings = SttSettings(initial_prompt="Apri Chrome.")
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     stt._model.text = " Chiudi il blocco note."  # not a piece of the prompt: one pass
     stt.transcribe(speech)
@@ -233,7 +232,7 @@ def test_an_ordinary_request_takes_one_pass() -> None:
     from claudio.config import SttSettings
 
     stt = make_stt()
-    stt.settings = SttSettings(prompts={"it": "Apri Chrome, poi alza il volume."})
+    stt.settings = SttSettings(initial_prompt="Apri Chrome, poi alza il volume.")
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     stt._model.text = " Claudio, alza il volume."
     assert stt.transcribe(speech) == "Claudio, alza il volume." and stt._model.calls == 1
@@ -259,8 +258,7 @@ def make_stt():
 
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings()
-    stt.language, stt.language_confidence, stt._encoded, stt._reused = "it", 1.0, None, 0
-    stt.last_language, stt.last_prompt = "it", ""
+    stt.language, stt._encoded, stt._reused, stt.last_prompt = "it", None, 0, ""
     stt._model = FakeWhisper()
     return stt
 
@@ -327,132 +325,22 @@ async def test_paused_responder_answers_only_system_commands(matcher) -> None:
     assert await collect(r.respond("apri chrome")) == ["Apro Chrome."]
 
 
-@pytest.mark.parametrize(
-    ("probs", "last", "expected"),
-    [
-        ({"it": 0.7, "en": 0.2, "es": 0.1}, "it", "it"),
-        ({"en": 0.8, "it": 0.1}, "it", "en"),
-        ({"es": 0.9, "it": 0.08, "en": 0.02}, "en", "it"),  # Spanish is not a choice
-        ({"it": 0.45, "en": 0.4}, "en", "en"),  # 53%: unsure, keep the last language
-        ({"fr": 1.0}, "en", "en"),
-    ],
-)
-def test_language_is_picked_among_the_configured_ones(probs, last, expected) -> None:
-    from claudio.stt.transcriber import pick_language
-
-    assert pick_language(probs, ["it", "en"], last, 0.6)[0] == expected
-
-
-class FakeFeatures:
-    nb_max_frames = 3000
-
-    def __call__(self, audio):
-        import numpy as np
-
-        frames = len(audio) // 160 + 1
-        return np.tile(np.arange(frames, dtype=np.float32), (2, 1))
-
-
-class FakeMultilingualWhisper(FakeWhisper):
-    """Encodes and detects the language like faster-whisper: transcribe() encodes the first
-    30 s window through self.encode."""
-
-    def __init__(self, probs: list[tuple[str, float]], text: str = " Open Chrome.") -> None:
-        super().__init__(text)
-        self.feature_extractor = FakeFeatures()
-        self.encoded = 0
-        self.model = type("Ct2", (), {"detect_language": lambda _self, enc: [probs]})()
-
-    def encode(self, features):
-        self.encoded += 1
-        return ("encoded", features.shape)
-
-    def transcribe(self, audio, **kwargs):
-        from faster_whisper.audio import pad_or_trim
-
-        features = self.feature_extractor(audio)
-        self.encode(pad_or_trim(features[:, : features.shape[-1] - 1]))
-        return super().transcribe(audio, **kwargs)
-
-
-def test_language_detection_reuses_the_encoder_pass() -> None:
-    import numpy as np
-
-    from claudio.config import SttSettings
-
-    stt = make_stt()
-    stt.settings = SttSettings(
-        languages=["it", "en"],
-        prompts={"it": "Apri la cartella.", "en": "Open the folder."},
-        other_confidence=0.8,
-    )
-    stt._model = FakeMultilingualWhisper([("<|en|>", 0.8), ("<|it|>", 0.15), ("<|de|>", 0.05)])
-    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
-    assert stt.transcribe(speech) == "Open Chrome."
-    assert stt.language == "en" and stt._model.kwargs["language"] == "en"
-    assert stt._model.kwargs["initial_prompt"] == "Open the folder."
-    assert stt._model.encoded == 1 and stt._reused == 1  # one encoder pass, not two
-    assert "encode" not in vars(stt._model)  # Whisper's own encoder is back
-    stt._model.model = type("Ct2", (), {"detect_language": lambda s, e: [[("<|it|>", 0.5)]]})()
-    stt._model.text = " Apri Chrome."
-    assert stt.transcribe(speech) == "Apri Chrome." and stt.language == "it"
-
-
-def test_only_real_requests_set_the_fallback_language() -> None:
-    """An unsure detection keeps the last request's language: a lone wake word or a dropped
-    hallucination (English for everyone) must not become that language."""
-    import numpy as np
-
-    from claudio.config import SttSettings
-
-    stt = make_stt()
-    stt.settings = SttSettings(languages=["it", "en"])
-    speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
-    for heard in (" Hey Jarvis.", " Thanks for watching!"):
-        stt._model = FakeMultilingualWhisper([("<|en|>", 0.9)], text=heard)
-        stt.transcribe(speech)
-        assert stt.language == "en" and stt.last_language == "it"
-    stt._model = FakeMultilingualWhisper([("<|it|>", 0.40), ("<|en|>", 0.35)], text=" Muto.")
-    assert stt.transcribe(speech) == "Muto." and stt._model.kwargs["language"] == "it"
-    stt._model = FakeMultilingualWhisper([("<|en|>", 0.9)], text=" Open Chrome.")
-    stt.transcribe(speech)
-    assert stt.last_language == "en"
-
-
 def test_quick_mode_is_a_short_look_that_remembers_nothing() -> None:
     """The wake word's second chance: the shipped prompt (30/10: a lone "Claudio" came out
-    "Grazie." without it), few tokens, and the language kept for an unsure request stays
-    that of the last real one."""
+    "Grazie." without it) and few tokens."""
     import numpy as np
 
     from claudio.config import SttSettings
 
     stt = make_stt()
-    stt.settings = SttSettings(languages=["it", "en"], prompts={"it": "Hey Claudio.", "en": "x"})
+    stt.settings = SttSettings(initial_prompt="Hey Claudio.")
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
-    stt._model = FakeMultilingualWhisper([("<|en|>", 0.9)], text=" Open Chrome.")
-    assert stt.transcribe(speech, quick=True) == "Open Chrome."
+    assert stt.transcribe(speech, quick=True) == "Apri Chrome."
     kwargs = stt._model.kwargs
-    assert kwargs["initial_prompt"] == "x" and kwargs["max_new_tokens"] == 24
-    assert stt.last_language == "it"  # a real request would have made it English
-    stt.transcribe(speech)
-    assert stt._model.kwargs["initial_prompt"] == "x" and stt.last_language == "en"
+    assert kwargs["initial_prompt"] == "Hey Claudio." and kwargs["max_new_tokens"] == 24
 
 
-def test_the_warm_up_does_not_choose_the_language(monkeypatch) -> None:
-    from pathlib import Path
-
-    from claudio.config import SttSettings
-    from claudio.stt.transcriber import WhisperTranscriber
-
-    fake = FakeMultilingualWhisper([("<|en|>", 0.9)])  # Whisper hears English in the hiss
-    monkeypatch.setattr(WhisperTranscriber, "_open", lambda self, name, **kwargs: fake)
-    stt = WhisperTranscriber(SttSettings(device="cpu", languages=["it", "en"]), Path("."))
-    assert fake.calls == 1  # the warm-up ran
-    assert stt.language == stt.last_language == "it"
-
-
-def test_one_language_skips_the_detection() -> None:
+def test_whisper_always_gets_italian() -> None:
     import numpy as np
 
     stt = make_stt()
@@ -461,12 +349,7 @@ def test_one_language_skips_the_detection() -> None:
     assert stt._model.kwargs["language"] == "it" and stt._reused == 0
 
 
-def test_stt_languages_and_prompts() -> None:
-    from claudio.config import SttSettings
-
-    s = SttSettings(languages=["it", "en"], initial_prompt="Apri Chrome.", prompts={"en": "Hi."})
-    assert s.prompt("it") == "Apri Chrome." and s.prompt("en") == "Hi."
-    assert SttSettings(languages=["it", "en"], language="en").languages == ["en"]
+def test_english_hallucinations_are_dropped() -> None:
     assert is_hallucination("Thanks for watching!") and is_hallucination("you")
 
 
@@ -478,10 +361,10 @@ def test_the_names_on_the_pc_come_before_the_sentences() -> None:
     from claudio.config import SttSettings
 
     stt = make_stt()
-    stt.settings = SttSettings(languages=["it"], prompts={"it": "Ehi Claudio, che ore sono?"})
+    stt.settings = SttSettings(initial_prompt="Ehi Claudio, che ore sono?")
     stt.vocabulary = lambda language: "Cartelle: Tesi, PSS." if language == "it" else ""
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
-    stt._model = FakeMultilingualWhisper([("<|it|>", 0.9)], text=" Apri la cartella Tesi.")
+    stt._model.text = " Apri la cartella Tesi."
     assert stt.transcribe(speech) == "Apri la cartella Tesi."
     prompt = stt._model.kwargs["initial_prompt"]
     assert prompt == "Cartelle: Tesi, PSS. Ehi Claudio, che ore sono?"
