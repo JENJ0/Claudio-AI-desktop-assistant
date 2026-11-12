@@ -355,7 +355,7 @@ Ultime 10 sessioni (31/10 23:17 → 02/11 17:13), con le righe ereditate escluse
 - **Procedure ricordate** (idea di Terminator: compito riuscito ripetuto a 0 $, con il modello solo se un
   passo fallisce): da riprendere quando i log mostrano compiti ripetuti.
 - **Commento continuo in gioco** (~0,05-0,10 $ l'ora, stima): dopo i crediti Max.
-- **Take basse di Jack** (JenJo, 31/10; `piani/IT-1-merge-consegne.md`): lavoro a parte di IT-2, non legato
+- **Take basse di Jack** (JenJo, 31/10; `git show f33b04d:piani/IT-1-merge-consegne.md`): lavoro a parte di IT-2, non legato
   a questi passi.
 - Altri aperti in quel file: wake debole con frase di memoria, seconda opinione sulla frase detta sopra la
   risposta.
