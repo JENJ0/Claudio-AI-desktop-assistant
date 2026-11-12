@@ -33,7 +33,7 @@ class WeakWake(FakeWake):
 
 
 class OnlyCommands(FakeResponder):
-    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
+    def understands(self, text: str, memory: bool = True) -> bool:
         return "chrome" in text.lower()
 
 

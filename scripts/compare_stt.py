@@ -141,7 +141,7 @@ def build_engine(
 
         vocabulary = build_vocabulary(settings)
         vocabulary.read_now()  # now, not in the background: the first request needs it
-        names = vocabulary.text("it")
+        names = vocabulary.text()
         prompt = " ".join(p for p in (names, settings.stt.initial_prompt) if p)
         return whisper_engine(settings, "large-v3-turbo", False, matcher, prompt)
     model = "large-v3" if name == "large-v3" else "large-v3-turbo"

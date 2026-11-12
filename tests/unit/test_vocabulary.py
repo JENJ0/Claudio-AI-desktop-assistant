@@ -90,11 +90,11 @@ def test_most_recent_first_and_each_name_once(tmp_path: Path) -> None:
 
 
 def test_prompt_text() -> None:
-    assert prompt_text("it", ["Dainese"], ["Tesi", "PSS"], ["Rocket League"]) == (
+    assert prompt_text(["Dainese"], ["Tesi", "PSS"], ["Rocket League"]) == (
         "Cartelle: Dainese, Tesi, PSS. Programmi: Rocket League."
     )
-    assert prompt_text("it", [], [], []) == ""
-    assert prompt_text("it", [], [], ["Steam"], ["Blocco note"]) == (
+    assert prompt_text([], [], []) == ""
+    assert prompt_text([], [], ["Steam"], ["Blocco note"]) == (
         "Programmi: Steam. Finestre aperte: Blocco note."
     )
 
@@ -126,20 +126,20 @@ def test_vocabulary_reads_in_the_background_and_refreshes(tmp_path: Path) -> Non
         lambda: [desktop, docs], lambda: [desktop], words=["Dainese"], clock=lambda: now[0]
     )
     vocabulary.read_now()
-    text = vocabulary.text("it")
+    text = vocabulary.text()
     assert text.startswith("Cartelle: Dainese, ") and "Tesi" in text
     assert text.endswith("Programmi: Rocket League.")
     (desktop / "NUOVA").mkdir()
-    assert "Nuova" not in vocabulary.text("it")  # still the list read before
+    assert "Nuova" not in vocabulary.text()  # still the list read before
     now[0] = 601.0
     vocabulary.read_now()
-    assert "Nuova" in vocabulary.text("it")
+    assert "Nuova" in vocabulary.text()
 
 
 def test_before_the_first_reading_only_jenjos_words(tmp_path: Path) -> None:
     vocabulary = Vocabulary(lambda: [tmp_path / "missing"], lambda: [], words=["Dainese"])
     vocabulary.refresh = lambda: None  # type: ignore[method-assign]
-    assert vocabulary.text("it") == "Cartelle: Dainese."
+    assert vocabulary.text() == "Cartelle: Dainese."
 
 
 def test_open_windows_are_read_again_every_few_seconds() -> None:
@@ -155,12 +155,12 @@ def test_open_windows_are_read_again_every_few_seconds() -> None:
         lambda: [], lambda: [], words=["Tesi"], clock=lambda: now[0], windows=windows
     )
     vocabulary.refresh = lambda: None  # type: ignore[method-assign]
-    assert vocabulary.text("it") == "Cartelle: Tesi. Finestre aperte: Blocco note."
+    assert vocabulary.text() == "Cartelle: Tesi. Finestre aperte: Blocco note."
     titles[0] = ["Calcolatrice", "Tesi"]
     now[0] = 1.0
-    assert "Blocco note" in vocabulary.text("it")  # one request asks twice: read once
+    assert "Blocco note" in vocabulary.text()  # one request asks twice: read once
     now[0] = 5.0
-    assert vocabulary.text("it") == "Cartelle: Tesi. Finestre aperte: Calcolatrice."
+    assert vocabulary.text() == "Cartelle: Tesi. Finestre aperte: Calcolatrice."
     assert calls == [0.0, 5.0]
 
 
@@ -170,4 +170,4 @@ def test_a_failed_window_reading_leaves_them_out() -> None:
 
     vocabulary = Vocabulary(lambda: [], lambda: [], words=["Tesi"], windows=broken)
     vocabulary.refresh = lambda: None  # type: ignore[method-assign]
-    assert vocabulary.text("it") == "Cartelle: Tesi."
+    assert vocabulary.text() == "Cartelle: Tesi."

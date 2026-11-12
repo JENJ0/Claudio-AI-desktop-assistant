@@ -33,14 +33,14 @@ NOISE = NoiseSettings()  # the shipped values
 class Commands(FakeResponder):
     """Understands only "apri chrome"."""
 
-    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
+    def understands(self, text: str, memory: bool = True) -> bool:
         return "chrome" in text.lower()
 
 
 def decide(text: str, responder=None, f: RequestFilter | None = None, **heard):
     f = f or RequestFilter(noise=NOISE)
     return f.decide(
-        text, "it", Heard(**{"wake_word": "hey_claudio", **heard}), responder or Commands()
+        text, Heard(**{"wake_word": "hey_claudio", **heard}), responder or Commands()
     )
 
 
@@ -315,11 +315,11 @@ def test_a_quiet_answer_keeps_its_own_reason() -> None:
 
 def test_closed_list_skips_questions_and_long_phrases() -> None:
     f, r = RequestFilter(closed_list_max_words=5), Commands()
-    assert f.wants_closed_list("apri crom", "it", r)
-    assert not f.wants_closed_list("come ti chiami?", "it", r)  # a question: for Claude
-    assert not f.wants_closed_list("apri chrome", "it", r)  # already understood
-    assert not f.wants_closed_list("uno due tre quattro cinque sei", "it", r)
-    assert not f.wants_closed_list("Hey Claudio", "it", r)
+    assert f.wants_closed_list("apri crom", r)
+    assert not f.wants_closed_list("come ti chiami?", r)  # a question: for Claude
+    assert not f.wants_closed_list("apri chrome", r)  # already understood
+    assert not f.wants_closed_list("uno due tre quattro cinque sei", r)
+    assert not f.wants_closed_list("Hey Claudio", r)
 
 
 # -- the short yes (level 2) --

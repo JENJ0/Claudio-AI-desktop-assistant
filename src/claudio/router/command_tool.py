@@ -7,7 +7,7 @@ actions. This tool runs them through the same ActionRunner as the router. Claude
 own tools for opening apps, folders and windows; the time and date come with each request;
 "basta", "ripeti" and "svegliati" never need Claude.
 
-The command's reply is the router's, in the request's language. When Claude marks the call
+The command's reply is the router's. When Claude marks the call
 `last` (the command is the whole request), Claudio says that reply itself and Claude is not
 called again just to say "Fatto" (IT-1: 0.6-1 s and one call less). Unmarked, Claude gets
 the reply as the result and goes on: a request with more in it ("abbassa il volume e dimmi
@@ -20,7 +20,6 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
-from claudio.config import DEFAULT_LANGUAGE
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import Command, Match
 from claudio.router.normalizer import normalize
@@ -88,7 +87,7 @@ class CommandTool:
             return 1  # nothing will run: the result reports the error
         return max(cmd.level, LEVEL_CONFIRM) if cmd.action == "system" else cmd.level
 
-    def phrase(self, args: Mapping[str, Any], language: str = DEFAULT_LANGUAGE) -> str:
+    def phrase(self, args: Mapping[str, Any]) -> str:
         """How JenJo would say the command, for the confirmation question."""
         try:
             cmd = self.command(args)
@@ -96,7 +95,7 @@ class CommandTool:
             return str(args.get("command", ""))
         return cmd.phrases[0]
 
-    def said_again(self, args: Mapping[str, Any], text: str, language: str) -> bool:
+    def said_again(self, args: Mapping[str, Any], text: str) -> bool:
         """`text` is this command once more: close to one of its own phrases ("spegni" is 85.7
         from "spegniti", and no phrase of the matcher's). One yes word may open it ("sì,
         spegniti")."""
@@ -108,11 +107,11 @@ class CommandTool:
         heard = " ".join(words[1:] if words and words[0] in YES_WORDS else words)
         return any(fuzz.ratio(heard, normalize(phrase)) >= self.threshold for phrase in cmd.phrases)
 
-    def run(self, args: Mapping[str, Any], language: str = DEFAULT_LANGUAGE) -> str:
-        """Run it; the command's reply in `language`, as the router would say it ("" for
+    def run(self, args: Mapping[str, Any]) -> str:
+        """Run it; the command's reply, as the router would say it ("" for
         the media keys, silent as with the router)."""
         cmd = self.command(args)
         number = args.get("number")
         if number is not None:
             number = max(1, min(int(number), MAX_NUMBER))
-        return self.actions.execute(Match(cmd, 100.0, number, DEFAULT_LANGUAGE), language)
+        return self.actions.execute(Match(cmd, 100.0, number))

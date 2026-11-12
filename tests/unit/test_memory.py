@@ -281,7 +281,7 @@ def test_a_stem_hit_is_not_a_whole_word_hit(store: MemoryStore) -> None:
     ],
 )
 def test_memory_requests_are_understood(said: str, action: str, text: str) -> None:
-    assert parse(said) == Intent(action, text, "it")  # type: ignore[arg-type]
+    assert parse(said) == Intent(action, text)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -1049,7 +1049,7 @@ def test_cancella_l_ultimo_is_not_about_memory() -> None:
     """recheck: "cancella quello che ho detto" while dictating deleted the last memory."""
     assert parse("Claudio, cancella quello che ho detto") is None
     assert parse("togli l'ultima") is None
-    assert parse("cancella l'ultimo ricordo") == Intent("forget_last", "l'ultimo ricordo", "it")
+    assert parse("cancella l'ultimo ricordo") == Intent("forget_last", "l'ultimo ricordo")
 
 
 @pytest.mark.parametrize(

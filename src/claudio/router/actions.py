@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from claudio.chat.launcher import ChatLauncher
-from claudio.config import DEFAULT_LANGUAGE
 from claudio.cost.tracker import CostTracker
 from claudio.router.matcher import Match
 from claudio.system import SystemControl
@@ -145,7 +144,7 @@ class ActionContext:
         return cls(run=_run, open_path=_open_path, press_key=_press_key, press_combo=_press_combo)
 
 
-def say_time(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
+def say_time(now: datetime) -> str:
     h, m = now.hour, now.minute
     if h == 1:
         head = "È l'una"
@@ -158,12 +157,12 @@ def say_time(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
     return f"{head} e {m}."
 
 
-def say_date(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
+def say_date(now: datetime) -> str:
     day = "primo" if now.day == 1 else str(now.day)
     return f"Oggi è {WEEKDAYS[now.weekday()]} {day} {MONTHS[now.month - 1]} {now.year}."
 
 
-def say_spend(spent: float, budget: float, calls: int, language: str = DEFAULT_LANGUAGE) -> str:
+def say_spend(spent: float, budget: float, calls: int) -> str:
     percent = round(spent / budget * 100) if budget > 0 else 0
     if calls == 0:
         return "Oggi non hai speso nulla."
@@ -171,7 +170,7 @@ def say_spend(spent: float, budget: float, calls: int, language: str = DEFAULT_L
     return f"Oggi hai speso {amount} dollari, il {percent} per cento del budget."
 
 
-Handler = Callable[[Match, str], "str | None"]
+Handler = Callable[[Match], "str | None"]
 
 
 class ActionRunner:
@@ -192,8 +191,8 @@ class ActionRunner:
             "open_app": self._open_app,
             "open_folder": self._open_folder,
             "media_key": self._media_key,
-            "tell_time": lambda m, lang: say_time(self.ctx.now(), lang),
-            "tell_date": lambda m, lang: say_date(self.ctx.now(), lang),
+            "tell_time": lambda m: say_time(self.ctx.now()),
+            "tell_date": lambda m: say_date(self.ctx.now()),
             "system": self._system,
             "tell_spend": self._tell_spend,
             "close_window": self._close_window,
@@ -201,13 +200,13 @@ class ActionRunner:
             "memory": self._memory,
         }
 
-    def execute(self, match: Match, language: str = DEFAULT_LANGUAGE) -> str:
-        """Run the command's action; return the text to speak, in `language`."""
+    def execute(self, match: Match) -> str:
+        """Run the command's action; return the text to speak."""
         cmd = match.command
         handler = self._handlers.get(cmd.action)
         if handler is None:
             raise ValueError(f"Azione sconosciuta '{cmd.action}' nel comando '{cmd.id}'")
-        spoken = handler(match, language)
+        spoken = handler(match)
         log.info(
             "Azione eseguita: %s",
             cmd.id,
@@ -220,10 +219,10 @@ class ActionRunner:
         )
         return spoken if spoken is not None else cmd.reply
 
-    def _open_app(self, match: Match, language: str) -> None:
+    def _open_app(self, match: Match) -> None:
         self.ctx.run(APPS[match.command.params["app"]])
 
-    def _open_folder(self, match: Match, language: str) -> None:
+    def _open_folder(self, match: Match) -> None:
         folder = match.command.params["folder"]
         if folder == "explorer":
             self.ctx.run(["explorer.exe"])
@@ -234,17 +233,17 @@ class ActionRunner:
         path = path or self.ctx.home / FALLBACK_FOLDERS.get(folder, folder)
         self.ctx.open_path(str(path))
 
-    def _system(self, match: Match, language: str) -> str | None:
+    def _system(self, match: Match) -> str | None:
         """The command's reply when something changed, params["already"] when not (pausing
         while already paused)."""
         changed = self.system.apply(match.command.params["do"])
         return None if changed else str(match.command.params.get("already") or "")
 
-    def _close_window(self, match: Match, language: str) -> None:
+    def _close_window(self, match: Match) -> None:
         """Level 2: the responder has already asked and heard a yes."""
         self.ctx.press_combo((VK_MENU, VK_F4))
 
-    def _chat(self, match: Match, language: str) -> str | None:
+    def _chat(self, match: Match) -> str | None:
         """params["do"]: open or close; params["already"] when there is nothing to do."""
         if self.chat is None:
             return str(match.command.params.get("unavailable") or "")
@@ -254,23 +253,22 @@ class ActionRunner:
         changed = self.chat.open() if what == "open" else self.chat.close()
         return None if changed else str(match.command.params.get("already") or "")
 
-    def _memory(self, match: Match, language: str) -> str:
+    def _memory(self, match: Match) -> str:
         """params["do"]: list, forget_last or wipe (level 3: "confermo" was heard)."""
         if self.memory is None:
             return str(match.command.params.get("unavailable") or "")
-        return self.memory.run(str(match.command.params["do"]), language)
+        return self.memory.run(str(match.command.params["do"]))
 
-    def _tell_spend(self, match: Match, language: str) -> str:
+    def _tell_spend(self, match: Match) -> str:
         if self.tracker is None:
-            return say_spend(0.0, 1.0, 0, language)
+            return say_spend(0.0, 1.0, 0)
         return say_spend(
             self.tracker.spent_today(),
             self.tracker.daily_budget,
             self.tracker.calls_today(),
-            language,
         )
 
-    def _media_key(self, match: Match, language: str) -> None:
+    def _media_key(self, match: Match) -> None:
         params = match.command.params
         steps = match.number if match.number is not None else int(params.get("steps", 1))
         steps = max(1, min(steps, 50))  # one press = 2% on Windows

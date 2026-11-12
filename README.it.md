@@ -333,8 +333,8 @@ Per tarare l'ascolto ogni riga ha anche `input_dbfs` (volume medio del microfono
 8000 WAV (`[logging] keep_audio`, circa 940 MB) di quello che Claudio ha sentito (1,5 s prima della
 wake word, poi tutto il resto), con il nome dell'esito (`ok`, `timeout`, `empty`, `error`,
 `interrupted` e altri), e fino a 4000 altri in `logs/audio/rejected/` (`keep_rejected`, circa 300 MB).
-Accanto al WAV di ogni richiesta c'è una piccola nota (`.json`) con il prompt dato a Whisper, la
-lingua e il guadagno d'ingresso; quel prompt elenca i nomi delle tue cartelle, dei programmi e delle
+Accanto al WAV di ogni richiesta c'è una piccola nota (`.json`) con il prompt dato a Whisper e il
+guadagno d'ingresso; quel prompt elenca i nomi delle tue cartelle, dei programmi e delle
 finestre aperte. Restano sul PC e non finiscono mai su Git; si spengono con
 `[logging] save_audio = false`.
 

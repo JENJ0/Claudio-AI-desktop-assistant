@@ -127,7 +127,7 @@ class EchoStt:
     for the end of a reply)."""
 
     def __init__(self, texts: list[str], echo: str) -> None:
-        self.texts, self.echo, self.language = iter(texts), echo, "it"
+        self.texts, self.echo = iter(texts), echo
         self.heard: list[str] = []
         self.samples: list[int] = []  # how much audio each phrase had
 

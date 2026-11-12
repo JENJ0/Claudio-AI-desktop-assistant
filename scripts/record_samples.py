@@ -286,7 +286,7 @@ def session(
 
 
 def command_prompts(
-    commands: list[Any], language: str, repeat: int, seconds: float, out: Path
+    commands: list[Any], repeat: int, seconds: float, out: Path
 ) -> list[tuple[str, str, str, float]]:
     """The first phrase of every command, `repeat` times, numbered after the takes already
     in `out` (benchmark_latency.py reads the command id before the first "__")."""
@@ -421,7 +421,6 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=2)
     parser.add_argument("--seconds", type=float, default=None)
     parser.add_argument("--out", type=Path, default=PROJECT_ROOT / "samples")
-    parser.add_argument("--language", default="it", help="commands: lingua delle frasi")
     args = parser.parse_args()
 
     if args.mode == "pack":
@@ -468,7 +467,7 @@ def main() -> None:
     else:
         out = args.out / "commands"
         commands = load_commands(settings.resolve(settings.router.commands_file))
-        prompts = command_prompts(commands, args.language, args.repeat, args.seconds or 3.5, out)
+        prompts = command_prompts(commands, args.repeat, args.seconds or 3.5, out)
     if args.seconds and args.mode in ("wakeword", "negatives"):
         prompts = [(h, t, s, args.seconds) for h, t, s, _ in prompts]
     saved = session(prompts, out, device, labels)

@@ -24,7 +24,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from claudio.config import DEFAULT_LANGUAGE
 from claudio.echo import WORD_SHARE, word_share
 from claudio.memory.relevance import STOPWORDS, rank, same_word, stems
 from claudio.memory.store import Kind, Memory, MemoryRefused, MemoryStore
@@ -180,13 +179,11 @@ _FORGET_VERBS = frozenset(
 class Intent:
     action: Action
     text: str  # what to remember, to forget or to look for, as said
-    language: str
 
 
 @dataclass(frozen=True)
 class Reply:
     text: str  # "" when nothing is to be said (the echo of Claudio's own question)
-    language: str
     outcome: str  # for the metrics: saved, rule, known, refused, forgot, which, recall...
 
 
@@ -198,7 +195,6 @@ class _Question:
     kind: Literal["which", "forget", "rule"]
     options: tuple[Memory, ...]  # which / forget: the memories asked about
     rule: str  # rule: the rule to keep
-    language: str
     said: str  # the question as spoken: its echo is not an answer
     asked: float
 
@@ -217,10 +213,9 @@ def _alternatives(phrases: Sequence[str]) -> str:
 
 @dataclass(frozen=True)
 class _Words:
-    """A language's trigger words. `that` joins "ricordati" and the fact ("che"); `always`
+    """The trigger words. `that` joins "ricordati" and the fact ("che"); `always`
     makes "ricordati sempre di..." a rule."""
 
-    language: str
     openers: Sequence[str]
     remember: Sequence[str]
     adverbs: Sequence[str]
@@ -239,7 +234,7 @@ class _Words:
 
 
 def _grammar(w: _Words) -> tuple[tuple[Action, re.Pattern[str]], ...]:
-    """The patterns of one language, in the order they are tried: forgetting and asking come
+    """The patterns of the trigger words, in the order they are tried: forgetting and asking come
     first, and a rule before a fact ("ricordati che da ora in poi..." is a rule)."""
     start = rf"^(?:{_alternatives(w.openers)}{_SEP})*"
     remember = _alternatives(w.remember)
@@ -267,7 +262,7 @@ def _grammar(w: _Words) -> tuple[tuple[Action, re.Pattern[str]], ...]:
 
 
 GRAMMAR = _grammar(
-    _Words("it", IT_OPENERS, IT_REMEMBER, IT_ADVERBS, "che", "sempre di", IT_RULE,
+    _Words(IT_OPENERS, IT_REMEMBER, IT_ADVERBS, "che", "sempre di", IT_RULE,
            IT_FORGET, IT_FORGET_JOIN, IT_FORGET_IT, IT_FORGET_LAST, IT_LAST, IT_DELETE,
            IT_LAST_MEMORY, IT_RECALL, IT_ABOUT)
 )  # fmt: skip
@@ -295,7 +290,7 @@ def parse(text: str) -> Intent | None:
         body = _COURTESY_START.sub("", _COURTESY_END.sub("", m.group("body"))).strip()
         if action in ("forget", "recall") and not stems(body):
             return None
-        return Intent(action, body, DEFAULT_LANGUAGE)
+        return Intent(action, body)
     return None
 
 
@@ -356,14 +351,14 @@ class MemoryVoice:
             return self._forget_last(intent, addressed)
         return self._recall(intent)
 
-    def run(self, do: str, language: str = DEFAULT_LANGUAGE) -> str:
+    def run(self, do: str) -> str:
         """A memory command of commands.toml: list or wipe (level 3: "confermo" was heard)."""
         self._question = None
         if do == "list":
             items = self.store.items()
             if not items:
                 return SAY["nothing"]
-            latest = _spoken(list(reversed(items[-LIST_MAX:])), language)
+            latest = _spoken(list(reversed(items[-LIST_MAX:])))
             if len(items) == 1:
                 self._talk(items[0])  # "dimenticalo" now means it
             key = "list_one" if len(items) == 1 else "list"
@@ -379,20 +374,20 @@ class MemoryVoice:
         kind: Kind = "rule" if intent.action == "rule" else "fact"
         if kind == "rule" and not addressed:
             text = " ".join(intent.text.split()).strip(" .!?")
-            return self._ask(_Question("rule", (), text, intent.language, "", 0.0))
+            return self._ask(_Question("rule", (), text, "", 0.0))
         try:
             memory, new = self.store.add(intent.text, kind, "jenjo")
         except MemoryRefused as exc:
             self._talked = (None, self.store.clock())  # "ok, dimenticalo": nothing to forget
-            return Reply(SAY[exc.reason], intent.language, "refused")
+            return Reply(SAY[exc.reason], "refused")
         self._talk(memory)
         if not new:
-            return Reply(SAY["known"], intent.language, "known")
+            return Reply(SAY["known"], "known")
         if kind == "rule":
-            return Reply(SAY["rule"].format(text=memory.text), intent.language, "rule")
+            return Reply(SAY["rule"].format(text=memory.text), "rule")
         if len(memory.text) > SPOKEN_MAX:
-            return Reply(SAY["saved_long"], intent.language, "saved")
-        return Reply(SAY["saved"].format(text=memory.text), intent.language, "saved")
+            return Reply(SAY["saved_long"], "saved")
+        return Reply(SAY["saved"].format(text=memory.text), "saved")
 
     # -- forgetting --
 
@@ -406,11 +401,11 @@ class MemoryVoice:
         if len(close) == 1:
             best = close[0]
             if addressed and best.coverage == 1.0 and best.exact == 1.0:
-                return self._forgot([best.memory], intent.language)
+                return self._forgot([best.memory])
             options: tuple[Memory, ...] = (best.memory,)
-            return self._ask(_Question("forget", options, "", intent.language, "", 0.0))
+            return self._ask(_Question("forget", options, "", "", 0.0))
         options = tuple(s.memory for s in close[:RECALL_MAX])
-        return self._ask(_Question("which", options, "", intent.language, "", 0.0))
+        return self._ask(_Question("which", options, "", "", 0.0))
 
     def _forget_last(self, intent: Intent, addressed: bool) -> Reply | None:
         """ "Dimenticalo" forgets the memory just talked about (None without one: then it is
@@ -418,25 +413,25 @@ class MemoryVoice:
         ricordo" with nothing just talked about asks about the last one of this run."""
         target, refused = self._recent()
         if refused:
-            return Reply(SAY["not_saved"], intent.language, "not_saved")
+            return Reply(SAY["not_saved"], "not_saved")
         if target is not None:
             if not addressed:
-                return self._ask(_Question("forget", (target,), "", intent.language, "", 0.0))
-            return self._forgot([target], intent.language)
+                return self._ask(_Question("forget", (target,), "", "", 0.0))
+            return self._forgot([target])
         if intent.action == "forget_it":
             return None
         last = self.store.last_added()
         if last is None:
-            return Reply(SAY["nothing_new"], intent.language, "nothing_new")
-        return self._ask(_Question("forget", (last,), "", intent.language, "", 0.0))
+            return Reply(SAY["nothing_new"], "nothing_new")
+        return self._ask(_Question("forget", (last,), "", "", 0.0))
 
-    def _forgot(self, memories: Sequence[Memory], language: str) -> Reply:
+    def _forgot(self, memories: Sequence[Memory]) -> Reply:
         gone = self.store.remove([m.id for m in memories])
         if self._talked is not None and self._talked[0] in gone:
             self._talked = None
         if len(gone) == 1:
-            return Reply(SAY["forgot"].format(text=_as_said(gone[0], language)), language, "forgot")
-        return Reply(SAY["forgot_many"].format(count=len(gone)), language, "forgot")
+            return Reply(SAY["forgot"].format(text=_as_said(gone[0])), "forgot")
+        return Reply(SAY["forgot_many"].format(count=len(gone)), "forgot")
 
     # -- the question and its answer --
 
@@ -444,14 +439,14 @@ class MemoryVoice:
         if q.kind == "rule":
             said = SAY["keep_rule"].format(text=q.rule)
         elif q.kind == "forget":
-            said = SAY["forget_one"].format(items=_spoken(q.options, q.language))
+            said = SAY["forget_one"].format(items=_spoken(q.options))
             self._talk(q.options[0])  # "dimenticalo" now means this one
         else:
-            items = _spoken(q.options, q.language)
+            items = _spoken(q.options)
             said = SAY["which"].format(count=len(q.options), items=items)
-        self._question = _Question(q.kind, q.options, q.rule, q.language, said, self.clock())
+        self._question = _Question(q.kind, q.options, q.rule, said, self.clock())
         outcome = {"which": "which", "forget": "forget_one", "rule": "rule_asked"}[q.kind]
-        return Reply(said, q.language, outcome)
+        return Reply(said, outcome)
 
     def _answer(self, text: str, q: _Question) -> Reply | None:
         """The answer to the question, or None when `text` is something else (the question
@@ -461,21 +456,21 @@ class MemoryVoice:
         unclear = SAY["rule_unclear" if q.kind == "rule" else "unclear"]
         words = _answer_words(text)
         if not words:  # said far from the microphone (or nothing): never a yes
-            return Reply(unclear, q.language, "unclear")
+            return Reply(unclear, "unclear")
         if _echo(text, q):
             self._question = q  # Claudio's own question in the microphone: still waiting
-            return Reply("", q.language, "echo")
+            return Reply("", "echo")
         asked = has_question_mark(text)  # parse_answer gets the words, without the "?"
         intent = parse(text)
         if intent is not None and intent.action == "forget_it":
             if asked:
                 return None  # "Dimenticalo?" asks: nothing is forgotten
             if q.kind == "forget":
-                return self._forgot(q.options, q.language)  # "Dimenticalo." is the yes
+                return self._forgot(q.options)  # "Dimenticalo." is the yes
             if q.kind == "rule":
-                return Reply(SAY["rule_dropped"], q.language, "kept")
+                return Reply(SAY["rule_dropped"], "kept")
             self._question = q  # which one? "dimenticalo" does not say
-            return Reply(q.said, q.language, "which")
+            return Reply(q.said, "which")
         if words[0] in _FORGET_VERBS:  # "dimentica la prima": the answer, if the rest is one
             words = words[1:]
         elif intent is not None:
@@ -484,11 +479,11 @@ class MemoryVoice:
             return None
         if words[0] in _NONE or (len(words) <= ANSWER_WORDS and _NONE.intersection(words)):
             kept = SAY["rule_dropped" if q.kind == "rule" else "kept"]
-            return Reply(kept, q.language, "kept")
+            return Reply(kept, "kept")
         if q.kind != "which":
             if not asked and parse_answer(" ".join(_without_question(q, words))) is Answer.YES:
                 return (
-                    self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options, q.language)
+                    self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options)
                 )
             return None
         return self._which_answer(words, text, q)
@@ -499,10 +494,10 @@ class MemoryVoice:
         if has_question_mark(text):
             return None
         if _all(words):
-            return self._forgot(q.options, q.language)
+            return self._forgot(q.options)
         index = _ordinal(words, len(q.options))
         if index is not None:
-            return self._forgot([q.options[index]], q.language)
+            return self._forgot([q.options[index]])
         if len(words) <= NAMED_ANSWER_WORDS:
             # "quella di Torino": every word in one of them, as a whole word
             allowed = NAMED_ANSWER_CONNECTORS
@@ -511,11 +506,11 @@ class MemoryVoice:
             said = [w for w in words if w not in allowed]
             whole = [s for s in rank(" ".join(said), q.options) if s.exact == 1.0]
             if len(whole) == 1 and _holds(whole[0].memory, said):
-                return self._forgot([whole[0].memory], q.language)
+                return self._forgot([whole[0].memory])
         return None
 
     def _keep_rule(self, q: _Question) -> Reply:
-        return self._remember(Intent("rule", q.rule, q.language), addressed=True)
+        return self._remember(Intent("rule", q.rule), addressed=True)
 
     # -- reading back --
 
@@ -528,8 +523,8 @@ class MemoryVoice:
         shown = [s.memory for s in found[:RECALL_MAX]]
         if len(shown) == 1:
             self._talk(shown[0])
-        items = _spoken(shown, intent.language)
-        return Reply(SAY["recall"].format(items=items), intent.language, "recall")
+        items = _spoken(shown)
+        return Reply(SAY["recall"].format(items=items), "recall")
 
     def _talk(self, memory: Memory) -> None:
         self._talked = (memory, self.store.clock())
@@ -608,10 +603,10 @@ def _echo(text: str, q: _Question) -> bool:
     return bool(heard & own) and word_share(text, q.said) >= WORD_SHARE
 
 
-def _as_said(memory: Memory, language: str) -> str:
+def _as_said(memory: Memory) -> str:
     """A rule is read with its "da ora in poi": "chiamami capo" alone sounds like an order."""
     return SAY["ruled"].format(text=memory.text) if memory.kind == "rule" else memory.text
 
 
-def _spoken(memories: Sequence[Memory], language: str) -> str:
-    return "; ".join(_as_said(m, language) for m in memories)
+def _spoken(memories: Sequence[Memory]) -> str:
+    return "; ".join(_as_said(m) for m in memories)

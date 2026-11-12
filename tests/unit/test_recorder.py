@@ -20,7 +20,7 @@ def test_writes_wav_and_keeps_only_the_latest(tmp_path) -> None:
 def test_note_writes_the_context_beside_the_wav(tmp_path) -> None:
     rec = UtteranceRecorder(tmp_path, keep=2)
     name = rec(np.full(1600, 0.5, dtype=np.float32), "ok")
-    meta = {"whisper_prompt": "Cartelle: Università.", "language": "it", "gain_db": 12.5}
+    meta = {"whisper_prompt": "Cartelle: Università.", "gain_db": 12.5}
     rec.note(str(name), meta)
     note = tmp_path / name.replace(".wav", ".json")
     assert json.loads(note.read_text(encoding="utf-8")) == meta

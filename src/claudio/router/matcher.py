@@ -16,12 +16,10 @@ from typing import Any
 
 from rapidfuzz import fuzz, process
 
-from claudio.config import DEFAULT_LANGUAGE
-from claudio.router.normalizer import extract_number, last_clauses, normalize
-from claudio.router.normalizer import language as language_rules
+from claudio.router.normalizer import RULES, extract_number, last_clauses, normalize
 from claudio.router.phonetic import sound_key, spell_capitals
 
-ARTICLES = language_rules(DEFAULT_LANGUAGE).articles
+ARTICLES = RULES.articles
 
 
 @dataclass(frozen=True)
@@ -42,7 +40,6 @@ class Match:
     command: Command
     score: float
     number: int | None = None
-    language: str = DEFAULT_LANGUAGE
 
 
 @dataclass(frozen=True)
@@ -124,7 +121,7 @@ class CommandMatcher:
                 return cmd
         return None
 
-    def match(self, text: str, language: str = DEFAULT_LANGUAGE) -> Match | None:
+    def match(self, text: str) -> Match | None:
         # A stop goes before the fuzzy match: "apri la calcolatrice, stop" is close to a command.
         found = self._exact(text) or self._stop_at_end(text)
         if found is not None:
@@ -185,9 +182,7 @@ class CommandMatcher:
                 return Match(cmd, float(score), number)
         return None
 
-    def nearest(
-        self, texts: Sequence[str], language: str = DEFAULT_LANGUAGE, limit: int = 4
-    ) -> list[Near]:
+    def nearest(self, texts: Sequence[str], limit: int = 4) -> list[Near]:
         """The commands `texts` (a transcription and Whisper's other guesses) come closest to
         without matching, best first, one entry per command. Letters and sound are both
         compared, and exact-only commands count too: "Claudio spegni ti" is 94 from

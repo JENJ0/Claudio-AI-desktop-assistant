@@ -100,7 +100,7 @@ def test_words_after_a_clipped_name(text: str, rest: str) -> None:
 # --- the verdict ------------------------------------------------------------------------
 
 
-DOUBT = Doubt("Spenditi.", "it", "not_a_request", close=True)
+DOUBT = Doubt("Spenditi.", "not_a_request", close=True)
 
 
 @pytest.mark.parametrize(
@@ -111,11 +111,11 @@ DOUBT = Doubt("Spenditi.", "it", "not_a_request", close=True)
         (Guess("alza", 0.4), DOUBT, "media_key", Verdict.DROP),
         (Guess("alza", 0.6), DOUBT, "media_key", Verdict.ASK),
         (Guess("alza", 0.8), DOUBT, "media_key", Verdict.ACT),
-        (Guess("alza", 0.95), Doubt("x", "it", "unsure", close=False), "media_key", Verdict.DROP),
+        (Guess("alza", 0.95), Doubt("x", "unsure", close=False), "media_key", Verdict.DROP),
         # JenJo 30/10: "basta" from 50 % stops at once, never "Hai detto: basta?"...
         (Guess("basta", 0.4), DOUBT, "stop", Verdict.DROP),
         (Guess("basta", 0.6), DOUBT, "stop", Verdict.ACT),
-        (Guess("basta", 0.95), Doubt("x", "it", "unsure", close=False), "stop", Verdict.DROP),
+        (Guess("basta", 0.95), Doubt("x", "unsure", close=False), "stop", Verdict.DROP),
         # ...and "spegniti" is always asked, however sure: never off on a guess alone.
         (Guess("spegniti", 0.99), DOUBT, "system", Verdict.ASK),
         (Guess("chiuditi", 0.99), DOUBT, "system", Verdict.ASK),
@@ -145,7 +145,6 @@ def test_catalog_has_every_command_with_a_few_phrases(matcher: CommandMatcher) -
 def test_describe_tells_how_the_phrase_was_heard(matcher: CommandMatcher) -> None:
     doubt = Doubt(
         "Audio Bust.",
-        "it",
         "not_a_request",
         alternatives=("Audio basta.",),
         wake_word=CONVERSATION,
@@ -166,7 +165,7 @@ def test_describe_tells_how_the_phrase_was_heard(matcher: CommandMatcher) -> Non
 
 
 def test_describe_after_a_wake_word(matcher: CommandMatcher) -> None:
-    doubt = Doubt("Prossima.", "it", "name_not_heard", wake_word="hey_claudio", wake_score=0.93)
+    doubt = Doubt("Prossima.", "name_not_heard", wake_word="hey_claudio", wake_score=0.93)
     text = describe(doubt, matcher.nearest(["Prossima."]))
     assert 'after the wake word "hey_claudio" (score 0.93)' in text
     assert "the name was not in the phrase" in text
@@ -266,7 +265,7 @@ async def test_the_system_prompt_is_the_same_at_every_call(
     client = GuessClient()
     g = guesser(pricing, matcher, client)
     await g(DOUBT, matcher.nearest(["Spenditi."]))
-    await g(Doubt("Prossima.", "it", "unsure"), matcher.nearest(["Prossima."]))
+    await g(Doubt("Prossima.", "unsure"), matcher.nearest(["Prossima."]))
     assert client.calls[0]["system"] == client.calls[1]["system"]
 
 
@@ -330,19 +329,19 @@ def responder(
     return r, fake, rec
 
 
-async def say(r: LocalResponder, text: str, language: str = "it") -> str:
-    return "".join([c async for c in r.respond(text, language)])
+async def say(r: LocalResponder, text: str) -> str:
+    return "".join([c async for c in r.respond(text)])
 
 
 async def test_nothing_close_to_a_command_costs_nothing(matcher: CommandMatcher) -> None:
     r, fake, _ = responder(matcher, Guess("basta", 0.9, "stop"))
-    assert await r.guess(Doubt("Grazie a tutti.", "it", "unsure")) is None
+    assert await r.guess(Doubt("Grazie a tutti.", "unsure")) is None
     assert fake.calls == []
 
 
 async def test_sure_guess_is_answered(matcher: CommandMatcher) -> None:
     r, fake, rec = responder(matcher, Guess("canzone successiva", 0.9, "media_next", "song"))
-    recovery = await r.guess(Doubt("Prossima.", "it", "not_a_request", close=True))
+    recovery = await r.guess(Doubt("Prossima.", "not_a_request", close=True))
     assert recovery is not None and recovery.verdict is Verdict.ACT
     assert recovery.said == "canzone successiva" and not r.awaiting
     assert recovery.info["guess_p"] == 0.9 and recovery.info["guess_ms"] == 400
@@ -354,14 +353,14 @@ async def test_sure_guess_is_answered(matcher: CommandMatcher) -> None:
 
 async def test_the_words_after_a_clipped_name_are_compared(matcher: CommandMatcher) -> None:
     r, fake, _ = responder(matcher, Guess("alza il volume", 0.9, "volume_up"))
-    recovery = await r.guess(Doubt("Audio, alsa il volu", "it", "name_not_heard"))
+    recovery = await r.guess(Doubt("Audio, alsa il volu", "name_not_heard"))
     assert recovery is not None and recovery.verdict is Verdict.ACT
     assert any(n.command.id == "volume_up" for n in fake.calls[0][1])
 
 
 async def test_switching_off_is_always_asked(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
-    recovery = await r.guess(Doubt("Spenditi.", "it", "not_a_request", close=True))
+    recovery = await r.guess(Doubt("Spenditi.", "not_a_request", close=True))
     assert recovery is not None and recovery.verdict is Verdict.ASK
     assert recovery.question == "Hai detto: spegniti?"
     assert r.awaiting and not r.actions.system.off
@@ -374,7 +373,7 @@ async def test_switching_off_or_closing_is_asked_however_sure(
     matcher: CommandMatcher, said: str, command: str
 ) -> None:
     r, _, _ = responder(matcher, Guess(said, 0.99, command))
-    recovery = await r.guess(Doubt("Spenditi.", "it", "not_a_request", close=True))
+    recovery = await r.guess(Doubt("Spenditi.", "not_a_request", close=True))
     assert recovery is not None and recovery.verdict is Verdict.ASK
     assert recovery.question == f"Hai detto: {said}?" and r.awaiting
 
@@ -382,14 +381,14 @@ async def test_switching_off_or_closing_is_asked_however_sure(
 async def test_a_guessed_basta_stops_without_asking(matcher: CommandMatcher) -> None:
     # JenJo 30/10: between ask_at and act_at a "basta" is done, never "Hai detto: basta?".
     r, _, _ = responder(matcher, Guess("basta", 0.6, "stop"))
-    recovery = await r.guess(Doubt("Pasta.", "it", "not_a_request", close=True))
+    recovery = await r.guess(Doubt("Pasta.", "not_a_request", close=True))
     assert recovery is not None and recovery.verdict is Verdict.ACT
     assert recovery.said == "basta" and not r.awaiting
 
 
 async def test_no_drops_the_guess(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
-    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    await r.guess(Doubt("Spenditi.", "not_a_request"))
     assert await say(r, "no") == "Va bene, lascio stare."
     assert not r.actions.system.off and not r.awaiting
     assert r.last_route["route"] == "guess_refused"
@@ -397,7 +396,7 @@ async def test_no_drops_the_guess(matcher: CommandMatcher) -> None:
 
 async def test_no_and_another_request_answers_that(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, Guess("spegniti", 0.99, "off"))
-    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    await r.guess(Doubt("Spenditi.", "not_a_request"))
     await say(r, "no, alza il volume")
     assert not r.actions.system.off
     assert rec.keys and set(rec.keys) == {MEDIA_KEYS["volume_up"]}
@@ -416,7 +415,7 @@ async def test_no_and_another_request_answers_that(matcher: CommandMatcher) -> N
 async def test_a_refusal_does_not_run_what_it_refuses(matcher: CommandMatcher, said: str) -> None:
     """ "non spegnerti adesso" with the "non" taken out was the request "spegnerti adesso"."""
     r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
-    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    await r.guess(Doubt("Spenditi.", "not_a_request"))
     assert await say(r, said) == "Va bene, lascio stare."
     assert not r.actions.system.off and not r.awaiting
     assert r.last_route["route"] == "guess_refused"
@@ -424,7 +423,7 @@ async def test_a_refusal_does_not_run_what_it_refuses(matcher: CommandMatcher, s
 
 async def test_no_and_lower_the_volume_is_still_a_new_request(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, Guess("spegniti", 0.99, "off"))
-    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    await r.guess(Doubt("Spenditi.", "not_a_request"))
     await say(r, "no, abbassa il volume")
     assert not r.actions.system.off
     assert rec.keys and set(rec.keys) == {MEDIA_KEYS["volume_down"]}
@@ -432,14 +431,14 @@ async def test_no_and_lower_the_volume_is_still_a_new_request(matcher: CommandMa
 
 async def test_a_refusal_of_closing_the_window_presses_nothing(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, Guess("chiudi la finestra", 0.6, "close_window"))
-    await r.guess(Doubt("Chiudi la fenestra.", "it", "not_a_request"))
+    await r.guess(Doubt("Chiudi la fenestra.", "not_a_request"))
     assert await say(r, "non chiudere la finestra") == "Va bene, lascio stare."
     assert rec.combos == []
 
 
 async def test_the_questions_own_echo_is_no_answer(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
-    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    await r.guess(Doubt("Spenditi.", "not_a_request"))
     assert await say(r, "detto spegniti") == ""
     assert not r.actions.system.off and not r.awaiting
     assert r.last_route["route"] == "guess_echo"
@@ -449,7 +448,7 @@ async def test_unsure_guess_asks_and_a_yes_needs_no_second_question(
     matcher: CommandMatcher,
 ) -> None:
     r, _, rec = responder(matcher, Guess("chiudi la finestra", 0.6, "close_window"))
-    recovery = await r.guess(Doubt("Chiudi la fenestra.", "it", "not_a_request"))
+    recovery = await r.guess(Doubt("Chiudi la fenestra.", "not_a_request"))
     assert recovery is not None and recovery.verdict is Verdict.ASK
     assert await say(r, "sì, grazie") == "Fatto."  # no "Confermi?" after "Hai detto"
     assert rec.combos == [(VK_MENU, VK_F4)]
@@ -457,7 +456,7 @@ async def test_unsure_guess_asks_and_a_yes_needs_no_second_question(
 
 async def test_a_yes_with_more_words_after_it_answers_the_guess(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, None)
-    r.propose("chiudi la finestra", "it")
+    r.propose("chiudi la finestra")
     assert await say(r, "sì, grazie mille davvero") == "Fatto."
     assert rec.combos == [(VK_MENU, VK_F4)]
 
@@ -468,7 +467,7 @@ async def test_a_phrase_that_is_not_only_a_yes_does_not_answer_the_guess(
     matcher: CommandMatcher, guessed: str, said: str
 ) -> None:
     r, _, rec = responder(matcher, None)
-    r.propose(guessed, "it")
+    r.propose(guessed)
     await say(r, said)
     assert not r.actions.system.off and (VK_MENU, VK_F4) not in rec.combos
 
@@ -485,7 +484,7 @@ async def test_a_phrase_that_is_not_only_a_yes_is_a_new_request(
         yield "Ok."
 
     r = LocalResponder(matcher, ActionRunner(Recorder().ctx()), fallback=claude)
-    r.propose("spegniti", "it")
+    r.propose("spegniti")
     assert await say(r, said) == "Ok."
     assert not r.actions.system.off
     assert asked == [said] and r.last_route["route"] == "claude"
@@ -494,7 +493,7 @@ async def test_a_phrase_that_is_not_only_a_yes_is_a_new_request(
 async def test_a_yes_that_repeats_the_guess_answers_it(matcher: CommandMatcher) -> None:
     """Not the question's echo: "sì, chiudi la finestra" at "Hai detto: chiudi la finestra?"."""
     r, _, rec = responder(matcher, None)
-    r.propose("chiudi la finestra", "it")
+    r.propose("chiudi la finestra")
     assert await say(r, "sì, chiudi la finestra") == "Fatto."
     assert rec.combos == [(VK_MENU, VK_F4)]
 
@@ -504,7 +503,7 @@ async def test_a_refusal_with_the_name_refuses_the_guess(
     matcher: CommandMatcher, said: str
 ) -> None:
     r, _, rec = responder(matcher, None)
-    r.propose("spegniti", "it")
+    r.propose("spegniti")
     assert await say(r, said) != ""
     assert not r.actions.system.off and rec.combos == []
     assert r.last_route["route"] == "guess_refused"
@@ -514,21 +513,21 @@ async def test_a_question_mark_after_the_yes_does_not_run_the_guess(
     matcher: CommandMatcher,
 ) -> None:
     r, _, rec = responder(matcher, None)
-    r.propose("chiudi la finestra", "it")
+    r.propose("chiudi la finestra")
     await say(r, "Sì? Chiudi la finestra.")
     assert rec.combos == []
 
 
 async def test_a_yes_that_repeats_switching_off_switches_off(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, None)
-    r.propose("spegniti", "it")
+    r.propose("spegniti")
     await say(r, "sì, spegniti")
     assert r.actions.system.off
 
 
 async def test_the_guess_repeated_without_a_yes_is_still_the_echo(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, None)
-    r.propose("chiudi la finestra", "it")
+    r.propose("chiudi la finestra")
     assert await say(r, "chiudi la finestra") == ""
     assert rec.combos == [] and r.last_route["route"] == "guess_echo"
 
@@ -542,7 +541,7 @@ async def test_a_yes_and_another_request_is_a_new_request(matcher: CommandMatche
 
     rec = Recorder()
     r = LocalResponder(matcher, ActionRunner(rec.ctx()), fallback=claude)
-    r.propose("chiudi la finestra", "it")
+    r.propose("chiudi la finestra")
     assert await say(r, "sì, chiudi la porta") == "Ok."
     assert rec.combos == [] and asked == ["sì, chiudi la porta"]
 
@@ -550,7 +549,7 @@ async def test_a_yes_and_another_request_is_a_new_request(matcher: CommandMatche
 async def test_a_yes_to_a_guessed_level_3_command_still_needs_its_confermo() -> None:
     level_3 = Command(id="delete", phrases=("cancella tutto",), action="close_window", level=3)
     r, _, rec = responder(CommandMatcher([level_3]), None)
-    r.propose("cancella tutto", "it")
+    r.propose("cancella tutto")
     assert "confermo" in await say(r, "sì")
     assert rec.combos == [] and r.awaiting and r.last_route["route"] == "confirm"
     await say(r, "confermo")
@@ -559,7 +558,7 @@ async def test_a_yes_to_a_guessed_level_3_command_still_needs_its_confermo() -> 
 
 async def test_sure_level_2_command_still_asks_its_own_question(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, Guess("chiudi la finestra", 0.9, "close_window"))
-    recovery = await r.guess(Doubt("Chiudi la fenestra.", "it", "not_a_request"))
+    recovery = await r.guess(Doubt("Chiudi la fenestra.", "not_a_request"))
     assert recovery is not None and recovery.verdict is Verdict.ACT
     assert (await say(r, recovery.said)).endswith("Confermi?")
     assert rec.combos == []
@@ -567,7 +566,7 @@ async def test_sure_level_2_command_still_asks_its_own_question(matcher: Command
 
 async def test_silence_after_the_question_does_nothing(matcher: CommandMatcher) -> None:
     r, _, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
-    await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    await r.guess(Doubt("Spenditi.", "not_a_request"))
     r.cancel_pending(silence=True)
     assert not r.awaiting and not r.actions.system.off
 
@@ -583,7 +582,7 @@ async def test_silence_after_the_question_does_nothing(matcher: CommandMatcher) 
 )
 async def test_dropped_as_before(matcher: CommandMatcher, guess: Guess | None) -> None:
     r, fake, _ = responder(matcher, guess)
-    recovery = await r.guess(Doubt("Pasta.", "it", "unsure"))
+    recovery = await r.guess(Doubt("Pasta.", "unsure"))
     assert recovery is not None and recovery.verdict is Verdict.DROP
     assert len(fake.calls) == 1 and not r.awaiting
 
@@ -591,13 +590,13 @@ async def test_dropped_as_before(matcher: CommandMatcher, guess: Guess | None) -
 async def test_claudes_words_become_the_commands_own(matcher: CommandMatcher) -> None:
     # Claude named off but wrote words no command matches: its first phrase is used.
     r, _, _ = responder(matcher, Guess("spegni il programma", 0.95, "off"))
-    recovery = await r.guess(Doubt("Spenditi.", "it", "not_a_request"))
+    recovery = await r.guess(Doubt("Spenditi.", "not_a_request"))
     assert recovery is not None and recovery.said == "spegniti"
 
 
 async def test_the_number_said_is_kept(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, Guess("alza volume di 5", 0.9, "volume_up"))
-    recovery = await r.guess(Doubt("Alsa il volu di 5", "it", "unsure"))
+    recovery = await r.guess(Doubt("Alsa il volu di 5", "unsure"))
     assert recovery is not None
     await say(r, recovery.said)
     assert rec.keys == [MEDIA_KEYS["volume_up"]] * 5
@@ -606,10 +605,10 @@ async def test_the_number_said_is_kept(matcher: CommandMatcher) -> None:
 @pytest.mark.parametrize(
     ("doubt", "settings", "paused"),
     [
-        (Doubt("Spenditi.", "it", "not_a_request", close=False), {}, False),  # far: the TV
-        (Doubt("Spenditi.", "it", "not_a_request"), {"enabled": False}, False),
-        (Doubt("Spenditi.", "it", "not_a_request"), {}, True),
-        (Doubt("Spenditi.", "it", "not_a_request"), {"near_floor": 95}, False),
+        (Doubt("Spenditi.", "not_a_request", close=False), {}, False),  # far: the TV
+        (Doubt("Spenditi.", "not_a_request"), {"enabled": False}, False),
+        (Doubt("Spenditi.", "not_a_request"), {}, True),
+        (Doubt("Spenditi.", "not_a_request"), {"near_floor": 95}, False),
     ],
 )
 async def test_no_call(
@@ -624,7 +623,7 @@ async def test_no_call(
 async def test_no_guess_while_a_question_waits(matcher: CommandMatcher) -> None:
     r, fake, _ = responder(matcher, Guess("spegniti", 0.99, "off"))
     await say(r, "chiudi la finestra")  # "Confermi?"
-    assert await r.guess(Doubt("Spenditi.", "it", "not_a_request")) is None
+    assert await r.guess(Doubt("Spenditi.", "not_a_request")) is None
     assert fake.calls == []
 
 
@@ -632,7 +631,7 @@ async def test_no_guess_while_off(matcher: CommandMatcher) -> None:
     # Off ("spegniti") nothing goes to Claude: a misheard "accenditi" is not guessed either.
     r, fake, _ = responder(matcher, Guess("accenditi", 0.99, "on"))
     r.actions.system.off = True
-    assert await r.guess(Doubt("A cendi ti.", "it", "not_a_request")) is None
+    assert await r.guess(Doubt("A cendi ti.", "not_a_request")) is None
     assert fake.calls == []
 
 
@@ -748,7 +747,7 @@ async def test_own_voice_and_silence_are_never_guessed(
     assistant, _, _, r = build_conversation(fake_vad, vad_settings, matcher, [])
     fake = guessing(r, assistant, Guess("basta", 0.99, "stop"))
     inter = Interaction(clock=assistant.clock)
-    assert await assistant._recover(decision, "it", Heard(CONVERSATION), inter) is None
+    assert await assistant._recover(decision, Heard(CONVERSATION), inter) is None
     assert fake.calls == []
 
 
@@ -762,7 +761,6 @@ def _commands(matcher: CommandMatcher) -> list[Command]:
 UNSURE = Segment(0.05, -0.65)
 PRECALL_DOUBT = Doubt(
     "Claudio, chi udite?",
-    "it",
     PRECALL,
     alternatives=("Claudio, chiuditi.",),
     close=True,
@@ -822,7 +820,7 @@ async def test_no_precall_while_a_question_waits(matcher: CommandMatcher) -> Non
 
 async def test_the_precall_asks_without_a_closeness_floor(matcher: CommandMatcher) -> None:
     r, fake, _ = responder(matcher, Guess("chiuditi", 0.99, "shutdown"), precall=True)
-    recovery = await r.guess(Doubt("Qualcosa di strano.", "it", PRECALL, close=True))
+    recovery = await r.guess(Doubt("Qualcosa di strano.", PRECALL, close=True))
     assert recovery is not None and recovery.verdict is Verdict.ASK
     assert recovery.question == "Hai detto: chiuditi?"
     assert len(fake.calls) == 1
@@ -863,7 +861,7 @@ def precalling(
     assistant.unsure_logprob = -0.2
     assistant.stt_segments = lambda: [UNSURE]
     assistant.alternatives = 2
-    assistant.closed_list = lambda audio, language: ["Claudio, chi udite?", "Claudio, chiuditi."]
+    assistant.closed_list = lambda audio: ["Claudio, chi udite?", "Claudio, chiuditi."]
     return assistant, speaker, rec, r, fake, told
 
 
@@ -998,7 +996,7 @@ async def _precall_doubt(
         assistant.transcriber.vocabulary = vocabulary
     inter = Interaction(clock=assistant.clock)
     decision = Decision(Kind.ANSWER, text)
-    await assistant._precall(np.zeros(1600, dtype=np.int16), decision, "it", heard, inter)
+    await assistant._precall(np.zeros(1600, dtype=np.int16), decision, heard, inter)
     return fake.calls[0][0]
 
 
@@ -1019,7 +1017,7 @@ async def test_the_window_names_survive_the_cut(fake_vad, vad_settings, matcher)
         + ". Finestre aperte: Blocco note."
     )
     doubt = await _precall_doubt(
-        fake_vad, vad_settings, matcher, _heard(), vocabulary=lambda language: names
+        fake_vad, vad_settings, matcher, _heard(), vocabulary=lambda: names
     )
     assert len(names) > 400 and doubt.nearby.endswith("Finestre aperte: Blocco note.")
 
@@ -1034,7 +1032,7 @@ async def test_a_failing_guess_leaves_the_precall_path(fake_vad, vad_settings, m
     inter = Interaction(clock=assistant.clock)
     decision = Decision(Kind.ANSWER, "chi udite?")
     audio = np.zeros(1600, dtype=np.int16)
-    assert await assistant._precall(audio, decision, "it", _heard(), inter) is None
+    assert await assistant._precall(audio, decision, _heard(), inter) is None
 
 
 async def test_sure_whisper_makes_no_precall(fake_vad, vad_settings, make_frames, matcher) -> None:
@@ -1058,7 +1056,7 @@ async def test_an_unsure_answer_to_claudes_question_goes_to_claude(
     )
     claude_says(r, "Dove ti trovi?")  # a plain question: its answer is the next phrase
     assistant.intake.claude_min_words = 3  # the window lets longer phrases through to Claude
-    assistant.closed_list = lambda audio, language: ["Claudio, sono a Roma"]
+    assistant.closed_list = lambda audio: ["Claudio, sono a Roma"]
     heard_so_far = []  # the first request is sure, the answer to the question is not
     assistant.stt_segments = lambda: [Segment(0.05, -0.05 if not heard_so_far else -0.65)]
     assistant.on_heard = lambda h: (heard_so_far.append(h), r.heard(h))[0]

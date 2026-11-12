@@ -134,7 +134,7 @@ def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
             t2 = time.perf_counter()
 
             # Route only (actions are not executed in the benchmark).
-            match = responder.matcher.match(text, stt.language)
+            match = responder.matcher.match(text)
             t3 = time.perf_counter()
             reply = match.command.reply if match else settings.router.unknown_reply
             tts_ms = 0.0
@@ -150,7 +150,7 @@ def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
             rows.append(row)
             flag = "ok " if got == expected else "ERR"
             print(
-                f"  {flag} {wav.stem[:40]:<40} {row['stt_ms']:6.0f} ms  {stt.language} "
+                f"  {flag} {wav.stem[:40]:<40} {row['stt_ms']:6.0f} ms  "
                 f"{text!r} -> {got}"
             )
         print(f"  riconosciuti {correct}/{len(clips)}")
@@ -212,16 +212,14 @@ def replay(
     class DryResponder:  # routes, never executes
         def __init__(self) -> None:
             self.last_route: dict[str, str] = {}
-            self.language = "it"
 
-        async def respond(self, text: str, language: str = "it"):
-            match = matcher.match(text, language)
-            self.language = match.language if match else language
+        async def respond(self, text: str, named: bool = False):
+            match = matcher.match(text)
             self.last_route = {"command": match.command.id if match else "-"}
             yield "ok"
 
     class Silent:
-        async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
+        async def speak(self, text_stream, on_first_audio=None) -> None:
             async for _ in text_stream:
                 pass
 
@@ -251,13 +249,12 @@ def replay(
         asyncio.run(assistant.run(frames()))
         got = assistant.history[0] if assistant.history else {}
         text, command = got.get("text", ""), got.get("command", "-")
-        language = got.get("stt_language", "")
         changed += text != row.get("text", "")
         understood += command != "-"
         if got.get("stt_ms") is not None:
             stt_ms.append(got["stt_ms"])
         print(
-            f"  {wav.stem[:22]:<22} live {row.get('text', '')!r:<34} ora {language} {text!r} "
+            f"  {wav.stem[:22]:<22} live {row.get('text', '')!r:<34} ora {text!r} "
             f"-> {command}"
         )
     print(f"comandi riconosciuti {understood}/{len(wavs)}")

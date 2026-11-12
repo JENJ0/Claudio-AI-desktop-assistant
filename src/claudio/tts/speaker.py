@@ -14,7 +14,7 @@ import numpy as np
 
 from claudio.audio.earcons import make_earcons
 from claudio.audio.player import AudioPlayer
-from claudio.config import DEFAULT_LANGUAGE, TtsSettings
+from claudio.config import TtsSettings
 from claudio.tts.sentence_splitter import group_stream, split_stream
 
 log = logging.getLogger(__name__)
@@ -111,21 +111,19 @@ class StreamingSpeaker:
         self._ducked = not full
         self.player.gain = 1.0 if volume is None else volume
 
-    def render(self, sentence: str, language: str = DEFAULT_LANGUAGE) -> tuple[np.ndarray, int]:
+    def render(self, sentence: str) -> tuple[np.ndarray, int]:
         synth = self.synth
         audio = synth.synthesize(sentence)
         rate = int(synth.sample_rate)
         return audio, rate
 
-    async def render_stream(
-        self, sentence: str, language: str
-    ) -> AsyncIterator[tuple[np.ndarray, int]]:
+    async def render_stream(self, sentence: str) -> AsyncIterator[tuple[np.ndarray, int]]:
         """The audio of a sentence. A synth with stream() (Jack) is played as it is generated,
         so the first words start before the sentence is finished."""
         synth = self.synth
         stream = getattr(synth, "stream", None)
         if stream is None:
-            yield await asyncio.to_thread(self.render, sentence, language)
+            yield await asyncio.to_thread(self.render, sentence)
             return
         chunks = iter(stream(sentence))
         try:
@@ -152,16 +150,13 @@ class StreamingSpeaker:
         self,
         text_stream: AsyncIterator[str],
         on_first_audio: Callable[[], None] | None = None,
-        language: str | Callable[[], str] = DEFAULT_LANGUAGE,
     ) -> None:
-        """`language` may be a callable, read at every sentence: the responder only knows the
-        language of its reply once it has matched the request."""
         self._reset_for_reply()
         # Rendering runs ahead of playback: the next sentences are ready before they are due
         # (Jack's whole-sentence RVC needs it); "basta" drops whatever is queued. The first
         # piece of each sentence carries its text.
         queue: asyncio.Queue[tuple[np.ndarray, int, str | None] | None] = asyncio.Queue(maxsize=16)
-        producer = asyncio.create_task(self._produce(text_stream, language, queue))
+        producer = asyncio.create_task(self._produce(text_stream, queue))
         loop = asyncio.get_running_loop()
 
         def wake() -> None:  # interrupt() may come from another thread
@@ -195,7 +190,6 @@ class StreamingSpeaker:
     async def _produce(
         self,
         text_stream: AsyncIterator[str],
-        language: str | Callable[[], str],
         queue: asyncio.Queue[tuple[np.ndarray, int, str | None] | None],
     ) -> None:
         try:
@@ -209,10 +203,9 @@ class StreamingSpeaker:
             else:
                 pieces = split_stream(text_stream, first_clause_chars=self.first_clause_chars)
             async for sentence in pieces:
-                lang = language() if callable(language) else language
-                log.debug("TTS (%s): %s", lang, sentence)
+                log.debug("TTS: %s", sentence)
                 text: str | None = sentence
-                async for audio, rate in self.render_stream(sentence, lang):
+                async for audio, rate in self.render_stream(sentence):
                     await queue.put((audio, rate, text))
                     text = None
         finally:

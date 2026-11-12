@@ -46,7 +46,6 @@ def doubt_of(row: dict, settings: Settings) -> Doubt:
     dbfs = row.get("speech_dbfs")
     return Doubt(
         text=text,
-        language=str(row.get("stt_language") or row.get("language") or "it"),
         reason=REASONS[row["outcome"]],
         wake_word=str(row.get("wake_word") or ""),
         wake_score=float(row.get("wake_score") or 0.0),
@@ -85,7 +84,7 @@ async def main() -> int:
         doubt = doubt_of(row, settings)
         texts = [doubt.text]
         texts += [rest for t in texts if (rest := after_clipped_name(t))]
-        near = responder.matcher.nearest(texts, doubt.language, settings.guess.candidates)
+        near = responder.matcher.nearest(texts, settings.guess.candidates)
         best = f"{near[0].command.id} {near[0].score:.0f}" if near else "-"
         line = f"{doubt.text[:40]:42} {doubt.reason:15} vicino: {best:22}"
         if not near or near[0].score < floor or args.dry:

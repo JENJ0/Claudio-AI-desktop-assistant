@@ -243,8 +243,7 @@ async def test_level_3_still_says_what_will_run(
 
 async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
     q = await verbose.question(
-        [call("type_text", text="ciao", window="chrome"), call("press_keys", keys=["enter"])],
-        "it",
+        [call("type_text", text="ciao", window="chrome"), call("press_keys", keys=["enter"])]
     )
     assert q == (
         'Scrivo "ciao" in "YouTube - Google Chrome", '
@@ -253,7 +252,7 @@ async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
     q = await verbose.question([call("close_window", window="")])
     assert q == 'Chiudo la finestra "Senza nome - Blocco note". Confermi?'
     q = await verbose.question(
-        [call("move_file", source="~/Downloads/a.pdf", destination="~")], "it"
+        [call("move_file", source="~/Downloads/a.pdf", destination="~")]
     )
     assert q.startswith('Sposto "a.pdf" in "~')
 
@@ -1648,21 +1647,6 @@ async def test_sonnet_is_not_offered_in_the_middle_of_an_action(
     assert await ask(b, "guarda le finestre") == "Ecco."
     sent = client.calls[1]["messages"][-2]["content"]
     assert [blk["name"] for blk in sent] == ["list_windows"]  # every tool_use has its result
-
-
-async def test_the_answer_keeps_the_question_language(
-    matcher: CommandMatcher, pricing: Pricing, tools: PcTools
-) -> None:
-    client = ScriptedClient(
-        ([], "tool_use", [use("close_window", window="chrome")]),
-        (["Chiusa."], "end_turn", []),
-    )
-    b = acting_brain(pricing, client, tools)
-    r = hybrid(matcher, b)
-    r.fallback_awaiting = lambda: b.awaiting
-    await say(r, "chiudi la finestra di chrome")
-    await say(r, "ok", language="en")  # Whisper heard "ok" as English
-    assert r.language == "it"
 
 
 async def test_a_tool_that_ran_in_a_later_round_loses_its_not_run_note(

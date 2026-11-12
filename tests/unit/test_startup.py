@@ -83,7 +83,7 @@ async def test_run_text_acts_for_real(tmp_path, monkeypatch) -> None:
         def __init__(self) -> None:
             self.player = type("P", (), {"close": lambda self: None})()
 
-        async def speak(self, replies, on_first_audio=None, language=None) -> None:
+        async def speak(self, replies, on_first_audio=None) -> None:
             async for _ in replies:
                 pass
 

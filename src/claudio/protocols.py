@@ -7,8 +7,6 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from claudio.config import DEFAULT_LANGUAGE
-
 
 class WakeWordDetector(Protocol):
     def process(self, frame: np.ndarray) -> tuple[str, float] | None:
@@ -41,7 +39,6 @@ class SpeechProbability(Protocol):
 
 
 class Transcriber(Protocol):
-    language: str  # of the last transcription
     # True while no transcribed word may be logged (CLAUDIO is off); the Assistant sets it.
     hides_text: Callable[[], bool] | None
 
@@ -51,7 +48,6 @@ class Transcriber(Protocol):
 
 
 class Responder(Protocol):
-    language: str  # of the reply being streamed, known by its first chunk
     last_route: dict[str, Any]  # how the last request was handled ("route", "command"...)
     claude_replied: bool  # the reply being streamed (or the last one) came from Claude
     can_resume: Callable[[], bool] | None  # set by the Assistant: "continua" has a rest to say
@@ -81,7 +77,7 @@ class Responder(Protocol):
         connections now, while JenJo is still talking."""
         ...
 
-    def understands(self, text: str, language: str = DEFAULT_LANGUAGE, memory: bool = True) -> bool:
+    def understands(self, text: str, memory: bool = True) -> bool:
         """A local command matches `text` (memory=True: or a memory request)."""
         ...
 
@@ -111,15 +107,13 @@ class Responder(Protocol):
         """The cut reply `handle` names had an action that was stopped and never ran."""
         ...
 
-    def propose(self, text: str, language: str) -> str:
+    def propose(self, text: str) -> str:
         """A request worked out from a misheard phrase: the question to ask first ("Hai
         detto: ...?"); the next phrase is its answer (awaiting)."""
         ...
 
-    def respond(
-        self, text: str, language: str = DEFAULT_LANGUAGE, named: bool = False
-    ) -> AsyncIterator[str]:
-        """Stream the reply to `text`, heard in `language`. Phase 1: one chunk. Phase 2:
+    def respond(self, text: str, named: bool = False) -> AsyncIterator[str]:
+        """Stream the reply to `text`. Phase 1: one chunk. Phase 2:
         Haiku tokens. `named`: the wake audio held the name, though `text` does not."""
         ...
 
@@ -156,7 +150,6 @@ class Speaker(Protocol):
         self,
         text_stream: AsyncIterator[str],
         on_first_audio: Callable[[], None] | None = None,
-        language: str | Callable[[], str] = DEFAULT_LANGUAGE,
     ) -> None: ...
 
     async def beep(self, kind: str = "wake") -> None: ...

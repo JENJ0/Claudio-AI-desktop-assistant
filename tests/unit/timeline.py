@@ -192,7 +192,7 @@ class SceneStt:
     is the length of the audio of each pass."""
 
     def __init__(self, scene: Scene) -> None:
-        self.scene, self.language, self.fail = scene, "it", False
+        self.scene, self.fail = scene, False
         self.samples: list[int] = []
         self.heard = ""  # what the pass in progress hears, fixed when it starts
 

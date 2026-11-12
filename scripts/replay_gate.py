@@ -161,7 +161,6 @@ class ManifestError(ValueError):
 class Clip:
     wav: Path
     prompt: str | None  # Whisper's prompt when the WAV was saved (note); None: the shipped one
-    language: str | None
     gain_db: float | None  # not applied: the WAV is already amplified
     session: str
     problem: str | None = None  # the note could not be read: the clip is an error
@@ -208,7 +207,6 @@ def load_clip(wav: Path) -> Clip:
     return Clip(
         wav,
         note.get("whisper_prompt"),
-        note.get("language"),
         note.get("gain_db"),
         wav.parent.parent.name,
         problem,
@@ -868,7 +866,7 @@ def frozen_prompt(stt: Any, prompt: str | None) -> Iterator[None]:
     if prompt is None:
         yield
         return
-    stt.prompt = lambda language: prompt
+    stt.prompt = lambda: prompt
     try:
         yield
     finally:

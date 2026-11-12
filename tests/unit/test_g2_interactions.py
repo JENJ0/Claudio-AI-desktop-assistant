@@ -116,10 +116,10 @@ async def test_the_sonnet_offer_is_not_made_while_paused(pricing: Pricing) -> No
 
 async def test_the_proposal_is_not_asked_while_off(make_scene) -> None:
     scene = make_scene(text_reply("x"))
-    scene.responder.propose("apri chrome", "it")
+    scene.responder.propose("apri chrome")
     scene.responder.actions.system.apply("off")
     decision = Decision(Kind.ASK, "Hai detto: apri chrome?", "recovered")
-    stream = await scene.assistant._reply_to(decision, np.zeros(1), "it", [], Interaction())
+    stream = await scene.assistant._reply_to(decision, np.zeros(1), [], Interaction())
     assert [chunk async for chunk in stream] == []
     assert not scene.responder.awaiting
 
@@ -205,7 +205,7 @@ async def test_named_by_the_wake_audio_is_a_new_request_over_the_local_question(
     notes: list[tuple[str, str]] = []
     r = local(matcher, rec, clock, fallback_note=lambda q, a: notes.append((q, a)))
     await say(r, "chiudi la finestra")
-    reply = "".join([c async for c in r.respond("che ore sono", "it", named=True)])
+    reply = "".join([c async for c in r.respond("che ore sono", named=True)])
     assert "Va bene" in reply and "Sono le" in reply
     assert rec.combos == []
     assert not r.awaiting
@@ -217,7 +217,7 @@ async def test_an_unnamed_request_still_answers_the_question_as_unclear(
     rec, clock = Recorder(), Monotonic()
     r = local(matcher, rec, clock)
     await say(r, "chiudi la finestra")
-    reply = "".join([c async for c in r.respond("che ore sono", "it")])
+    reply = "".join([c async for c in r.respond("che ore sono")])
     assert "Sono le" not in reply
     assert r.awaiting  # asked once more
 

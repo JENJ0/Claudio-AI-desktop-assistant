@@ -94,7 +94,6 @@ class Doubt:
     asked whether it is a command Whisper misheard (brain/guess.py)."""
 
     text: str
-    language: str
     reason: str  # why it was about to be dropped (Decision.reason)
     alternatives: tuple[str, ...] = ()  # Whisper's other guesses (the closed list's n-best)
     wake_word: str = ""  # the wake word model, CONVERSATION or BARGE_IN
@@ -194,7 +193,7 @@ class RequestFilter:
 
     # -- before decide(): is another Whisper pass worth it? --
 
-    def wants_closed_list(self, text: str, heard: str, responder: Responder) -> bool:
+    def wants_closed_list(self, text: str, responder: Responder) -> bool:
         """Ask Whisper for its n-best: not understood, short and not a question. Whisper
         writes the "?" only on questions, and those are for Claude (~100 ms saved)."""
         return (
@@ -203,12 +202,12 @@ class RequestFilter:
             and not text.rstrip().endswith("?")
             and not responder.awaiting
             and not (self.closed_list_max_words and words(text) > self.closed_list_max_words)
-            and not responder.understands(text, heard)
+            and not responder.understands(text)
         )
 
     # -- the decision --
 
-    def decide(self, text: str, language: str, heard: Heard, responder: Responder) -> Decision:
+    def decide(self, text: str, heard: Heard, responder: Responder) -> Decision:
         """A FALSE_WAKE may still be a request said after a pause: the Assistant lets Whisper
         listen to the wake word itself and, if the name is there, decides again with
         name_heard. While a question is open, a yes or no that carries the name ("No,
@@ -221,19 +220,19 @@ class RequestFilter:
             return Decision(Kind.RELISTEN, text)
         if not text or only_wake_words(text):
             return Decision(Kind.EMPTY, text)
-        if self._false_wake(text, language, heard, responder):
+        if self._false_wake(text, heard, responder):
             return Decision(Kind.FALSE_WAKE, text, "name_not_heard")
         if responder.awaiting:
             return self._answer(text, heard)
-        if heard.wake_word == CONVERSATION and not self.is_request(text, language, responder):
+        if heard.wake_word == CONVERSATION and not self.is_request(text, responder):
             return Decision(Kind.NOT_REQUEST, text, "not_a_request")
-        if (cause := self.noise_cause(text, heard)) and not responder.understands(text, language):
+        if (cause := self.noise_cause(text, heard)) and not responder.understands(text):
             return Decision(Kind.NOISE, text, cause)
         if (
             self.continue_incomplete
             and not heard.continued
             and incomplete(text)
-            and not responder.understands(text, language)
+            and not responder.understands(text)
         ):
             return Decision(Kind.CONTINUE, text, "incomplete")
         return Decision(Kind.ANSWER, text)
@@ -242,11 +241,11 @@ class RequestFilter:
     def _is_answer(text: str, responder: Responder) -> bool:
         return responder.awaiting and parse_answer(text) is not Answer.UNCLEAR
 
-    def is_request(self, text: str, language: str, responder: Responder) -> bool:
+    def is_request(self, text: str, responder: Responder) -> bool:
         """Heard in the conversation window: a command, or (with Claude) a phrase that sounds
         addressed to Claudio, short ones too when they say the name. The TV's "e poi gli ho
         detto di no" is not: it costs nothing."""
-        if responder.understands(text, language):
+        if responder.understands(text):
             return True
         if self.claude_min_words is not None and responder.asked_question:
             return True  # Claude asked "da dove parti?": "Milano." is the answer
@@ -303,7 +302,7 @@ class RequestFilter:
             and not wake_confirmed(text, False)
         )
 
-    def _false_wake(self, text: str, language: str, heard: Heard, responder: Responder) -> bool:
+    def _false_wake(self, text: str, heard: Heard, responder: Responder) -> bool:
         """Only a real wake word detection is judged: not the conversation window, not a
         yes/no answer, not a second chance (Whisper already heard the name), not the request
         after a lone wake word (the name was in the phrase before) and not a short answer to
@@ -319,7 +318,7 @@ class RequestFilter:
             or (responder.answer_expected and words(text) <= ANSWER_MAX_WORDS)
         ):
             return False
-        return not wake_confirmed(text, responder.understands(text, language))
+        return not wake_confirmed(text, responder.understands(text))
 
 
 # How a follow-up request to Claudio usually starts, when it is not a question.

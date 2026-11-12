@@ -66,8 +66,8 @@ def responder(
     )
 
 
-async def say(r: LocalResponder, said: str, language: str = "it") -> str:
-    return "".join([c async for c in r.respond(said, language)])
+async def say(r: LocalResponder, said: str) -> str:
+    return "".join([c async for c in r.respond(said)])
 
 
 # --- the router ---------------------------------------------------------------------------
@@ -84,7 +84,6 @@ async def test_remember_is_local_and_free(
     assert client.calls == [] and r.last_route == {
         "route": "memory",
         "memory": "saved",
-        "language": "it",
     }
     assert await say(r, "ripeti") == reply
 
@@ -214,8 +213,8 @@ async def test_the_echo_of_the_memorys_question_says_nothing_and_keeps_it_open(
     store.add("mia sorella abita a Torino")
     question = await say(r, "dimentica mia sorella")
     # No chunk at all: an empty one would mark first_text and write an empty reply in the row.
-    assert [chunk async for chunk in r.respond(question, "it")] == []
-    assert r.last_route == {"route": "memory", "memory": "echo", "language": "it"}
+    assert [chunk async for chunk in r.respond(question)] == []
+    assert r.last_route == {"route": "memory", "memory": "echo"}
     assert r.awaiting and len(store) == 2
 
 
@@ -751,7 +750,7 @@ async def test_words_over_the_reply_are_not_addressed(fake_vad, vad_settings) ->
         (BARGE_IN, "Claudio, da ora in poi parla in rima", True),
     ):
         inter = Interaction(clock=assistant.clock, info={"wake_word": wake_word})
-        await assistant._tell_hearing(np.zeros(1600, np.float32), said, "it", [], inter)
+        await assistant._tell_hearing(np.zeros(1600, np.float32), said, [], inter)
         assert heard[-1].addressed is addressed, (wake_word, said)
 
 

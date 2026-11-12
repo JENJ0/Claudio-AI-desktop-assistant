@@ -47,7 +47,6 @@ def doubt_of(row: dict[str, Any], settings: Settings, nearby: str, last_command:
     dbfs = row.get("speech_dbfs")
     return Doubt(
         text=text,
-        language=str(row.get("stt_language") or row.get("language") or "it"),
         reason=PRECALL,
         alternatives=tuple(row.get("stt_alternatives") or ()),
         wake_word=str(row.get("wake_word") or ""),
@@ -91,7 +90,7 @@ async def replay_once(
         }
         before = (len(rec.keys), len(rec.combos), len(rec.ran), len(rec.opened))
         if recovery.verdict is Verdict.ACT:  # what the router does with the reading
-            reply = "".join([c async for c in responder.respond(recovery.said, doubt.language)])
+            reply = "".join([c async for c in responder.respond(recovery.said)])
             item["reply"] = reply[:80]
             item["asked_confirm"] = responder.awaiting
             item["effects"] = (
@@ -137,9 +136,9 @@ async def main() -> int:
         )
         vocabulary = build_vocabulary(settings)
         vocabulary.read_now()
-        nearby = vocabulary.text("it")
+        nearby = vocabulary.text()
 
-        rows = [r for r in uncertain(args.log) if not responder.understands(r["text"], "it")]
+        rows = [r for r in uncertain(args.log) if not responder.understands(r["text"])]
         print(f"{len(rows)} richieste incerte che nessun comando capisce")
         if args.dry:
             for row in rows:
