@@ -231,7 +231,7 @@ async def test_a_local_question_cancelled_by_the_name_is_noted_as_not_done(
     rec, clock = Recorder(), Monotonic()
     notes: list[tuple[str, str]] = []
 
-    async def claude(text: str, language: str) -> AsyncIterator[str]:
+    async def claude(text: str) -> AsyncIterator[str]:
         yield "Domani piove."
 
     r = local(matcher, rec, clock, fallback=claude, fallback_note=lambda q, a: notes.append((q, a)))

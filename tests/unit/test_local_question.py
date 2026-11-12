@@ -117,7 +117,7 @@ async def test_claude_is_told_what_a_local_command_answered(
     assert client.calls[0]["messages"] == [
         {"role": "user", "content": "che ore sono"},
         {"role": "assistant", "content": f"{time_said} {LOCAL_NOTE}"},
-        {"role": "user", "content": "[it] chi ha scritto la Divina Commedia"},
+        {"role": "user", "content": "chi ha scritto la Divina Commedia"},
     ]
 
 
@@ -221,7 +221,7 @@ async def test_a_typed_yes_never_confirms_claudes_question(
     armed = [True]
     events: list[str] = []
 
-    async def claude(text: str, language: str) -> AsyncIterator[str]:
+    async def claude(text: str) -> AsyncIterator[str]:
         events.append(f"ask {text}")
         yield "Ok."
 

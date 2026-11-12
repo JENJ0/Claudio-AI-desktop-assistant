@@ -23,7 +23,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from claudio.brain.prompts import GUESS_PROMPT, PRECALL_PROMPT
-from claudio.config import DEFAULT_LANGUAGE, ClaudeSettings, GuessSettings
+from claudio.config import ClaudeSettings, GuessSettings
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.intake import BARGE_IN, CONVERSATION, PRECALL, Doubt, Guess
@@ -60,7 +60,7 @@ REASONS = {
 }
 
 
-def catalog(commands: Sequence[Command], language: str = DEFAULT_LANGUAGE) -> str:
+def catalog(commands: Sequence[Command]) -> str:
     """One line per command: "- volume_up: alza il volume / volume su / aumenta il volume"."""
     lines = []
     for cmd in commands:

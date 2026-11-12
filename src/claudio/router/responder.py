@@ -69,8 +69,8 @@ log = logging.getLogger(__name__)
 NOTED_ROUTES = frozenset({"local", "confirm", "confirmed", "refused"})
 ANSWER_WINDOW_S = 45.0  # then the question is old: a phrase without the name is not its answer
 
-# Asked with (request, reply language): Claude's reply, streamed.
-Fallback = Callable[[str, str], AsyncGenerator[str, None]]
+# Asked with the request: Claude's reply, streamed.
+Fallback = Callable[[str], AsyncGenerator[str, None]]
 # Claude's guess of what JenJo said (brain/guess.py), given the closest commands.
 GuessCall = Callable[[Doubt, Sequence[Near]], Awaitable[Guess | None]]
 
@@ -598,7 +598,7 @@ class LocalResponder:
         self.claude_replied = True
         self.last_route = {"route": "claude", "language": self.language}
         try:
-            async with contextlib.aclosing(self.fallback(text, self.language)) as reply:
+            async with contextlib.aclosing(self.fallback(text)) as reply:
                 async for chunk in reply:
                     yield chunk
         finally:

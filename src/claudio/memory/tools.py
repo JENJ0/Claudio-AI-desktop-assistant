@@ -121,7 +121,7 @@ class MemoryTools:
             return f"too long to be read out for JenJo's yes: at most {SPOKEN_CHARS} characters"
         return None
 
-    def describe(self, name: str, args: Mapping[str, Any], language: str) -> str:
+    def describe(self, name: str, args: Mapping[str, Any]) -> str:
         """What will happen, read in the confirmation question: a memory to keep in full."""
         say = _SAY
         if name == REMEMBER:

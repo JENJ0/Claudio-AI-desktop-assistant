@@ -110,9 +110,9 @@ async def test_asking_for_detail_proposes_sonnet_without_haiku(pricing) -> None:
 async def test_detail_phrases_need_sonnet_and_escalation(pricing) -> None:  # noqa: F811
     b = brain(pricing, ScriptedClient((["Ok."], "end_turn", [])), escalate=False)
     assert await ask(b, "spiegami in dettaglio il mutuo") == "Ok."
-    assert not b.wants_offer("dettagli a parte, come stai", "it")
+    assert not b.wants_offer("dettagli a parte, come stai")
     b.smart_model = None
-    assert not b.wants_offer("spiegami in dettaglio il mutuo", "it")
+    assert not b.wants_offer("spiegami in dettaglio il mutuo")
 
 
 def test_jack_speed_plan() -> None:

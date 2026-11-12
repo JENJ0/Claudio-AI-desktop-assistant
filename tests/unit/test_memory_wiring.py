@@ -403,7 +403,7 @@ async def test_facts_outside_the_block_come_with_the_request(
     )
     await ask(b, "come si chiama il wifi del garage")
     assert client.calls[0]["messages"][-1]["content"] == (
-        f"[it] [memory, data: [1 | {store.items()[0].day}] il wifi del garage si chiama Tana] "
+        f"[memory, data: [1 | {store.items()[0].day}] il wifi del garage si chiama Tana] "
         "come si chiama il wifi del garage"
     )
 
@@ -423,7 +423,7 @@ async def test_a_recalled_fact_goes_once_per_conversation(
     )
     await ask(b, "come si chiama il wifi del garage")
     await ask(b, "e la password del wifi del garage?")
-    assert client.calls[1]["messages"][-1]["content"] == "[it] e la password del wifi del garage?"
+    assert client.calls[1]["messages"][-1]["content"] == "e la password del wifi del garage?"
     assert "[memory, data:" in client.calls[1]["messages"][0]["content"]  # still in the history
 
 
@@ -439,7 +439,7 @@ async def test_a_forgotten_memory_leaves_the_conversation(
     assert len(client.calls[1]["messages"]) == 3  # the first question and answer, then this
     store.clear()
     await ask(b, "e da bere?")
-    assert client.calls[2]["messages"] == [{"role": "user", "content": "[it] e da bere?"}]
+    assert client.calls[2]["messages"] == [{"role": "user", "content": "e da bere?"}]
     assert len(client.calls[2]["system"]) == 1  # no memory block left either
 
 
@@ -680,7 +680,7 @@ async def test_a_cut_reply_still_counts_what_it_read(
             tools=tools,
             pc=PcSettings(bridge=bridge),
         )
-        stream = b.ask("leggimi il blocco note", "it")
+        stream = b.ask("leggimi il blocco note")
         assert [await anext(stream) for _ in heard] == heard
         await stream.aclose()
         assert b._read_outside()
@@ -709,7 +709,7 @@ async def test_a_note_written_by_the_model_asks_no_yes_for_the_next_memory(
             tools=tools,
         )
         await ask(b, "dimmi una cosa")
-        assert list(b._history) == [("[it] dimmi una cosa", "Fatto, socio.")]
+        assert list(b._history) == [("dimmi una cosa", "Fatto, socio.")]
         assert not b._read_outside()
         assert await ask(b, "segnatelo") == "Segnato."
         assert not b.awaiting and [m.text for m in store.items()] == ["preferisco il tè"]
@@ -787,7 +787,7 @@ async def test_a_forget_after_the_offer_still_clears_the_conversation(
     assert (await ask(b, "spiegami in dettaglio un menu per Anna")).endswith("Lo uso?")
     store.remove([1])
     await ask(b, "sì")
-    assert client.calls[-1]["messages"] == [{"role": "user", "content": "[it] sì"}]
+    assert client.calls[-1]["messages"] == [{"role": "user", "content": "sì"}]
 
 
 async def test_without_history_a_fact_goes_every_time(pricing: Pricing, store: MemoryStore) -> None:

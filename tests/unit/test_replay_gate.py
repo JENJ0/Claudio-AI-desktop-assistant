@@ -550,7 +550,7 @@ PARAMS: dict[str, Any] = {
     "model": "claude-haiku-5-5",
     "system": [{"type": "text", "text": "SYSTEM", "cache_control": {"type": "ephemeral"}}],
     "tools": [{"name": "open_app", "input_schema": {"type": "object"}}],
-    "messages": [{"role": "user", "content": "[it] ciao"}],
+    "messages": [{"role": "user", "content": "ciao"}],
     "max_tokens": 300,
 }
 SESSION = "2026-11-06_10-00"
@@ -582,7 +582,7 @@ def test_cassette_key_changes_with_the_system_prompt_and_not_with_dict_order() -
     other_system = {**PARAMS, "system": [{"type": "text", "text": "OTHER"}]}
     assert rg.cassette_key(other_system) != key
     reordered = {
-        "messages": [{"content": "[it] ciao", "role": "user"}],
+        "messages": [{"content": "ciao", "role": "user"}],
         "tools": [{"input_schema": {"type": "object"}, "name": "open_app"}],
         "system": [{"cache_control": {"type": "ephemeral"}, "text": "SYSTEM", "type": "text"}],
         "max_tokens": 1,  # not part of the key
@@ -694,7 +694,7 @@ def test_real_tools_are_never_built_in_the_gate(
     assert tools.desktop is harness.desktop and isinstance(harness.desktop, FakeDesktop)
     brain = harness.responder.fallback.__self__  # type: ignore[union-attr]
     assert brain.client is harness.client and brain.settings.tell_time is False
-    assert brain._tag("it") == "[it]"  # no clock in the request
+    assert brain._tag() == ""  # no clock in the request, no tag
     assert tools.policy.home == harness.home.resolve()
 
 

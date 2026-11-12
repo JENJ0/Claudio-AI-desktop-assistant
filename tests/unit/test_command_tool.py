@@ -112,7 +112,7 @@ async def test_runs_on_the_thread_of_the_spending_ledger(
 async def test_the_question_names_the_command(tool: CommandTool, tmp_path: Path) -> None:
     verbose = PcTools(FakeDesktop(), PcSettings(confirm_brief=False), home=tmp_path, commands=tool)
     try:
-        q = await verbose.question([call(NAME, command="shutdown")], "it")
+        q = await verbose.question([call(NAME, command="shutdown")])
     finally:
         verbose.close()
     assert q == "Chiuditi. Confermi?"  # "spegniti" is off now, "chiuditi" closes
@@ -148,7 +148,7 @@ async def test_a_note_before_the_command_leaves_only_its_reply(
     b = acting_brain(pricing, client, tools)
     assert await ask(b, "Audio alsa il volu") == "Volume alzato."
     assert list(b._history) == [
-        ("[it] Audio alsa il volu", "Volume alzato. [Claudio ran: claudio_command ok]")
+        ("Audio alsa il volu", "Volume alzato. [Claudio ran: claudio_command ok]")
     ]
 
 
@@ -199,12 +199,12 @@ async def test_a_command_after_a_tool_without_words_still_goes_back_to_claude(
 async def test_a_cut_at_the_commands_own_reply_is_marked(pricing: Pricing, tools: PcTools) -> None:
     client = ScriptedClient(([], "tool_use", [use(NAME, command="volume_up", last=True)]))
     b = acting_brain(pricing, client, tools)
-    stream = b.ask("Audio alsa il volu", "it")
+    stream = b.ask("Audio alsa il volu")
     assert await anext(stream) == "Volume alzato."
     await stream.aclose()
     # The finished entry before this one is the doubled cut bookkeeping: a known bug, not pinned.
     assert b._history[-1] == (
-        "[it] Audio alsa il volu",
+        "Audio alsa il volu",
         f"Volume alzato. {CUT_NOTE} [Claudio ran: claudio_command ok]",
     )
 
@@ -252,10 +252,10 @@ async def test_a_silent_command_stays_silent_after_the_yes(
     b = acting_brain(pricing, client, tools)
     # The model said nothing before the question: it reads the action out (Task 10 fix round 1).
     assert await ask(b, "togli l'audio") == "Togli l audio. Confermi?"
-    assert [c async for c in b.ask("sì", "it")] == []
+    assert [c async for c in b.ask("sì")] == []
     assert rec.keys == [MEDIA_KEYS["mute"]] and len(client.calls) == 1
     assert b._history[-1] == (
-        "[it] togli l'audio",
+        "togli l'audio",
         "Togli l audio. Confermi? [Claudio ran: claudio_command ok]",
     )
 
@@ -270,11 +270,11 @@ ASKED_02_11 = (
 NOT_UNDERSTOOD_IT = "Non ho capito: non lo faccio."
 
 
-async def unclear_twice(b: ClaudeBrain, said: str, language: str = "it") -> str:
+async def unclear_twice(b: ClaudeBrain, said: str) -> str:
     """An answer not understood is asked once more (Task 3); the second time it cancels."""
-    first = "".join([c async for c in b.ask(said, language)])
+    first = "".join([c async for c in b.ask(said)])
     assert first.startswith("Non ho capito. "), first
-    return "".join([c async for c in b.ask(said, language)])
+    return "".join([c async for c in b.ask(said)])
 
 
 def waiting(*calls: SimpleNamespace) -> ScriptedClient:
@@ -440,7 +440,7 @@ async def test_saying_another_tool_again_is_no_yes(pricing: Pricing, tools: PcTo
     assert await unclear_twice(b, "chiudi chrome") == NOT_UNDERSTOOD_IT
     assert not [d for d in tools.desktop.done if d[0] == "close"]
     # Not even a tool whose argument is called "command" too and names one of ours.
-    assert not tools.repeats([call("run_command", command="off")], "spegniti", "it")
+    assert not tools.repeats([call("run_command", command="off")], "spegniti")
 
 
 async def test_a_repeat_never_stands_in_for_the_explicit_confirmation(
@@ -480,7 +480,7 @@ def test_a_repeat_is_as_close_as_the_matcher_asks(
     brain = build_responder(settings, Recorder().ctx()).fallback.__self__  # type: ignore[union-attr]
     try:
         off = [call(NAME, command="off")]
-        assert brain.tools.repeats(off, "Claudio, spegni.", "it") is repeats
+        assert brain.tools.repeats(off, "Claudio, spegni.") is repeats
     finally:
         brain.tools.close()
 

@@ -75,5 +75,5 @@ def test_text_is_typed_literally() -> None:
 
 
 def test_spoken() -> None:
-    assert spoken("ctrl+shift+t", "it") == "control maiuscolo T"
-    assert spoken("page_down", "en") == "page down"
+    assert spoken("ctrl+shift+t") == "control maiuscolo T"
+    assert spoken("page_down") == "page down"

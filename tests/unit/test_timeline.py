@@ -796,7 +796,7 @@ async def test_dicevo_after_a_claude_answer_keeps_both_lines(make_scene) -> None
     await scene.say_over("qual è la capitale della Francia")
     await idle(scene)
     story, capital = scene.remembered
-    assert capital == ("[it] qual è la capitale della Francia", "Parigi.")
+    assert capital == ("qual è la capitale della Francia", "Parigi.")
     assert "Parigi" not in story[1] and SENTENCES[0] in story[1]
 
 
@@ -823,7 +823,7 @@ async def test_typed_request_over_a_stale_stream_does_not_wake_it(make_scene, ho
         desk=desk,
         home=home,
     )
-    stale = DrainedStream(scene.brain.ask(WRITE, "it"))
+    stale = DrainedStream(scene.brain.ask(WRITE))
     for _ in range(5):
         await asyncio.sleep(0)
     scene.brain.stop_acting()
