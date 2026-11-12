@@ -360,30 +360,6 @@ def build_base_synth(settings: Settings) -> tuple[Any, str]:
     return synth, f"Piper {settings.tts.voice}"
 
 
-def build_voices(settings: Settings, synth: Any) -> dict[str, tuple[Any, str]]:
-    """A voice for every other language Whisper listens for, same engine as `synth`. A voice
-    that cannot load is skipped: that language is read by the main voice."""
-    from claudio.tts.kokoro import KokoroSynth
-    from claudio.tts.speaker import PiperSynth, voice_path
-
-    piper_dir = settings.resolve(settings.models_dir) / "piper"
-    voices: dict[str, tuple[Any, str]] = {}
-    for language in (DEFAULT_LANGUAGE,):  # shortcut: no other language; Task 8 removes this loop
-        if language == DEFAULT_LANGUAGE:
-            continue
-        try:
-            base = getattr(synth, "fallback", synth)  # Jack speaks Italian only
-            if isinstance(base, KokoroSynth):
-                other = base.for_language(language)
-                voices[language] = other, f"Kokoro {other.voice}"
-            else:
-                name = settings.tts.piper_voice_for(language)
-                voices[language] = PiperSynth(voice_path(piper_dir, name), settings.tts), name
-        except (FileNotFoundError, ValueError) as exc:
-            log.warning("Voce per '%s' non disponibile (%s): uso quella principale", language, exc)
-    return voices
-
-
 def build_speaker(
     settings: Settings, jack: JackSynth | None = None, start_player: bool = True
 ) -> StreamingSpeaker:
@@ -393,7 +369,6 @@ def build_speaker(
     from claudio.tts.speaker import StreamingSpeaker
 
     synth, name = build_synth(settings, jack)
-    voices = build_voices(settings, synth)
     player = AudioPlayer(settings.audio.output_sample_rate, settings.audio.output_device)
     if start_player:
         player.start()
@@ -401,20 +376,13 @@ def build_speaker(
         synth,
         player,
         settings.audio.beep_volume,
-        {language: voice for language, (voice, _) in voices.items()},
         first_clause_chars=settings.tts.first_clause_chars,
         group_chars=settings.tts.jack_group_chars if settings.tts.engine == "jack" else 0,
         group_first_chars=settings.tts.jack_group_first_chars,
         group_pause_s=settings.tts.jack_group_pause_ms / 1000,
     )
     speaker.warm_up()
-    others = "".join(f", {lang}: {label}" for lang, (_, label) in voices.items())
-    log.info(
-        "TTS: %s (%d Hz)%s",
-        name,
-        synth.sample_rate,
-        others,
-    )
+    log.info("TTS: %s (%d Hz)", name, synth.sample_rate)
     return speaker
 
 
@@ -486,7 +454,6 @@ async def run_text(settings: Settings, text: str) -> None:
 
     responder = build_responder(settings, ActionContext.real())
     speaker = build_speaker(settings)
-    responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}
     start = time.perf_counter()
     first: list[float] = []
     await speaker.speak(
@@ -716,7 +683,6 @@ async def run_assistant(
         transcriber.model_name,
         transcriber.device.upper(),
     )
-    responder.voiced = {DEFAULT_LANGUAGE, *speaker.voices}  # no English text in Italian voice
     resolve_device(settings.audio.input_device, "input")  # fail fast on a wrong name
     capture = AudioCapture(
         settings.audio.sample_rate,

@@ -1,7 +1,7 @@
 """Match a transcription to a local command: exact first, then fuzzy (rapidfuzz).
 
-Each command has its phrases and reply in Italian (`phrases`, `reply`) and optionally in
-other languages (`phrases_en`, `reply_en`...). The language Whisper heard is tried first,
+Each command has its phrases and reply in Italian (`phrases`, `reply`) and optionally phrases in
+other languages (`phrases_en`...). The language Whisper heard is tried first,
 then the others, so a request still works when the language was misjudged. `keywords_xx`
 are words a fuzzy match in that language must contain ("what's the weather" is close to
 "what's the date" but has no "date").
@@ -25,7 +25,7 @@ from claudio.router.normalizer import extract_number, last_clauses, normalize
 from claudio.router.normalizer import language as language_rules
 from claudio.router.phonetic import sound_key, spell_capitals
 
-_TRANSLATED = re.compile(r"^(phrases|reply|keywords|confirm)_([a-z]{2})$")
+_TRANSLATED = re.compile(r"^(phrases|keywords)_([a-z]{2})$")
 SOUND_LANGUAGES = ("it",)  # the sound rules are Italian
 
 
@@ -38,11 +38,9 @@ class Command:
     reply: str = ""
     exact: bool = False  # only an exact phrase counts: "spegni" must not shut CLAUDIO down
     other_phrases: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    other_replies: dict[str, str] = field(default_factory=dict)
     keywords: dict[str, frozenset[str]] = field(default_factory=dict)  # per language
     level: int = 1  # safety level: 1 runs at once, 2 asks yes/no, 3 asks an explicit "confermo"
-    confirm: str = ""  # the question asked at level 2-3 (Italian; confirm_xx for the others)
-    other_confirms: dict[str, str] = field(default_factory=dict)
+    confirm: str = ""  # the question asked at level 2-3
 
     @property
     def languages(self) -> tuple[str, ...]:
@@ -52,21 +50,6 @@ class Command:
         return (
             self.phrases if language == DEFAULT_LANGUAGE else self.other_phrases.get(language, ())
         )
-
-    def reply_in(self, language: str) -> str:
-        """The reply in `language`, else the Italian one."""
-        return self.other_replies.get(language, self.reply)
-
-    def confirm_in(self, language: str) -> str:
-        """The question for `language`, else the Italian one (may be empty: the generic one)."""
-        return self.other_confirms.get(language, self.confirm)
-
-    def has_reply_in(self, language: str) -> bool:
-        return language == DEFAULT_LANGUAGE or language in self.other_replies
-
-    def param_in(self, name: str, language: str) -> Any:
-        """params["<name>_<language>"], else params["<name>"]."""
-        return self.params.get(f"{name}_{language}", self.params.get(name))
 
 
 @dataclass(frozen=True)
@@ -94,8 +77,6 @@ def load_commands(path: Path) -> list[Command]:
     seen: set[str] = set()
     for raw in data.get("command", []):
         other_phrases: dict[str, tuple[str, ...]] = {}
-        other_replies: dict[str, str] = {}
-        other_confirms: dict[str, str] = {}
         keywords: dict[str, frozenset[str]] = {}
         if "keywords" in raw:
             keywords[DEFAULT_LANGUAGE] = _keywords(raw["keywords"], DEFAULT_LANGUAGE)
@@ -104,10 +85,6 @@ def load_commands(path: Path) -> list[Command]:
                 kind, lang = m.groups()
                 if kind == "phrases":
                     other_phrases[lang] = tuple(value)
-                elif kind == "reply":
-                    other_replies[lang] = str(value)
-                elif kind == "confirm":
-                    other_confirms[lang] = str(value)
                 else:
                     keywords[lang] = _keywords(value, lang)
         cmd = Command(
@@ -118,11 +95,9 @@ def load_commands(path: Path) -> list[Command]:
             reply=raw.get("reply", ""),
             exact=bool(raw.get("exact", False)),
             other_phrases=other_phrases,
-            other_replies=other_replies,
             keywords=keywords,
             level=int(raw.get("level", 1)),
             confirm=raw.get("confirm", ""),
-            other_confirms=other_confirms,
         )
         if cmd.level not in (1, 2, 3):
             raise ValueError(

@@ -1,5 +1,4 @@
-"""Piper TTS: synthesises the next sentence while the current one plays, each language
-with its own voice."""
+"""Piper TTS: synthesises the next sentence while the current one plays."""
 
 from __future__ import annotations
 
@@ -7,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import threading
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -62,15 +61,13 @@ class PiperSynth:
 
 
 class StreamingSpeaker:
-    """Works with any synth exposing synthesize(text) -> int16 array and sample_rate.
-    `voices` are the other languages' synths (a language without one uses `synth`)."""
+    """Works with any synth exposing synthesize(text) -> int16 array and sample_rate."""
 
     def __init__(
         self,
         synth: Any,
         player: AudioPlayer,
         beep_volume: float = 0.25,
-        voices: Mapping[str, Any] | None = None,
         first_clause_chars: int = 0,
         group_chars: int = 0,
         group_first_chars: int = 0,
@@ -83,7 +80,6 @@ class StreamingSpeaker:
         self.group_chars = group_chars
         self.group_first_chars = group_first_chars  # the first piece leaves at this length
         self.group_pause_s = group_pause_s  # or once Claude's text stops for this long
-        self.voices = dict(voices or {})
         self.player = player
         self._earcons = make_earcons(player.sample_rate, beep_volume)
         self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
@@ -101,9 +97,8 @@ class StreamingSpeaker:
     def interrupt(self) -> None:
         """Stop the reply being spoken ("basta" heard while speaking)."""
         self._cancel.set()
-        for synth in (self.synth, *self.voices.values()):
-            if cancel := getattr(synth, "cancel", None):  # a worker generating audio stops too
-                cancel()
+        if cancel := getattr(self.synth, "cancel", None):  # a worker generating audio stops too
+            cancel()
         if (wake := self._wake) is not None:
             wake()
 
@@ -116,11 +111,8 @@ class StreamingSpeaker:
         self._ducked = not full
         self.player.gain = 1.0 if volume is None else volume
 
-    def voice(self, language: str) -> Any:
-        return self.voices.get(language, self.synth)
-
     def render(self, sentence: str, language: str = DEFAULT_LANGUAGE) -> tuple[np.ndarray, int]:
-        synth = self.voice(language)
+        synth = self.synth
         audio = synth.synthesize(sentence)
         rate = int(synth.sample_rate)
         return audio, rate
@@ -130,7 +122,7 @@ class StreamingSpeaker:
     ) -> AsyncIterator[tuple[np.ndarray, int]]:
         """The audio of a sentence. A synth with stream() (Jack) is played as it is generated,
         so the first words start before the sentence is finished."""
-        synth = self.voice(language)
+        synth = self.synth
         stream = getattr(synth, "stream", None)
         if stream is None:
             yield await asyncio.to_thread(self.render, sentence, language)
@@ -148,8 +140,6 @@ class StreamingSpeaker:
         itself, so its fallback is warmed instead (it speaks if Jack is not there in time)."""
         base = getattr(self.synth, "fallback", self.synth)
         base.synthesize("Ciao.")
-        for language in self.voices:
-            self.render("Hi.", language)
 
     async def beep(self, kind: str = "wake") -> None:
         await asyncio.to_thread(self.player.write, self._earcons[kind])
@@ -199,9 +189,8 @@ class StreamingSpeaker:
         self.duck(None)
         self.played = []
         self.first_sound_delay_s = 0.0
-        for synth in (self.synth, *self.voices.values()):
-            if begin := getattr(synth, "begin_reply", None):  # Jack: one voice per reply
-                begin()
+        if begin := getattr(self.synth, "begin_reply", None):  # Jack: one voice per reply
+            begin()
 
     async def _produce(
         self,

@@ -121,7 +121,7 @@ def test_the_request_and_its_question(text: str, said: str, question: str | None
 
     assert without_name(text) == said
     if question is not None:
-        assert DID_YOU_SAY["it"].format(text=quoted(said)) == question
+        assert DID_YOU_SAY.format(text=quoted(said)) == question
 
 
 def test_ask_gap_cannot_be_above_act_gap() -> None:

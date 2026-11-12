@@ -91,9 +91,9 @@ possibilità di sentire il nome (vedi `wakeword.second_chance`).
 | "ripeti", "non ho capito" | ripete l'ultima risposta |
 | "basta", "stop" | chiude la conversazione; detto mentre Claudio parla, lo interrompe |
 
-Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice
-(`phrases_en` e `reply_en` sono quelle inglesi). Tutte le altre richieste vanno a Claude; con
-`[claude] enabled = false` ricevono "Questo non lo so ancora fare" o "I can't do that yet".
+Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice.
+Tutte le altre richieste vanno a Claude; con `[claude] enabled = false` ricevono "Questo non lo so
+ancora fare".
 
 Ogni azione ha un livello di sicurezza (`level` in `commands.toml`). Il livello 1 parte subito.
 Il livello 2 chiede "Confermi?" e Claudio ascolta subito la risposta, senza wake word: "sì",
@@ -284,8 +284,8 @@ prima, è `[stt] initial_prompt`.
 La voce è Jack (Qwen3-TTS, in un processo separato sulla GPU). Il suo modello addestrato non è nel
 repo: se manca, Claudio lo dice all'avvio e parla Nicola (Kokoro, maschile), o Paola (Piper) se
 Kokoro non si carica. Come installarlo: README inglese, sezione "Jack's voice". `CLAUDIO_TTS__ENGINE=kokoro` o `piper` ne fa la voce principale
-(`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` per Riccardo con Piper, maschile e la più veloce). Le risposte in inglese usano Michael con Kokoro e Ryan (`en_US-ryan-low`) con
-Piper, impostate in `[tts.voices.en]`. La velocità di Kokoro e Piper si regola con `CLAUDIO_TTS__LENGTH_SCALE`
+(`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` per Riccardo con Piper, maschile e la più veloce).
+La velocità di Kokoro e Piper si regola con `CLAUDIO_TTS__LENGTH_SCALE`
 (più basso = più veloce, 0.77 = +30%, il valore di serie); quella di Jack con `jack_speed`.
 
 ## Avvio all'accesso

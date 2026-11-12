@@ -354,8 +354,7 @@ def test_translations_are_loaded(tmp_path: Path) -> None:
     )
     (cmd,) = load_commands(f)
     assert cmd.languages == ("it", "en") and cmd.phrases_in("en") == ("open x",)
-    assert cmd.reply_in("en") == "Opening X." and cmd.reply_in("de") == "Apro X."
-    assert cmd.param_in("already", "en") == "Done." and cmd.param_in("already", "it") == "Già."
+    assert cmd.reply == "Apro X." and cmd.params == {"already": "Già.", "already_en": "Done."}
 
 
 def test_keywords_gate_fuzzy_matches(tmp_path: Path) -> None:

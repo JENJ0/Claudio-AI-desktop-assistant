@@ -101,7 +101,7 @@ async def test_asking_for_detail_proposes_sonnet_without_haiku(pricing) -> None:
     client = ScriptedClient((["Il mutuo..."], "end_turn", []), (["Ecco."], "end_turn", []))
     b = brain(pricing, client)
     reply = await ask(b, "Spiegami in dettaglio come funziona un mutuo a tasso variabile.")
-    assert reply == OFFER["it"] and client.calls == []
+    assert reply == OFFER and client.calls == []
     assert b.last_call["escalated"] == "offered"
     await ask(b, "sì")
     assert [c["model"] for c in client.calls] == ["claude-sonnet-5-5"]

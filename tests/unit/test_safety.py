@@ -281,10 +281,15 @@ def test_question_falls_back_to_the_level(tmp_path: Path) -> None:
     plain2 = Command(id="x", phrases=("x",), action="close_window", level=2)
     plain3 = Command(id="y", phrases=("y",), action="close_window", level=3)
     assert question(Match(plain2, 100), "it") == "Confermi?"
-    assert question(Match(plain2, 100), "en") == "Do you confirm?"
     assert "confermo" in question(Match(plain3, 100), "it")
     own = Command(id="z", phrases=("z",), action="x", level=2, confirm="Sicuro?")
-    assert question(Match(own, 100), "en") == "Sicuro?"  # Italian when no confirm_en
+    assert question(Match(own, 100), "it") == "Sicuro?"
+
+
+def test_jenjo_answers_stay_after_english_goes() -> None:
+    """Words JenJo says in Italian that look English keep their meaning."""
+    assert parse_answer("ok") is Answer.YES and parse_answer("confermo") is Answer.YES
+    assert parse_answer("stop") is Answer.NO and parse_answer("lascia stare") is Answer.NO
 
 
 def test_invalid_level_is_refused(tmp_path: Path) -> None:
@@ -347,16 +352,6 @@ async def test_a_phrase_that_is_not_only_a_yes_does_not_run_the_command(
     if r.awaiting:  # unclear: asked once more, then cancelled (a refusal cancels at once)
         await say(r, said)
     assert rec.combos == [] and not r.awaiting
-
-
-async def test_the_answer_is_in_the_language_of_the_question(matcher: CommandMatcher) -> None:
-    rec = Recorder()
-    r = responder(matcher, rec)
-    assert await say(r, "close the window", "en") == (
-        "I'll close the window in front. Do you confirm?"
-    )
-    assert await say(r, "sì", "it") == "Done."  # Whisper may hear the "yes" as Italian
-    assert r.language == "en"
 
 
 async def test_cancel_pending(matcher: CommandMatcher) -> None:
@@ -467,7 +462,7 @@ def test_a_greeting_before_the_yes_is_still_a_yes() -> None:
 def test_the_second_question_has_its_words() -> None:
     from claudio.safety.confirmation import ASK_AGAIN, ASK_AGAIN_EXPLICIT
 
-    assert ASK_AGAIN["it"].format(what="Chiudo Chrome") == "Non ho capito. Chiudo Chrome: sì o no?"
-    assert ASK_AGAIN_EXPLICIT["en"].format(what="Erase it") == (
-        "I didn't catch that. Erase it. To go ahead, say: I confirm."
+    assert ASK_AGAIN.format(what="Chiudo Chrome") == "Non ho capito. Chiudo Chrome: sì o no?"
+    assert ASK_AGAIN_EXPLICIT.format(what="Cancello tutto") == (
+        "Non ho capito. Cancello tutto. Per procedere dì: confermo."
     )

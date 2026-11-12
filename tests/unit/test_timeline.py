@@ -605,8 +605,8 @@ async def test_a_local_request_over_a_dropped_action_says_so_and_does_not_resume
     await scene.say_over("che ore sono")
     await idle(scene, poll_s=0.002)
     spoken = scene.speaker.spoken
-    assert not resumed(scene) and spoken.count(ACTION_STOPPED["it"]) == 1
-    assert spoken.index("Sono le 14 e 5.") < spoken.index(ACTION_STOPPED["it"])
+    assert not resumed(scene) and spoken.count(ACTION_STOPPED) == 1
+    assert spoken.index("Sono le 14 e 5.") < spoken.index(ACTION_STOPPED)
     assert not typed_anything(desk) and not scene.brain.awaiting
     assert scene.assistant._unsaid_rest is None  # its rest would repeat the promise
 
@@ -942,11 +942,11 @@ async def test_a_reply_cut_after_a_bridge_keeps_no_bridge_in_the_history(make_sc
     scene = make_scene(text_reply(*STORY), sentence_frames=PLAY)
     await scene.say("raccontami una storia")
     await scene.until_speaking()
-    scene.speaker.played[:0] = [BRIDGE["it"]]  # "Ci guardo." was said before the story
+    scene.speaker.played[:0] = [BRIDGE]  # "Ci guardo." was said before the story
     scene.assistant._interrupted = True
     scene.responder.reply_cut(list(scene.speaker.played))
     ((_, answer),) = scene.remembered
-    assert BRIDGE["it"] not in answer
+    assert BRIDGE not in answer
 
 
 async def test_a_newer_cut_claude_reply_clears_the_older_rest(make_scene) -> None:

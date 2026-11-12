@@ -89,27 +89,6 @@ def test_earcons_and_resample() -> None:
     assert resample(audio, 22050, 22050) is audio
 
 
-async def test_each_language_speaks_with_its_voice() -> None:
-    class Voice(FakeSynth):
-        def __init__(self, rate: int) -> None:
-            super().__init__()
-            self.sample_rate = rate
-
-    class RatePlayer(FakePlayer):
-        def write(self, audio: np.ndarray, sample_rate: int | None = None, cancel=None) -> None:
-            self.played.append((sample_rate or 0, 0.0))
-
-    italian, english, player = Voice(22050), Voice(16000), RatePlayer()
-    speaker = StreamingSpeaker(italian, player, voices={"en": english})
-    language = iter(["en", "en", "it"])
-    await speaker.speak(stream("Opening. Chrome."), language=lambda: next(language))
-    await speaker.speak(stream("Apro."), language="it")
-    await speaker.speak(stream("Hallo."), language="de")  # no German voice: the main one
-    assert [t for t, _ in english.calls] == ["Opening.", "Chrome."]
-    assert [t for t, _ in italian.calls] == ["Apro.", "Hallo."]
-    assert [rate for rate, _ in player.played] == [16000, 16000, 22050, 22050]
-
-
 class StreamingSynth:
     """Like Jack: stream() yields the audio of a sentence in pieces."""
 
@@ -270,20 +249,20 @@ class Voice(FakeSynth):
         self.cancelled += 1
 
 
-async def test_every_voice_is_told_a_reply_begins_before_it_speaks() -> None:
-    main, english = Voice(), Voice()
-    speaker = StreamingSpeaker(main, FakePlayer(), voices={"en": english, "de": FakeSynth()})
+async def test_the_voice_is_told_a_reply_begins_before_it_speaks() -> None:
+    main = Voice()
+    speaker = StreamingSpeaker(main, FakePlayer())
     await speaker.speak(stream("Uno."))
     await speaker.speak(stream("Due."))
-    assert main.began_after == [0, 1] and english.began_after == [0, 0]
+    assert main.began_after == [0, 1]
 
 
-def test_interrupt_between_two_replies_stops_the_voices_and_not_the_next_reply() -> None:
-    main, english, player = Voice(), Voice(), FakePlayer()
-    speaker = StreamingSpeaker(main, player, voices={"en": english, "de": FakeSynth()})
+def test_interrupt_between_two_replies_stops_the_voice_and_not_the_next_reply() -> None:
+    main, player = Voice(), FakePlayer()
+    speaker = StreamingSpeaker(main, player)
     asyncio.run(speaker.speak(stream("Uno.")))
     speaker.interrupt()  # its loop is closed: nothing is left to wake
-    assert main.cancelled == 1 and english.cancelled == 1
+    assert main.cancelled == 1
     asyncio.run(speaker.speak(stream("Due.")))
     assert speaker.played == ["Due."] and len(player.played) == 2
 
@@ -384,24 +363,6 @@ async def test_basta_as_soon_as_the_text_starts_also_wakes_it() -> None:
     start = loop.time()
     await speaker.speak(text())
     assert loop.time() - start < 1.0 and speaker.played == []
-
-
-async def test_the_language_is_read_at_every_sentence_as_it_comes() -> None:
-    """The responder only knows the language of its reply once it has matched the request."""
-    italian, english = FakeSynth(), FakeSynth()
-    speaker = StreamingSpeaker(italian, FakePlayer(), voices={"en": english})
-    language = "it"
-
-    async def text():
-        nonlocal language
-        language = "en"
-        yield "Opening. "
-        language = "it"
-        yield "Apro. "
-
-    await speaker.speak(text(), language=lambda: language)
-    assert [t for t, _ in english.calls] == ["Opening."]
-    assert [t for t, _ in italian.calls] == ["Apro."]
 
 
 def test_leading_silence_finds_the_first_audible_sample() -> None:

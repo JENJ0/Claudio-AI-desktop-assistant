@@ -1,10 +1,8 @@
 # Local commands recognised without any LLM (zero cost).
 # Each command: phrases (examples, matched exactly and fuzzily after
 # normalisation; exact = true turns the fuzzy match off), action, optional params and the
-# spoken reply. `phrases` and `reply` are Italian; `phrases_en` and `reply_en` the same in
-# English (any two-letter language works the same way). CLAUDIO answers in the language of
-# the phrase it recognised; a missing reply_xx falls back to the Italian one (reply and
-# voice). keywords_xx: words a fuzzy match in that language must contain.
+# spoken reply. `phrases` and `reply` are Italian; `phrases_en` the same in
+# English (any two-letter language works the same way). keywords_xx: words a fuzzy match in that language must contain.
 # Adding a command here needs no Python change if the action already exists.
 # Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system,
 # chat, memory, repeat, resume, stop.
@@ -16,7 +14,6 @@ phrases_en = ["open chrome", "open google chrome", "open the browser", "start ch
 action = "open_app"
 params = { app = "chrome" }
 reply = "Apro Chrome."
-reply_en = "Opening Chrome."
 
 [[command]]
 id = "open_downloads"
@@ -25,7 +22,6 @@ phrases_en = ["open downloads", "open the downloads folder", "open my downloads"
 action = "open_folder"
 params = { folder = "downloads" }
 reply = "Apro la cartella Download."
-reply_en = "Opening Downloads."
 
 [[command]]
 id = "open_documents"
@@ -34,7 +30,6 @@ phrases_en = ["open documents", "open the documents folder", "open my documents"
 action = "open_folder"
 params = { folder = "documents" }
 reply = "Apro Documenti."
-reply_en = "Opening Documents."
 
 [[command]]
 id = "open_explorer"
@@ -43,7 +38,6 @@ phrases_en = ["open file explorer", "open explorer", "open windows explorer", "o
 action = "open_folder"
 params = { folder = "explorer" }
 reply = "Apro Esplora file."
-reply_en = "Opening File Explorer."
 
 [[command]]
 id = "open_notepad"
@@ -52,7 +46,6 @@ phrases_en = ["open notepad", "open the notepad", "start notepad", "launch notep
 action = "open_app"
 params = { app = "notepad" }
 reply = "Apro il Blocco note."
-reply_en = "Opening Notepad."
 
 [[command]]
 id = "open_calculator"
@@ -61,7 +54,6 @@ phrases_en = ["open the calculator", "open calculator", "start the calculator", 
 action = "open_app"
 params = { app = "calculator" }
 reply = "Apro la calcolatrice."
-reply_en = "Opening the calculator."
 
 [[command]]
 id = "volume_up"
@@ -70,7 +62,6 @@ phrases_en = ["turn up the volume", "turn the volume up", "volume up", "increase
 action = "media_key"
 params = { key = "volume_up", steps = 5 }
 reply = "Volume alzato."
-reply_en = "Volume up."
 
 [[command]]
 id = "volume_down"
@@ -79,7 +70,6 @@ phrases_en = ["turn down the volume", "turn the volume down", "volume down", "de
 action = "media_key"
 params = { key = "volume_down", steps = 5 }
 reply = "Volume abbassato."
-reply_en = "Volume down."
 
 [[command]]
 id = "mute"
@@ -88,7 +78,6 @@ phrases_en = ["mute", "unmute", "mute the sound", "mute the audio", "turn off th
 action = "media_key"
 params = { key = "mute", steps = 1 }
 reply = ""
-reply_en = ""
 
 # Media keys: the player in use (Spotify, YouTube...) gets them even in the background.
 # "salta 3 canzoni" presses the key 3 times.
@@ -101,7 +90,6 @@ keywords_en = ["music", "video", "play", "song"]
 action = "media_key"
 params = { key = "play_pause", steps = 1 }
 reply = ""
-reply_en = ""
 
 [[command]]
 id = "media_next"
@@ -112,7 +100,6 @@ keywords_en = ["next", "skip"]
 action = "media_key"
 params = { key = "next_track", steps = 1 }
 reply = ""
-reply_en = ""
 
 [[command]]
 id = "media_previous"
@@ -123,7 +110,6 @@ keywords_en = ["previous", "back", "last"]
 action = "media_key"
 params = { key = "previous_track", steps = 1 }
 reply = ""
-reply_en = ""
 
 [[command]]
 id = "tell_time"
@@ -132,7 +118,6 @@ phrases_en = ["what time is it", "what's the time", "tell me the time", "do you 
 keywords_en = ["time"]  # "what's the tide" is close to "what's the time"
 action = "tell_time"
 reply = ""
-reply_en = ""
 
 [[command]]
 id = "tell_date"
@@ -141,7 +126,6 @@ phrases_en = ["what day is it today", "what day is it", "what's the date", "what
 keywords_en = ["date", "day"]  # "what's the weather today" is close to "what's the date today"
 action = "tell_date"
 reply = ""
-reply_en = ""
 
 [[command]]
 id = "tell_spend"
@@ -151,7 +135,6 @@ keywords = ["speso", "spesa", "costa"]
 keywords_en = ["spend", "spent", "spending"]
 action = "tell_spend"
 reply = ""
-reply_en = ""
 
 # Safety levels (level = 1 | 2 | 3, default 1). Level 2: CLAUDIO asks `confirm` and a yes runs
 # the action; level 3: `confirm` is the summary of what will happen and only "confermo" /
@@ -163,9 +146,7 @@ phrases_en = ["close the window", "close window", "close this window", "close th
 action = "close_window"
 level = 2
 confirm = "Chiudo la finestra in primo piano. Confermi?"
-confirm_en = "I'll close the window in front. Do you confirm?"
 reply = "Fatto."
-reply_en = "Done."
 
 # The chat window (the same as `claudio --ui`), opened by the running assistant. Add your own
 # phrases here: they are matched locally, at no cost.
@@ -176,9 +157,8 @@ phrases_en = ["open the chat", "open chat", "chat", "show the chat", "let me typ
 keywords = ["chat", "scrivere"]
 keywords_en = ["chat", "type"]
 action = "chat"
-params = { do = "open", already = "La chat è già aperta.", already_en = "The chat is already open.", unavailable = "Qui la chat non si può aprire.", unavailable_en = "I can't open the chat here." }
+params = { do = "open", already = "La chat è già aperta.", unavailable = "Qui la chat non si può aprire." }
 reply = "Apro la chat."
-reply_en = "Opening the chat."
 
 [[command]]
 id = "close_chat"
@@ -187,9 +167,8 @@ phrases_en = ["close the chat", "close chat", "hide the chat", "close the chat w
 keywords = ["chat"]
 keywords_en = ["chat"]
 action = "chat"
-params = { do = "close", already = "La chat non è aperta.", already_en = "The chat isn't open.", unavailable = "Qui la chat non si può aprire.", unavailable_en = "I can't open the chat here." }
+params = { do = "close", already = "La chat non è aperta.", unavailable = "Qui la chat non si può aprire." }
 reply = "Chiudo la chat."
-reply_en = "Closing the chat."
 
 # Memory (src/claudio/memory/): the fixed phrases. "ricordati che...", "dimentica X",
 # "dimenticalo" and "cosa ricordi di X" depend on the text or on what was just said and are
@@ -201,7 +180,7 @@ phrases = ["cosa ricordi", "che cosa ricordi", "cosa ti ricordi", "che cosa ti r
 phrases_en = ["what do you remember", "what do you know about me", "what do you remember about me", "list your memories"]
 action = "memory"
 exact = true
-params = { do = "list", unavailable = "La memoria è spenta.", unavailable_en = "My memory is switched off." }
+params = { do = "list", unavailable = "La memoria è spenta." }
 
 [[command]]
 id = "memory_wipe"
@@ -211,8 +190,7 @@ action = "memory"
 exact = true
 level = 3
 confirm = "Cancello tutti i ricordi, per sempre. Per procedere dì: confermo."
-confirm_en = "I'll erase every memory, for good. To go ahead, say: I confirm."
-params = { do = "wipe", unavailable = "La memoria è spenta.", unavailable_en = "My memory is switched off." }
+params = { do = "wipe", unavailable = "La memoria è spenta." }
 
 # Conversation: "ripeti" says the last reply again; "basta" ends the conversation (CLAUDIO
 # stops listening without the wake word) and, said while CLAUDIO speaks, interrupts it.
@@ -224,9 +202,8 @@ phrases_en = ["repeat", "repeat that", "say that again", "can you repeat", "what
 keywords = ["ripeti", "ripetere", "ripetilo", "ridillo", "detto", "capito"]
 keywords_en = ["repeat", "again", "say", "pardon"]
 action = "repeat"
-params = { empty = "Non ho ancora detto niente.", empty_en = "I haven't said anything yet." }
+params = { empty = "Non ho ancora detto niente." }
 reply = ""
-reply_en = ""
 
 # "continua": says again the text still missing of a reply that was cut, for free. Only while there is
 # one (the Assistant knows); else the phrase goes to Claude, as if no command matched.
@@ -237,7 +214,6 @@ phrases_en = ["go on", "continue", "carry on", "go ahead"]
 exact = true
 action = "resume"
 reply = ""
-reply_en = ""
 
 [[command]]
 id = "stop"
@@ -246,7 +222,6 @@ phrases_en = ["stop", "enough", "that's enough", "shut up", "be quiet", "quiet",
 action = "stop"
 exact = true
 reply = ""
-reply_en = ""
 
 # System commands: also heard while paused (then they are the only ones answered).
 # "already" is said when there is nothing to change (pausing while already paused).
@@ -255,18 +230,16 @@ id = "pause"
 phrases = ["vai in pausa", "mettiti in pausa", "fai una pausa", "vai a dormire", "dormi", "vai a nanna"]
 phrases_en = ["go to sleep", "pause", "take a break", "sleep"]
 action = "system"
-params = { do = "pause", already = "Sono già in pausa.", already_en = "I'm already paused." }
+params = { do = "pause", already = "Sono già in pausa." }
 reply = "Vado in pausa. Per riattivarmi chiamami e di' svegliati."
-reply_en = "Pausing. To wake me up, call me and say wake up."
 
 [[command]]
 id = "resume"
 phrases = ["svegliati", "sveglia", "torna attivo", "riattivati", "esci dalla pausa", "sei sveglio"]
 phrases_en = ["wake up", "resume", "unpause", "are you awake", "come back"]
 action = "system"
-params = { do = "resume", already = "Sono già sveglio.", already_en = "I'm already awake." }
+params = { do = "resume", already = "Sono già sveglio." }
 reply = "Eccomi."
-reply_en = "I'm here."
 
 # Off: no beeps and no replies until "accenditi" (only the wake word listens, a bit stricter).
 # exact = true: "spegni la luce" / "accendi la luce" must never switch CLAUDIO off or on.
@@ -276,9 +249,8 @@ phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegne
 phrases_en = ["turn yourself off", "switch yourself off", "stop listening", "go silent", "go deaf"]
 action = "system"
 exact = true
-params = { do = "off", already = "Sono già spento.", already_en = "I'm already off." }
+params = { do = "off", already = "Sono già spento." }
 reply = "Mi spengo. Per riaccendermi di' Claudio, accenditi."
-reply_en = "Turning off. To turn me back on, say Claudio, turn on."
 
 [[command]]
 id = "on"
@@ -286,9 +258,8 @@ phrases = ["accenditi", "riaccenditi", "accenditi pure", "ora accenditi", "puoi 
 phrases_en = ["turn yourself on", "switch yourself on", "start listening", "start listening again", "turn yourself back on"]
 action = "system"
 exact = true
-params = { do = "on", already = "Sono già acceso.", already_en = "I'm already on." }
+params = { do = "on", already = "Sono già acceso." }
 reply = "Eccomi, sono acceso."
-reply_en = "I'm on."
 
 # Shutdown closes the program ("chiuditi"); "spegniti" is the off command above.
 [[command]]
@@ -299,4 +270,3 @@ action = "system"
 exact = true  # no fuzzy match: "spegni la luce" or "shut down the PC" must not close CLAUDIO
 params = { do = "shutdown" }
 reply = "A presto."
-reply_en = "See you soon."

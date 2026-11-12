@@ -163,11 +163,6 @@ server = "sèrver"
 update = "apdèit"
 cloud = "clàud"
 
-# English replies are off (Whisper listens in Italian only); their voices, if it comes back:
-# [tts.voices.en]
-# kokoro_voice = "am_michael"
-# voice = "en_US-ryan-low"
-
 [startup]
 parallel = true            # load Whisper, wake word, voice and Claude together (false = one after the other, slower)
 announce_ready = true      # say "Sono pronto" once everything, Jack's voice included, has loaded
@@ -176,8 +171,8 @@ tray = true                # icon next to the clock: state by color, menu to tur
 [router]
 commands_file = "config/commands.toml"
 fuzzy_threshold = 85
-unknown_reply = { it = "Questo non lo so ancora fare.", en = "I can't do that yet." }
-error_reply = { it = "Non ci sono riuscito.", en = "I couldn't do it." }
+unknown_reply = "Questo non lo so ancora fare."
+error_reply = "Non ci sono riuscito."
 
 [conversation]
 window_s = 6.0             # after a reply, listen this long without the wake word (0 = off)
@@ -239,11 +234,11 @@ smart_model = "claude-sonnet-5-5"  # must be in config/pricing.toml; "" = no sec
 smart_effort = "low"           # low | medium | high
 smart_max_tokens = 1024        # its thinking counts here too
 escalate = true
-smart_phrases = { it = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"], en = ["think hard", "think carefully", "think it through"] }
+smart_phrases = ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"]
 # A request for detail: with Haiku as main, Claudio asks "Lo uso?" for Sonnet at once (no Haiku call); unused while Sonnet is the main model.
-offer_phrases = { it = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"], en = ["in detail", "in depth", "explain thoroughly"] }
+offer_phrases = ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"]
 # Stories, jokes, poems: the main model tells them itself, never "Lo uso?" (only matters with Haiku as main).
-no_offer_phrases = { it = ["storia", "storie", "storiella", "favola", "fiaba", "barzelletta", "barzellette", "poesia", "filastrocca", "racconta", "raccontami"], en = ["story", "stories", "joke", "jokes", "poem", "fairy tale"] }
+no_offer_phrases = ["storia", "storie", "storiella", "favola", "fiaba", "barzelletta", "barzellette", "poesia", "filastrocca", "racconta", "raccontami"]
 
 # A phrase Claudio was about to ignore (a false wake, not addressed to it, noise) that sounds
 # like a command ("Spenditi.", "Audio Bust."): Haiku guesses which command JenJo asked and

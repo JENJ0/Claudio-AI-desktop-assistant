@@ -55,8 +55,7 @@ def main() -> int:
     )
     parser.add_argument("--skip-whisper", action="store_true")
     parser.add_argument("--skip-kokoro", action="store_true")
-    voices = [settings.tts.piper_voice_for(lang) for lang in ("it",)]
-    parser.add_argument("--voices", nargs="*", default=list(dict.fromkeys(voices)))
+    parser.add_argument("--voices", nargs="*", default=[settings.tts.voice])
     args = parser.parse_args()
     models = settings.resolve(settings.models_dir)
 
@@ -66,7 +65,7 @@ def main() -> int:
     for name in OWW_FILES:
         fetch(OWW_BASE + name, models / "wakeword" / name)
     if not args.skip_kokoro:
-        print("Kokoro (voci Nicola e Michael, ~350 MB)")
+        print("Kokoro (voce Nicola, ~350 MB)")
         for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
             fetch(KOKORO_BASE + name, models / "kokoro" / name)
         fetch(KOKORO_VOCAB, models / "kokoro" / "config.json")

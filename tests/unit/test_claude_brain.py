@@ -24,7 +24,7 @@ from claudio.brain.claude import (
     stream_end,
 )
 from claudio.brain.prompts import ASK_SONNET_TOOL, OFFER, SYSTEM_PROMPT
-from claudio.config import ClaudeSettings, in_language
+from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
 from claudio.protocols import CUT_SHORT
 from claudio.router.actions import ActionRunner
@@ -356,14 +356,6 @@ async def test_a_reply_cut_at_the_token_limit_ends_with_a_closing_sentence(
     assert b._history[-1] == ("[it] raccontami una storia", "".join(CUT_STORY) + CLOSING)
 
 
-async def test_the_closing_sentence_follows_the_reply_language(pricing: Pricing) -> None:
-    b = brain(pricing, FakeClient(["Once upon a time, a ki"], stop="max_tokens"))
-    assert (
-        await ask(b, "tell me a story", "en")
-        == "Once upon a time, a ki I'll stop here: ask and I'll go on."
-    )
-
-
 async def test_a_finished_reply_has_no_marker(pricing: Pricing) -> None:
     b = brain(pricing, FakeClient(["Fine."]))
     assert [c async for c in b.ask("dimmi una cosa", "it")] == ["Fine."]
@@ -421,17 +413,6 @@ async def test_unknown_goes_to_claude_and_can_be_repeated(
     assert route["cost"] > 0
     assert await say(r, "ripeti") == "Dante Alighieri."
     assert len(client.calls) == 1
-
-
-async def test_claude_reply_language_follows_the_voices(
-    matcher: CommandMatcher, pricing: Pricing
-) -> None:
-    client = FakeClient(["Ciao."])
-    r = hybrid(matcher, brain(pricing, client))
-    r.voiced = {"it"}  # no English voice: the reply must be Italian
-    await say(r, "who wrote the Divine Comedy", "en")
-    assert r.language == "it"
-    assert client.calls[0]["messages"][-1]["content"].startswith("[it] ")
 
 
 async def test_paused_never_calls_claude(matcher: CommandMatcher, pricing: Pricing) -> None:
@@ -718,7 +699,7 @@ async def test_detail_words_do_not_offer_sonnet_for_a_joke(pricing: Pricing) -> 
     b = brain(pricing, client)
     assert not b.wants_offer("dimmi una barzelletta nel dettaglio", "it")
     assert b.wants_offer("spiegami nel dettaglio il mutuo variabile", "it")
-    assert await ask(b, "tell me a joke in detail", "en") == "Allora."
+    assert await ask(b, "dimmi una barzelletta nel dettaglio") == "Allora."
     assert b._offer is None
 
 
@@ -837,21 +818,6 @@ async def test_a_handoff_with_no_sonnet_to_offer_ends_the_reply_as_it_is(pricing
     assert await ask(b, "spiegami il mutuo variabile") == "Il mutuo."
     assert b._offer is None and len(client.calls) == 1
     assert list(b._history) == [("[it] spiegami il mutuo variabile", "Il mutuo.")]
-
-
-@pytest.mark.parametrize("answer", ["sì", "no"])
-async def test_the_answer_to_the_offer_keeps_the_language_of_the_question(
-    pricing: Pricing, answer: str
-) -> None:
-    """A short answer may be heard as another language: the reply still follows the question."""
-    client = ScriptedClient(
-        ([], "tool_use", HANDOFF),
-        (["It depends. A b"], "max_tokens", []),
-    )
-    b = brain(pricing, client)
-    await ask(b, "compare trains and cars for me", "en")
-    reply = await ask(b, answer, "it")
-    assert reply == "It depends. A b I'll stop here: ask and I'll go on."
 
 
 NETWORK_SAID = "Non riesco a collegarmi a Claude. Controlla la connessione."
@@ -1252,9 +1218,9 @@ async def test_a_cancel_during_a_reply_is_not_a_network_error(pricing: Pricing) 
     assert list(b._history) == [("[it] raccontami una storia", f"Prima frase. {CUT_NOTE}")]
 
 
-async def test_think_phrase_in_another_language(pricing: Pricing) -> None:
+async def test_think_phrases(pricing: Pricing) -> None:
     b = brain(pricing, ScriptedClient())
-    assert b.wants_smart("think hard about this", "it")
+    assert b.wants_smart("pensaci bene su questo", "it")
     assert not b.wants_smart("pensa che bello", "it")
     b.smart_model = None
     assert not b.wants_smart("pensaci bene", "it")
@@ -1393,10 +1359,7 @@ async def test_the_yes_reaches_claude_through_the_router(
 
 # --- an offer survives the end of its own request, not a cut ----------------------------
 
-OFFER_CASES = [
-    ("it", "fammi un confronto tra treno e auto", "sì"),
-    ("en", "compare trains and cars for me", "yes"),
-]
+OFFER_CASES = [("fammi un confronto tra treno e auto", "sì")]
 
 
 def wired(assistant: Assistant, r: LocalResponder, b: ClaudeBrain) -> None:
@@ -1412,17 +1375,16 @@ def sonnet_calls(client: ScriptedClient) -> int:
     return sum(c["model"] == "claude-sonnet-5-5" for c in client.calls)
 
 
-@pytest.mark.parametrize(("language", "question", "yes"), OFFER_CASES)
+@pytest.mark.parametrize(("question", "yes"), OFFER_CASES)
 async def test_a_completed_offer_survives_its_request_and_the_yes_reaches_sonnet(
-    fake_vad, vad_settings, make_frames, matcher, pricing, language, question, yes
+    fake_vad, vad_settings, make_frames, matcher, pricing, question, yes
 ) -> None:
     client = ScriptedClient(([], "tool_use", HANDOFF), (["Ok."], "end_turn", []))
     assistant, speaker, _, r = build_conversation(fake_vad, vad_settings, matcher, [question, yes])
-    assistant.transcriber.language = language
     b = brain(pricing, client)
     wired(assistant, r, b)
     await talk(assistant, make_frames, speaker, requests=2)
-    assert speaker.spoken[0] == OFFER[language]
+    assert speaker.spoken[0] == OFFER
     assert sonnet_calls(client) == 1
 
 
@@ -1884,7 +1846,7 @@ async def test_a_history_pruned_or_cleared_before_the_cut_is_not_rewritten(
 async def test_an_offer_nobody_heard_is_disarmed(pricing: Pricing) -> None:
     client = ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF))
     b = brain(pricing, client)
-    assert (await ask(b, "spiegami il mutuo variabile")).endswith(in_language(OFFER, "it"))
+    assert (await ask(b, "spiegami il mutuo variabile")).endswith(OFFER)
     assert b._offer is not None
     b.reply_cut(["Domanda complessa."])  # the voice never started "Lo uso?"
     assert b._offer is None
@@ -1894,7 +1856,7 @@ async def test_an_offer_that_was_heard_stays_armed(pricing: Pricing) -> None:
     client = ScriptedClient((["Domanda complessa."], "tool_use", HANDOFF))
     b = brain(pricing, client)
     await ask(b, "spiegami il mutuo variabile")
-    b.reply_cut(["Domanda complessa.", in_language(OFFER, "it")])
+    b.reply_cut(["Domanda complessa.", OFFER])
     assert b._offer is not None
 
 

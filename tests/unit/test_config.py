@@ -80,27 +80,39 @@ def test_resolve_relative_to_project_root() -> None:
     assert s.resolve(Path("models")).is_absolute()
 
 
-def test_languages_voices_and_replies(tmp_path: Path) -> None:
+def test_replies_and_phrases_are_plain_text_and_lists(tmp_path: Path) -> None:
     s = load_settings(DEFAULT_CONFIG)
-    assert s.tts.piper_voice_for("en") == "en_US-ryan-low"
-    assert s.tts.piper_voice_for("it") == s.tts.voice == s.tts.piper_voice_for("de")
-    assert s.tts.kokoro_voice_for("en") == "am_michael"
-    assert s.router.unknown_reply["en"] == "I can't do that yet."
+    assert s.router.unknown_reply == "Questo non lo so ancora fare."
+    assert s.router.error_reply == "Non ci sono riuscito."
+    assert "pensaci bene" in s.claude.smart_phrases and "a fondo" in s.claude.offer_phrases
+    assert "barzelletta" in s.claude.no_offer_phrases
     f = tmp_path / "c.toml"
     f.write_text('[router]\nunknown_reply = "Non lo so."\n', encoding="utf-8")
-    replies = load_settings(f).router.unknown_reply
-    assert replies["it"] == "Non lo so." and replies["en"] == "I can't do that yet."
+    assert load_settings(f).router.unknown_reply == "Non lo so."
 
 
-def test_plain_values_in_env_still_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A v0.1.0 .env set the replies as plain text: it must still load, and JSON works too."""
+def test_plain_replies_in_env_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     f = tmp_path / "c.toml"
     f.write_text("", encoding="utf-8")
     monkeypatch.setenv("CLAUDIO_ROUTER__UNKNOWN_REPLY", "Non lo so fare, scusa.")
-    monkeypatch.setenv("CLAUDIO_ROUTER__ERROR_REPLY", '{"it": "Ops.", "en": "Oops."}')
+    monkeypatch.setenv("CLAUDIO_ROUTER__ERROR_REPLY", "Ops.")
     s = load_settings(f)
-    assert s.router.unknown_reply == {"it": "Non lo so fare, scusa.", "en": "I can't do that yet."}
-    assert s.router.error_reply == {"it": "Ops.", "en": "Oops."}
+    assert s.router.unknown_reply == "Non lo so fare, scusa."
+    assert s.router.error_reply == "Ops."
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '[router]\nunknown_reply = { it = "Non lo so." }\n',
+        '[claude]\nsmart_phrases = { it = ["pensaci bene"] }\n',
+    ],
+)
+def test_the_old_per_language_forms_are_rejected(tmp_path: Path, line: str) -> None:
+    f = tmp_path / "c.toml"
+    f.write_text(line, encoding="utf-8")
+    with pytest.raises(ConfigError, match="valori non validi"):
+        load_settings(f)
 
 
 def test_unreadable_env_value_has_clear_message(
@@ -137,17 +149,6 @@ def test_configuration_error_is_printed_and_exits_2(
     f.write_text("[stt]\nbeam_size = 0\n", encoding="utf-8")
     assert main(["--config", str(f), "--check"]) == 2  # supervisor.FINAL_EXITS relies on 2
     assert "Errore di configurazione" in capsys.readouterr().err
-
-
-def test_kokoro_voices_are_read_from_its_file(tmp_path: Path) -> None:
-    import numpy as np
-
-    from claudio.checks import kokoro_voices
-
-    assert kokoro_voices(tmp_path) is None  # no file: reported by the model check
-    with (tmp_path / "voices-v1.0.bin").open("wb") as fh:
-        np.savez(fh, am_michael=np.zeros(3), im_nicola=np.zeros(3))
-    assert kokoro_voices(tmp_path) == {"am_michael", "im_nicola"}
 
 
 def test_an_old_effect_line_in_dotenv_is_ignored(

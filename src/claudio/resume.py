@@ -16,13 +16,10 @@ CLOSERS = frozenset(
     | {"capito", "non", "importa", "niente", "fa", "nulla", "thanks", "thank", "you", "fine"}
     | {"claudio", "ehi", "hey", "e", "si", "no", "allora", "dai"}
 )
-RESUME_PREFIX = {"it": "Dicevo:", "en": "As I was saying:"}
+RESUME_PREFIX = "Dicevo:"
 # Said after a local answer given over a reply whose action was stopped: "Dicevo" would repeat the
 # promise of that action.
-ACTION_STOPPED = {
-    "it": "Ho lasciato stare l'azione di prima.",
-    "en": "I dropped the action from before.",
-}
+ACTION_STOPPED = "Ho lasciato stare l'azione di prima."
 
 
 class DrainedStream:

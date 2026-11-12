@@ -129,55 +129,26 @@ ASK_SONNET_TOOL = {
 }
 
 # Said at once before a slow action (search, reading a window, a screenshot, a command).
-BRIDGE = {"it": "Ci guardo.", "en": "Let me check."}
-BRIDGE_RUN = {"it": "Eseguo.", "en": "Running it."}  # after "confermo", before the command
+BRIDGE = "Ci guardo."
+BRIDGE_RUN = "Eseguo."  # after "confermo", before the command
 
 # Haiku proposed Sonnet: Claudio asks before spending more (JenJo, 23/10).
-OFFER = {
-    "it": "Per questa serve Sonnet, il modello più potente, che costa di più. Lo uso?",
-    "en": "This one needs Sonnet, the stronger model, which costs more. Shall I use it?",
-}
+OFFER = "Per questa serve Sonnet, il modello più potente, che costa di più. Lo uso?"
 
 # Said before the answer, once a day, when today's spending reaches the warning level.
-BUDGET_WARNING = {
-    "it": "Attenzione, hai usato il {percent} per cento del budget di oggi.",
-    "en": "Heads up, you have used {percent} percent of today's budget.",
-}
-BUDGET_BLOCKED = {
-    "it": "Il budget di oggi per l'intelligenza artificiale è finito. I comandi locali "
-    "funzionano ancora.",
-    "en": "Today's AI budget is used up. Local commands still work.",
-}
-NO_KEY = {
-    "it": "Non ho la chiave per collegarmi a Claude. Mettila nel file punto env.",
-    "en": "I don't have the key to reach Claude. Put it in the dot env file.",
-}
-BAD_KEY = {
-    "it": "La chiave di Claude non è valida. Controlla il file punto env.",
-    "en": "The Claude key is not valid. Check the dot env file.",
-}
-NETWORK_ERROR = {
-    "it": "Non riesco a collegarmi a Claude. Controlla la connessione.",
-    "en": "I can't reach Claude. Check the connection.",
-}
-API_ERROR = {
-    "it": "Claude non ha risposto. Riprova tra poco.",
-    "en": "Claude didn't answer. Try again in a moment.",
-}
-REFUSED = {
-    "it": "Su questo non posso aiutarti.",
-    "en": "I can't help with that.",
-}
+BUDGET_WARNING = "Attenzione, hai usato il {percent} per cento del budget di oggi."
+BUDGET_BLOCKED = (
+    "Il budget di oggi per l'intelligenza artificiale è finito. I comandi locali funzionano ancora."
+)
+NO_KEY = "Non ho la chiave per collegarmi a Claude. Mettila nel file punto env."
+BAD_KEY = "La chiave di Claude non è valida. Controlla il file punto env."
+NETWORK_ERROR = "Non riesco a collegarmi a Claude. Controlla la connessione."
+API_ERROR = "Claude non ha risposto. Riprova tra poco."
+REFUSED = "Su questo non posso aiutarti."
 # Said after a reply cut at the token limit, instead of its unfinished last sentence (30/10).
-CUT_AT_LIMIT = {
-    "it": "Mi fermo qui: se vuoi, continuo.",
-    "en": "I'll stop here: ask and I'll go on.",
-}
+CUT_AT_LIMIT = "Mi fermo qui: se vuoi, continuo."
 # Said when a tool call was cut at the token limit and its retry did not give a whole call.
-NOT_RUN_CUT = {
-    "it": "Non l'ho fatto: il testo era troppo lungo. Se vuoi, ne scrivo uno più corto.",
-    "en": "I didn't do it: the text was too long. I can write a shorter one if you want.",
-}
+NOT_RUN_CUT = "Non l'ho fatto: il testo era troppo lungo. Se vuoi, ne scrivo uno più corto."
 
 
 # The guess (brain/guess.py): a phrase Claudio was about to drop sounds like a command. Frozen

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -18,7 +17,6 @@ from pydantic import (
 )
 from pydantic_settings import (
     BaseSettings,
-    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     SettingsError,
@@ -32,19 +30,6 @@ DEFAULT_LANGUAGE = "it"  # commands.toml's plain `phrases` and `reply`, the firs
 
 class ConfigError(Exception):
     """Configuration file missing or invalid, with a readable message."""
-
-
-def _json_or(value: Any, plain: Any) -> Any:
-    """A setting from .env or the environment: JSON when it looks like JSON ('{"it": ...}',
-    '["it", "en"]'), else `plain(value)`. TOML values arrive already parsed."""
-    if not isinstance(value, str):
-        return value
-    if value.strip()[:1] in ("{", "["):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            pass
-    return plain(value)
 
 
 class AudioSettings(BaseModel):
@@ -145,23 +130,10 @@ class SttSettings(BaseModel):
     cpu_threads: int = Field(4, ge=1)
 
 
-class VoiceSettings(BaseModel):
-    """The voices of one language; empty = the main (Italian) voice."""
-
-    kokoro_voice: str = ""
-    voice: str = ""  # Piper
-
-
 class TtsSettings(BaseModel):
     engine: Literal["kokoro", "piper", "jack"] = "kokoro"
     kokoro_voice: str = "im_nicola"
     voice: str = "it_IT-paola-medium"  # Piper: engine "piper", and the fallback
-    # Other languages' voices, by the language Whisper detects.
-    voices: dict[str, VoiceSettings] = Field(
-        default_factory=lambda: {
-            "en": VoiceSettings(kokoro_voice="am_michael", voice="en_US-ryan-low")
-        }
-    )
     length_scale: float = Field(1.0, gt=0)
     noise_scale: float | None = Field(None, ge=0)  # None = the voice's own default
     noise_w_scale: float | None = Field(None, ge=0)
@@ -247,44 +219,15 @@ class TtsSettings(BaseModel):
     # before the whole first sentence has arrived from Claude (0 = whole sentences only).
     first_clause_chars: int = Field(25, ge=0, le=200)
 
-    def kokoro_voice_for(self, language: str) -> str:
-        other = self.voices.get(language)
-        return other.kokoro_voice if other and other.kokoro_voice else self.kokoro_voice
-
-    def piper_voice_for(self, language: str) -> str:
-        other = self.voices.get(language)
-        return other.voice if other and other.voice else self.voice
-
-
-UNKNOWN_REPLY = {"it": "Questo non lo so ancora fare.", "en": "I can't do that yet."}
-ERROR_REPLY = {"it": "Non ci sono riuscito.", "en": "I couldn't do it."}
-
-
-def in_language(texts: dict[str, str], language: str) -> str:
-    """The text in `language`, else the Italian one."""
-    return texts.get(language) or texts.get(DEFAULT_LANGUAGE, "")
+UNKNOWN_REPLY = "Questo non lo so ancora fare."
+ERROR_REPLY = "Non ci sono riuscito."
 
 
 class RouterSettings(BaseModel):
     commands_file: Path = Path("config/commands.toml")
     fuzzy_threshold: float = Field(85, ge=0, le=100)
-    # Per language; a plain string (also in .env, as in v0.1.0) replaces the Italian one.
-    unknown_reply: Annotated[dict[str, str], NoDecode] = Field(
-        default_factory=lambda: dict(UNKNOWN_REPLY)
-    )
-    error_reply: Annotated[dict[str, str], NoDecode] = Field(
-        default_factory=lambda: dict(ERROR_REPLY)
-    )
-
-    @field_validator("unknown_reply", mode="before")
-    @classmethod
-    def _unknown_reply(cls, value: Any) -> Any:
-        return _json_or(value, lambda text: {**UNKNOWN_REPLY, DEFAULT_LANGUAGE: text})
-
-    @field_validator("error_reply", mode="before")
-    @classmethod
-    def _error_reply(cls, value: Any) -> Any:
-        return _json_or(value, lambda text: {**ERROR_REPLY, DEFAULT_LANGUAGE: text})
+    unknown_reply: str = UNKNOWN_REPLY
+    error_reply: str = ERROR_REPLY
 
 
 class StartupSettings(BaseModel):
@@ -440,37 +383,34 @@ class ClaudeSettings(BaseModel):
     # cached. Missing: copied from config/CLAUDIO.md. Longer than the limit: cut (it costs).
     personality_file: Path = Path("data/CLAUDIO.md")
     personality_max_chars: int = Field(3000, ge=0, le=20000)  # 0 = no personality
-    smart_phrases: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "it": ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"],
-            "en": ["think hard", "think carefully", "think it through"],
-        }
+    smart_phrases: list[str] = Field(
+        default_factory=lambda: ["pensaci bene", "ragionaci", "ragiona bene", "pensaci su"]
     )
     # A request for detail: Claudio proposes Sonnet at once ("Lo uso?"), no Haiku call.
-    offer_phrases: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "it": ["in dettaglio", "nel dettaglio", "approfondisci", "spiegami bene", "a fondo"],
-            "en": ["in detail", "in depth", "explain thoroughly"],
-        }
+    offer_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "in dettaglio",
+            "nel dettaglio",
+            "approfondisci",
+            "spiegami bene",
+            "a fondo",
+        ]
     )
     # Stories, jokes, poems: Haiku tells them itself, never "Lo uso?" (JenJo, 25/10).
-    no_offer_phrases: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "it": [
-                "storia",
-                "storie",
-                "storiella",
-                "favola",
-                "fiaba",
-                "barzelletta",
-                "barzellette",
-                "poesia",
-                "filastrocca",
-                "racconta",
-                "raccontami",
-            ],
-            "en": ["story", "stories", "joke", "jokes", "poem", "fairy tale"],
-        }
+    no_offer_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "storia",
+            "storie",
+            "storiella",
+            "favola",
+            "fiaba",
+            "barzelletta",
+            "barzellette",
+            "poesia",
+            "filastrocca",
+            "racconta",
+            "raccontami",
+        ]
     )
 
 

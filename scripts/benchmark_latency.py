@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from claudio.config import in_language, load_settings
+from claudio.config import load_settings
 from claudio.metrics import summarize
 
 
@@ -136,10 +136,7 @@ def offline(wav_dir: Path, model_names: list[str], device: str) -> None:
             # Route only (actions are not executed in the benchmark).
             match = responder.matcher.match(text, stt.language)
             t3 = time.perf_counter()
-            if match:
-                reply = match.command.reply_in(match.language)
-            else:
-                reply = in_language(settings.router.unknown_reply, stt.language)
+            reply = match.command.reply if match else settings.router.unknown_reply
             tts_ms = 0.0
             if synth and reply:
                 t4 = time.perf_counter()
