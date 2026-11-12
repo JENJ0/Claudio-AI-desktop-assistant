@@ -16,7 +16,6 @@ The arguments are passed to CLAUDIO as they are (`--config other.toml`)."""
 from __future__ import annotations
 
 import argparse
-import contextlib
 import logging
 import subprocess
 import sys
@@ -25,8 +24,7 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from claudio.config import PROJECT_ROOT, ConfigError, configured_language, load_settings
-from claudio.i18n import set_language
+from claudio.config import PROJECT_ROOT, ConfigError, load_settings
 from claudio.logging_setup import setup_logging
 from claudio.single_instance import EXIT_ALREADY_RUNNING
 
@@ -111,7 +109,6 @@ def logs_dir(config: Path | None) -> Path:
         settings = load_settings(config)
     except ConfigError:
         return PROJECT_ROOT / "logs"
-    set_language(settings.language)
     return settings.resolve(settings.logs_dir)
 
 
@@ -120,8 +117,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--config", type=Path)
     config = parser.parse_known_args(args)[0].config
-    with contextlib.suppress(ValueError):
-        set_language(configured_language(config))
     setup_logging(logs_dir(config), file_name=LOG_FILE)
     command = child_command(args)
     log.info("Supervisore: avvio %s", " ".join(command))

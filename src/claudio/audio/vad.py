@@ -11,7 +11,6 @@ import numpy as np
 from claudio.audio.level import CLIP_LEVEL
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.config import VadSettings
-from claudio.i18n import tr
 from claudio.protocols import SpeechProbability
 
 
@@ -25,7 +24,7 @@ class SileroVad:
         import onnxruntime as ort
 
         if not model_path.is_file():
-            raise FileNotFoundError(tr("Modello Silero VAD mancante: {path}", path=model_path))
+            raise FileNotFoundError(f"Modello Silero VAD mancante: {model_path}")
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = 1
         opts.inter_op_num_threads = 1

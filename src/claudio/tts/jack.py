@@ -31,7 +31,6 @@ from typing import Any
 
 import numpy as np
 
-from claudio.i18n import tr
 from claudio.tts.spoken_text import to_spoken_it
 from claudio.tts.takes import TakeStore
 from claudio.tts.voice_check import TakeJudge, TakeVerdict
@@ -208,7 +207,7 @@ class JackSynth:
                 creationflags=flags,
             )
         except OSError as exc:
-            raise WorkerError(tr("worker Jack non avviabile: {error}", error=exc)) from exc
+            raise WorkerError(f"worker Jack non avviabile: {exc}") from exc
         self._proc = proc
         threading.Thread(target=self._read_stdout, args=(proc, self._events), daemon=True).start()
         threading.Thread(target=self._read_stderr, args=(proc,), daemon=True).start()
@@ -219,7 +218,7 @@ class JackSynth:
             raise
         if event.get("event") != "ready":
             self.close()
-            raise WorkerError(tr("worker Jack: {error}", error=event.get("message", event)))
+            raise WorkerError(f"worker Jack: {event.get('message', event)}")
         self.sample_rate = int(event.get("sample_rate", SAMPLE_RATE))
         self.load_s = float(event.get("load_s", 0.0))
         self.vram_mb = int(event.get("vram_mb", 0))
@@ -318,9 +317,7 @@ class JackSynth:
         """Next event as a dict (audio events carry their bytes under "pcm")."""
         event = self._poll(timeout)
         if event is None:
-            raise WorkerTimeout(
-                tr("worker Jack: nessuna risposta in {seconds} s", seconds=round(timeout))
-            )
+            raise WorkerTimeout(f"worker Jack: nessuna risposta in {round(timeout)} s")
         return event
 
     def _poll(self, timeout: float) -> dict[str, Any] | None:
@@ -330,7 +327,7 @@ class JackSynth:
         except queue.Empty:
             return None
         if item is None:
-            raise WorkerError(tr("worker Jack terminato"))
+            raise WorkerError("worker Jack terminato")
         header, payload = item
         return {**header, "pcm": payload} if payload else header
 
@@ -548,7 +545,7 @@ class JackSynth:
         if event is None:
             if time.monotonic() >= deadline:
                 limit = round(self.sentence_timeout_s)
-                raise WorkerError(tr("worker Jack: nessuna risposta in {seconds} s", seconds=limit))
+                raise WorkerError(f"worker Jack: nessuna risposta in {limit} s")
             return None
         if event.get("id") != rid:
             return None  # leftovers of an interrupted sentence

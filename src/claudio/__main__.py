@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import logging
 import sys
 import time
@@ -18,11 +17,9 @@ from claudio.config import (
     DEFAULT_LANGUAGE,
     ConfigError,
     Settings,
-    configured_language,
     load_settings,
 )
 from claudio.gpu import GpuMemory, GpuSampler, has_room, read_gpu
-from claudio.i18n import set_language, tr
 from claudio.logging_setup import setup_logging
 from claudio.session_log import drop_old_lines
 
@@ -433,7 +430,7 @@ def jack_wait_s(settings: Settings, gpu: GpuMemory | None) -> float | None:
         "voce di riserva",
         gpu.free_mb,
         gpu.total_mb,
-        tr(", calcolo al {pct}%", pct=gpu.busy_pct) if gpu.busy_pct is not None else "",
+        f", calcolo al {gpu.busy_pct}%" if gpu.busy_pct is not None else "",
     )
     return 0.0
 
@@ -445,13 +442,13 @@ def startup_notices(
     alone went unnoticed (on 23/10 Jack's worker failed and Kokoro answered all evening)."""
     notices = []
     if settings.tts.engine == "jack" and not jack_running:
-        notices.append(tr("La voce di Jack non è partita: uso quella di riserva."))
+        notices.append("La voce di Jack non è partita: uso quella di riserva.")
         if gpu_busy:  # a fact, maybe not the cause: the cause is in the log
-            notices.append(tr("All'avvio la scheda video era quasi piena."))
+            notices.append("All'avvio la scheda video era quasi piena.")
     if settings.stt.device == "auto" and stt_device == "cpu":
-        notices.append(tr("La scheda video non è disponibile: ti capisco più lentamente."))
+        notices.append("La scheda video non è disponibile: ti capisco più lentamente.")
     if notices:
-        notices.append(tr("Il motivo è nel log."))
+        notices.append("Il motivo è nel log.")
     return notices
 
 
@@ -794,7 +791,7 @@ async def run_assistant(
     log.info(
         'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).',
         time.perf_counter() - t0,
-        tr('" o "').join(wake.names),
+        '" o "'.join(wake.names),
     )
     inbox = (
         asyncio.create_task(serve_inbox(assistant, chat, settings)) if settings.chat.typed else None
@@ -857,7 +854,7 @@ async def announce_ready(
     for notice in notices:
         log.warning("Avviso a voce: %s", notice)
     if settings.startup.announce_ready:
-        notices.append(tr("Sono pronto."))
+        notices.append("Sono pronto.")
     if notices:
         await assistant.announce(" ".join(notices))
 
@@ -887,14 +884,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"CLAUDIO {__version__}")
     args = parser.parse_args(argv)
 
-    with contextlib.suppress(ValueError):  # so that a configuration error is in it too
-        set_language(configured_language(args.config))
     try:
         settings = load_settings(args.config)
     except ConfigError as exc:
-        print(tr("Errore di configurazione: {error}", error=exc), file=sys.stderr)
+        print(f"Errore di configurazione: {exc}", file=sys.stderr)
         return 2
-    set_language(settings.language)
     logs_dir = settings.resolve(settings.logs_dir)
     log_name = "chat-window.log.jsonl" if args.ui else "claudio.log.jsonl"
     # Before setup_logging: Windows will not replace a file our own handler holds open.

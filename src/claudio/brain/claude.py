@@ -51,7 +51,6 @@ from claudio.brain.prompts import (
 from claudio.config import ClaudeSettings, PcSettings, in_language
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
-from claudio.i18n import tr
 from claudio.intake import Hearing
 from claudio.memory.prompt import without_recalled
 from claudio.protocols import CUT_SHORT
@@ -1376,7 +1375,7 @@ class ClaudeBrain:
                 timing.get("ttft_ms", "-"),
                 timing.get("word_ms", "-"),  # "-": the call only asked for tools
                 timing.get("total_ms", "-"),
-                tr(", interrotta (stima)") if cut else "",
+                ", interrotta (stima)" if cut else "",
                 extra={"claude_call": {"model": model, **timing}},
             )
             # Haiku then Sonnet: the metrics show the last model and the sum of both calls.

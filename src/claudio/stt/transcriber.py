@@ -16,7 +16,6 @@ from typing import Any
 import numpy as np
 
 from claudio.config import SttSettings
-from claudio.i18n import tr
 from claudio.intake import Segment
 from claudio.router.normalizer import normalize, only_wake_words
 from claudio.stt.recovery import NO_FIT, Fit, SecondHearing
@@ -185,7 +184,7 @@ class WhisperTranscriber:
                 import ctranslate2
 
                 if ctranslate2.get_cuda_device_count() == 0:
-                    raise RuntimeError(tr("nessuna GPU CUDA trovata"))
+                    raise RuntimeError("nessuna GPU CUDA trovata")
                 model = self._open(s.model, device="cuda", compute_type=s.compute_type)
                 self._model, self.device, self.model_name = model, "cuda", s.model
                 self._warm_up()  # CUDA kernel problems (e.g. Blackwell) show up here

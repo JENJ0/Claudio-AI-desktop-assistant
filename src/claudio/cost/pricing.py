@@ -10,8 +10,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from claudio.i18n import tr
-
 PER_TOKEN = 1 / 1_000_000  # prices are per million tokens
 CacheTtl = Literal["5m", "1h"]
 
@@ -38,7 +36,7 @@ class Pricing(BaseModel):
             return self.models[model]
         except KeyError:
             raise PricingError(
-                tr("Nessun prezzo per il modello '{model}' in config/pricing.toml", model=model)
+                f"Nessun prezzo per il modello '{model}' in config/pricing.toml"
             ) from None
 
     def cost(self, model: str, usage: Usage) -> float:
@@ -108,15 +106,13 @@ def load_pricing(path: Path) -> Pricing:
         with path.open("rb") as fh:
             data = tomllib.load(fh)
     except FileNotFoundError:
-        raise PricingError(tr("File dei prezzi non trovato: {path}", path=path)) from None
+        raise PricingError(f"File dei prezzi non trovato: {path}") from None
     except tomllib.TOMLDecodeError as exc:
-        raise PricingError(tr("{path}: TOML non valido ({error})", path=path, error=exc)) from exc
+        raise PricingError(f"{path}: TOML non valido ({exc})") from exc
     try:
         return Pricing.model_validate(data)
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in exc.errors()
         )
-        raise PricingError(
-            tr("{path}: valori non validi -> {problems}", path=path, problems=problems)
-        ) from exc
+        raise PricingError(f"{path}: valori non validi -> {problems}") from exc
