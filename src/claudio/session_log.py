@@ -4,11 +4,13 @@ read as it is (Claude reads the folder) instead of being copied into the chat.""
 
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
+import os
 import shutil
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,8 +56,9 @@ def purge_old_logs(
 ) -> int:
     """Privacy (logging.retention_days): delete what Claudio heard more than `days` ago, by
     last change. Session folders (console and conversation), the WAVs and notes in logs/audio/
-    (near misses too, and those in its folders: rejected/) and the rotated metrics files; the live
-    metrics.jsonl and `current` stay. Returns how many were deleted."""
+    (near misses too, and those in its folders: rejected/) and every rotated *.jsonl.N file (log,
+    metrics, chat, supervisor); the live metrics.jsonl loses its old head. `current` stays.
+    Returns how many were deleted."""
     cutoff = (now if now is not None else time.time()) - days * 86400
     old: list[Path] = []
     sessions = logs_dir / "sessions"
@@ -64,7 +67,7 @@ def purge_old_logs(
     audio = logs_dir / "audio"
     if audio.is_dir():
         old += list(audio.rglob("*.wav")) + list(audio.rglob("*.json"))  # notes: folder names
-    old += list(logs_dir.glob("metrics.jsonl.*"))
+    old += list(logs_dir.glob("*.jsonl.*"))
     removed = 0
     for path in old:
         try:
@@ -77,7 +80,50 @@ def purge_old_logs(
             removed += 1
         except OSError:
             log.warning("Impossibile eliminare il vecchio log %s", path)
+    if trimmed := drop_old_lines(logs_dir / "metrics.jsonl", cutoff):
+        log.info("Metriche: %d righe vecchie tolte da metrics.jsonl", trimmed)
     return removed
+
+
+def _line_time(line: bytes) -> float | None:
+    """The `ts` of a log line (ISO text) or metrics row (epoch seconds); None if unreadable."""
+    try:
+        ts = json.loads(line)["ts"]
+        if isinstance(ts, str):
+            return datetime.fromisoformat(ts).astimezone(UTC).timestamp()
+        return float(ts)
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def drop_old_lines(path: Path, cutoff: float) -> int:
+    """Cut the lines older than `cutoff` (epoch seconds) from the head of a .jsonl file. Lines
+    are in time order: cut up to the last readable old line, so broken lines before it go too.
+    Returns the lines dropped; 0 if the file is missing, has nothing old, or cannot be replaced
+    (Windows refuses while a handler holds it open)."""
+    try:
+        lines = path.read_bytes().splitlines(keepends=True)
+    except OSError:
+        return 0
+    cut = 0
+    for i, line in enumerate(lines):
+        ts = _line_time(line)
+        if ts is None:
+            continue
+        if ts >= cutoff:
+            break
+        cut = i + 1
+    if cut == 0:
+        return 0
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_bytes(b"".join(lines[cut:]))
+        os.replace(tmp, path)
+    except OSError:
+        log.warning("Impossibile tagliare il vecchio log %s", path)
+        tmp.unlink(missing_ok=True)
+        return 0
+    return cut
 
 
 class ConversationLog:
