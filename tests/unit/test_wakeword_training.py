@@ -864,7 +864,7 @@ def test_command_takes_never_overwrite(tmp_path: Path) -> None:
 
     commands = [Command("open_chrome", "apri chrome"), Command("mute", "muto")]
     (tmp_path / "open_chrome__apri_chrome__1.wav").write_bytes(b"")
-    prompts = record_samples.command_prompts(commands, "it", 2, 3.5, tmp_path)
+    prompts = record_samples.command_prompts(commands, 2, 3.5, tmp_path)
     assert [p[2] for p in prompts] == [
         "open_chrome__apri_chrome__2",
         "open_chrome__apri_chrome__3",

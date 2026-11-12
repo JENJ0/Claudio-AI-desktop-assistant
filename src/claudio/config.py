@@ -25,7 +25,6 @@ from pydantic_settings import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "claudio.toml"
-DEFAULT_LANGUAGE = "it"  # commands.toml's plain `phrases` and `reply`, the first fallback
 
 
 class ConfigError(Exception):

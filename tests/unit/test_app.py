@@ -46,10 +46,9 @@ class FakeStt:
         text: str | list[str] = "apri chrome",
         error: bool = False,
         delay: float = 0,
-        language: str = "it",
     ) -> None:
         self.texts = [text] if isinstance(text, str) else text
-        self.error, self.delay, self.audio, self.language = error, delay, None, language
+        self.error, self.delay, self.audio = error, delay, None
         self.heard: list[np.ndarray] = []
 
     def transcribe(self, audio: np.ndarray) -> str:
@@ -66,7 +65,6 @@ class FakeResponder:
     def __init__(self) -> None:
         self.last_route: dict = {}
         self.seen: list[str] = []
-        self.language = "it"
         self.awaiting = False
         self.asked_question = False
         self.answer_expected = False
@@ -80,7 +78,7 @@ class FakeResponder:
     def prepare(self) -> None:
         self.prepared += 1
 
-    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
+    def understands(self, text: str, memory: bool = True) -> bool:
         return True
 
     def is_stop(self, text: str) -> bool:
@@ -97,11 +95,8 @@ class FakeResponder:
     def reply_cut(self, played: Sequence[str], handle: object | None = None) -> None:
         return None
 
-    async def respond(
-        self, text: str, language: str = "it", named: bool = False
-    ) -> AsyncIterator[str]:
+    async def respond(self, text: str, named: bool = False) -> AsyncIterator[str]:
         self.seen.append(text)
-        self.language = language
         if "chrome" in text:
             self.last_route = {"route": "local", "command": "open_chrome"}
             yield "Apro "
@@ -114,7 +109,6 @@ class FakeResponder:
 class FakeSpeaker:
     def __init__(self) -> None:
         self.spoken: list[str] = []
-        self.languages: list[str] = []
         self.beeps: list[str] = []
         self.ducks: list[float | None] = []
         self.played: list[str] = []
@@ -147,7 +141,6 @@ class FakeSpeaker:
         self,
         text_stream: AsyncIterator[str],
         on_first_audio: Callable[[], None] | None = None,
-        language: str | Callable[[], str] = "it",
     ) -> None:
         """Like the real speaker: sentence by sentence, first audio at the first one, and
         interrupt() stops it, also while it waits for text. `spoken` is what it read."""
@@ -172,11 +165,9 @@ class FakeSpeaker:
         loop = asyncio.get_running_loop()
         self._wake = lambda: loop.call_soon_threadsafe(queue.put_nowait, None)
         producer = asyncio.create_task(produce())
-        lang: str | None = None
         first = True
         try:
             while (sentence := await queue.get()) is not None and not self._cancel.is_set():
-                lang = language() if callable(language) else language
                 if first:
                     await self._before_first_sound()
                     if self._cancel.is_set():
@@ -191,10 +182,6 @@ class FakeSpeaker:
             producer.cancel()
             (result,) = await asyncio.gather(producer, return_exceptions=True)
             self.spoken.append("".join(read))
-            if lang is None and not callable(language):
-                lang = language  # no text: a callable is never read, as the real one's
-            if lang is not None:
-                self.languages.append(lang)
         if isinstance(result, Exception):
             raise result
 
@@ -438,7 +425,7 @@ async def test_finish_saves_the_gain_before_the_level_moves(
     )
     assert assistant.history[-1]["gain_db"] == 6.0
     assert sink.notes == [
-        ("ok.wav", {"whisper_prompt": "Cartelle: Tesi.", "language": "it", "gain_db": 6.0})
+        ("ok.wav", {"whisper_prompt": "Cartelle: Tesi.", "gain_db": 6.0})
     ]
 
 
@@ -490,7 +477,7 @@ async def test_a_wake_word_alone_then_silence_keeps_the_pass_that_ran_in_the_not
     (row,) = assistant.history
     assert row["outcome"] == "timeout" and row["relisten"] == "Hey Claudio."
     assert sink.notes == [
-        ("timeout.wav", {"whisper_prompt": "P1", "language": "it", "gain_db": 0.0})
+        ("timeout.wav", {"whisper_prompt": "P1", "gain_db": 0.0})
     ]  # the pass that ran, and the one a replay of this clip would run again
 
 
@@ -639,7 +626,7 @@ async def test_second_chance_keeps_the_near_miss_when_it_hears_something_else(
 
 
 class NoCommands(FakeResponder):
-    def understands(self, text: str, language: str = "it") -> bool:
+    def understands(self, text: str) -> bool:
         return False
 
 
@@ -1162,7 +1149,7 @@ class SeenLevel:
 
 class FailingResponder(FakeResponder):
     async def respond(
-        self, text: str, language: str = "it", named: bool = False
+        self, text: str, named: bool = False
     ) -> AsyncIterator[str]:
         self.seen.append(text)
         raise RuntimeError("Claude non risponde")
@@ -1171,7 +1158,7 @@ class FailingResponder(FakeResponder):
 
 class StopResponder(FakeResponder):
     async def respond(
-        self, text: str, language: str = "it", named: bool = False
+        self, text: str, named: bool = False
     ) -> AsyncIterator[str]:
         self.seen.append(text)
         self.last_route = {"route": "local", "command": "stop"}
@@ -1186,10 +1173,10 @@ class SwitchingResponder(FakeResponder):
         self.level = level
 
     async def respond(
-        self, text: str, language: str = "it", named: bool = False
+        self, text: str, named: bool = False
     ) -> AsyncIterator[str]:
         self.level.microphone = "Webcam"
-        async for part in super().respond(text, language, named):
+        async for part in super().respond(text, named):
             yield part
 
 
@@ -1304,7 +1291,7 @@ class SystemResponder(FakeResponder):
         self.system = system
 
     async def respond(
-        self, text: str, language: str = "it", named: bool = False
+        self, text: str, named: bool = False
     ) -> AsyncIterator[str]:
         self.seen.append(text)
         command = {"dormi": "pause", "svegliati": "resume", "spegniti": "shutdown"}.get(text)
@@ -1410,7 +1397,7 @@ def test_history_is_bounded(fake_vad, vad_settings) -> None:
 
 async def test_typed_message_is_answered_in_silence(fake_vad, vad_settings, tmp_path) -> None:
     assistant, _, speaker, responder = build(fake_vad, vad_settings, FakeStt(), set(), tmp_path)
-    reply = await assistant.handle_typed("apri chrome", "it")
+    reply = await assistant.handle_typed("apri chrome")
     assert reply == "Apro Chrome." and responder.seen == ["apri chrome"]
     assert speaker.spoken == [] and speaker.beeps == []  # JenJo's choice: written reply only
     row = assistant.history[-1]
@@ -1421,14 +1408,14 @@ async def test_typed_message_is_answered_in_silence(fake_vad, vad_settings, tmp_
 
 async def test_typed_message_can_be_spoken(fake_vad, vad_settings) -> None:
     assistant, _, speaker, _ = build(fake_vad, vad_settings, FakeStt(), set())
-    await assistant.handle_typed("apri chrome", "it", speak=True)
+    await assistant.handle_typed("apri chrome", speak=True)
     assert speaker.spoken == ["Apro Chrome."]
 
 
 async def test_typed_message_waits_for_the_spoken_request(fake_vad, vad_settings) -> None:
     assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt(), set())
     assistant.state = State.SPEAKING
-    task = asyncio.create_task(assistant.handle_typed("apri chrome", "it"))
+    task = asyncio.create_task(assistant.handle_typed("apri chrome"))
     await asyncio.sleep(0.12)
     assert responder.seen == []  # not while Claudio speaks
     assistant.state = State.IDLE
@@ -1441,7 +1428,7 @@ async def test_typed_actions_to_confirm_need_the_voice(fake_vad, vad_settings) -
     cancelled: list[bool] = []
     responder.awaiting = True  # the router asked "Confermi?"
     responder.cancel_pending = lambda **_: cancelled.append(True)  # type: ignore[method-assign]
-    reply = await assistant.handle_typed("chiudi la finestra", "it")
+    reply = await assistant.handle_typed("chiudi la finestra")
     assert "a voce" in reply and cancelled
     assert assistant.history[-1]["outcome"] == "needs_voice"
 
@@ -1482,7 +1469,7 @@ async def test_announce_waits_for_the_request_in_progress(fake_vad, vad_settings
 class LiteralResponder(FakeResponder):
     """No local command understands the phrase: it is for Claude."""
 
-    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
+    def understands(self, text: str, memory: bool = True) -> bool:
         return False
 
 
@@ -1664,12 +1651,12 @@ async def test_a_typed_message_that_never_reaches_the_router_has_no_route(
     assistant, _, _, responder = build(fake_vad, vad_settings, FakeStt(), set(), tmp_path)
     responder.last_route = dict(CLAUDE_ROUTE)
 
-    async def broken(text: str, language: str = "it") -> AsyncIterator[str]:
+    async def broken(text: str) -> AsyncIterator[str]:
         raise RuntimeError("boom")
         yield ""
 
     responder.respond = broken  # type: ignore[method-assign]
-    await assistant.handle_typed("apri chrome", "it")
+    await assistant.handle_typed("apri chrome")
     row = assistant.history[-1]
     assert row["outcome"] == "error"
     assert not {"route", "tools", "cost"} & row.keys()

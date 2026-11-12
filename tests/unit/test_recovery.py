@@ -41,7 +41,7 @@ class FakeWhisper:
         self.prompts: list[str] = []
         self.scored: list[list[str]] = []
 
-    def listen_again(self, audio: np.ndarray, prompt: str, language: str) -> SecondHearing:
+    def listen_again(self, audio: np.ndarray, prompt: str) -> SecondHearing:
         self.prompts.append(prompt)
         return SecondHearing(self.proposal, self._fit)
 
@@ -132,23 +132,23 @@ def test_ask_gap_cannot_be_above_act_gap() -> None:
 
 
 @pytest.mark.parametrize(
-    ("text", "language", "wanted"),
+    ("text", "wanted"),
     [
-        ("Scaniti.", "it", True),
-        ("Chi ce l'ha fatta?", "it", True),  # a question too
-        ("Claudio, chi ce l'ha fatta?", "it", True),
-        ("Apri Chrome.", "it", False),  # understood already
-        ("Claudio.", "it", False),  # only the name: the request is still to come
-        ("", "it", False),
-        ("Raccontami una storia lunga di draghi e cavalieri.", "it", False),  # for Claude
+        ("Scaniti.", True),
+        ("Chi ce l'ha fatta?", True),  # a question too
+        ("Claudio, chi ce l'ha fatta?", True),
+        ("Apri Chrome.", False),  # understood already
+        ("Claudio.", False),  # only the name: the request is still to come
+        ("", False),
+        ("Raccontami una storia lunga di draghi e cavalieri.", False),  # for Claude
     ],
 )
-def test_wants(matcher: CommandMatcher, text: str, language: str, wanted: bool) -> None:
-    assert recovery(FakeWhisper(""), matcher).wants(text, language) is wanted
+def test_wants(matcher: CommandMatcher, text: str, wanted: bool) -> None:
+    assert recovery(FakeWhisper(""), matcher).wants(text) is wanted
 
 
 def test_off_in_the_settings(matcher: CommandMatcher) -> None:
-    assert not recovery(FakeWhisper(""), matcher, enabled=False).wants("Scaniti.", "it")
+    assert not recovery(FakeWhisper(""), matcher, enabled=False).wants("Scaniti.")
 
 
 # --- the second opinion -------------------------------------------------------------------
@@ -156,7 +156,7 @@ def test_off_in_the_settings(matcher: CommandMatcher) -> None:
 
 def test_a_clearly_likelier_command_is_done(matcher: CommandMatcher) -> None:
     whisper = FakeWhisper("Chiudi la chat.", {"Chi ce l'ha fatta?": -12.0, "Chiudi la chat.": -4.0})
-    found = recovery(whisper, matcher)(AUDIO, "Chi ce l'ha fatta?", "it")
+    found = recovery(whisper, matcher)(AUDIO, "Chi ce l'ha fatta?")
     assert found is not None and found.verdict is Verdict.ACT and found.text == "Chiudi la chat."
     assert whisper.prompts[0].startswith("Claudio, Apri chrome.")
     assert whisper.scored == [["Chi ce l'ha fatta?", "Chiudi la chat."]]
@@ -171,7 +171,7 @@ def test_a_clearly_likelier_command_is_done(matcher: CommandMatcher) -> None:
 
 def test_switching_off_is_asked_however_likely(matcher: CommandMatcher) -> None:
     whisper = FakeWhisper("Spegniti.", {"Scaniti.": -11.7, "Spegniti.": -5.9})  # 30/10 14:01
-    found = recovery(whisper, matcher)(AUDIO, "Scaniti.", "it")
+    found = recovery(whisper, matcher)(AUDIO, "Scaniti.")
     assert found is not None and found.verdict is Verdict.ASK
     assert found.info["recovery_command"] == "off"
 
@@ -179,21 +179,21 @@ def test_switching_off_is_asked_however_likely(matcher: CommandMatcher) -> None:
 @pytest.mark.parametrize("heard", ["Chi gliel'ha fatta?", "Svegliati.", "Dai, accenditi."])
 def test_no_command_worth_proposing_is_no_proposal(matcher: CommandMatcher, heard: str) -> None:
     whisper = FakeWhisper(heard)
-    found = recovery(whisper, matcher)(AUDIO, "Grazie a te.", "it")
+    found = recovery(whisper, matcher)(AUDIO, "Grazie a te.")
     assert found is not None and found.verdict is Verdict.DROP
     assert found.info == {"recovery": heard} and whisper.scored == []
 
 
 def test_not_worth_a_try_costs_nothing(matcher: CommandMatcher) -> None:
     whisper = FakeWhisper("Apri Chrome.")
-    assert recovery(whisper, matcher)(AUDIO, "Apri Chrome.", "it") is None
+    assert recovery(whisper, matcher)(AUDIO, "Apri Chrome.") is None
     assert whisper.prompts == []
 
 
 def test_the_question_leaves_a_clipped_name_out(matcher: CommandMatcher) -> None:
     proposal = "L'audio metti in pausa la musica."
     whisper = FakeWhisper(proposal, {"Lotti in posa la mosca.": -9.0, proposal: -10.0})
-    found = recovery(whisper, matcher)(AUDIO, "Lotti in posa la mosca.", "it")
+    found = recovery(whisper, matcher)(AUDIO, "Lotti in posa la mosca.")
     assert found is not None and found.verdict is Verdict.ASK
     assert found.text == "metti in pausa la musica"  # not "Hai detto: L'audio metti..."
     assert found.info["recovery"] == proposal and found.info["recovery_command"] == (
@@ -274,7 +274,7 @@ def forced_stt():
 
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings()
-    stt.language, stt._encoded, stt._reused, stt.last_segments = "it", None, 0, []
+    stt._encoded, stt._reused, stt.last_segments = None, 0, []
     stt._model = ForcedModel()
     return stt
 
@@ -310,7 +310,7 @@ def test_listen_again_shares_one_encoder_pass(monkeypatch: pytest.MonkeyPatch) -
         return "chiudi la chat", []
 
     monkeypatch.setattr(stt, "_decode", decode)
-    heard = stt.listen_again(SPEECH, "Claudio, Chiudi la chat.", "it")
+    heard = stt.listen_again(SPEECH, "Claudio, Chiudi la chat.")
     assert heard.text == "chiudi la chat" and seen[0][0] == "Claudio, Chiudi la chat."
     heard.fit(["chiudi la chat", "grazie a tutti"])
     assert stt._model.encodes == 1
@@ -320,8 +320,8 @@ def test_listen_again_shares_one_encoder_pass(monkeypatch: pytest.MonkeyPatch) -
 def test_listen_again_on_silence_and_hallucinations(monkeypatch: pytest.MonkeyPatch) -> None:
     stt = forced_stt()
     monkeypatch.setattr(stt, "_decode", lambda *args, **kwargs: ("Grazie a tutti.", []))
-    assert stt.listen_again(SPEECH, "Claudio, Chiudi la chat.", "it").text == ""
-    silent = stt.listen_again(np.zeros(16000, np.float32), "Claudio, Chiudi la chat.", "it")
+    assert stt.listen_again(SPEECH, "Claudio, Chiudi la chat.").text == ""
+    silent = stt.listen_again(np.zeros(16000, np.float32), "Claudio, Chiudi la chat.")
     assert silent.text == "" and silent.fit(["chiudi la chat"]) == [NO_FIT]
     assert stt._model.encodes == 1  # silence is not even encoded
 
@@ -408,7 +408,7 @@ async def test_a_failing_second_opinion_goes_on_as_before(
     fake_vad, vad_settings, make_frames, matcher
 ) -> None:
     class Broken(FakeWhisper):
-        def listen_again(self, audio: np.ndarray, prompt: str, language: str) -> SecondHearing:
+        def listen_again(self, audio: np.ndarray, prompt: str) -> SecondHearing:
             raise RuntimeError("CUDA esplosa")
 
     assistant, speaker, _, _, guesser = window(
@@ -441,8 +441,8 @@ async def test_never_a_second_opinion(
     assistant.intake.noise = NoiseSettings()
     if state:
         setattr(r.actions.system, state, True)
-    assert not assistant._may_recover(decision, heard, "it")
-    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"), "it") is not bool(
+    assert not assistant._may_recover(decision, heard)
+    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x")) is not bool(
         state
     )
 
@@ -459,14 +459,14 @@ async def test_no_second_opinion_on_a_memory_request(
     assistant, _, _, r, _ = window(fake_vad, vad_settings, matcher, [], whisper)
     r.memory = MemoryVoice(MemoryStore(tmp_path / "memory.db"))
     for said in ("Dimenticalo.", "Cosa ricordi di Anna?"):
-        assert not assistant._may_recover(Decision(Kind.ANSWER, said), Heard("x"), "it")
-    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"), "it")
+        assert not assistant._may_recover(Decision(Kind.ANSWER, said), Heard("x"))
+    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"))
 
 
 async def test_no_second_opinion_while_a_question_waits(fake_vad, vad_settings, matcher) -> None:
     assistant, _, _, r, _ = window(fake_vad, vad_settings, matcher, [], FakeWhisper(""))
-    r.propose("spegniti", "it")  # "Hai detto: spegniti?"
-    assert not assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"), "it")
+    r.propose("spegniti")  # "Hai detto: spegniti?"
+    assert not assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x"))
 
 
 async def test_no_second_opinion_on_the_answer_to_claudes_question(
@@ -522,7 +522,7 @@ async def test_the_helper_for_other_phrases(fake_vad, vad_settings, matcher) -> 
     whisper = FakeWhisper("Chiudi la chat.", {"Chi ce l'ha fatta?": -12.0, "Chiudi la chat.": -4.0})
     assistant, _, _, _, _ = window(fake_vad, vad_settings, matcher, [], whisper)
     inter = Interaction(clock=assistant.clock)
-    decision = await assistant._recover_command(AUDIO, "Chi ce l'ha fatta?", "it", inter)
+    decision = await assistant._recover_command(AUDIO, "Chi ce l'ha fatta?", inter)
     assert decision == Decision(Kind.ANSWER, "Chiudi la chat.", "recovered")
     assert inter.info["recovered_from"] == "Chi ce l'ha fatta?"
-    assert await assistant._recover_command(AUDIO, "Apri Chrome.", "it", inter) is None
+    assert await assistant._recover_command(AUDIO, "Apri Chrome.", inter) is None

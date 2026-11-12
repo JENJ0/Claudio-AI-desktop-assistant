@@ -58,7 +58,7 @@ class SecondHearing:
 class Rescorer(Protocol):
     """What the recovery needs from Whisper (stt/transcriber.py)."""
 
-    def listen_again(self, audio: np.ndarray, prompt: str, language: str) -> SecondHearing:
+    def listen_again(self, audio: np.ndarray, prompt: str) -> SecondHearing:
         """One more transcription, with `prompt` in place of the usual one."""
         ...
 
@@ -119,25 +119,25 @@ class CommandRecovery:
         self.settings = settings
         self._prompt = command_prompt(commands)
 
-    def wants(self, text: str, language: str) -> bool:
+    def wants(self, text: str) -> bool:
         """Worth a try: a short phrase (a question too) that no command understands."""
         return (
             self.settings.enabled
             and bool(text.strip())
             and not only_wake_words(text)
             and words(text) <= self.settings.max_words
-            and self.matcher.match(text, language) is None
+            and self.matcher.match(text) is None
         )
 
-    def __call__(self, audio: np.ndarray, text: str, language: str) -> Recovered | None:
+    def __call__(self, audio: np.ndarray, text: str) -> Recovered | None:
         """None when the phrase is not worth a try. Whisper encodes the audio once, transcribes
         it with the commands' prompt and, when that is a command, scores both texts: call it
         from a worker thread, holding the lock of every Whisper use."""
-        if not self.wants(text, language):
+        if not self.wants(text):
             return None
-        heard = self.whisper.listen_again(audio, self._prompt, language)
+        heard = self.whisper.listen_again(audio, self._prompt)
         proposal = heard.text
-        match = self.matcher.match(proposal, language) if proposal else None
+        match = self.matcher.match(proposal) if proposal else None
         if match is None or not recoverable(match.command):
             # Whisper heard no command worth proposing, even when told about them.
             return Recovered(proposal, Verdict.DROP, {"recovery": proposal})
@@ -150,12 +150,12 @@ class CommandRecovery:
             "recovery_mean": round(fit.mean, 2),
             "recovery_verdict": verdict.value,
         }
-        return Recovered(self._said(proposal, match.command, language), verdict, info)
+        return Recovered(self._said(proposal, match.command), verdict, info)
 
-    def _said(self, proposal: str, command: Command, language: str) -> str:
+    def _said(self, proposal: str, command: Command) -> str:
         """The proposal as "Hai detto: ...?" repeats it: without the name in front, a clipped
         one too ("L'audio metti in pausa la musica." -> "metti in pausa la musica")."""
         said = without_name(proposal)
         rest = after_clipped_name(said)
-        match = self.matcher.match(rest, language) if rest else None
+        match = self.matcher.match(rest) if rest else None
         return rest if match is not None and match.command.id == command.id else said

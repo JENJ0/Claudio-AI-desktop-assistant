@@ -123,8 +123,8 @@ def is_hallucination(text: str, prompt: str = "") -> bool:
 
 
 class WhisperTranscriber:
-    # language -> the names on the PC for the prompt ("Cartelle: Tesi, PSS."); None: none.
-    vocabulary: Callable[[str], str] | None = None
+    # The names on the PC for the prompt ("Cartelle: Tesi, PSS."); None: none.
+    vocabulary: Callable[[], str] | None = None
     # While it says so (CLAUDIO is off) what is dropped here is logged hidden. This is never the
     # turn-on: that one is what gets through. None: always logged.
     hides_text: Callable[[], bool] | None = None
@@ -134,7 +134,6 @@ class WhisperTranscriber:
         self.download_root = download_root
         self.device = "cpu"
         self.model_name = settings.fallback_model
-        self.language = WHISPER_LANGUAGE
         self._encoded: tuple[np.ndarray, Any] | None = None
         # Whisper's confidence in each segment of the last request (the noise filter).
         self.last_segments: list[Segment] = []
@@ -192,10 +191,10 @@ class WhisperTranscriber:
     def _logged(self, text: str) -> str:
         return HIDDEN if self.hides_text is not None and self.hides_text() else text
 
-    def prompt(self, language: str) -> str:
+    def prompt(self) -> str:
         """The names on the PC, then the shipped sentences: Whisper keeps the end of a long
         prompt, and the sentences say how JenJo talks."""
-        names = self.vocabulary(language) if self.vocabulary is not None else ""
+        names = self.vocabulary() if self.vocabulary is not None else ""
         return " ".join(p for p in (names, self.settings.initial_prompt) if p)
 
     def _encode(self, features: np.ndarray) -> Any:
@@ -221,7 +220,7 @@ class WhisperTranscriber:
                 self.last_segments, self.last_prompt = [], ""
             return ""  # silence: Whisper would invent something ("Buon appetito!")
         audio = audio.astype(np.float32, copy=False)
-        prompt = self.settings.initial_prompt if quick else self.prompt(WHISPER_LANGUAGE)
+        prompt = self.settings.initial_prompt if quick else self.prompt()
         text, kept = self._decode(audio, prompt, quick)
         if text and prompt and is_prompt_echo(text, prompt):
             # Whisper repeats its prompt on unclear audio, but "alza il volume" is also a
@@ -291,7 +290,7 @@ class WhisperTranscriber:
             return []
         audio = audio.astype(np.float32, copy=False)
         model = self._model
-        prompt_text = self.prompt(WHISPER_LANGUAGE)
+        prompt_text = self.prompt()
         tokenizer = Tokenizer(
             model.hf_tokenizer,
             model.model.is_multilingual,
@@ -316,13 +315,11 @@ class WhisperTranscriber:
                 texts.append(text)
         return texts
 
-    def listen_again(self, audio: np.ndarray, prompt: str, language: str) -> SecondHearing:
+    def listen_again(self, audio: np.ndarray, prompt: str) -> SecondHearing:
         """One more transcription of `audio` with `prompt` in place of the usual one, and the
         scorer of any text on the same encoder pass (the command recovery, stt/recovery.py).
         The request's own figures (last_segments) stay as they are. No check
-        for a piece of the prompt: its phrases are what may have been said.
-        shortcut: `language` is ignored (always Italian), upgrade when the language parameter
-        goes (Task 10-11)."""
+        for a piece of the prompt: its phrases are what may have been said."""
         if not audible(audio):
             return SecondHearing("", lambda texts: [NO_FIT] * len(texts))
         audio = audio.astype(np.float32, copy=False)

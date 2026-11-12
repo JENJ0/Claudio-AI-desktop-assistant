@@ -73,7 +73,7 @@ async def test_unsure_without_alternatives_and_read_once(pricing: Pricing) -> No
     assert client.calls[1]["messages"][-1]["content"] == "che ore sono"
 
 
-async def test_sure_request_has_the_plain_tag(pricing: Pricing) -> None:
+async def test_sure_request_has_no_tag(pricing: Pricing) -> None:
     client = FakeClient(["Ok."])
     b = brain(pricing, client)
     b.heard(Hearing())
@@ -133,7 +133,7 @@ class Claude(FakeResponder):
         super().__init__()
         self.hearings: list[Hearing] = []
 
-    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
+    def understands(self, text: str, memory: bool = True) -> bool:
         return "chrome" in text
 
 
@@ -151,8 +151,8 @@ def setup(fake_vad, vad_settings, text: str, segments: list[Segment], candidates
     assistant.on_heard = responder.hearings.append
     passes: list[str] = []
 
-    def closed_list(audio, language):
-        passes.append(language)
+    def closed_list(audio):
+        passes.append("run")
         return candidates
 
     assistant.closed_list = closed_list
@@ -171,7 +171,7 @@ async def test_doubted_request_gets_whispers_other_guesses(
     )
     await run_frames(assistant, request(make_frames))
     # The closed list already ran (short, not a command): its n-best is reused, no new pass.
-    assert passes == ["it"]
+    assert passes == ["run"]
     assert responder.hearings == [Hearing(True, ("Apri la cartella Tesi.", "x"))]
     row = assistant.history[-1]
     assert row["stt_unsure"] is True and row["stt_alternatives"] == ["Apri la cartella Tesi.", "x"]
@@ -185,7 +185,7 @@ async def test_long_doubted_question_pays_one_more_pass(
         fake_vad, vad_settings, question, [DOUBTED], ["Raccontami una storia lunga su un robot"]
     )
     await run_frames(assistant, request(make_frames))
-    assert passes == ["it"]  # the closed list skipped it (a question): one pass, for Claude
+    assert passes == ["run"]  # the closed list skipped it (a question): one pass, for Claude
     assert responder.hearings == [Hearing(True, ("Raccontami una storia lunga su un robot",))]
     assert "alternatives_ms" in assistant.history[-1]
 
@@ -197,7 +197,7 @@ async def test_the_other_guesses_are_of_this_phrase(fake_vad, vad_settings, make
     )
     assistant._candidates = ["the closed list of the phrase before"]
     await run_frames(assistant, request(make_frames))
-    assert passes == ["it"]
+    assert passes == ["run"]
     assert responder.hearings == [Hearing(True, ("Raccontami una storia lunga su un robot",))]
 
 

@@ -26,6 +26,7 @@ from claudio.brain.claude import (
 from claudio.brain.prompts import ASK_SONNET_TOOL, OFFER, SYSTEM_PROMPT
 from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, Usage, load_pricing
+from claudio.intake import Hearing
 from claudio.protocols import CUT_SHORT
 from claudio.router.actions import ActionRunner
 from claudio.router.matcher import CommandMatcher
@@ -391,8 +392,8 @@ def hybrid(matcher: CommandMatcher, b: ClaudeBrain) -> LocalResponder:
     )
 
 
-async def say(r: LocalResponder, text: str, language: str = "it") -> str:
-    return "".join([c async for c in r.respond(text, language)])
+async def say(r: LocalResponder, text: str) -> str:
+    return "".join([c async for c in r.respond(text)])
 
 
 async def test_local_commands_never_call_claude(matcher: CommandMatcher, pricing: Pricing) -> None:
@@ -533,7 +534,7 @@ async def test_long_questions_skip_the_closed_list(fake_vad, vad_settings, make_
     assistant, speaker, _, calls = setup_closed_list(fake_vad, vad_settings, short, ["apri chrome"])
     assistant.intake.closed_list_max_words = 5
     await run_frames(assistant, request(make_frames))
-    assert calls == ["it"] and speaker.spoken == ["Apro Chrome."]
+    assert calls == ["run"] and speaker.spoken == ["Apro Chrome."]
 
 
 async def test_answer_to_claudes_question_needs_no_wake_word(
@@ -1246,6 +1247,45 @@ async def test_the_time_goes_after_the_cached_prefix(pricing: Pricing) -> None:
     assert content == "[Fri 2026-10-23 17:15] che ore sono in Thailandia"
 
 
+def timed_brain(pricing: Pricing, client: Any, memory: Any = None) -> ClaudeBrain:
+    from datetime import datetime
+
+    return ClaudeBrain(
+        client,
+        tracker(pricing, 1.0),
+        ClaudeSettings(),
+        clock=Monotonic(),
+        wall=lambda: datetime(2026, 10, 23, 17, 15),
+        memory=memory,
+    )
+
+
+async def test_the_tag_joins_the_time_and_the_unsure_note(pricing: Pricing) -> None:
+    client = ScriptedClient((["Apro Tesi."], "end_turn", []))
+    b = timed_brain(pricing, client)
+    b.heard(Hearing(True, ("Apri la cartella Tesi.",)))
+    await ask(b, "Apri la cartella desi.")
+    content = client.calls[0]["messages"][-1]["content"]
+    assert content == (
+        '[Fri 2026-10-23 17:15 | unsure: "Apri la cartella Tesi."] Apri la cartella desi.'
+    )
+
+
+async def test_the_tag_comes_before_a_recalled_memory(pricing: Pricing) -> None:
+    recalled = "[memory, data: [1 | 2026-10-26] il wifi del garage si chiama Tana]"
+    memory = SimpleNamespace(
+        forgotten=lambda: False,
+        forget_pending=False,
+        block=lambda: "",
+        relevant=lambda text, sent=(): recalled,
+    )
+    client = ScriptedClient((["Tana."], "end_turn", []))
+    b = timed_brain(pricing, client, memory)
+    await ask(b, "come si chiama il wifi")
+    content = client.calls[0]["messages"][-1]["content"]
+    assert content == f"[Fri 2026-10-23 17:15] {recalled} come si chiama il wifi"
+
+
 async def test_warm_up_opens_the_connection_once(pricing: Pricing) -> None:
     client = ScriptedClient()
     b = brain(pricing, client)
@@ -1905,7 +1945,7 @@ async def test_a_cut_guess_question_leaves_claudes_history_alone(
     )
     await say(r, "qual è la capitale d'Italia")
     whole = list(b._history)
-    r.propose("chiudi la finestra", "it")  # never goes through respond()
+    r.propose("chiudi la finestra")  # never goes through respond()
     r.reply_cut(["Hai detto"])
     assert list(b._history) == whole
 

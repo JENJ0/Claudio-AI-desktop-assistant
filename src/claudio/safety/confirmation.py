@@ -133,7 +133,6 @@ class Pending:
     """An action waiting for its yes."""
 
     match: Match
-    language: str  # of the question: the answer is given in it
     asked: float  # the responder's clock when it was asked: ACTION_TTL_S from then
     asked_again: bool = False  # the answer was not heard once: the second question is the last
     heard: bool = True  # False: a phrase cut the question before its last sentence played
@@ -144,7 +143,7 @@ class Pending:
         return self.match.command.level
 
 
-def question(match: Match, language: str) -> str:
+def question(match: Match) -> str:
     """What CLAUDIO asks before running `match`: the command's own `confirm` text (for level 3,
     the summary of what will happen), else the generic one of its level."""
     cmd = match.command

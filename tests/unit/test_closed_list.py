@@ -57,7 +57,7 @@ def make_stt(hypotheses: list[str], prompt: str = "comandi"):
 
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings(initial_prompt=prompt)
-    stt.language, stt._encoded, stt._reused = "it", None, 0
+    stt._encoded, stt._reused = None, 0
     stt._model = FakeModel(hypotheses)
     return stt
 

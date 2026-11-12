@@ -17,8 +17,8 @@ WAKE_SEARCH = 3  # Whisper writes a fast "hey" as "e", "e il", "e i": the name c
 
 
 @dataclass(frozen=True)
-class Language:
-    """What a language's commands can do without: articles, courtesy words, verb forms."""
+class Rules:
+    """What the commands can do without: articles, courtesy words, verb forms."""
 
     articles: frozenset[str]
     fillers: frozenset[str]
@@ -51,74 +51,66 @@ IT_NUMBERS = {
     "trenta": 30,
     "cinquanta": 50,
 }
-LANGUAGES: dict[str, Language] = {
-    "it": Language(
-        articles=frozenset({"il", "lo", "la", "i", "gli", "le", "l", "un", "uno", "una", "un'"}),
-        fillers=frozenset(
-            {
-                "claudio",
-                "jarvis",
-                "hey",
-                "hei",
-                "ehi",
-                "ei",
-                "ok",
-                "okay",
-                "allora",
-                "senti",
-                "dai",
-                "adesso",
-                "puoi",
-                "potresti",
-                "riesci",
-                "a",
-                "mi",
-                "grazie",
-                "prego",
-                "subito",
-                "scusa",
-                "scusami",
-            }
-        ),
-        polite=("per favore", "per piacere", "per cortesia", "se puoi", "gentilmente"),
-        verb_forms={
-            "aprire": "apri",
-            "aprimi": "apri",
-            "apra": "apri",
-            "aprilo": "apri",
-            "alzare": "alza",
-            "alzami": "alza",
-            "abbassare": "abbassa",
-            "abbassami": "abbassa",
-            "avviare": "avvia",
-            "avviami": "avvia",
-            "lanciare": "lancia",
-            "togliere": "togli",
-            "aumentare": "aumenta",
-            "diminuire": "diminuisci",
-            "mostrare": "mostra",
-            "mostrami": "mostra",
-            "dirmi": "dimmi",
-            "silenziare": "silenzia",
-            "metterti": "mettiti",
-            "svegliarti": "svegliati",
-            "riattivarti": "riattivati",
-            "spegnerti": "spegniti",
-        },
-        numbers=IT_NUMBERS,
-        number_affixes=(r"(?:di\s+)?", r"(?:\s+volte)?"),  # "alza il volume di 10", "tre volte"
+RULES = Rules(
+    articles=frozenset({"il", "lo", "la", "i", "gli", "le", "l", "un", "uno", "una", "un'"}),
+    fillers=frozenset(
+        {
+            "claudio",
+            "jarvis",
+            "hey",
+            "hei",
+            "ehi",
+            "ei",
+            "ok",
+            "okay",
+            "allora",
+            "senti",
+            "dai",
+            "adesso",
+            "puoi",
+            "potresti",
+            "riesci",
+            "a",
+            "mi",
+            "grazie",
+            "prego",
+            "subito",
+            "scusa",
+            "scusami",
+        }
     ),
-}
-DEFAULT = "it"
+    polite=("per favore", "per piacere", "per cortesia", "se puoi", "gentilmente"),
+    verb_forms={
+        "aprire": "apri",
+        "aprimi": "apri",
+        "apra": "apri",
+        "aprilo": "apri",
+        "alzare": "alza",
+        "alzami": "alza",
+        "abbassare": "abbassa",
+        "abbassami": "abbassa",
+        "avviare": "avvia",
+        "avviami": "avvia",
+        "lanciare": "lancia",
+        "togliere": "togli",
+        "aumentare": "aumenta",
+        "diminuire": "diminuisci",
+        "mostrare": "mostra",
+        "mostrami": "mostra",
+        "dirmi": "dimmi",
+        "silenziare": "silenzia",
+        "metterti": "mettiti",
+        "svegliarti": "svegliati",
+        "riattivarti": "riattivati",
+        "spegnerti": "spegniti",
+    },
+    numbers=IT_NUMBERS,
+    number_affixes=(r"(?:di\s+)?", r"(?:\s+volte)?"),  # "alza il volume di 10", "tre volte"
+)
 _NON_WORD = re.compile(r"[^a-z0-9]+")
-_FILLERS = LANGUAGES[DEFAULT].fillers
+_FILLERS = RULES.fillers
 # What ends a clause as Whisper writes it. Not ":": "scrivi: basta" says what to write.
 _CLAUSE_END = re.compile(r"[.,;!?…]+")
-
-
-def language(code: str) -> Language:
-    """The rules of `code`; languages without their own (yet) use the Italian ones."""
-    return LANGUAGES.get(code, LANGUAGES[DEFAULT])
 
 
 def strip_accents(text: str) -> str:
@@ -126,17 +118,16 @@ def strip_accents(text: str) -> str:
     return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
-def normalize(text: str, drop_fillers: bool = True, lang: str = DEFAULT) -> str:
+def normalize(text: str, drop_fillers: bool = True) -> str:
     """Lowercase, no accents or punctuation; optionally drop articles and courtesy words."""
     text = strip_accents(text.lower())
     text = _NON_WORD.sub(" ", text).strip()
     if not drop_fillers:
         return " ".join(text.split())
-    rules = language(lang)
-    for phrase in rules.polite:
+    for phrase in RULES.polite:
         text = re.sub(rf"\b{phrase}\b", " ", text)
-    words = [rules.verb_forms.get(w, w) for w in strip_wake_words(text.split())]
-    return " ".join(w for w in words if w not in rules.articles and w not in rules.fillers)
+    words = [RULES.verb_forms.get(w, w) for w in strip_wake_words(text.split())]
+    return " ".join(w for w in words if w not in RULES.articles and w not in RULES.fillers)
 
 
 def is_wake_word(word: str) -> bool:
@@ -203,7 +194,7 @@ def after_wake_word(text: str) -> str:
     return ""
 
 
-def last_clauses(text: str, lang: str = DEFAULT) -> list[str]:
+def last_clauses(text: str) -> list[str]:
     """How the end of a phrase said to Claudio may read, whatever punctuation Whisper wrote ("No,
     Claudio, non parlare. Claudio, stop.", "no claudio non parlare claudio stop"): what follows
     the last mention of the name, or the last punctuation. None for a question, without the name,
@@ -214,19 +205,18 @@ def last_clauses(text: str, lang: str = DEFAULT) -> list[str]:
     words = normalize(text, drop_fillers=False).split()
     named = [i for i, w in enumerate(words) if w not in GREETINGS and is_wake_word(w)]
     said = " ".join(words[named[-1] + 1 :]) if named else ""
-    if not normalize(said, lang=lang):
+    if not normalize(said):
         return []
-    pieces = [piece for piece in _CLAUSE_END.split(text) if normalize(piece, lang=lang)]
+    pieces = [piece for piece in _CLAUSE_END.split(text) if normalize(piece)]
     return [said, *pieces[-1:]]
 
 
-def extract_number(norm_text: str, lang: str = DEFAULT) -> tuple[str, int | None]:
+def extract_number(norm_text: str) -> tuple[str, int | None]:
     """Remove the first number ("di 10", "tre volte") from normalised text and return it."""
-    rules = language(lang)
-    m = rules.number_pattern.search(norm_text)
+    m = RULES.number_pattern.search(norm_text)
     if not m:
         return norm_text, None
     raw = m.group(1)
-    value = int(raw) if raw.isdigit() else rules.numbers[raw]
+    value = int(raw) if raw.isdigit() else RULES.numbers[raw]
     rest = (norm_text[: m.start()] + " " + norm_text[m.end() :]).split()
     return " ".join(rest), value

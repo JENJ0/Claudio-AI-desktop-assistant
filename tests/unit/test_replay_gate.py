@@ -185,7 +185,7 @@ def test_report_names_the_device() -> None:
     assert "cuda" in line and "large-v3-turbo" in line
 
 
-def test_clip_reads_its_note(tmp_path: Path) -> None:
+def test_clip_reads_its_note_and_ignores_the_old_language_key(tmp_path: Path) -> None:
     wav = tmp_path / "20261105-170000-000_ok.wav"
     sf.write(wav, np.zeros(160, np.int16), SR, subtype="PCM_16")
     assert rg.load_clip(wav).prompt is None
@@ -193,7 +193,7 @@ def test_clip_reads_its_note(tmp_path: Path) -> None:
         '{"whisper_prompt": "P", "language": "it", "gain_db": 6.0}', encoding="utf-8"
     )
     clip = rg.load_clip(wav)
-    assert (clip.prompt, clip.language, clip.gain_db) == ("P", "it", 6.0)
+    assert (clip.prompt, clip.gain_db) == ("P", 6.0)
 
 
 def test_build_assistant_passes_the_settings(settings: Settings) -> None:

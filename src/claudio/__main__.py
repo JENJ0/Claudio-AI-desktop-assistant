@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 from claudio import __version__
 from claudio.config import (
-    DEFAULT_LANGUAGE,
     ConfigError,
     Settings,
     load_settings,
@@ -457,9 +456,8 @@ async def run_text(settings: Settings, text: str) -> None:
     start = time.perf_counter()
     first: list[float] = []
     await speaker.speak(
-        responder.respond(text, DEFAULT_LANGUAGE),  # as if Whisper heard it
+        responder.respond(text),  # as if Whisper heard it
         on_first_audio=lambda: first.append(time.perf_counter()),
-        language=lambda: responder.language,
     )
     if first:
         log.info("Prima parola dopo %.0f ms (router + TTS)", (first[0] - start) * 1000)
@@ -588,9 +586,7 @@ def build_assistant(
         barge_in=build_barge_in(settings, transcriber) if settings.conversation.barge_in else None,
         verify_wake=settings.wakeword.verify,
         closed_list=(
-            (lambda audio, _language: transcriber.candidates(audio))
-            if settings.stt.closed_list
-            else None
+            (lambda audio: transcriber.candidates(audio)) if settings.stt.closed_list else None
         ),
         closed_list_max_words=settings.stt.closed_list_max_words,
         claude_min_words=settings.claude.conversation_min_words if responder.fallback else None,
@@ -821,13 +817,12 @@ async def announce_ready(
 
 async def serve_inbox(assistant: Any, chat: Any, settings: Settings) -> None:
     """Answer what is written in the chat window (`claudio --ui`), one message at a time.
-    Typed text has no detected language: Italian is used."""
-    language = DEFAULT_LANGUAGE
+    """
     while True:
         try:
             pending = await asyncio.to_thread(chat.take_pending, settings.chat.max_age_s)
             for _, text in pending:
-                await assistant.handle_typed(text, language, speak=settings.chat.speak_typed)
+                await assistant.handle_typed(text, speak=settings.chat.speak_typed)
         except Exception:  # a locked or broken database: try again at the next poll
             log.exception("Messaggi della finestra non letti")
         await asyncio.sleep(settings.chat.poll_s)

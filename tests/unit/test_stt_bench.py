@@ -236,15 +236,13 @@ def test_recupero_goes_on_as_live(matcher) -> None:
     assert bench.parse_variant("live+recupero").recover and not bench.parse_variant("live").recover
 
     class Stt:
-        language = "it"
-
         def __init__(self, *listed: str) -> None:
             self.listed = list(listed)
 
         def candidates(self, audio: np.ndarray) -> list[str]:
             return self.listed
 
-    def second(audio: np.ndarray, text: str, language: str) -> Recovered:
+    def second(audio: np.ndarray, text: str) -> Recovered:
         return Recovered("Chiudi la chat.", Verdict.DROP if text == "Pasta." else Verdict.ASK)
 
     def live(text: str, stt: Stt | None = None) -> str:

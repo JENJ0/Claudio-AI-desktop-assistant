@@ -27,26 +27,26 @@ from tests.unit.test_safety import responder, say
 
 
 @pytest.mark.parametrize(
-    ("text", "command", "language"),
+    ("text", "command"),
     [
-        ("Metti in pausa la musica", "media_play_pause", "it"),
-        ("Riprendi la musica.", "media_play_pause", "it"),
-        ("Play", "media_play_pause", "it"),
-        ("Canzone successiva", "media_next", "it"),
-        ("Prossima canzone!", "media_next", "it"),
-        ("Salta 3 canzoni", "media_next", "it"),
-        ("Canzone precedente", "media_previous", "it"),
-        ("Ripeti", "repeat", "it"),
-        ("Puoi ripetere?", "repeat", "it"),
-        ("Non ho capito", "repeat", "it"),
-        ("Basta!", "stop", "it"),
-        ("Claudio, basta così.", "stop", "it"),
-        ("Stai zitto", "stop", "it"),
-        ("Stop.", "stop", "it"),
+        ("Metti in pausa la musica", "media_play_pause"),
+        ("Riprendi la musica.", "media_play_pause"),
+        ("Play", "media_play_pause"),
+        ("Canzone successiva", "media_next"),
+        ("Prossima canzone!", "media_next"),
+        ("Salta 3 canzoni", "media_next"),
+        ("Canzone precedente", "media_previous"),
+        ("Ripeti", "repeat"),
+        ("Puoi ripetere?", "repeat"),
+        ("Non ho capito", "repeat"),
+        ("Basta!", "stop"),
+        ("Claudio, basta così.", "stop"),
+        ("Stai zitto", "stop"),
+        ("Stop.", "stop"),
     ],
 )
-def test_new_commands_match(matcher: CommandMatcher, text: str, command: str, language: str):
-    match = matcher.match(text, language)
+def test_new_commands_match(matcher: CommandMatcher, text: str, command: str):
+    match = matcher.match(text)
     assert match is not None and match.command.id == command
 
 
@@ -140,7 +140,7 @@ def test_is_stop(matcher: CommandMatcher, text: str, stop: bool) -> None:
 SAID_ON_01_11 = "No, Claudio, non parlare. Claudio, stop."  # went to Claude: "zitto come una tomba"
 
 
-def brain() -> tuple[Callable[[str, str], AsyncGenerator[str, None]], list[str]]:
+def brain() -> tuple[Callable[[str], AsyncGenerator[str, None]], list[str]]:
     """Claude as the responder sees it, and what it was asked."""
     asked: list[str] = []
 
@@ -152,22 +152,22 @@ def brain() -> tuple[Callable[[str, str], AsyncGenerator[str, None]], list[str]]
 
 
 @pytest.mark.parametrize(
-    ("text", "language"),
+    "text",
     [
-        (SAID_ON_01_11, "it"),
-        ("no claudio non parlare claudio stop", "it"),  # Whisper wrote no punctuation
-        ("No, Claudio, non parlare! Claudio stop", "it"),
-        ("Claudio, che ore sono? Basta.", "it"),
-        ("Claudio, apri Chrome, stop.", "it"),  # the whole phrase is close to "apri chrome"
-        ("Claudio, non parlare, stop, grazie.", "it"),
-        ("Non parlare", "it"),
-        ("Claudio, non parlare.", "it"),
+        SAID_ON_01_11,
+        "no claudio non parlare claudio stop",  # Whisper wrote no punctuation
+        "No, Claudio, non parlare! Claudio stop",
+        "Claudio, che ore sono? Basta.",
+        "Claudio, apri Chrome, stop.",  # the whole phrase is close to "apri chrome"
+        "Claudio, non parlare, stop, grazie.",
+        "Non parlare",
+        "Claudio, non parlare.",
     ],
 )
 def test_a_stop_ending_a_phrase_to_claudio_is_the_stop_command(
-    matcher: CommandMatcher, text: str, language: str
+    matcher: CommandMatcher, text: str
 ) -> None:
-    match = matcher.match(text, language)
+    match = matcher.match(text)
     assert match is not None and match.command.id == "stop", text
 
 
@@ -262,10 +262,10 @@ async def test_a_stop_at_the_end_is_still_a_refusal_at_confirmi(matcher: Command
 async def test_a_stop_at_the_end_still_answers_hai_detto(matcher: CommandMatcher) -> None:
     rec = Recorder()
     r = responder(matcher, rec)
-    r.propose("chiudi la finestra", "it")
+    r.propose("chiudi la finestra")
     assert await say(r, "Claudio, stop.") == "Va bene, lascio stare."
     assert r.last_route["route"] == "guess_refused"
-    r.propose("chiudi la finestra", "it")
+    r.propose("chiudi la finestra")
     assert await say(r, SAID_ON_01_11) == "Va bene, lascio stare."
     assert rec.combos == [] and r.last_route["route"] == "guess_refused"
 
@@ -533,9 +533,9 @@ class LongSpeaker(FakeSpeaker):
         self._stop.set()
         super().interrupt()
 
-    async def speak(self, text_stream, on_first_audio=None, language="it") -> None:
+    async def speak(self, text_stream, on_first_audio=None) -> None:
         self._stop = asyncio.Event()
-        await super().speak(text_stream, on_first_audio, language)
+        await super().speak(text_stream, on_first_audio)
 
     async def _during_sentence(self) -> None:
         if len(self.played) == 1:

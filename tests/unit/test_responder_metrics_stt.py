@@ -28,7 +28,7 @@ async def test_responder_known_unknown_and_error(matcher) -> None:
     assert await collect(r.respond("Apri Chrome.")) == ["Apro Chrome."]
     assert r.last_route["command"] == "open_chrome"
     assert await collect(r.respond("prenota un volo")) == ["Questo non lo so ancora fare."]
-    assert r.last_route == {"route": "unknown", "language": "it"}
+    assert r.last_route == {"route": "unknown"}
     r = make_responder(matcher, fail=True)
     assert await collect(r.respond("apri chrome")) == ["Non ci sono riuscito."]
     assert r.last_route["error"] is True
@@ -171,7 +171,7 @@ def test_last_prompt_is_the_request_prompt_not_the_quick_one() -> None:
     from claudio.config import SttSettings
 
     stt = make_stt()
-    stt.vocabulary = lambda language: "Cartelle: Tesi."
+    stt.vocabulary = lambda: "Cartelle: Tesi."
     stt.settings = SttSettings(initial_prompt="Apri Chrome.")
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     stt._model.text = " Chiudi il blocco note."  # not a piece of the prompt: one pass
@@ -218,7 +218,7 @@ def make_stt():
 
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings()
-    stt.language, stt._encoded, stt._reused, stt.last_prompt = "it", None, 0, ""
+    stt._encoded, stt._reused, stt.last_prompt = None, 0, ""
     stt._model = FakeWhisper()
     return stt
 
@@ -322,7 +322,7 @@ def test_the_names_on_the_pc_come_before_the_sentences() -> None:
 
     stt = make_stt()
     stt.settings = SttSettings(initial_prompt="Ehi Claudio, che ore sono?")
-    stt.vocabulary = lambda language: "Cartelle: Tesi, PSS." if language == "it" else ""
+    stt.vocabulary = lambda: "Cartelle: Tesi, PSS."
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     stt._model.text = " Apri la cartella Tesi."
     assert stt.transcribe(speech) == "Apri la cartella Tesi."
@@ -331,7 +331,7 @@ def test_the_names_on_the_pc_come_before_the_sentences() -> None:
     stt.transcribe(speech, quick=True)
     assert stt._model.kwargs["initial_prompt"] == "Ehi Claudio, che ore sono?"
     stt.vocabulary = None
-    assert stt.prompt("it") == "Ehi Claudio, che ore sono?"
+    assert stt.prompt() == "Ehi Claudio, che ore sono?"
 
 
 def test_from_log_groups_latency_by_path(tmp_path, capsys) -> None:

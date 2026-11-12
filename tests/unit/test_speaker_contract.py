@@ -115,36 +115,6 @@ async def test_a_reply_after_an_interrupt_starts_clean(speaker: Speaker) -> None
     assert speaker.played == ["Tre.", "Quattro."]
 
 
-async def test_language_callable_is_read_at_every_sentence_once_its_text_arrived(
-    speaker: Speaker,
-) -> None:
-    delivered: list[str] = []
-    seen_at_read: list[int] = []
-
-    async def stream() -> AsyncIterator[str]:
-        for chunk in ("Uno. ", "Due."):
-            delivered.append(chunk)
-            yield chunk
-
-    def language() -> str:
-        seen_at_read.append(len(delivered))
-        return "it"
-
-    await run(speaker, stream(), language=language)
-    assert seen_at_read == [1, 2]
-
-
-async def test_no_text_does_not_read_the_language(speaker: Speaker) -> None:
-    reads: list[int] = []
-
-    def language() -> str:
-        reads.append(1)
-        return "it"
-
-    await run(speaker, text(""), language=language)
-    assert reads == []
-
-
 async def test_first_audio_waits_for_a_whole_sentence(speaker: Speaker) -> None:
     complete: list[int] = []
     fired_when: list[int] = []

@@ -26,7 +26,7 @@ from urllib.parse import quote_plus, urlsplit
 
 from rapidfuzz import fuzz, process
 
-from claudio.config import DEFAULT_LANGUAGE, PcSettings
+from claudio.config import PcSettings
 from claudio.memory import tools as memory_tools
 from claudio.pc import files, keys, screen, terminal
 from claudio.pc.files import Found, PathPolicy, PathRefused
@@ -497,7 +497,7 @@ class PcTools:
         calls beside it, which nobody said again."""
         if self.commands is None or len(calls) != 1 or calls[0].name != command_tool.NAME:
             return False
-        return self.commands.said_again(calls[0].args, text, DEFAULT_LANGUAGE)
+        return self.commands.said_again(calls[0].args, text)
 
     async def prepare(self, calls: Sequence[ToolCall]) -> dict[str, str]:
         """Before the levels are read: which type_text calls should land in a window of

@@ -256,10 +256,10 @@ def test_level_3_refusal() -> None:
 def test_question_falls_back_to_the_level(tmp_path: Path) -> None:
     plain2 = Command(id="x", phrases=("x",), action="close_window", level=2)
     plain3 = Command(id="y", phrases=("y",), action="close_window", level=3)
-    assert question(Match(plain2, 100), "it") == "Confermi?"
-    assert "confermo" in question(Match(plain3, 100), "it")
+    assert question(Match(plain2, 100)) == "Confermi?"
+    assert "confermo" in question(Match(plain3, 100))
     own = Command(id="z", phrases=("z",), action="x", level=2, confirm="Sicuro?")
-    assert question(Match(own, 100), "it") == "Sicuro?"
+    assert question(Match(own, 100)) == "Sicuro?"
 
 
 def test_jenjo_answers_stay_after_english_goes() -> None:
@@ -287,8 +287,8 @@ def responder(matcher: CommandMatcher, rec: Recorder) -> LocalResponder:
     return LocalResponder(matcher, ActionRunner(rec.ctx()))
 
 
-async def say(r: LocalResponder, text: str, language: str = "it") -> str:
-    return "".join([c async for c in r.respond(text, language)])
+async def say(r: LocalResponder, text: str) -> str:
+    return "".join([c async for c in r.respond(text)])
 
 
 async def test_level_2_asks_then_runs_on_yes(matcher: CommandMatcher) -> None:

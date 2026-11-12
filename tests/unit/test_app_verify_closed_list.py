@@ -6,7 +6,7 @@ from tests.unit.test_app import FakeResponder, FakeStt, build, run_frames
 
 
 class Understanding(FakeResponder):
-    def understands(self, text: str, language: str = "it", memory: bool = True) -> bool:
+    def understands(self, text: str, memory: bool = True) -> bool:
         return "chrome" in text
 
 
@@ -18,8 +18,8 @@ def setup(fake_vad, vad_settings, text: str, candidates: list[str] | None = None
     calls: list[str] = []
     if candidates is not None:
 
-        def closed_list(audio, language):
-            calls.append(language)
+        def closed_list(audio):
+            calls.append("run")
             return candidates
 
         assistant.closed_list = closed_list
@@ -62,7 +62,7 @@ async def test_closed_list_picks_the_known_command(fake_vad, vad_settings, make_
         fake_vad, vad_settings, "Claudio, a prick roam", ["Claudio, a prick roam", "apri chrome"]
     )
     await run_frames(assistant, request(make_frames))
-    assert calls == ["it"]
+    assert calls == ["run"]
     assert responder.seen == ["apri chrome"] and speaker.spoken == ["Apro Chrome."]
     row = assistant.history[-1]
     assert row["closed_list_from"] == "Claudio, a prick roam" and "closed_list_ms" in row
@@ -73,7 +73,7 @@ async def test_a_failing_closed_list_keeps_the_transcribed_request(
 ) -> None:
     assistant, speaker, responder, _ = setup(fake_vad, vad_settings, "Claudio, a prick roam", [])
 
-    def closed_list(audio, language):
+    def closed_list(audio):
         raise RuntimeError("CUDA esplosa")
 
     assistant.closed_list = closed_list
@@ -98,7 +98,7 @@ async def test_closed_list_without_a_command_keeps_the_text(
         fake_vad, vad_settings, "Claudio prenota un volo", ["Claudio prenoto un volo"]
     )
     await run_frames(assistant, request(make_frames))
-    assert calls == ["it"] and responder.seen == ["Claudio prenota un volo"]
+    assert calls == ["run"] and responder.seen == ["Claudio prenota un volo"]
     assert "closed_list_from" not in assistant.history[-1]
 
 
@@ -106,7 +106,7 @@ async def test_closed_list_keeps_whisper_to_itself(fake_vad, vad_settings, make_
     assistant, _, _, _ = setup(fake_vad, vad_settings, "Claudio, a prick roam")
     held: list[bool] = []
 
-    def closed_list(audio, language):
+    def closed_list(audio):
         held.append(assistant._stt_lock.locked())
         return ["apri chrome"]
 

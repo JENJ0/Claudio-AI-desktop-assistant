@@ -305,9 +305,9 @@ async def test_the_repeat_reaches_the_brain_through_the_router(
     client = waiting(use(NAME, command="off", last=True))
     b = acting_brain(pricing, client, tools)
     r = routed(b, matcher, system)
-    asked = "".join([c async for c in r.respond("Ehi Claudio, spenitri.", "it")])
+    asked = "".join([c async for c in r.respond("Ehi Claudio, spenitri.")])
     assert asked == "Spegniti. Confermi?"  # nothing said before it: the action is read out
-    assert "".join([c async for c in r.respond("Claudio, spegni.", "it")]) == OFF_REPLY
+    assert "".join([c async for c in r.respond("Claudio, spegni.")]) == OFF_REPLY
     assert system.off and len(client.calls) == 1
 
 
@@ -555,8 +555,8 @@ def routed(b: ClaudeBrain, matcher: CommandMatcher, system: SystemControl) -> Lo
     )
 
 
-async def say(r: LocalResponder, text: str, language: str = "it") -> str:
-    return "".join([c async for c in r.respond(text, language)])
+async def say(r: LocalResponder, text: str) -> str:
+    return "".join([c async for c in r.respond(text)])
 
 
 async def test_the_name_and_a_system_command_over_claudes_question_never_reach_claude(

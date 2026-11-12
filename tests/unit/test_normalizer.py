@@ -81,10 +81,6 @@ def test_extract_number(text: str, rest: str, number: int | None) -> None:
     assert extract_number(text) == (rest, number)
 
 
-def test_unknown_language_uses_the_italian_rules() -> None:
-    assert normalize("Apri il blocco note", lang="de") == "apri blocco note"
-
-
 @pytest.mark.parametrize(
     ("text", "expected"),
     [

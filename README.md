@@ -408,7 +408,7 @@ and `vad_max` (how sure Silero was of hearing a voice, 0-1). `logs/audio/` keeps
 WAVs (`[logging] keep_audio`, about 940 MB) of what CLAUDIO heard (1.5 s before the wake word, then
 everything else), named by outcome (`ok`, `timeout`, `empty`, `error`, `interrupted` and others), and
 up to 4000 more in `logs/audio/rejected/` (`keep_rejected`, about 300 MB). Beside each request's WAV
-there is a small note (`.json`) with the prompt given to Whisper, the language and the input gain;
+there is a small note (`.json`) with the prompt given to Whisper and the input gain;
 that prompt lists the names of your folders, programs and open windows. They stay on the PC and are
 never committed; `[logging] save_audio = false` turns them off.
 

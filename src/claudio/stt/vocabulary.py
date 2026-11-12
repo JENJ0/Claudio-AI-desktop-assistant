@@ -167,7 +167,6 @@ def pick(names: Sequence[Name], limit: int, seen: set[str]) -> list[str]:
 
 
 def prompt_text(
-    language: str,
     words: Sequence[str],
     folders: Sequence[str],
     programs: Sequence[str],
@@ -260,7 +259,7 @@ class Vocabulary:
             with self._lock:
                 self._reading = False
 
-    def text(self, language: str) -> str:
+    def text(self) -> str:
         """The names for Whisper's prompt; JenJo's words only until the first reading ends.
         An old list is still used while a new one is read."""
         if self.clock() - self._read_at > self.refresh_s:
@@ -268,7 +267,7 @@ class Vocabulary:
         folders, programs = self._names or ([], [])
         seen = {n.casefold() for n in (*self.words, *folders, *programs)}
         windows = [w for w in self.open_windows() if w.casefold() not in seen]
-        return prompt_text(language, self.words, folders, programs, windows)
+        return prompt_text(self.words, folders, programs, windows)
 
     def open_windows(self) -> list[str]:
         """The open windows' names, read again after `windows_s` (one request asks twice:

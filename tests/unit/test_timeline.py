@@ -196,7 +196,7 @@ def count_listener_passes(scene: Scene) -> list[int]:
 async def silent_typed_hears_nothing(scene: Scene) -> None:
     """A typed message answered in the chat only: voice frames during it reach no listener."""
     passes = count_listener_passes(scene)
-    typed = asyncio.create_task(scene.assistant.handle_typed("raccontami una storia", "it"))
+    typed = asyncio.create_task(scene.assistant.handle_typed("raccontami una storia"))
     await scene.until(lambda: scene.assistant.state is State.RESPONDING)
     await scene.say_over("basta")
     await scene.until(typed.done, poll_s=0.002)
@@ -649,7 +649,7 @@ async def test_typed_message_waits_for_the_spoken_reply(make_scene) -> None:
     scene = make_scene(text_reply(*STORY), sentence_frames=PLAY)
     await scene.say("raccontami una storia")
     await scene.until_speaking()
-    typed = asyncio.create_task(scene.assistant.handle_typed("che ore sono", "it"))
+    typed = asyncio.create_task(scene.assistant.handle_typed("che ore sono"))
     await scene.advance(2.0)
     assert not typed.done() and scene.speaker.played != SENTENCES  # still speaking: it waits
     await scene.until(typed.done, poll_s=0.002)
@@ -726,7 +726,7 @@ async def test_typed_reply_cut_short_keeps_what_was_said(make_scene, voice: str,
     setattr(scene.assistant, hook, cut_at_first_sound)
     if path == "typed":
         done = asyncio.create_task(
-            scene.assistant.handle_typed("raccontami una storia", "it", speak=True)
+            scene.assistant.handle_typed("raccontami una storia", speak=True)
         ).done
     else:
         await scene.say("raccontami una storia")
@@ -805,7 +805,7 @@ async def test_a_cut_question_of_the_guess_leaves_the_claude_line_alone(make_sce
     await scene.say("quanto dista la Luna dalla Terra")
     await idle(scene)
     before = scene.remembered
-    scene.responder.propose("chiudi la finestra", "it")
+    scene.responder.propose("chiudi la finestra")
     scene.assistant._interrupted = True
     inter = Interaction(clock=scene.clock, info={})
     await scene.assistant._speak_reply(
@@ -827,7 +827,7 @@ async def test_typed_request_over_a_stale_stream_does_not_wake_it(make_scene, ho
     for _ in range(5):
         await asyncio.sleep(0)
     scene.brain.stop_acting()
-    await scene.assistant.handle_typed("quanto dista la Luna dalla Terra", "it")
+    await scene.assistant.handle_typed("quanto dista la Luna dalla Terra")
     await scene.advance(1.0)
     await stale.finish(5.0)
     assert not scene.brain.awaiting and not typed_anything(desk)
@@ -1003,7 +1003,7 @@ async def test_typed_continua_shows_the_rest_in_the_chat(make_scene) -> None:
     scene = make_scene(text_reply(*STORY), sentence_frames=PLAY)
     await stop_the_story(scene)
     heard = list(scene.speaker.played)
-    reply = await scene.assistant.handle_typed("continua", "it")
+    reply = await scene.assistant.handle_typed("continua")
     assert reply == remainder("".join(STORY), heard) and api_calls(scene) == 1
     assert scene.assistant._unsaid_rest is None
 

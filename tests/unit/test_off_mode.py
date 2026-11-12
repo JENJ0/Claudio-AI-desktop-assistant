@@ -118,7 +118,7 @@ def test_off_and_shutdown_are_separate() -> None:
 
 
 async def say(r: LocalResponder, text: str) -> str:
-    return "".join([c async for c in r.respond(text, "it")])
+    return "".join([c async for c in r.respond(text)])
 
 
 async def test_while_off_only_accenditi_is_answered(matcher: CommandMatcher) -> None:
@@ -253,8 +253,8 @@ async def test_off_without_the_name_whispers_other_guesses_are_searched_for_acce
     in the request."""
     guesses: list[str] = []
 
-    def closed_list(audio: np.ndarray, language: str) -> list[str]:
-        guesses.append(language)
+    def closed_list(audio: np.ndarray) -> list[str]:
+        guesses.append("run")
         return ["Grazie a te.", "Dai, accenditi."]
 
     texts = ["Claudio, spegniti.", "Grazie a te."]
@@ -390,7 +390,7 @@ async def test_going_busy_during_the_closed_list_stops_the_second_chance(
     are not the second chance's."""
     reached, gate = threading.Event(), threading.Event()
 
-    def closed_list(audio: np.ndarray, language: str) -> list[str]:
+    def closed_list(audio: np.ndarray) -> list[str]:
         reached.set()
         assistant.clock.t += 5.0
         gate.wait(5)
@@ -424,7 +424,7 @@ async def test_going_busy_during_the_closed_list_stops_the_second_chance(
 async def test_a_failing_closed_list_while_off_is_a_plain_rejection(
     fake_vad, vad_settings, make_frames, matcher: CommandMatcher, tmp_path, caplog
 ) -> None:
-    def closed_list(audio: np.ndarray, language: str) -> list[str]:
+    def closed_list(audio: np.ndarray) -> list[str]:
         raise RuntimeError("CUDA esplosa")
 
     assistant, speaker, system, _, _, checks = build(
@@ -499,7 +499,7 @@ class WhisperModel:
 def real_whisper(phrases: Sequence[object], names: Sequence[object], prompt: str = ""):
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
     stt.settings = SttSettings(initial_prompt=prompt)
-    stt.language, stt._encoded, stt._reused, stt.last_segments = "it", None, 0, []
+    stt._encoded, stt._reused, stt.last_segments = None, 0, []
     stt._model = WhisperModel(phrases, names)
     return stt
 
@@ -663,7 +663,7 @@ class Guesses:
     def __init__(self, *lists: list[str]) -> None:
         self.lists = list(lists)
 
-    def __call__(self, audio: np.ndarray, language: str) -> list[str]:
+    def __call__(self, audio: np.ndarray) -> list[str]:
         return self.lists.pop(0) if self.lists else []
 
 
@@ -781,7 +781,7 @@ async def test_nothing_heard_while_off_is_not_logged_as_a_hidden_phrase(
     assistant.system.apply("off")
     await run_requests(assistant, make_frames, 1)
     console = in_the_console(disk)
-    assert "Trascritto (it): ''" in console and HIDDEN_IN_THE_LOG not in console
+    assert "Trascritto: ''" in console and HIDDEN_IN_THE_LOG not in console
 
 
 async def test_a_voice_the_meter_rejects_while_off_saves_no_audio(
@@ -819,7 +819,6 @@ async def test_a_row_heard_while_off_keeps_every_figure(
     (row,) = rows(disk)
     assert row["outcome"] == row["route"] == "off"
     assert row["wake_word"] == "claudio" and row["wake_score"] == 0.9
-    assert row["stt_language"] == "it"  # which language, not what was said
     for figure in ("stt_ms", "speech_ms", "second_chance_ms", "voice_ms", "speech_dbfs"):
         assert row[figure] is not None, figure
 
@@ -907,7 +906,7 @@ async def test_a_phrase_still_going_when_mi_spengo_ends_leaves_nothing_on_disk(
     ("said", "options", "in_the_log"),
     [
         pytest.param(
-            f"Claudio, lo {WORD}.", {}, f"Trascritto (it): {HIDDEN_IN_THE_LOG}", id="a phrase"
+            f"Claudio, lo {WORD}.", {}, f"Trascritto: {HIDDEN_IN_THE_LOG}", id="a phrase"
         ),
         pytest.param(
             "Sono le 14 e 5.",
@@ -1006,7 +1005,7 @@ async def test_an_answer_to_hai_detto_while_off_is_hidden_in_the_log(
 ) -> None:
     system = SystemControl()
     responder = LocalResponder(matcher, ActionRunner(Recorder().ctx(), system))
-    responder.propose("apri chrome", "it")
+    responder.propose("apri chrome")
     system.apply("off")
     with caplog.at_level("INFO"):
         assert await say(responder, said) == ""
@@ -1018,7 +1017,7 @@ async def test_a_message_typed_while_off_is_kept(disk, fake_vad, vad_settings, m
     is not answered."""
     assistant = on_disk(disk, fake_vad, vad_settings, matcher)
     assistant.system.apply("off")
-    assert await assistant.handle_typed(f"una ricetta col {WORD}", "it") == ""
+    assert await assistant.handle_typed(f"una ricetta col {WORD}") == ""
     assert rows(disk)[0]["route"] == "off"
     assert "chat.db" in holding(WORD, disk)
 
@@ -1043,7 +1042,6 @@ def test_the_row_of_a_phrase_heard_while_off_has_no_field_with_words() -> None:
         "wake_score": 0.9,
         "outcome": "off",
         "route": "off",
-        "stt_language": "it",
         "second_chance_ms": 120,
         "rejected": "no_name",
     }
@@ -1062,7 +1060,7 @@ def test_whispers_own_logs_hide_a_second_hearing_while_off(caplog) -> None:
     stt.hides_text = lambda: True
     speech = (np.sin(np.arange(16000) / 5) * 0.1).astype(np.float32)
     with caplog.at_level("INFO"):
-        assert stt.listen_again(speech, "", "it").text == ""
+        assert stt.listen_again(speech, "").text == ""
     assert WORD not in caplog.text and HIDDEN_IN_THE_LOG in caplog.text
 
 
@@ -1098,7 +1096,7 @@ async def test_while_off_an_open_question_is_dropped_not_answered(
     if asked_by == "a command":
         await say(r, "chiudi la finestra")
     elif asked_by == "a guess":
-        r.propose("chiudi la finestra", "it")
+        r.propose("chiudi la finestra")
     assert r.awaiting
     system.apply("off")
     assert await say(r, "sì") == ""

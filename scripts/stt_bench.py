@@ -248,7 +248,7 @@ def whisper_engine(
         stt.settings = base.model_copy(update={"beam_size": variant.beam or base.beam_size})
         stt.vocabulary = cache["names"] if variant.prompt == "nomi" else None  # type: ignore[assignment]
         if variant.prompt == "vuoto":
-            stt.prompt = lambda language: ""  # type: ignore[method-assign]
+            stt.prompt = lambda: ""  # type: ignore[method-assign]
         else:
             stt.__dict__.pop("prompt", None)
         text = stt.transcribe(audio)
@@ -277,7 +277,7 @@ def as_live(
         found = next((c for c in listed if c != text and matcher.match(c) is not None), None)
         if found:
             return str(found)
-    second = recovery(audio, text, stt.language) if recovery is not None else None
+    second = recovery(audio, text) if recovery is not None else None
     if second is None or second.verdict is intake.Verdict.DROP:
         return text
     return str(second.text)

@@ -36,8 +36,8 @@ def local(matcher: CommandMatcher, rec: Recorder, clock: Monotonic, **hooks: Any
     return LocalResponder(matcher, ActionRunner(rec.ctx()), clock=clock, **hooks)
 
 
-async def say(r: LocalResponder, text: str, language: str = "it") -> str:
-    return "".join([c async for c in r.respond(text, language)])
+async def say(r: LocalResponder, text: str) -> str:
+    return "".join([c async for c in r.respond(text)])
 
 
 # --- rule 1: the question waits, like Claude's ------------------------------------------
@@ -210,7 +210,7 @@ async def test_a_typed_yes_never_confirms_a_local_question(
     r = local(matcher, rec, Monotonic())
     assistant = typed_assistant(fake_vad, vad_settings, r)
     await say(r, "chiudi la finestra")  # armed by voice
-    reply = await assistant.handle_typed("sì", "it")
+    reply = await assistant.handle_typed("sì")
     assert reply.startswith(TYPED_CANCELS_QUESTION)
     assert rec.combos == [] and not r.awaiting
 
@@ -238,7 +238,7 @@ async def test_a_typed_yes_never_confirms_claudes_question(
         fallback_cancel=cancel,
     )
     assistant = typed_assistant(fake_vad, vad_settings, r)
-    reply = await assistant.handle_typed("sì", "it")
+    reply = await assistant.handle_typed("sì")
     assert reply.startswith(TYPED_CANCELS_QUESTION)
     assert events == ["cancel", "ask sì"]  # the question is gone before the text is a request
 
@@ -274,7 +274,7 @@ async def test_a_pause_ends_claudes_question_and_the_proposal_too(
         fallback_cancel=lambda cut: armed.clear(),
     )
     typed_assistant(fake_vad, vad_settings, r)
-    r.propose("alza il volume", "it")
+    r.propose("alza il volume")
     r.actions.system.apply("pause")
     assert not armed and not r.awaiting
 

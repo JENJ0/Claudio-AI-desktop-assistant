@@ -189,10 +189,10 @@ def test_chat_opens_once_and_closes(matcher, rec) -> None:
     chat = FakeChat()
     runner = ActionRunner(rec.ctx(), chat=chat)  # type: ignore[arg-type]
 
-    def say(text: str, language: str = "it") -> str:
-        match = matcher.match(text, language)
+    def say(text: str) -> str:
+        match = matcher.match(text)
         assert match is not None
-        return runner.execute(match, match.language)
+        return runner.execute(match)
 
     assert say("apri la chat") == "Apro la chat."
     assert say("fammi scrivere") == "La chat è già aperta."
