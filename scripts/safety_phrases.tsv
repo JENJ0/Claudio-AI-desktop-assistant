@@ -3,7 +3,8 @@
 # group is the folder of the takes in samples/safety_v2/ and the way the results are split:
 # yes, question (a "sì?" said as a real question), twin (a refusal with a yes twin), rewrite ("si ..."),
 # offtopic, noise. takes: 2 for the phrases of the first list, 1 for the traps written before recording
-# (safety-v2 asks 145 takes: 44 yes, 8 question, 93 non-yes).
+# (safety-v2 asks 145 takes: 44 yes, 8 question, 93 non-yes; the 44 yes takes include the 6
+# English takes now expected `unclear`, 12/11, Italian-only).
 yes	sì	yes	2
 yes	sì, grazie	yes	2
 yes	sì, va bene	yes	2

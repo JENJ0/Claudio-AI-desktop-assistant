@@ -1231,16 +1231,8 @@ async def test_no_sonnet_when_the_budget_runs_out_before_the_yes(pricing: Pricin
 
 
 async def test_the_time_goes_after_the_cached_prefix(pricing: Pricing) -> None:
-    from datetime import datetime
-
     client = ScriptedClient((["Sono le 17 e 15."], "end_turn", []))
-    b = ClaudeBrain(
-        client,
-        tracker(pricing, 1.0),
-        ClaudeSettings(),
-        clock=Monotonic(),
-        wall=lambda: datetime(2026, 10, 23, 17, 15),
-    )
+    b = timed_brain(pricing, client)
     await ask(b, "che ore sono in Thailandia")
     assert client.calls[0]["system"] == cached(SYSTEM_PROMPT)  # frozen: cacheable
     content = client.calls[0]["messages"][-1]["content"]

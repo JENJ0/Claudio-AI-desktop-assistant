@@ -13,7 +13,7 @@ from claudio.tts.sentence_splitter import joined_reply
 # The new request ends the old reply instead of pausing it ("ok, va bene, grazie").
 CLOSERS = frozenset(
     {"ok", "okay", "va", "bene", "grazie", "basta", "stop", "lascia", "stare", "perfetto"}
-    | {"capito", "non", "importa", "niente", "fa", "nulla", "thanks", "thank", "you", "fine"}
+    | {"capito", "non", "importa", "niente", "fa", "nulla", "fine"}
     | {"claudio", "ehi", "hey", "e", "si", "no", "allora", "dai"}
 )
 RESUME_PREFIX = "Dicevo:"

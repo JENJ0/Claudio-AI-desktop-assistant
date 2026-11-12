@@ -575,36 +575,33 @@ class PcTools:
     async def describe_calls(self, calls: Sequence[ToolCall]) -> str:
         """What `calls` will do, read out ("Chiudo la finestra ..., poi premo enter"); the
         second question says it too. "" when no call has a description."""
-        say = _SAY
         ids = {c.id for c in self._reply}
         reply = self._reply if all(c.id in ids for c in calls) else list(calls)
-        parts = [await self._describe(call, say, reply) for call in calls]
-        what = say["then"].join(p for p in parts if p)
+        parts = [await self._describe(call, reply) for call in calls]
+        what = _SAY["then"].join(p for p in parts if p)
         return what[:1].upper() + what[1:]
 
-    async def _describe(
-        self, call: ToolCall, say: dict[str, str], reply: Sequence[ToolCall]
-    ) -> str:
+    async def _describe(self, call: ToolCall, reply: Sequence[ToolCall]) -> str:
         a = call.args
         if call.name == "type_text":
             text = str(a.get("text", ""))
             if len(text) > SPOKEN_TEXT_CHARS:
                 text = text[:SPOKEN_TEXT_CHARS].rsplit(" ", 1)[0] + "..."
-            window = await self._front_title(call, say, reply)
-            return say["type_into"].format(text=text, window=window)
+            window = await self._front_title(call, reply)
+            return _SAY["type_into"].format(text=text, window=window)
         if call.name == "press_keys":
             try:
                 combos = keys.parse_combos(list(a.get("keys") or []))
             except (keys.BadKey, TypeError):
                 return ""
             spoken = ", ".join(keys.spoken(c) for c in combos)
-            window = await self._front_title(call, say, reply)
-            return say["press_keys_into"].format(keys=spoken, window=window)
+            window = await self._front_title(call, reply)
+            return _SAY["press_keys_into"].format(keys=spoken, window=window)
         if call.name == "close_window":
-            window = await self._window_title(str(a.get("window", "")), say)
-            return say["close_window"].format(window=window)
+            window = await self._window_title(str(a.get("window", "")))
+            return _SAY["close_window"].format(window=window)
         if call.name == "move_file":
-            return say["move_file"].format(
+            return _SAY["move_file"].format(
                 source=Path(str(a.get("source", ""))).name or a.get("source", ""),
                 destination=files.shorten(
                     self.policy.expand(str(a.get("destination", ""))), self.policy.home
@@ -615,22 +612,20 @@ class PcTools:
             if len(purpose) > SPOKEN_PURPOSE_CHARS:
                 purpose = purpose[:SPOKEN_PURPOSE_CHARS].rsplit(" ", 1)[0] + "..."
             purpose = purpose[:1].lower() + purpose[1:]
-            return say["run_command"].format(purpose=purpose)
+            return _SAY["run_command"].format(purpose=purpose)
         if call.name == command_tool.NAME and self.commands is not None:
-            return say["claudio_command"].format(phrase=self.commands.phrase(a))
+            return _SAY["claudio_command"].format(phrase=self.commands.phrase(a))
         if call.name in memory_tools.NAMES and self.memory is not None:
             return self.memory.describe(call.name, a)
         return call.name
 
-    async def _front_title(
-        self, call: ToolCall, say: dict[str, str], reply: Sequence[ToolCall]
-    ) -> str:
+    async def _front_title(self, call: ToolCall, reply: Sequence[ToolCall]) -> str:
         """Where the keys of `call` (no window named) go, as JenJo hears it. Without a known
         place, the word for "the active one" (such a call is refused before it is asked)."""
         try:
             return (await self._expect(call, reply)).title
         except ToolFailed:
-            return str(call.args.get("window") or say["active"])
+            return str(call.args.get("window") or _SAY["active"])
 
     async def _expect(self, call: ToolCall, reply: Sequence[ToolCall]) -> _Expect:
         """Where the keys of `call` go if they went now, remembered for the yes (asked again
@@ -678,12 +673,12 @@ class PcTools:
             ) from None
         return _Expect(window.title, window)
 
-    async def _window_title(self, query: str, say: dict[str, str]) -> str:
+    async def _window_title(self, query: str) -> str:
         """The title of the window that would be used (so JenJo hears the real one)."""
         try:
             window = await self._call(self._find_window, query)
         except Exception:
-            return query or say["active"]
+            return query or _SAY["active"]
         return window.title
 
     async def run(self, call: ToolCall) -> ToolOutcome:

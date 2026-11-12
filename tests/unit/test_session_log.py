@@ -139,7 +139,6 @@ def test_a_full_row_is_written_in_a_fixed_order() -> None:
         "barge_in": True,
         "wake_check": "Ehi Claudio.",
         "closed_list_from": "a",
-        "retried_from": "b",
         "recovered_from": "c",
         "audio_file": "last.wav",
     }
@@ -155,7 +154,7 @@ def test_a_full_row_is_written_in_a_fixed_order() -> None:
         " · TTFT 610 · - ms (rete 220 ms, connessione nuova)"
         " · claude-haiku-5-5 100 in / 20 out = 0.00000 $"
         " · claude_error: boom · barge_in: True · wake_check: Ehi Claudio."
-        " · closed_list_from: a · retried_from: b · recovered_from: c"
+        " · closed_list_from: a · recovered_from: c"
         " · audio: last.wav_\n"
     )
 
@@ -316,6 +315,21 @@ def test_drop_old_lines_keeps_an_unreadable_line_after_the_old_ones(tmp_path: Pa
     assert path.read_bytes() == rest
 
 
+@pytest.mark.parametrize(
+    "stamp",
+    ["1960-01-01T00:00:00", "9999-12-31T23:59:59-01:00", "0001-01-01T00:00:00+01:00", 1e400],
+)
+def test_drop_old_lines_survives_a_timestamp_the_clock_cannot_convert(
+    tmp_path: Path, stamp: object
+) -> None:
+    path = tmp_path / "claudio.log.jsonl"
+    recent = _iso_line(NOW_TS - 100)
+    bad = (json.dumps({"ts": stamp}) + "\n").encode()
+    path.write_bytes(_iso_line(CUTOFF - 5) + bad + recent)
+    assert drop_old_lines(path, CUTOFF) == 1
+    assert path.read_bytes() == bad + recent
+
+
 def test_drop_old_lines_keeps_unreadable_files(tmp_path: Path) -> None:
     path = tmp_path / "claudio.log.jsonl"
     content = b"garbage{\nmore garbage\n"
@@ -384,5 +398,26 @@ def test_main_trims_the_log_before_logging_opens_it(
     monkeypatch.setenv("CLAUDIO_LOGGING__RETENTION_DAYS", "30")
     monkeypatch.setattr(entry, "setup_logging", stub)
     with pytest.raises(RuntimeError, match="stop here"):
-        entry.main(["--check"])
+        entry.main([])
     assert seen == [recent]
+
+
+@pytest.mark.parametrize("argv", [["--check"], ["--text", "ciao"]])
+def test_main_does_not_trim_the_live_log_for_short_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> None:
+    from claudio import __main__ as entry
+
+    log_file = tmp_path / "claudio.log.jsonl"
+    content = _iso_line(time.time() - 40 * 86400, "old") + _iso_line(time.time() - 100, "recent")
+    log_file.write_bytes(content)
+
+    def stub(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("stop here")
+
+    monkeypatch.setenv("CLAUDIO_LOGS_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDIO_LOGGING__RETENTION_DAYS", "30")
+    monkeypatch.setattr(entry, "setup_logging", stub)
+    with pytest.raises(RuntimeError, match="stop here"):
+        entry.main(argv)
+    assert log_file.read_bytes() == content

@@ -148,7 +148,9 @@ def test_configuration_error_is_printed_and_exits_2(
     f = tmp_path / "c.toml"
     f.write_text("[stt]\nbeam_size = 0\n", encoding="utf-8")
     assert main(["--config", str(f), "--check"]) == 2  # supervisor.FINAL_EXITS relies on 2
-    assert "Errore di configurazione" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "Errore di configurazione" in err
+    assert "stt.beam_size" in err
 
 
 def test_an_old_effect_line_in_dotenv_is_ignored(
@@ -156,6 +158,8 @@ def test_an_old_effect_line_in_dotenv_is_ignored(
 ) -> None:
     """The voice effects are gone: a .env that still sets one must not stop Claudio."""
     env = tmp_path / ".env"
-    env.write_text("CLAUDIO_TTS__EFFECT=none\n", encoding="utf-8")
+    env.write_text("CLAUDIO_TTS__EFFECT=none\nCLAUDIO_TTS__LENGTH_SCALE=0.9\n", encoding="utf-8")
     monkeypatch.setitem(Settings.model_config, "env_file", env)
-    assert load_settings(DEFAULT_CONFIG).tts.engine == "jack"
+    settings = load_settings(DEFAULT_CONFIG)
+    assert settings.tts.length_scale == 0.9  # the file was read
+    assert settings.tts.engine == "jack"

@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 # figures around them say nothing of it.
 SAID_FIELDS = frozenset(
     {"text", "second_chance", "second_chance_from", "wake_unclear", "wake_check", "relisten"}
-    | {"continued_from", "closed_list_from", "retried_from", "recovered_from", "guessed_from"}
+    | {"continued_from", "closed_list_from", "recovered_from", "guessed_from"}
     | {"barge_in", "recovery", "guess", "stt_alternatives", "reply", "tools", "shown"}
 )
 

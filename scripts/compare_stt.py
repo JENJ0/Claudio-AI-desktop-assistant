@@ -15,7 +15,7 @@ Engines:
     lista     the "closed list": turbo proposes 5 transcriptions, the first known command wins
     frase     turbo with the natural-sentence prompt (NATURAL_PROMPT, the shipped
               [stt] initial_prompt, or --prompt): does it hear "Claudio" and free questions
-              better?
+              better? Same as `turbo` (same model, same shipped prompt) unless --prompt is given.
     nomi      turbo with the names on this PC first in the prompt (folders and programs, as
               [stt] vocabulary does live), then the shipped sentences
     parakeet  NVIDIA Parakeet TDT 0.6B v3 (ONNX int8, via onnx-asr): fast, guesses the language

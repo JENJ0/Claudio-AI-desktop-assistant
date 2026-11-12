@@ -3,6 +3,7 @@ Claude, which could guess the chat window but had no tool to open it."""
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -353,7 +354,7 @@ async def test_the_waiting_command_said_again_is_a_yes(
         "spegniti no",
         "Claudio, non spegnerti",
         "sì, non spegnerti",
-        "stop listening",
+        "aspetta, spegniti",
     ],
 )
 async def test_a_refusal_wins_over_a_repeat(
@@ -534,8 +535,11 @@ def test_build_responder_drops_the_guess_without_its_price(
     with caplog.at_level("ERROR"):
         responder = guess_responder(tmp_path, model="claude-nope")
     try:
+        assert responder.fallback is not None
         assert responder.fallback_guess is None
-        assert any("claude-nope" in r.getMessage() for r in caplog.records)
+        assert any(
+            "claude-nope" in r.getMessage() and r.levelno == logging.ERROR for r in caplog.records
+        )
     finally:
         responder.fallback.__self__.tools.close()  # type: ignore[union-attr]
 
