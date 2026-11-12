@@ -98,12 +98,6 @@ def test_chiuditi_still_closes(matcher: CommandMatcher, text: str) -> None:
     assert match is not None and match.command.id == "shutdown"
 
 
-def test_english_phrases(matcher: CommandMatcher) -> None:
-    assert matcher.match("Stop listening", "en").command.id == "off"  # type: ignore[union-attr]
-    assert matcher.match("Turn yourself on", "en").command.id == "on"  # type: ignore[union-attr]
-    assert matcher.match("Shut down", "en").command.id == "shutdown"  # type: ignore[union-attr]
-
-
 # --- the state --------------------------------------------------------------------------
 
 

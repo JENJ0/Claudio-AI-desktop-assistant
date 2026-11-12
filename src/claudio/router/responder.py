@@ -175,16 +175,15 @@ class LocalResponder:
         return match is not None
 
     def is_stop(self, text: str) -> bool:
-        """`text` is only "basta" / "stop" (in any language), or a phrase to Claudio ending with
+        """`text` is only "basta" / "stop", or a phrase to Claudio ending with
         it (the matcher's rule): said while CLAUDIO speaks, it interrupts. Repeated words count
         once ("basta, basta")."""
         words = normalize(text, drop_fillers=False).split()
         deduped = " ".join(w for i, w in enumerate(words) if i == 0 or w != words[i - 1])
         for candidate in {text, deduped}:
-            for language in self.matcher.languages:
-                match = self.matcher.match(candidate, language)
-                if match is not None and match.command.action == "stop":
-                    return True
+            match = self.matcher.match(candidate)
+            if match is not None and match.command.action == "stop":
+                return True
         return False
 
     @property
@@ -710,7 +709,7 @@ class LocalResponder:
 
     def _ask_again(self, match: Match, level: int) -> str:
         """The second question: the command's own phrase, then yes/no (or "confermo")."""
-        phrases = match.command.phrases_in(self.language) or match.command.phrases
+        phrases = match.command.phrases
         what = phrases[0][:1].upper() + phrases[0][1:]
         ask = ASK_AGAIN_EXPLICIT if level >= LEVEL_EXPLICIT else ASK_AGAIN
         return ask.format(what=what)

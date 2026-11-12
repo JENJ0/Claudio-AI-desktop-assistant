@@ -344,16 +344,6 @@ async def test_the_waiting_command_said_again_is_a_yes(
     assert len(client.calls) == 1
 
 
-async def test_a_word_close_to_a_phrase_of_another_language_closes_nothing(
-    pricing: Pricing, tools: PcTools, system: SystemControl
-) -> None:
-    """ "qui" is 85.7 from the English "quit": over an Italian question it is only "qui"."""
-    b = acting_brain(pricing, waiting(use(NAME, command="shutdown", last=True)), tools)
-    await ask(b, "parole confuse")
-    assert await unclear_twice(b, "qui") == NOT_UNDERSTOOD_IT
-    assert not system.stopping
-
-
 @pytest.mark.parametrize(
     "said",
     [

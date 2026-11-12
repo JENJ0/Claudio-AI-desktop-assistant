@@ -94,23 +94,19 @@ class CommandTool:
             cmd = self.command(args)
         except UnknownCommand:
             return str(args.get("command", ""))
-        return (cmd.phrases_in(language) or cmd.phrases)[0]
+        return cmd.phrases[0]
 
     def said_again(self, args: Mapping[str, Any], text: str, language: str) -> bool:
         """`text` is this command once more: close to one of its own phrases ("spegni" is 85.7
-        from "spegniti", and no phrase of the matcher's), in the `language` of the question:
-        over an Italian one "qui" is not the English "quit". One yes word may open it ("sì,
+        from "spegniti", and no phrase of the matcher's). One yes word may open it ("sì,
         spegniti")."""
         try:
             cmd = self.command(args)
         except UnknownCommand:
             return False
-        words = normalize(text, lang=language).split()
+        words = normalize(text).split()
         heard = " ".join(words[1:] if words and words[0] in YES_WORDS else words)
-        return any(
-            fuzz.ratio(heard, normalize(phrase, lang=language)) >= self.threshold
-            for phrase in cmd.phrases_in(language)
-        )
+        return any(fuzz.ratio(heard, normalize(phrase)) >= self.threshold for phrase in cmd.phrases)
 
     def run(self, args: Mapping[str, Any], language: str = DEFAULT_LANGUAGE) -> str:
         """Run it; the command's reply in `language`, as the router would say it ("" for

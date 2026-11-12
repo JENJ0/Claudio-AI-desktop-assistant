@@ -21,9 +21,10 @@ yes	sì d'accordo	yes	2
 yes	assolutamente sì	yes	2
 yes	sì, grazie mille	yes	2
 yes	sì, per favore	yes	2
-yes	yes	yes	2
-yes	yes please	yes	2
-yes	go ahead	yes	2
+# English yes words were removed on 12/11 (Italian-only): these three takes are now expected unclear.
+unclear	yes	yes	2
+unclear	yes please	yes	2
+unclear	go ahead	yes	2
 no	no	twin	2
 no	no aspetta	twin	2
 no	sì, anzi no	twin	2

@@ -130,8 +130,7 @@ SAY = {
     "known": "Lo sapevo già.",
     "empty": "Cosa devo ricordare?",
     "too_long": "È troppo lungo: dimmelo in una frase.",
-    "sensitive": "Questo non lo salvo: password e codici andrebbero su internet a ogni "
-    "richiesta.",
+    "sensitive": "Questo non lo salvo: password e codici andrebbero su internet a ogni richiesta.",
     "full": "Ho la memoria piena: fammi dimenticare qualcosa prima.",
     "forgot": "Dimenticato: {text}.",
     "forgot_many": "Fatto, ne ho dimenticati {count}.",
@@ -611,9 +610,7 @@ def _echo(text: str, q: _Question) -> bool:
 
 def _as_said(memory: Memory, language: str) -> str:
     """A rule is read with its "da ora in poi": "chiamami capo" alone sounds like an order."""
-    return (
-        SAY["ruled"].format(text=memory.text) if memory.kind == "rule" else memory.text
-    )
+    return SAY["ruled"].format(text=memory.text) if memory.kind == "rule" else memory.text
 
 
 def _spoken(memories: Sequence[Memory], language: str) -> str:

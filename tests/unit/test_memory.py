@@ -847,7 +847,7 @@ def test_a_long_yes_to_the_rule(voice: MemoryVoice) -> None:
     assert reply(voice, "Sì, tienila come regola.") == "D'accordo, da ora in poi: chiamami capo."
 
 
-@pytest.mark.parametrize("said", ["do it", "yes do it", "Sì, tienila come regola."])
+@pytest.mark.parametrize("said", ["fallo", "sì fallo", "Sì, tienila come regola."])
 def test_a_yes_to_the_rule_may_repeat_its_words(voice: MemoryVoice, said: str) -> None:
     reply(voice, "da ora in poi chiamami capo", addressed=False)
     assert reply(voice, said) == "D'accordo, da ora in poi: chiamami capo."

@@ -104,9 +104,8 @@ def check_commands(settings: Settings, report: Callable[[bool, str], None]) -> N
         from claudio.router.matcher import CommandMatcher, load_commands
 
         commands = load_commands(settings.resolve(settings.router.commands_file))
-        matcher = CommandMatcher(commands, settings.router.fuzzy_threshold)
-        languages = ", ".join(matcher.languages)
-        what = f"{len(commands)} comandi in {settings.router.commands_file} ({languages})"
+        CommandMatcher(commands, settings.router.fuzzy_threshold)  # refuses ambiguous phrases
+        what = f"{len(commands)} comandi in {settings.router.commands_file}"
         report(True, what)
     except Exception as exc:
         report(False, f"comandi: {exc}")

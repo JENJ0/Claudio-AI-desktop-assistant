@@ -1,4 +1,4 @@
-"""Text normalisation shared by command phrases and transcriptions, per language."""
+"""Text normalisation shared by command phrases and transcriptions (Italian)."""
 
 from __future__ import annotations
 
@@ -50,22 +50,6 @@ IT_NUMBERS = {
     "venti": 20,
     "trenta": 30,
     "cinquanta": 50,
-}
-EN_NUMBERS = {
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-    "fifteen": 15,
-    "twenty": 20,
-    "thirty": 30,
-    "fifty": 50,
 }
 LANGUAGES: dict[str, Language] = {
     "it": Language(
@@ -124,39 +108,10 @@ LANGUAGES: dict[str, Language] = {
         numbers=IT_NUMBERS,
         number_affixes=(r"(?:di\s+)?", r"(?:\s+volte)?"),  # "alza il volume di 10", "tre volte"
     ),
-    "en": Language(
-        articles=frozenset({"the", "a", "an"}),
-        fillers=frozenset(
-            {
-                "claudio",
-                "jarvis",
-                "hey",
-                "hi",
-                "ok",
-                "okay",
-                "so",
-                "now",
-                "just",
-                "please",
-                "can",
-                "could",
-                "would",
-                "will",
-                "you",
-                "thanks",
-                "sorry",
-                "excuse",
-            }
-        ),
-        polite=("for me", "if you can", "thank you", "would you mind"),
-        verb_forms={"opening": "open", "turning": "turn"},
-        numbers=EN_NUMBERS,
-        number_affixes=(r"(?:by\s+)?", r"(?:\s+times)?"),  # "turn it up by 10", "three times"
-    ),
 }
 DEFAULT = "it"
 _NON_WORD = re.compile(r"[^a-z0-9]+")
-_FILLERS = frozenset().union(*(rules.fillers for rules in LANGUAGES.values()))
+_FILLERS = LANGUAGES[DEFAULT].fillers
 # What ends a clause as Whisper writes it. Not ":": "scrivi: basta" says what to write.
 _CLAUSE_END = re.compile(r"[.,;!?…]+")
 
@@ -195,7 +150,7 @@ def is_wake_word(word: str) -> bool:
 
 def _before_wake_word(word: str) -> bool:
     """What may come before the wake word: a greeting, what Whisper makes of a fast "hey"
-    ("e", "il", "hai", "ejci") or a courtesy word ("ok", "allora", "scusa", "please")."""
+    ("e", "il", "hai", "ejci") or a courtesy word ("ok", "allora", "scusa")."""
     from rapidfuzz.distance import Levenshtein
 
     if word in GREETINGS or len(word) <= 3 or word in _FILLERS:

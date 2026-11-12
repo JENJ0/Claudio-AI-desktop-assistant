@@ -36,18 +36,13 @@ from tests.unit.test_safety import responder, say
         ("Prossima canzone!", "media_next", "it"),
         ("Salta 3 canzoni", "media_next", "it"),
         ("Canzone precedente", "media_previous", "it"),
-        ("Pause the music", "media_play_pause", "en"),
-        ("Next song", "media_next", "en"),
-        ("Previous track", "media_previous", "en"),
         ("Ripeti", "repeat", "it"),
         ("Puoi ripetere?", "repeat", "it"),
         ("Non ho capito", "repeat", "it"),
-        ("Say that again", "repeat", "en"),
         ("Basta!", "stop", "it"),
         ("Claudio, basta così.", "stop", "it"),
         ("Stai zitto", "stop", "it"),
         ("Stop.", "stop", "it"),
-        ("That's enough", "stop", "en"),
     ],
 )
 def test_new_commands_match(matcher: CommandMatcher, text: str, command: str, language: str):
@@ -61,7 +56,7 @@ def test_new_commands_match(matcher: CommandMatcher, text: str, command: str, la
         "Mettiti in pausa",  # CLAUDIO's own pause, not the music's
         "Vai in pausa",
         "Basta aprire Chrome",  # "basta" must be all that was said
-        "Stop the computer",
+        "Stop al computer",
         "Salta",  # too short to be sure
     ],
 )
@@ -130,7 +125,6 @@ async def test_stop_says_nothing(matcher: CommandMatcher) -> None:
         ("Basta.", True),
         ("Basta, basta!", True),
         ("Stop", True),
-        ("Shut up.", True),
         ("Claudio basta", True),
         ("Apro Chrome.", False),  # CLAUDIO hearing itself through the speakers
         ("Basta aprire Chrome", False),
@@ -168,8 +162,6 @@ def brain() -> tuple[Callable[[str, str], AsyncGenerator[str, None]], list[str]]
         ("Claudio, non parlare, stop, grazie.", "it"),
         ("Non parlare", "it"),
         ("Claudio, non parlare.", "it"),
-        ("No, Claudio, don't talk. Claudio, stop.", "en"),
-        ("Don't talk.", "en"),
     ],
 )
 def test_a_stop_ending_a_phrase_to_claudio_is_the_stop_command(

@@ -1,8 +1,7 @@
 # Local commands recognised without any LLM (zero cost).
 # Each command: phrases (examples, matched exactly and fuzzily after
 # normalisation; exact = true turns the fuzzy match off), action, optional params and the
-# spoken reply. `phrases` and `reply` are Italian; `phrases_en` the same in
-# English (any two-letter language works the same way). keywords_xx: words a fuzzy match in that language must contain.
+# spoken reply, all in Italian. keywords: words a fuzzy match must contain.
 # Adding a command here needs no Python change if the action already exists.
 # Actions: open_app, open_folder, media_key, tell_time, tell_date, tell_spend, close_window, system,
 # chat, memory, repeat, resume, stop.
@@ -10,7 +9,6 @@
 [[command]]
 id = "open_chrome"
 phrases = ["apri chrome", "apri google chrome", "apri il browser", "avvia chrome", "lancia chrome", "apri internet"]
-phrases_en = ["open chrome", "open google chrome", "open the browser", "start chrome", "launch chrome", "open the internet"]
 action = "open_app"
 params = { app = "chrome" }
 reply = "Apro Chrome."
@@ -18,7 +16,6 @@ reply = "Apro Chrome."
 [[command]]
 id = "open_downloads"
 phrases = ["apri la cartella download", "apri download", "apri i download", "apri la cartella dei download", "mostra i download", "vai su download"]
-phrases_en = ["open downloads", "open the downloads folder", "open my downloads", "show my downloads", "go to downloads"]
 action = "open_folder"
 params = { folder = "downloads" }
 reply = "Apro la cartella Download."
@@ -26,7 +23,6 @@ reply = "Apro la cartella Download."
 [[command]]
 id = "open_documents"
 phrases = ["apri documenti", "apri la cartella documenti", "apri i documenti", "mostra i documenti", "vai su documenti"]
-phrases_en = ["open documents", "open the documents folder", "open my documents", "show my documents", "go to documents"]
 action = "open_folder"
 params = { folder = "documents" }
 reply = "Apro Documenti."
@@ -34,7 +30,6 @@ reply = "Apro Documenti."
 [[command]]
 id = "open_explorer"
 phrases = ["apri esplora file", "apri esplora risorse", "apri il file explorer", "apri gestione file", "apri le cartelle"]
-phrases_en = ["open file explorer", "open explorer", "open windows explorer", "open the file manager", "open my files"]
 action = "open_folder"
 params = { folder = "explorer" }
 reply = "Apro Esplora file."
@@ -42,7 +37,6 @@ reply = "Apro Esplora file."
 [[command]]
 id = "open_notepad"
 phrases = ["apri il blocco note", "apri blocco note", "apri notepad", "avvia il blocco note", "apri il blocco notes"]
-phrases_en = ["open notepad", "open the notepad", "start notepad", "launch notepad"]
 action = "open_app"
 params = { app = "notepad" }
 reply = "Apro il Blocco note."
@@ -50,7 +44,6 @@ reply = "Apro il Blocco note."
 [[command]]
 id = "open_calculator"
 phrases = ["apri la calcolatrice", "apri calcolatrice", "avvia la calcolatrice", "lancia la calcolatrice", "calcolatrice"]
-phrases_en = ["open the calculator", "open calculator", "start the calculator", "launch the calculator", "calculator"]
 action = "open_app"
 params = { app = "calculator" }
 reply = "Apro la calcolatrice."
@@ -58,7 +51,6 @@ reply = "Apro la calcolatrice."
 [[command]]
 id = "volume_up"
 phrases = ["alza il volume", "volume su", "aumenta il volume", "alza l audio", "piu volume", "alza"]
-phrases_en = ["turn up the volume", "turn the volume up", "volume up", "increase the volume", "raise the volume", "louder", "turn the volume on", "turn on the volume", "volume on"]
 action = "media_key"
 params = { key = "volume_up", steps = 5 }
 reply = "Volume alzato."
@@ -66,7 +58,6 @@ reply = "Volume alzato."
 [[command]]
 id = "volume_down"
 phrases = ["abbassa il volume", "volume giu", "diminuisci il volume", "abbassa l audio", "meno volume", "abbassa"]
-phrases_en = ["turn down the volume", "turn the volume down", "volume down", "decrease the volume", "lower the volume", "quieter"]
 action = "media_key"
 params = { key = "volume_down", steps = 5 }
 reply = "Volume abbassato."
@@ -74,7 +65,6 @@ reply = "Volume abbassato."
 [[command]]
 id = "mute"
 phrases = ["togli l audio", "muto", "silenzia", "disattiva l audio", "metti in muto", "togli il volume", "riattiva l audio"]
-phrases_en = ["mute", "unmute", "mute the sound", "mute the audio", "turn off the sound", "turn the sound back on", "turn off the volume", "turn the volume off"]
 action = "media_key"
 params = { key = "mute", steps = 1 }
 reply = ""
@@ -84,9 +74,7 @@ reply = ""
 [[command]]
 id = "media_play_pause"
 phrases = ["metti in pausa la musica", "pausa la musica", "ferma la musica", "riprendi la musica", "fai ripartire la musica", "metti play", "play", "fai partire la musica", "metti in pausa il video", "riprendi il video"]
-phrases_en = ["pause the music", "stop the music", "resume the music", "play the music", "play music", "play", "pause the video", "resume the video"]
 keywords = ["musica", "video", "play", "canzone", "brano"]
-keywords_en = ["music", "video", "play", "song"]
 action = "media_key"
 params = { key = "play_pause", steps = 1 }
 reply = ""
@@ -94,9 +82,7 @@ reply = ""
 [[command]]
 id = "media_next"
 phrases = ["canzone successiva", "prossima canzone", "brano successivo", "traccia successiva", "salta la canzone", "salta canzone", "passa alla prossima", "metti la prossima", "video successivo"]
-phrases_en = ["next song", "next track", "skip the song", "skip this song", "skip", "next video"]
 keywords = ["successiva", "successivo", "prossima", "prossimo", "salta"]
-keywords_en = ["next", "skip"]
 action = "media_key"
 params = { key = "next_track", steps = 1 }
 reply = ""
@@ -104,9 +90,7 @@ reply = ""
 [[command]]
 id = "media_previous"
 phrases = ["canzone precedente", "brano precedente", "traccia precedente", "torna alla canzone di prima", "metti la canzone di prima", "video precedente"]
-phrases_en = ["previous song", "previous track", "go back a song", "last song", "previous video"]
 keywords = ["precedente", "prima"]
-keywords_en = ["previous", "back", "last"]
 action = "media_key"
 params = { key = "previous_track", steps = 1 }
 reply = ""
@@ -114,35 +98,28 @@ reply = ""
 [[command]]
 id = "tell_time"
 phrases = ["che ore sono", "che ora e", "dimmi l ora", "mi dici l ora", "sai che ore sono"]
-phrases_en = ["what time is it", "what's the time", "tell me the time", "do you know what time it is", "what time is it now"]
-keywords_en = ["time"]  # "what's the tide" is close to "what's the time"
 action = "tell_time"
 reply = ""
 
 [[command]]
 id = "tell_date"
 phrases = ["che giorno e oggi", "che giorno e", "quanti ne abbiamo oggi", "dimmi la data", "che data e oggi"]
-phrases_en = ["what day is it today", "what day is it", "what's the date", "what's the date today", "tell me the date", "what's today's date"]
-keywords_en = ["date", "day"]  # "what's the weather today" is close to "what's the date today"
 action = "tell_date"
 reply = ""
 
 [[command]]
 id = "tell_spend"
 phrases = ["quanto ho speso oggi", "quanto ho speso", "quanto abbiamo speso oggi", "dimmi la spesa di oggi", "quanto costa oggi"]
-phrases_en = ["how much did i spend today", "how much have i spent", "what did i spend today", "tell me today's spending"]
 keywords = ["speso", "spesa", "costa"]
-keywords_en = ["spend", "spent", "spending"]
 action = "tell_spend"
 reply = ""
 
 # Safety levels (level = 1 | 2 | 3, default 1). Level 2: CLAUDIO asks `confirm` and a yes runs
-# the action; level 3: `confirm` is the summary of what will happen and only "confermo" /
-# "I confirm" runs it. Anything else cancels. Used here as the test of the mechanism.
+# the action; level 3: `confirm` is the summary of what will happen and only "confermo"
+# runs it. Anything else cancels. Used here as the test of the mechanism.
 [[command]]
 id = "close_window"
 phrases = ["chiudi la finestra", "chiudi finestra", "chiudi questa finestra", "chiudi la finestra attiva"]
-phrases_en = ["close the window", "close window", "close this window", "close the active window"]
 action = "close_window"
 level = 2
 confirm = "Chiudo la finestra in primo piano. Confermi?"
@@ -153,9 +130,7 @@ reply = "Fatto."
 [[command]]
 id = "open_chat"
 phrases = ["apri la chat", "apri chat", "chat", "la chat", "fammi scrivere", "voglio scrivere", "mostra la chat", "apri la finestra della chat", "fammi vedere la chat"]
-phrases_en = ["open the chat", "open chat", "chat", "show the chat", "let me type", "i want to type", "open the chat window"]
 keywords = ["chat", "scrivere"]
-keywords_en = ["chat", "type"]
 action = "chat"
 params = { do = "open", already = "La chat è già aperta.", unavailable = "Qui la chat non si può aprire." }
 reply = "Apro la chat."
@@ -163,9 +138,7 @@ reply = "Apro la chat."
 [[command]]
 id = "close_chat"
 phrases = ["chiudi la chat", "chiudi chat", "chiudi la finestra della chat", "nascondi la chat"]
-phrases_en = ["close the chat", "close chat", "hide the chat", "close the chat window"]
 keywords = ["chat"]
-keywords_en = ["chat"]
 action = "chat"
 params = { do = "close", already = "La chat non è aperta.", unavailable = "Qui la chat non si può aprire." }
 reply = "Chiudo la chat."
@@ -177,7 +150,6 @@ reply = "Chiudo la chat."
 [[command]]
 id = "memory_list"
 phrases = ["cosa ricordi", "che cosa ricordi", "cosa ti ricordi", "che cosa ti ricordi", "cosa ricordi di me", "cosa sai di me", "che cosa sai di me", "che sai di me", "elenca i ricordi", "quali ricordi hai", "cosa hai in memoria", "cosa c e nella tua memoria"]
-phrases_en = ["what do you remember", "what do you know about me", "what do you remember about me", "list your memories"]
 action = "memory"
 exact = true
 params = { do = "list", unavailable = "La memoria è spenta." }
@@ -185,7 +157,6 @@ params = { do = "list", unavailable = "La memoria è spenta." }
 [[command]]
 id = "memory_wipe"
 phrases = ["dimentica tutto", "dimenticati tutto", "scordati tutto", "dimentica tutto quello che sai", "dimentica tutti i ricordi", "cancella tutti i ricordi", "cancella la memoria", "cancella tutta la memoria", "svuota la memoria"]
-phrases_en = ["forget everything", "erase your memory", "delete all memories", "wipe your memory"]
 action = "memory"
 exact = true
 level = 3
@@ -198,9 +169,7 @@ params = { do = "wipe", unavailable = "La memoria è spenta." }
 [[command]]
 id = "repeat"
 phrases = ["ripeti", "puoi ripetere", "ripeti per favore", "ripetilo", "ridillo", "cosa hai detto", "come hai detto", "non ho capito", "me lo ripeti"]
-phrases_en = ["repeat", "repeat that", "say that again", "can you repeat", "what did you say", "come again", "pardon", "i didn't get that"]
 keywords = ["ripeti", "ripetere", "ripetilo", "ridillo", "detto", "capito"]
-keywords_en = ["repeat", "again", "say", "pardon"]
 action = "repeat"
 params = { empty = "Non ho ancora detto niente." }
 reply = ""
@@ -210,7 +179,6 @@ reply = ""
 [[command]]
 id = "continue_reply"
 phrases = ["continua", "riprendi", "continua la storia", "riprendi la storia", "vai avanti"]
-phrases_en = ["go on", "continue", "carry on", "go ahead"]
 exact = true
 action = "resume"
 reply = ""
@@ -218,7 +186,6 @@ reply = ""
 [[command]]
 id = "stop"
 phrases = ["basta", "basta cosi", "stop", "zitto", "stai zitto", "fermati", "silenzio", "smettila", "ho finito", "lascia stare", "niente", "non parlare"]
-phrases_en = ["stop", "enough", "that's enough", "shut up", "be quiet", "quiet", "never mind", "i'm done", "nothing", "don't talk"]
 action = "stop"
 exact = true
 reply = ""
@@ -228,7 +195,6 @@ reply = ""
 [[command]]
 id = "pause"
 phrases = ["vai in pausa", "mettiti in pausa", "fai una pausa", "vai a dormire", "dormi", "vai a nanna"]
-phrases_en = ["go to sleep", "pause", "take a break", "sleep"]
 action = "system"
 params = { do = "pause", already = "Sono già in pausa." }
 reply = "Vado in pausa. Per riattivarmi chiamami e di' svegliati."
@@ -236,7 +202,6 @@ reply = "Vado in pausa. Per riattivarmi chiamami e di' svegliati."
 [[command]]
 id = "resume"
 phrases = ["svegliati", "sveglia", "torna attivo", "riattivati", "esci dalla pausa", "sei sveglio"]
-phrases_en = ["wake up", "resume", "unpause", "are you awake", "come back"]
 action = "system"
 params = { do = "resume", already = "Sono già sveglio." }
 reply = "Eccomi."
@@ -246,7 +211,6 @@ reply = "Eccomi."
 [[command]]
 id = "off"
 phrases = ["spegniti", "spengiti", "spegniti pure", "ora spegniti", "puoi spegnerti", "smetti di ascoltare"]
-phrases_en = ["turn yourself off", "switch yourself off", "stop listening", "go silent", "go deaf"]
 action = "system"
 exact = true
 params = { do = "off", already = "Sono già spento." }
@@ -255,7 +219,6 @@ reply = "Mi spengo. Per riaccendermi di' Claudio, accenditi."
 [[command]]
 id = "on"
 phrases = ["accenditi", "riaccenditi", "accenditi pure", "ora accenditi", "puoi accenderti", "torna ad ascoltare"]
-phrases_en = ["turn yourself on", "switch yourself on", "start listening", "start listening again", "turn yourself back on"]
 action = "system"
 exact = true
 params = { do = "on", already = "Sono già acceso." }
@@ -265,7 +228,6 @@ reply = "Eccomi, sono acceso."
 [[command]]
 id = "shutdown"
 phrases = ["chiuditi", "chiuditi pure", "ora chiuditi", "puoi chiuderti", "esci dal programma"]
-phrases_en = ["shut down", "shut yourself down", "quit", "exit the program", "close yourself"]
 action = "system"
 exact = true  # no fuzzy match: "spegni la luce" or "shut down the PC" must not close CLAUDIO
 params = { do = "shutdown" }

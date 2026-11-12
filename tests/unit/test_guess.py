@@ -68,12 +68,6 @@ def test_nearest_counts_exact_only_commands(matcher: CommandMatcher) -> None:
     assert near[0].phrase == "spegniti"  # as written in commands.toml, for Claude
 
 
-def test_nearest_compares_only_the_heard_language(matcher: CommandMatcher) -> None:
-    # "Come stai?" is 74 from the English "come again", and means nothing like it.
-    near = matcher.nearest(["Come stai?"], "it")
-    assert all(n.phrase in n.command.phrases_in("it") for n in near)
-
-
 def test_nearest_keeps_the_best_of_all_hearings(matcher: CommandMatcher) -> None:
     alone = matcher.nearest(["Pasta."])
     both = matcher.nearest(["Pasta.", "Basta."])

@@ -325,7 +325,7 @@ def test_closed_list_skips_questions_and_long_phrases() -> None:
 # -- the short yes (level 2) --
 
 
-@pytest.mark.parametrize("text", ["sì", "Sì, va bene", "sì sì, va bene", "Yes, go ahead"])
+@pytest.mark.parametrize("text", ["sì", "Sì, va bene", "sì sì, va bene"])
 def test_short_yes(text: str) -> None:
     assert parse_answer(text) is Answer.YES
 
