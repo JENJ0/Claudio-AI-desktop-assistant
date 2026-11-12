@@ -464,6 +464,7 @@ EN: dict[str, str] = {
         "%s is over %d characters: keeping only the start (every character costs on every request)"
     ),
     "Sonnet spento, solo Haiku: %s": "Sonnet off, Haiku only: %s",
+    "Ipotesi di Claude spente: %s": "Claude guesses off: %s",
     "Haiku propone Sonnet: chiedo conferma": "Haiku proposes Sonnet: asking first",
     "Sonnet chiesto per una storia: risponde Haiku": "Sonnet asked for a story: Haiku answers",
     "Sonnet approvato": "Sonnet approved",

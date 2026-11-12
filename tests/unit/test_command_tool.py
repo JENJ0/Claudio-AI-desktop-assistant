@@ -559,6 +559,41 @@ def test_the_clock_reaches_the_brain_through_build_responder(tmp_path: Path) -> 
         brain.tools.close()
 
 
+def guess_responder(tmp_path: Path, **guess: object) -> LocalResponder:
+    settings = load_settings()
+    return build_responder(
+        settings.model_copy(
+            update={
+                "cost": settings.cost.model_copy(update={"db_file": tmp_path / "spend.db"}),
+                "memory": settings.memory.model_copy(update={"enabled": False}),
+                "guess": settings.guess.model_copy(update={"enabled": True, **guess}),
+            }
+        ),
+        Recorder().ctx(),
+    )
+
+
+def test_build_responder_keeps_the_guess_with_its_price(tmp_path: Path) -> None:
+    responder = guess_responder(tmp_path)
+    try:
+        assert responder.fallback_guess is not None
+    finally:
+        responder.fallback.__self__.tools.close()  # type: ignore[union-attr]
+
+
+def test_build_responder_drops_the_guess_without_its_price(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Without a price `Guesser._record` would not count the spend: no guess at all."""
+    with caplog.at_level("ERROR"):
+        responder = guess_responder(tmp_path, model="claude-nope")
+    try:
+        assert responder.fallback_guess is None
+        assert any("claude-nope" in r.getMessage() for r in caplog.records)
+    finally:
+        responder.fallback.__self__.tools.close()  # type: ignore[union-attr]
+
+
 # --- Fix round 0: the name rule lives in the responder, for Claude's question too -------
 
 
