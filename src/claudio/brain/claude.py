@@ -1068,7 +1068,7 @@ class ClaudeBrain:
         return messages
 
     def _tag(self, hearing: Hearing | None = None) -> str:
-        """[Thu 2026-10-23 17:15] with the time: after the cached prefix, so the time changes
+        """[Fri 2026-10-23 17:15] with the time: after the cached prefix, so the time changes
         nothing that is cached. When Whisper was unsure: [... | unsure: "apri la cartella
         Tesi" / "apri la cartella tesi?"] (~10-25 tokens, only then). No field, no tag: ""."""
         fields: list[str] = []

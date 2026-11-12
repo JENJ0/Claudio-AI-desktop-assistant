@@ -90,7 +90,7 @@ def _line_time(line: bytes) -> float | None:
         if isinstance(ts, str):
             return datetime.fromisoformat(ts).astimezone(UTC).timestamp()
         return float(ts)
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, OSError, OverflowError):
         return None
 
 
@@ -173,7 +173,6 @@ def _details(row: dict[str, Any]) -> list[str]:
         "barge_in",
         "wake_check",
         "closed_list_from",
-        "retried_from",
         "recovered_from",
     ):
         if row.get(key):

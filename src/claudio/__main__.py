@@ -816,8 +816,7 @@ async def announce_ready(
 
 
 async def serve_inbox(assistant: Any, chat: Any, settings: Settings) -> None:
-    """Answer what is written in the chat window (`claudio --ui`), one message at a time.
-    """
+    """Answer what is written in the chat window (`claudio --ui`), one message at a time."""
     while True:
         try:
             pending = await asyncio.to_thread(chat.take_pending, settings.chat.max_age_s)
@@ -847,9 +846,12 @@ def main(argv: list[str] | None = None) -> int:
     logs_dir = settings.resolve(settings.logs_dir)
     log_name = "chat-window.log.jsonl" if args.ui else "claudio.log.jsonl"
     # Before setup_logging: Windows will not replace a file our own handler holds open.
-    trimmed = drop_old_lines(
-        logs_dir / log_name, time.time() - settings.logging.retention_days * 86400
-    )
+    # Only the real run and the chat window: `--check` and `--text` often start while Claudio is on.
+    trimmed = 0
+    if args.ui or not (args.check or args.text):
+        trimmed = drop_old_lines(
+            logs_dir / log_name, time.time() - settings.logging.retention_days * 86400
+        )
     setup_logging(logs_dir, settings.logging.level, log_name)
     if trimmed:
         log.info(

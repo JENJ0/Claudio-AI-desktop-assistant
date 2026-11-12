@@ -159,9 +159,9 @@ class LocalResponder:
             log.exception("Preparazione della risposta non riuscita")
 
     def understands(self, text: str, memory: bool = True) -> bool:
-        """A local command matches `text` (the assistant retries in Italian when not), or it
-        is a memory request: no closed list or guess may turn "dimentica Anna" into another
-        command, and it is a request also in the conversation window. memory=False: commands
+        """A local command matches `text`, or it is a memory request: no closed
+        list or guess may turn "dimentica Anna" into another command, and it is a request also
+        in the conversation window. memory=False: commands
         only (words said over a reply need the name to be a memory request). While CLAUDIO
         is off only "accenditi" counts: no other command nor memory request is answered."""
         match = self.matcher.match(text)

@@ -467,7 +467,6 @@ SAID_FIELDS = {
     "second_chance",
     "second_chance_from",
     "closed_list_from",
-    "retried_from",
     "continued_from",
     "relisten",
     "barge_in",
@@ -819,6 +818,7 @@ async def test_a_row_heard_while_off_keeps_every_figure(
     (row,) = rows(disk)
     assert row["outcome"] == row["route"] == "off"
     assert row["wake_word"] == "claudio" and row["wake_score"] == 0.9
+    assert "stt_language" not in row  # the field is gone with the English
     for figure in ("stt_ms", "speech_ms", "second_chance_ms", "voice_ms", "speech_dbfs"):
         assert row[figure] is not None, figure
 

@@ -292,8 +292,8 @@ La velocità di Kokoro e Piper si regola con `CLAUDIO_TTS__LENGTH_SCALE`
 
 CLAUDIO può partire da solo 30 s dopo l'accesso a Windows (Utilità di pianificazione, solo il
 tuo utente, senza diritti di amministratore, senza finestra: `pythonw.exe`, log in `logs/`).
-Non si registra niente finché non esegui, dalla cartella del progetto (`install` e
-`uninstall` si possono ripetere):
+Solo `install` lo registra; le altre righe lo controllano o lo annullano. Eseguile dalla
+cartella del progetto (`install` e `uninstall` si possono ripetere):
 
 ```powershell
 uv run python -m claudio.autostart install --dry-run   # solo mostra

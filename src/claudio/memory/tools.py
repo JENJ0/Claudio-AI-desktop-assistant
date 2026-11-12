@@ -123,16 +123,15 @@ class MemoryTools:
 
     def describe(self, name: str, args: Mapping[str, Any]) -> str:
         """What will happen, read in the confirmation question: a memory to keep in full."""
-        say = _SAY
         if name == REMEMBER:
             kind = "rule" if args.get("kind") == "rule" else "fact"
-            return say[kind].format(text=" ".join(str(args.get("text", "")).split()))
+            return _SAY[kind].format(text=" ".join(str(args.get("text", "")).split()))
         ids = set(_ids(args))
         gone = [m for m in self.store.items() if m.id in ids]
         if not gone:
-            return say["forget"].format(text="?")
-        more = say["more"].format(n=len(gone) - 1) if len(gone) > 1 else ""
-        return say["forget"].format(text=_short(gone[0].text)) + more
+            return _SAY["forget"].format(text="?")
+        more = _SAY["more"].format(n=len(gone) - 1) if len(gone) > 1 else ""
+        return _SAY["forget"].format(text=_short(gone[0].text)) + more
 
     def run(self, name: str, args: Mapping[str, Any]) -> str:
         """Do it; the tool result for Claude. Raises MemoryToolError when nothing was done."""
