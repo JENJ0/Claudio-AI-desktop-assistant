@@ -14,8 +14,7 @@ _current = "it"
 EN: dict[str, str] = {
     # __main__
     "Router: %d comandi locali (%s)": "Router: %d local commands (%s)",
-    "TTS: %s (%d Hz)%s%s": "TTS: %s (%d Hz)%s%s",
-    ", effetto {effect}": ", effect {effect}",
+    "TTS: %s (%d Hz)%s": "TTS: %s (%d Hz)%s",
     "STT: %s su %s, lingue %s": "STT: %s on %s, languages %s",
     'Modelli caricati in %.1f s. Di\' "%s" per iniziare (Ctrl+C per uscire).': (
         'Models loaded in %.1f s. Say "%s" to start (Ctrl+C to quit).'
@@ -353,9 +352,6 @@ EN: dict[str, str] = {
     "Budget giornaliero: %d%% speso": "Daily budget: %d%% spent",
     "Costo chiamata %s: %.5f %s": "Call cost %s: %.5f %s",
     # tts
-    "Effetto voce '{name}' sconosciuto (disponibili: {known})": (
-        "Unknown voice effect '{name}' (available: {known})"
-    ),
     "Kokoro: mancano {files} in {folder}. Esegui: uv run python scripts/download_models.py": (
         "Kokoro: {files} missing in {folder}. Run: uv run python scripts/download_models.py"
     ),

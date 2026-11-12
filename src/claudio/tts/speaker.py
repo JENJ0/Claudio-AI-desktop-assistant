@@ -68,15 +68,13 @@ class PiperSynth:
 
 class StreamingSpeaker:
     """Works with any synth exposing synthesize(text) -> int16 array and sample_rate.
-    `voices` are the other languages' synths (a language without one uses `synth`);
-    `effect` (int16 audio, sample rate) -> int16 audio colours every sentence."""
+    `voices` are the other languages' synths (a language without one uses `synth`)."""
 
     def __init__(
         self,
         synth: Any,
         player: AudioPlayer,
         beep_volume: float = 0.25,
-        effect: Callable[[np.ndarray, int], np.ndarray] | None = None,
         voices: Mapping[str, Any] | None = None,
         first_clause_chars: int = 0,
         group_chars: int = 0,
@@ -92,7 +90,6 @@ class StreamingSpeaker:
         self.group_pause_s = group_pause_s  # or once Claude's text stops for this long
         self.voices = dict(voices or {})
         self.player = player
-        self.effect = effect
         self._earcons = make_earcons(player.sample_rate, beep_volume)
         self._cancel = threading.Event()  # set by interrupt(): the reply stops at once
         self._ducked = False  # lowered by duck(): logged when it goes back to full volume
@@ -131,17 +128,16 @@ class StreamingSpeaker:
         synth = self.voice(language)
         audio = synth.synthesize(sentence)
         rate = int(synth.sample_rate)
-        return (self.effect(audio, rate) if self.effect else audio), rate
+        return audio, rate
 
     async def render_stream(
         self, sentence: str, language: str
     ) -> AsyncIterator[tuple[np.ndarray, int]]:
         """The audio of a sentence. A synth with stream() (Jack) is played as it is generated,
-        so the first words start before the sentence is finished; with a voice effect, the
-        sentence is rendered whole, as the effect needs it."""
+        so the first words start before the sentence is finished."""
         synth = self.voice(language)
         stream = getattr(synth, "stream", None)
-        if stream is None or self.effect:
+        if stream is None:
             yield await asyncio.to_thread(self.render, sentence, language)
             return
         chunks = iter(stream(sentence))
@@ -156,9 +152,7 @@ class StreamingSpeaker:
         """The first sentence of a voice is slow: say one now. Jack's worker warms up by
         itself, so its fallback is warmed instead (it speaks if Jack is not there in time)."""
         base = getattr(self.synth, "fallback", self.synth)
-        audio = base.synthesize("Ciao.")
-        if self.effect:
-            self.effect(audio, int(base.sample_rate))
+        base.synthesize("Ciao.")
         for language in self.voices:
             self.render("Hi.", language)
 

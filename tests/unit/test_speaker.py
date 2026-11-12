@@ -89,20 +89,6 @@ def test_earcons_and_resample() -> None:
     assert resample(audio, 22050, 22050) is audio
 
 
-async def test_effect_colours_every_sentence() -> None:
-    seen: list[int] = []
-
-    def effect(audio: np.ndarray, sample_rate: int) -> np.ndarray:
-        seen.append(sample_rate)
-        return audio + 1000
-
-    player = FakePlayer()
-    speaker = StreamingSpeaker(FakeSynth(), player, effect=effect)
-    await speaker.speak(stream("Uno. ", "Due."))
-    assert [n for n, _ in player.played] == [1001, 1002]
-    assert seen == [22050, 22050]
-
-
 async def test_each_language_speaks_with_its_voice() -> None:
     class Voice(FakeSynth):
         def __init__(self, rate: int) -> None:
@@ -156,22 +142,6 @@ def test_a_streaming_voice_is_played_piece_by_piece() -> None:
     assert synth.streamed == ["Prima frase.", "Seconda frase."]
     assert [first for first, _ in player.played] == [1, 2, 3, 1, 2, 3]
     assert synth.closed == 2
-
-
-def test_an_effect_makes_a_streaming_voice_render_whole_sentences() -> None:
-    class Whole(StreamingSynth):
-        def synthesize(self, text: str) -> np.ndarray:
-            return np.full(100, 7, dtype=np.int16)
-
-    synth, player = Whole(), FakePlayer()
-    speaker = StreamingSpeaker(synth, player, effect=lambda audio, rate: audio)
-
-    async def text():
-        yield "Una frase."
-
-    asyncio.run(speaker.speak(text()))
-    assert synth.streamed == []
-    assert [first for first, _ in player.played] == [7]
 
 
 def test_played_lists_each_sentence_once_as_it_starts() -> None:

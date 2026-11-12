@@ -247,8 +247,7 @@ at start and Kokoro speaks; `engine = "kokoro"` skips the attempt.
    (`rvc/Applio/logs/jack/jack_100e_2800s.pth`); other paths: `jack_*` keys in `[tts]`.
 2. Build the worker venv once: `powershell -File scripts\setup_jack_worker.ps1`.
 3. Try it alone: `models\voices\jack\worker\env\Scripts\python.exe scripts\try_jack.py --play`.
-4. Nothing to set: the shipped `config/claudio.toml` already has `engine = "jack"` and
-   `effect = "none"`.
+4. Nothing to set: the shipped `config/claudio.toml` already has `engine = "jack"`.
 5. Pick the pronunciation settings by ear: `uv run python scripts/jack_variants.py` (close
    Claudio first) makes every variant speak the same replies and writes the WAVs plus a
    report (Whisper's word error rate, first audio, longest pause) to `logs/jack-variants/`.
@@ -357,10 +356,8 @@ in `[stt.prompts]`. CLAUDIO's own messages (console, log, `--check`) are Italian
 The voice is Jack (see "Jack's voice"); the fallback is Nicola (Kokoro, male), and Paola (Piper)
 when Kokoro does not load. `CLAUDIO_TTS__ENGINE=kokoro` or `piper` makes one of them the main
 voice (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` for Riccardo with Piper, male and the fastest). English replies use Michael with Kokoro and Ryan (`en_US-ryan-low`) with
-Piper, set in `[tts.voices.en]`, with the same effect. `CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
-Kokoro and Piper (lower = faster; 0.77 = +30%, the shipped value; Jack's is `jack_speed`). The robotic tone is `CLAUDIO_TTS__EFFECT`:
-`none` (default: the clean voice), `ultron_estremo`, `estremo`, `ultron` or `jarvis`. The
-effect costs about 5 ms per sentence.
+Piper, set in `[tts.voices.en]`. `CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
+Kokoro and Piper (lower = faster; 0.77 = +30%, the shipped value; Jack's is `jack_speed`).
 
 ## Start at login
 
