@@ -261,18 +261,6 @@ class Walk:
     similar: list[Found] = field(default_factory=list)
 
 
-def walk_search(
-    terms: Iterable[str],
-    roots: Sequence[Path],
-    kind: str | None,
-    limit: int,
-    budget_s: float,
-) -> list[Found]:
-    """Without the Windows index: walk the roots for names holding every term, within
-    `budget_s` seconds (most recent first)."""
-    return walk(terms, roots, kind, limit, budget_s).found
-
-
 def walk(
     terms: Iterable[str],
     roots: Sequence[Path],

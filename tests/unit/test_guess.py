@@ -1063,7 +1063,7 @@ async def test_an_unsure_answer_to_claudes_question_goes_to_claude(
         texts=("Claudio, che tempo fa?", "Claudio, sono a Roma vicino al Colosseo"),
     )
     claude_says(r, "Dove ti trovi?")  # a plain question: its answer is the next phrase
-    assistant.claude_min_words = 3  # the window lets longer phrases through to Claude
+    assistant.intake.claude_min_words = 3  # the window lets longer phrases through to Claude
     assistant.closed_list = lambda audio, language: ["Claudio, sono a Roma"]
     heard_so_far = []  # the first request is sure, the answer to the question is not
     assistant.stt_segments = lambda: [Segment(0.05, -0.05 if not heard_so_far else -0.65)]

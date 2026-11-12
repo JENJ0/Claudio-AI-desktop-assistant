@@ -298,7 +298,7 @@ class Scene:
             barge_in=self._listener(vad_settings),
         )
         self.wake.assistant = self.assistant
-        self.assistant.claude_min_words = 3
+        self.assistant.intake.claude_min_words = 3
         if continue_s:
             self.assistant.continue_s = continue_s
             self.assistant.intake.continue_incomplete = True

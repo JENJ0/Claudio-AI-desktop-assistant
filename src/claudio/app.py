@@ -331,58 +331,10 @@ class Assistant:
     # The request filter's settings, as attributes of the Assistant.
 
     @property
-    def verify_wake(self) -> bool:
-        """Drop a wake whose transcript has no name at the start and no command."""
-        return self.intake.verify_wake
-
-    @verify_wake.setter
-    def verify_wake(self, value: bool) -> None:
-        self.intake.verify_wake = value
-
-    @property
     def retry_language(self) -> str | None:
         """A request heard in another language that no command understands is transcribed
         again in this one (fast Italian often sounds English). None: never."""
         return self.intake.retry_language
-
-    @property
-    def closed_list_max_words(self) -> int:
-        """Longer requests skip the closed list: a question for Claude (0: no limit)."""
-        return self.intake.closed_list_max_words
-
-    @closed_list_max_words.setter
-    def closed_list_max_words(self, value: int) -> None:
-        self.intake.closed_list_max_words = value
-
-    @property
-    def claude_min_words(self) -> int | None:
-        """In the conversation window a phrase for Claude needs this many words (shorter is
-        the TV or a remark). None: Claude is off, the window keeps only local commands."""
-        return self.intake.claude_min_words
-
-    @claude_min_words.setter
-    def claude_min_words(self, value: int | None) -> None:
-        self.intake.claude_min_words = value
-
-    @property
-    def only_addressed(self) -> bool:
-        """True: in the window only phrases that sound addressed to Claudio go to Claude.
-        False: every phrase of claude_min_words or more is answered (JenJo's choice, 23/10)."""
-        return self.intake.only_addressed
-
-    @only_addressed.setter
-    def only_addressed(self, value: bool) -> None:
-        self.intake.only_addressed = value
-
-    @property
-    def echo_tail_ms(self) -> int:
-        """How long the room and the microphone keep a sound of CLAUDIO's own after it came
-        out of the speakers: nothing listens to it ([conversation] echo_tail_ms)."""
-        return self.own_sound.tail_ms
-
-    @echo_tail_ms.setter
-    def echo_tail_ms(self, value: int) -> None:
-        self.own_sound.tail_ms = value
 
     def _set_state(self, state: State) -> None:
         if state != self.state:
@@ -523,7 +475,7 @@ class Assistant:
         sent a stray "Ciao." to Haiku (26/10, 19:41). Only with verify on, never while off,
         and never on silence: an empty text counts only if the voice meter heard a voice
         (`voiced`; 30/10 14:00:43: a wake on audio too quiet for Whisper, "Nessuna richiesta")."""
-        if not self.verify_wake or name not in self.always_confirm or self.system.off:
+        if not self.intake.verify_wake or name not in self.always_confirm or self.system.off:
             return False
         if clipped_name(text):
             return True

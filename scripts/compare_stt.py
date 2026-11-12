@@ -32,7 +32,7 @@ import gc
 import json
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -89,6 +89,11 @@ def load_requests(audio_dir: Path, log_path: Path, sample_rate: int = 16000) -> 
     return requests
 
 
+def _first_known(candidates: Sequence[str], is_known: Callable[[str], bool]) -> str:
+    """The closed list: the first candidate that is a known command, else the most likely."""
+    return next((c for c in candidates if is_known(c)), candidates[0] if candidates else "")
+
+
 def whisper_engine(
     settings: Settings,
     model: str,
@@ -96,7 +101,7 @@ def whisper_engine(
     matcher: CommandMatcher,
     prompt: str | None = None,
 ) -> Callable[[np.ndarray], str]:
-    from claudio.stt.transcriber import WhisperTranscriber, first_known
+    from claudio.stt.transcriber import WhisperTranscriber
 
     update: dict[str, object] = {"model": model}
     if prompt is not None:  # in place of the first language's prompt
@@ -108,7 +113,7 @@ def whisper_engine(
         print(f"  prompt: {prompt!r}")
     if not closed_list:
         return stt.transcribe
-    return lambda audio: first_known(stt.candidates(audio), lambda t: matcher.match(t) is not None)
+    return lambda audio: _first_known(stt.candidates(audio), lambda t: matcher.match(t) is not None)
 
 
 def parakeet_engine() -> Callable[[np.ndarray], str]:
