@@ -1,5 +1,4 @@
-"""faster-whisper transcription: GPU first, automatic CPU fallback. With several languages
-configured, Whisper first picks which one each request is in."""
+"""faster-whisper transcription: GPU first, automatic CPU fallback. Always in Italian."""
 
 from __future__ import annotations
 
@@ -9,7 +8,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +16,13 @@ import numpy as np
 
 from claudio.config import SttSettings
 from claudio.intake import Segment
-from claudio.router.normalizer import normalize, only_wake_words
+from claudio.router.normalizer import normalize
 from claudio.stt.recovery import NO_FIT, Fit, SecondHearing
 from claudio.system import HIDDEN
 
 log = logging.getLogger(__name__)
+
+WHISPER_LANGUAGE = "it"  # Claudio is Italian only: Whisper never detects the language
 
 # Phrases Whisper invents on silence or noise (normalised form).
 HALLUCINATIONS = (
@@ -121,26 +122,6 @@ def is_hallucination(text: str, prompt: str = "") -> bool:
     return bool(prompt) and is_prompt_echo(text, prompt)
 
 
-def pick_language(
-    probs: Mapping[str, float],
-    languages: Sequence[str],
-    last: str,
-    min_confidence: float,
-    other_confidence: float = 0.0,
-) -> tuple[str, float]:
-    """The most likely of `languages` and its share of their probability; `last` (the language
-    of the previous request) when that share is below `min_confidence`, or below
-    `other_confidence` for a language other than the first: Italian said fast often sounds
-    English to Whisper ("apri la calcolatrice" -> "cue the calculator"). Whisper's guesses
-    outside the list ("es" for Italian said fast) are ignored."""
-    scores = {lang: probs.get(lang, 0.0) for lang in languages}
-    total = sum(scores.values())
-    best = max(scores, key=lambda lang: scores[lang])
-    confidence = scores[best] / total if total > 0 else 0.0
-    needed = min_confidence if best == languages[0] else max(min_confidence, other_confidence)
-    return (best if confidence >= needed else last), confidence
-
-
 class WhisperTranscriber:
     # language -> the names on the PC for the prompt ("Cartelle: Tesi, PSS."); None: none.
     vocabulary: Callable[[str], str] | None = None
@@ -153,19 +134,13 @@ class WhisperTranscriber:
         self.download_root = download_root
         self.device = "cpu"
         self.model_name = settings.fallback_model
-        self.language = settings.languages[0]  # heard in the last audio
-        self.language_confidence = 1.0
-        # What an unsure detection falls back to: the language of the last real request,
-        # never that of the warm-up noise, a lone wake word or a dropped hallucination.
-        self.last_language = settings.languages[0]
+        self.language = WHISPER_LANGUAGE
         self._encoded: tuple[np.ndarray, Any] | None = None
         # Whisper's confidence in each segment of the last request (the noise filter).
         self.last_segments: list[Segment] = []
         self.last_prompt = ""  # the request's real pass, for replaying its WAV
         self._reused = 0  # encoder passes saved, for the tests
         self._model = self._load()
-        self.language, self.language_confidence = settings.languages[0], 1.0
-        self.last_language = settings.languages[0]
 
     def _open(self, name: str, **kwargs: Any) -> Any:
         from faster_whisper import WhisperModel
@@ -214,28 +189,6 @@ class WhisperTranscriber:
         self.transcribe(noise)
         log.debug("STT riscaldato in %.0f ms", (time.perf_counter() - start) * 1000)
 
-    def detect_language(self, audio: np.ndarray) -> str:
-        """Pick the request's language among the configured ones (one: no work at all)."""
-        s = self.settings
-        if len(s.languages) == 1:
-            self.language, self.language_confidence = s.languages[0], 1.0
-            return self.language
-        from faster_whisper.audio import pad_or_trim
-
-        model = self._model
-        features = model.feature_extractor(audio)
-        # The same first window Whisper encodes when transcribing: the output is reused.
-        frames = min(model.feature_extractor.nb_max_frames, features.shape[-1] - 1)
-        segment = pad_or_trim(features[:, :frames])
-        encoded = model.encode(segment)
-        probs = {token[2:-2]: prob for token, prob in model.model.detect_language(encoded)[0]}
-        self.language, self.language_confidence = pick_language(
-            probs, s.languages, self.last_language, s.language_confidence, s.other_confidence
-        )
-        self._encoded = (segment, encoded)
-        log.debug("Lingua: %s (%.2f)", self.language, self.language_confidence)
-        return self.language
-
     def _logged(self, text: str) -> str:
         return HIDDEN if self.hides_text is not None and self.hides_text() else text
 
@@ -243,10 +196,10 @@ class WhisperTranscriber:
         """The names on the PC, then the shipped sentences: Whisper keeps the end of a long
         prompt, and the sentences say how JenJo talks."""
         names = self.vocabulary(language) if self.vocabulary is not None else ""
-        return " ".join(p for p in (names, self.settings.prompt(language)) if p)
+        return " ".join(p for p in (names, self.settings.initial_prompt) if p)
 
     def _encode(self, features: np.ndarray) -> Any:
-        """Whisper's encoder, answering from what detect_language() already encoded."""
+        """Whisper's encoder, answering from what listen_again() already encoded."""
         if self._encoded is not None:
             segment, encoded = self._encoded
             self._encoded = None
@@ -255,29 +208,21 @@ class WhisperTranscriber:
                 return encoded
         return type(self._model).encode(self._model, features)
 
-    def transcribe(
-        self, audio: np.ndarray, *, quick: bool = False, language: str | None = None
-    ) -> str:
+    def transcribe(self, audio: np.ndarray, *, quick: bool = False) -> str:
         """`quick`: the wake word's second chance, or a phrase said over the reply. A short
         look (QUICK_NEW_TOKENS) that leaves alone what the next request is judged on (its
-        segments, the language kept for an unsure one). Its prompt is the shipped sentences,
+        segments). Its prompt is the shipped sentences,
         without the names on the PC (noise must not become a folder name): a lone "Claudio"
         with its "C" cut by the headset's gate came out "Grazie." without a prompt and
         "Claudio" with it (30/10: 11 of 11 against 6 of 11, no name in 90 phrases without
-        one); the voice meter keeps silence and clicks from Whisper. `language`: no
-        detection, transcribe in that one (the retry of a request not understood in the
-        language Whisper guessed)."""
+        one); the voice meter keeps silence and clicks from Whisper."""
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             if not quick:
                 self.last_segments, self.last_prompt = [], ""
             return ""  # silence: Whisper would invent something ("Buon appetito!")
         audio = audio.astype(np.float32, copy=False)
-        if language is None:
-            language = self.detect_language(audio)
-        else:
-            self.language, self.language_confidence = language, 1.0
-        prompt = self.settings.prompt(language) if quick else self.prompt(language)
-        text, kept = self._decode(audio, language, prompt, quick)
+        prompt = self.settings.initial_prompt if quick else self.prompt(WHISPER_LANGUAGE)
+        text, kept = self._decode(audio, prompt, quick)
         if text and prompt and is_prompt_echo(text, prompt):
             # Whisper repeats its prompt on unclear audio, but "alza il volume" is also a
             # request: asked again without the prompt, Whisper says what was really there.
@@ -286,19 +231,15 @@ class WhisperTranscriber:
                 self._logged(text),
             )
             prompt = ""  # the pass that produced the text
-            text, kept = self._decode(audio, language, prompt, quick)
+            text, kept = self._decode(audio, prompt, quick)
         if not quick:  # the second chance must not overwrite the request's own figures
             self.last_segments, self.last_prompt = kept, prompt
         if text and is_hallucination(text):
             log.info("Trascrizione scartata (allucinazione nota): %r", self._logged(text))
             return ""
-        if text and not quick and not only_wake_words(text):
-            self.last_language = language
         return text
 
-    def _decode(
-        self, audio: np.ndarray, language: str, prompt: str, quick: bool
-    ) -> tuple[str, list[Segment]]:
+    def _decode(self, audio: np.ndarray, prompt: str, quick: bool) -> tuple[str, list[Segment]]:
         """One Whisper pass: the text of the segments that are not silence or a loop, and
         Whisper's confidence in each."""
         s = self.settings
@@ -308,7 +249,7 @@ class WhisperTranscriber:
         try:
             segments, _info = self._model.transcribe(
                 audio,
-                language=language,
+                language=WHISPER_LANGUAGE,
                 beam_size=s.beam_size,
                 initial_prompt=prompt or None,
                 vad_filter=False,  # Silero already did it upstream
@@ -339,9 +280,7 @@ class WhisperTranscriber:
             self._encoded = None
         return " ".join(p for p in parts if p).strip(), kept
 
-    def candidates(
-        self, audio: np.ndarray, n: int = CANDIDATES, *, language: str | None = None
-    ) -> list[str]:
+    def candidates(self, audio: np.ndarray, n: int = CANDIDATES) -> list[str]:
         """The `n` best transcriptions of one beam search, most likely first: the "closed
         list" picks the first that is a known command ("apri la calcolatrice" may be only the
         third guess when said fast). Same prompt and filters as transcribe(); at most 30 s."""
@@ -351,11 +290,13 @@ class WhisperTranscriber:
         if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) < MIN_RMS:
             return []
         audio = audio.astype(np.float32, copy=False)
-        language = language or self.detect_language(audio)
         model = self._model
-        prompt_text = self.prompt(language)
+        prompt_text = self.prompt(WHISPER_LANGUAGE)
         tokenizer = Tokenizer(
-            model.hf_tokenizer, model.model.is_multilingual, task="transcribe", language=language
+            model.hf_tokenizer,
+            model.model.is_multilingual,
+            task="transcribe",
+            language=WHISPER_LANGUAGE,
         )
         previous = tokenizer.encode(" " + prompt_text.strip()) if prompt_text else []
         prompt = model.get_prompt(tokenizer, previous, without_timestamps=True)
@@ -376,9 +317,10 @@ class WhisperTranscriber:
         return texts
 
     def listen_again(self, audio: np.ndarray, prompt: str, language: str) -> SecondHearing:
+        # `language` is ignored (always Italian): it goes with the language parameter, later.
         """One more transcription of `audio` with `prompt` in place of the usual one, and the
         scorer of any text on the same encoder pass (the command recovery, stt/recovery.py).
-        The request's own figures (last_segments, last_language) stay as they are. No check
+        The request's own figures (last_segments) stay as they are. No check
         for a piece of the prompt: its phrases are what may have been said."""
         if not audible(audio):
             return SecondHearing("", lambda texts: [NO_FIT] * len(texts))
@@ -386,11 +328,11 @@ class WhisperTranscriber:
         window = self._window(audio)
         encoded = type(self._model).encode(self._model, window)
         self._encoded = (window, encoded)  # _decode() uses it instead of encoding again
-        text, _ = self._decode(audio, language, prompt, quick=False)
+        text, _ = self._decode(audio, prompt, quick=False)
         if text and is_hallucination(text):
             log.info("Seconda trascrizione scartata (allucinazione nota): %r", self._logged(text))
             text = ""
-        return SecondHearing(text, functools.partial(self._fit, encoded, language))
+        return SecondHearing(text, functools.partial(self._fit, encoded))
 
     def _window(self, audio: np.ndarray) -> np.ndarray:
         """The first 30 s of log-Mel as transcribe() encodes them (its last frame dropped,
@@ -401,13 +343,16 @@ class WhisperTranscriber:
         features = extractor(audio)
         return pad_or_trim(features[:, : min(extractor.nb_max_frames, features.shape[-1] - 1)])
 
-    def _fit(self, encoded: Any, language: str, texts: Sequence[str]) -> list[Fit]:
+    def _fit(self, encoded: Any, texts: Sequence[str]) -> list[Fit]:
         """How likely Whisper finds each text on the encoded audio with no prompt."""
         from faster_whisper.tokenizer import Tokenizer
 
         model = self._model
         tokenizer = Tokenizer(
-            model.hf_tokenizer, model.model.is_multilingual, task="transcribe", language=language
+            model.hf_tokenizer,
+            model.model.is_multilingual,
+            task="transcribe",
+            language=WHISPER_LANGUAGE,
         )
         start = [*tokenizer.sot_sequence, tokenizer.no_timestamps]
         return [self._forced(encoded, start, tokenizer, text) for text in texts]

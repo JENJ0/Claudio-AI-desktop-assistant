@@ -99,7 +99,7 @@ def test_frase_is_turbo_with_the_natural_prompt(
 def test_the_natural_prompt_is_the_shipped_one() -> None:
     from claudio.config import DEFAULT_CONFIG, load_settings
 
-    assert load_settings(DEFAULT_CONFIG).stt.prompts["it"] == cs.NATURAL_PROMPT
+    assert load_settings(DEFAULT_CONFIG).stt.initial_prompt == cs.NATURAL_PROMPT
 
 
 @pytest.mark.parametrize(

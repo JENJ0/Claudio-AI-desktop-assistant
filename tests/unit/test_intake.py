@@ -322,14 +322,6 @@ def test_closed_list_skips_questions_and_long_phrases() -> None:
     assert not f.wants_closed_list("Hey Claudio", "it", r)
 
 
-def test_retry_only_in_another_language() -> None:
-    f, r = RequestFilter(retry_language="it"), Commands()
-    assert f.wants_retry("cue the calculator", "en", r)
-    assert not f.wants_retry("cue the calculator", "it", r)
-    assert not f.wants_retry("open chrome", "en", r)
-    assert not RequestFilter().wants_retry("cue the calculator", "en", r)
-
-
 # -- the short yes (level 2) --
 
 

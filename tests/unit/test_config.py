@@ -80,10 +80,8 @@ def test_resolve_relative_to_project_root() -> None:
     assert s.resolve(Path("models")).is_absolute()
 
 
-def test_languages_voices_and_replies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_languages_voices_and_replies(tmp_path: Path) -> None:
     s = load_settings(DEFAULT_CONFIG)
-    assert s.stt.languages == ["it"]  # Italian only for now (JenJo)
-    assert "Ehi Claudio" in s.stt.prompt("it") and "Open Chrome" in s.stt.prompt("en")
     assert s.tts.piper_voice_for("en") == "en_US-ryan-low"
     assert s.tts.piper_voice_for("it") == s.tts.voice == s.tts.piper_voice_for("de")
     assert s.tts.kokoro_voice_for("en") == "am_michael"
@@ -92,10 +90,6 @@ def test_languages_voices_and_replies(tmp_path: Path, monkeypatch: pytest.Monkey
     f.write_text('[router]\nunknown_reply = "Non lo so."\n', encoding="utf-8")
     replies = load_settings(f).router.unknown_reply
     assert replies["it"] == "Non lo so." and replies["en"] == "I can't do that yet."
-    monkeypatch.setenv("CLAUDIO_STT__LANGUAGES", '["en"]')
-    assert load_settings(f).stt.languages == ["en"]
-    monkeypatch.setenv("CLAUDIO_STT__LANGUAGE", "it")  # one fixed language wins
-    assert load_settings(f).stt.languages == ["it"]
 
 
 def test_plain_values_in_env_still_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,13 +98,9 @@ def test_plain_values_in_env_still_work(tmp_path: Path, monkeypatch: pytest.Monk
     f.write_text("", encoding="utf-8")
     monkeypatch.setenv("CLAUDIO_ROUTER__UNKNOWN_REPLY", "Non lo so fare, scusa.")
     monkeypatch.setenv("CLAUDIO_ROUTER__ERROR_REPLY", '{"it": "Ops.", "en": "Oops."}')
-    monkeypatch.setenv("CLAUDIO_STT__LANGUAGES", "it, en")
     s = load_settings(f)
     assert s.router.unknown_reply == {"it": "Non lo so fare, scusa.", "en": "I can't do that yet."}
     assert s.router.error_reply == {"it": "Ops.", "en": "Oops."}
-    assert s.stt.languages == ["it", "en"]
-    monkeypatch.setenv("CLAUDIO_STT__LANGUAGES", "en")
-    assert load_settings(f).stt.languages == ["en"]
 
 
 def test_unreadable_env_value_has_clear_message(
@@ -118,7 +108,7 @@ def test_unreadable_env_value_has_clear_message(
 ) -> None:
     f = tmp_path / "c.toml"
     f.write_text("", encoding="utf-8")
-    monkeypatch.setenv("CLAUDIO_STT__PROMPTS", "non è JSON")
+    monkeypatch.setenv("CLAUDIO_STT__VOCABULARY_WORDS", "non è JSON")
     with pytest.raises(ConfigError, match="valori non validi"):
         load_settings(f)
 
@@ -126,8 +116,16 @@ def test_unreadable_env_value_has_clear_message(
 def test_initial_prompt_from_env_replaces_the_shipped_one(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLAUDIO_STT__INITIAL_PROMPT", "Hey Claudio, apri Spotify.")
     s = load_settings(DEFAULT_CONFIG)
-    assert s.stt.prompt("it") == "Hey Claudio, apri Spotify."
-    assert "Open Chrome" in s.stt.prompt("en")
+    assert s.stt.initial_prompt == "Hey Claudio, apri Spotify."
+
+
+def test_shipped_config_keeps_the_whisper_prompt() -> None:
+    """The prompt moved from [stt.prompts] it to [stt] initial_prompt; an old [stt.prompts]
+    left in a config would be ignored without an error, so the shipped one is pinned here."""
+    assert load_settings(DEFAULT_CONFIG).stt.initial_prompt == (
+        "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. "
+        "Apri Chrome e la cartella Download, poi alza il volume."
+    )
 
 
 def test_kokoro_voices_are_read_from_its_file(tmp_path: Path) -> None:

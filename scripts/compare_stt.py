@@ -14,7 +14,8 @@ Engines:
     large-v3  Whisper large-v3: slower, sometimes more accurate on fast speech
     lista     the "closed list": turbo proposes 5 transcriptions, the first known command wins
     frase     turbo with a natural-sentence prompt (NATURAL_PROMPT, or --prompt) instead of the
-              command list in [stt.prompts]: does it hear "Claudio" and free questions better?
+              command list in [stt] initial_prompt: does it hear "Claudio" and free questions
+              better?
     nomi      turbo with the names on this PC first in the prompt (folders and programs, as
               [stt] vocabulary does live), then the shipped sentences
     parakeet  NVIDIA Parakeet TDT 0.6B v3 (ONNX int8, via onnx-asr): fast, guesses the language
@@ -46,7 +47,7 @@ from claudio.wakeword.verifier import wake_confirmed
 ENGINES = ("turbo", "large-v3", "lista", "frase", "nomi", "parakeet")
 # How JenJo talks to CLAUDIO, written as Whisper would: the prompt is read as the text said just
 # before, so whole sentences bias it less toward commands than a list of them.
-NATURAL_PROMPT = (  # config/claudio.toml [stt.prompts] it, the one CLAUDIO uses
+NATURAL_PROMPT = (  # config/claudio.toml [stt] initial_prompt, the one CLAUDIO uses
     "Ehi Claudio, che ore sono? Claudio, raccontami una storia breve. "
     "Apri Chrome e la cartella Download, poi alza il volume."
 )
@@ -140,9 +141,8 @@ def build_engine(
 
         vocabulary = build_vocabulary(settings)
         vocabulary.read_now()  # now, not in the background: the first request needs it
-        language = settings.stt.languages[0]
-        names = vocabulary.text(language)
-        prompt = " ".join(p for p in (names, settings.stt.prompt(language)) if p)
+        names = vocabulary.text("it")
+        prompt = " ".join(p for p in (names, settings.stt.initial_prompt) if p)
         return whisper_engine(settings, "large-v3-turbo", False, matcher, prompt)
     model = "large-v3" if name == "large-v3" else "large-v3-turbo"
     return whisper_engine(

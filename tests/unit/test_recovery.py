@@ -275,9 +275,8 @@ def forced_stt():
     from claudio.stt.transcriber import WhisperTranscriber
 
     stt = WhisperTranscriber.__new__(WhisperTranscriber)
-    stt.settings = SttSettings(languages=["it"])
-    stt.language, stt.language_confidence, stt._encoded, stt._reused = "it", 1.0, None, 0
-    stt.last_language, stt.last_segments = "it", []
+    stt.settings = SttSettings()
+    stt.language, stt._encoded, stt._reused, stt.last_segments = "it", None, 0, []
     stt._model = ForcedModel()
     return stt
 
@@ -289,7 +288,7 @@ def test_forced_scores_count_the_end_of_the_text_over_the_vocabulary_only() -> N
     stt = forced_stt()
     size = stt._model.hf_tokenizer.get_vocab_size()
     each = 2.0 - np.log(np.exp(2.0) + size - 1)  # log-softmax of the favoured piece
-    fits = stt._fit("encoded", "it", ["chiudi la chat", "  "])
+    fits = stt._fit("encoded", ["chiudi la chat", "  "])
     assert fits[0].total == pytest.approx(4 * each) and fits[0].mean == pytest.approx(each)
     assert fits[1] == NO_FIT  # nothing to score, no call
     ((features, prompt, kwargs),) = stt._model.model.calls
@@ -298,7 +297,7 @@ def test_forced_scores_count_the_end_of_the_text_over_the_vocabulary_only() -> N
     assert prompt[4:] == [hf.token_to_id(w) for w in ("chiudi", "la", "chat")]
     assert kwargs["max_length"] == 9 and kwargs["return_logits_vocab"] is True
     # One piece ("No"): ctranslate2 needs 2 * 1 + 3 to give both steps (measured on the GPU).
-    (lone,) = stt._fit("encoded", "it", ["grazie"])
+    (lone,) = stt._fit("encoded", ["grazie"])
     assert lone.total == pytest.approx(2 * each)
     assert stt._model.model.calls[-1][2]["max_length"] == 5
 
@@ -307,7 +306,7 @@ def test_listen_again_shares_one_encoder_pass(monkeypatch: pytest.MonkeyPatch) -
     stt = forced_stt()
     seen: list[tuple[str, object]] = []
 
-    def decode(audio, language, prompt, quick):
+    def decode(audio, prompt, quick):
         assert stt._encoded is not None  # transcribe() takes this encoding as its own
         seen.append((prompt, stt._encoded[1]))
         return "chiudi la chat", []

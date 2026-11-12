@@ -5,7 +5,7 @@
 Assistente vocale per Windows: wake word, trascrizione, comandi e voce girano **sul PC**, gratis.
 A quello che nessun comando locale capisce risponde Claude (API Anthropic: Sonnet 5.5 come modello
 principale, in prova; Haiku 5.5 per indovinare i comandi capiti male), con un budget giornaliero.
-Capisce e parla italiano; l'inglese è un'opzione (`[stt] languages`).
+Capisce e parla italiano.
 
 ```
 Microfono ─► openWakeWord ("Hey Claudio", "Claudio") ─► bip
@@ -91,11 +91,9 @@ possibilità di sentire il nome (vedi `wakeword.second_chance`).
 | "ripeti", "non ho capito" | ripete l'ultima risposta |
 | "basta", "stop" | chiude la conversazione; detto mentre Claudio parla, lo interrompe |
 
-Con `[stt] languages = ["it", "en"]` (la configurazione di serie ha solo l'italiano) ogni comando
-funziona anche in inglese: "open Chrome", "open my downloads", "turn up the volume by 10", "mute",
-"what time is it", "what day is it", "go to sleep", "wake up", "shut down". Per ogni richiesta
-Whisper decide allora se è italiano o inglese, e Claudio risponde in quella lingua con una voce
-inglese.
+Whisper ascolta solo in italiano, quindi le frasi inglesi ancora in
+[config/commands.toml](config/commands.toml) ("open Chrome", "mute"...) in pratica arrivano solo
+dal testo scritto nella finestra della chat; si stanno togliendo.
 
 Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice
 (`phrases_en` e `reply_en` sono quelle inglesi). Tutte le altre richieste vanno a Claude; con
@@ -283,16 +281,9 @@ al giorno dopo, mentre i comandi locali continuano a funzionare.
 
 Se la GPU non è utilizzabile, Claudio passa da solo a Whisper `small` su CPU e lo scrive nel log.
 
-Lingue: di serie `[stt] languages = ["it"]`, solo italiano; con `["it", "en"]` Whisper sceglie
-tra le due. Il riconoscimento
-riusa il passaggio dell'encoder della trascrizione, quindi non costa quasi nulla; quando Whisper è
-incerto (sotto `language_confidence`, 0.6; per l'inglese `other_confidence`, 0.9, perché l'italiano
-veloce a Whisper sembra spesso inglese) Claudio tiene la lingua della richiesta precedente. Una
-richiesta sentita come inglese che nessun comando capisce viene ritrascritta in italiano (circa
-0,2 s, solo in quel caso): "cue the calculator" diventa "apri la calcolatrice".
-`retry_in_first_language = false` lo disattiva. Con
-una lingua sola, come di serie, il riconoscimento non c'è proprio. Il prompt di
-Whisper è per lingua, in `[stt.prompts]`.
+Lingua: Whisper trascrive sempre in italiano: non c'è riconoscimento della lingua né una seconda
+trascrizione in un'altra lingua. Il suo prompt, le frasi che legge come le parole dette un attimo
+prima, è `[stt] initial_prompt`.
 
 La voce è Jack (Qwen3-TTS, in un processo separato sulla GPU). Il suo modello addestrato non è nel
 repo: se manca, Claudio lo dice all'avvio e parla Nicola (Kokoro, maschile), o Paola (Piper) se

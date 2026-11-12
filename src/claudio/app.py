@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import functools
 import logging
 import time
 from collections import deque
@@ -175,7 +174,6 @@ class Assistant:
         level: LevelControl | None = None,
         system: SystemControl | None = None,
         second_chance: Callable[[np.ndarray], str] | None = None,
-        retry_language: str | None = None,
         conversation_s: float = 0.0,
         barge_in: BargeIn | None = None,
         verify_wake: bool = False,
@@ -232,7 +230,6 @@ class Assistant:
             claude_min_words=claude_min_words,
             only_addressed=only_addressed,
             closed_list_max_words=closed_list_max_words,
-            retry_language=retry_language,
             noise=noise,
             continue_incomplete=continue_s > 0,
         )
@@ -327,12 +324,6 @@ class Assistant:
         self._beeps: set[asyncio.Task[None]] = set()
         # Finished interactions (for tests/benchmarks). Bounded: always-on runs last for weeks.
         self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_MAX)
-
-    @property
-    def retry_language(self) -> str | None:
-        """A request heard in another language that no command understands is transcribed
-        again in this one (fast Italian often sounds English). None: never."""
-        return self.intake.retry_language
 
     def _set_state(self, state: State) -> None:
         if state != self.state:
@@ -830,19 +821,16 @@ class Assistant:
                 text = await asyncio.to_thread(self.transcriber.transcribe, audio)
                 heard = self.transcriber.language
                 inter.whisper_prompt = getattr(self.transcriber, "last_prompt", "")
-                # Whisper's confidence in the first pass: a retry only replaces it when
-                # understood.
                 segments = list(self.stt_segments()) if self.stt_segments is not None else []
-                # Off, the only command understood is "accenditi": the retry and the
-                # closed list look for that one (30/10: "Dai, accenditi." was the second
-                # transcription of an attempt dropped as "Grazie a te.").
-                text, heard = await self._retry(audio, text, heard, inter)
+                # Off, the only command understood is "accenditi": the closed list looks
+                # for that one (30/10: "Dai, accenditi." was the second transcription of an
+                # attempt dropped as "Grazie a te.").
                 text = await self._closed_list(audio, text, heard, inter)
         inter.mark("stt_done")
         inter.info["text"] = text
         inter.info["stt_language"] = heard
         log.info("Trascritto (%s): %r", heard, self._kept(text))
-        if "retried_from" in inter.info or "closed_list_from" in inter.info:
+        if "closed_list_from" in inter.info:
             segments = []  # a known command now: the first pass's doubts no longer apply
         return text, heard, segments
 
@@ -1645,32 +1633,6 @@ class Assistant:
             if self.state is not State.LISTENING:
                 break
             self._on_listen(frame)
-
-    async def _retry(
-        self, audio: np.ndarray, text: str, heard: str, inter: Interaction
-    ) -> tuple[str, str]:
-        """`text` again in retry_language when it was heard in another one and no command
-        understands it; the first transcription when the retry is not understood either."""
-        first = self.retry_language
-        understands = self.responder.understands
-        if first is None or not self.intake.wants_retry(text, heard, self.responder):
-            return text, heard
-        start = self.clock()
-        try:
-            again = await asyncio.to_thread(
-                functools.partial(self.transcriber.transcribe, audio, language=first)
-            )
-        except Exception:
-            log.exception("Ripetizione in %s non riuscita", first)
-            return text, heard
-        inter.info["retry_ms"] = round((self.clock() - start) * 1000)
-        if again and understands(again, first):
-            log.info("Riprovato in %s: %r -> %r", first, self._kept(text), again)
-            inter.whisper_prompt = getattr(self.transcriber, "last_prompt", "")
-            inter.info["retried_from"] = self._kept(text)
-            return again, first
-        log.info("Riprovato in %s, non capito neanche così: %r", first, self._kept(again))
-        return text, heard
 
     def _relisten(self, inter: Interaction, segments: Sequence[Segment]) -> None:
         """The phrase was only the wake word (said again, or its tail after an early detection):

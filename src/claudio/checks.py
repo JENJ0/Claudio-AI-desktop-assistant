@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from claudio.config import Settings, SttSettings
+from claudio.config import DEFAULT_LANGUAGE, Settings, SttSettings
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ def check_jack(settings: Settings, models: Path, report: Callable[[bool, str], N
 
 def check_voices(settings: Settings, models: Path) -> None:
     """The voice of each language Whisper may hear: a missing one only gets a warning."""
-    for language in settings.stt.languages:
+    for language in (DEFAULT_LANGUAGE,):  # shortcut: no other language; Task 8 removes this loop
         if settings.tts.engine in ("kokoro", "jack"):  # one model, a voice per language inside it
             voice = settings.tts.kokoro_voice_for(language)
             found = kokoro_voices(models / "kokoro")
