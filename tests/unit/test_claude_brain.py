@@ -463,7 +463,7 @@ def test_addressed_to_claudio(text: str, addressed: bool) -> None:
 def with_claude(assistant: Any, r: LocalResponder, b: ClaudeBrain) -> None:
     r.fallback = b.ask
     r.fallback_info = lambda: b.last_call
-    assistant.claude_min_words = 3
+    assistant.intake.claude_min_words = 3
 
 
 async def test_conversation_follow_up_goes_to_claude(
@@ -536,7 +536,7 @@ async def test_window_answers_everything_when_asked_to(
         fake_vad, vad_settings, matcher, ["che ore sono", "la chat non funziona", "boh"]
     )
     with_claude(assistant, r, brain(pricing, client))
-    assistant.only_addressed = False
+    assistant.intake.only_addressed = False
     await talk(assistant, make_frames, speaker, requests=3)
     assert len(client.calls) == 1  # "boh" is still too short
     assert [row["outcome"] for row in assistant.history] == ["ok", "ok", "conversation_end"]
@@ -545,12 +545,12 @@ async def test_window_answers_everything_when_asked_to(
 async def test_long_questions_skip_the_closed_list(fake_vad, vad_settings, make_frames) -> None:
     long = "Claudio quanto è distante la Luna dalla Terra"
     assistant, _, _, calls = setup_closed_list(fake_vad, vad_settings, long, ["apri chrome"])
-    assistant.closed_list_max_words = 5
+    assistant.intake.closed_list_max_words = 5
     await run_frames(assistant, request(make_frames))
     assert calls == []
     short = "Claudio a prick roam"
     assistant, speaker, _, calls = setup_closed_list(fake_vad, vad_settings, short, ["apri chrome"])
-    assistant.closed_list_max_words = 5
+    assistant.intake.closed_list_max_words = 5
     await run_frames(assistant, request(make_frames))
     assert calls == ["it"] and speaker.spoken == ["Apro Chrome."]
 
@@ -1405,7 +1405,7 @@ def wired(assistant: Assistant, r: LocalResponder, b: ClaudeBrain) -> None:
     r.fallback_info = lambda: b.last_call
     r.fallback_awaiting = lambda: b.awaiting
     r.fallback_cancel = b.cancel_pending
-    assistant.claude_min_words = 3
+    assistant.intake.claude_min_words = 3
 
 
 def sonnet_calls(client: ScriptedClient) -> int:

@@ -443,11 +443,6 @@ class WhisperTranscriber:
         return Fit(float(picked.sum()), float(picked.mean()))
 
 
-def first_known(candidates: Sequence[str], is_known: Callable[[str], bool]) -> str:
-    """The closed list: the first candidate that is a known command, else the most likely."""
-    return next((c for c in candidates if is_known(c)), candidates[0] if candidates else "")
-
-
 def audible(audio: np.ndarray) -> bool:
     """Louder than MIN_RMS: something to transcribe or to score."""
     return audio.size > 0 and float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) >= MIN_RMS

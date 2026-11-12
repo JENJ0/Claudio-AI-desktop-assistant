@@ -1298,11 +1298,6 @@ async def test_a_request_cancelled_during_its_last_beep_keeps_its_outcome(
     assert assistant.history[0]["outcome"] == "stopped" and assistant.state is State.IDLE
 
 
-@pytest.mark.parametrize("state", list(State))
-def test_states_are_strings(state: State) -> None:
-    assert isinstance(state.value, str)
-
-
 class SystemResponder(FakeResponder):
     """The real system commands on top of the fake router: pause, resume, shut down."""
 
@@ -1617,7 +1612,7 @@ CLAUDE_ROUTE = {
 def after_a_claude_reply(fake_vad, vad_settings, text: str, verify_wake: bool = False):
     """A request that never reaches the router, right after a Claude reply left its route."""
     assistant, *_ = build_continuing(fake_vad, vad_settings, FakeStt(text))
-    assistant.verify_wake = verify_wake
+    assistant.intake.verify_wake = verify_wake
     previous = dict(CLAUDE_ROUTE)
     assistant.responder.last_route = previous
     return assistant, previous

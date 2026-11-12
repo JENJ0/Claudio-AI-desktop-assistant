@@ -5,7 +5,7 @@ The task runs `pythonw.exe -m claudio.supervisor` from the project's virtual env
 for the logged-in user only and without admin rights. The supervisor starts CLAUDIO and
 starts it again after a crash: Task Scheduler's own RestartOnFailure (kept below) only
 covers a program that cannot be started at all. Installing twice replaces the task (/F), so
-the commands are idempotent. scripts/install_autostart.ps1 does the same in PowerShell."""
+the commands are idempotent."""
 
 from __future__ import annotations
 

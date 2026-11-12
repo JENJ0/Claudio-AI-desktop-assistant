@@ -14,7 +14,7 @@ def setup(fake_vad, vad_settings, text: str, candidates: list[str] | None = None
     assistant, _, speaker, _ = build(fake_vad, vad_settings, FakeStt(text), {1})
     responder = Understanding()
     assistant.responder = responder
-    assistant.verify_wake = True
+    assistant.intake.verify_wake = True
     calls: list[str] = []
     if candidates is not None:
 
@@ -52,7 +52,7 @@ async def test_command_without_the_name_is_answered(fake_vad, vad_settings, make
 
 async def test_verifier_off_answers_everything(fake_vad, vad_settings, make_frames) -> None:
     assistant, speaker, _, _ = setup(fake_vad, vad_settings, "Hey, ciao, come stai?")
-    assistant.verify_wake = False
+    assistant.intake.verify_wake = False
     await run_frames(assistant, request(make_frames))
     assert speaker.spoken == ["Questo non lo so ancora fare."]
 

@@ -249,7 +249,7 @@ async def test_the_whole_assistant_stops_in_silence_with_no_call_to_claude(
     fallback, asked = brain()
     assistant, speaker, _, r = build(fake_vad, vad_settings, matcher, [text])
     r.fallback = fallback
-    assistant.verify_wake = True
+    assistant.intake.verify_wake = True
     await talk(assistant, make_frames, speaker, requests=1)
     assert asked == []
     assert speaker.spoken == [""] and speaker.beeps == ["wake", "cancel"]  # as "basta": no "error"
@@ -1137,7 +1137,7 @@ async def test_the_window_starts_deaf_but_still_hears_the_next_request(
     assistant, speaker, _, _ = build(
         fake_vad, vad_settings, matcher, ["che ore sono", "che giorno è oggi"]
     )
-    assistant.echo_tail_ms = 300
+    assistant.own_sound.tail_ms = 300
     await talk(assistant, make_frames, speaker, requests=2)
     assert len(speaker.spoken) == 2
     assert [r["outcome"] for r in assistant.history][:2] == ["ok", "ok"]
@@ -1179,7 +1179,7 @@ async def test_the_wake_word_does_not_hear_claudios_own_sounds(
 ) -> None:
     """JenJo 28/10: the low beep that ends a conversation woke the "claudio" model."""
     assistant, _, _, _ = build(fake_vad, vad_settings, matcher, ["x"])
-    assistant.echo_tail_ms = 400
+    assistant.own_sound.tail_ms = 400
     frame = np.zeros(1280, dtype=np.int16)  # 80 ms
     assistant._beep("cancel")  # a beep is playing
     await assistant.handle_frame(frame)

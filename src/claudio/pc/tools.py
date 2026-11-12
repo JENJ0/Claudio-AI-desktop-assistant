@@ -325,9 +325,7 @@ NAMES = frozenset(LEVELS)
 
 _SAY = {
     "it": {
-        "type_text": 'scrivo "{text}"',
         "type_into": 'scrivo "{text}" in "{window}"',
-        "press_keys": "premo {keys}",
         "press_keys_into": 'premo {keys} in "{window}"',
         "close_window": 'chiudo la finestra "{window}"',
         "move_file": 'sposto "{source}" in "{destination}"',
@@ -337,9 +335,7 @@ _SAY = {
         "active": "attiva",
     },
     "en": {
-        "type_text": 'I\'ll type "{text}"',
         "type_into": 'I\'ll type "{text}" in "{window}"',
-        "press_keys": "I'll press {keys}",
         "press_keys_into": 'I\'ll press {keys} in "{window}"',
         "close_window": 'I\'ll close the window "{window}"',
         "move_file": 'I\'ll move "{source}" to "{destination}"',
@@ -843,9 +839,9 @@ class PcTools:
             return None
         wanted = files.fold(name)
         for kind in ("folder", None):
-            found = files.walk_search(
+            found = files.walk(
                 terms, self.policy.search_roots(), kind, 5, self.settings.search_timeout_s
-            )
+            ).found
             for f in found:
                 stem = f.path.name if f.path.is_dir() else f.path.stem
                 same = wanted in (files.fold(f.path.name), files.fold(stem))

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 WORDS = ["apri", "la", "calcolatrice", "cue", "the", "calculator", "comandi", "grazie", "a",
          "tutti", "per", "la", "visione"]  # fmt: skip
@@ -88,17 +87,3 @@ def test_candidates_drop_hallucinations_and_silence() -> None:
     stt = make_stt(["grazie per la visione", "apri la calcolatrice"])
     assert stt.candidates(SPEECH) == ["apri la calcolatrice"]
     assert stt.candidates(np.zeros(16000, np.float32)) == []
-
-
-@pytest.mark.parametrize(
-    ("candidates", "expected"),
-    [
-        (["cue the calculator", "apri la calcolatrice"], "apri la calcolatrice"),
-        (["cue the calculator", "grazie a tutti"], "cue the calculator"),  # none known: the best
-        ([], ""),
-    ],
-)
-def test_first_known(candidates: list[str], expected: str) -> None:
-    from claudio.stt.transcriber import first_known
-
-    assert first_known(candidates, lambda text: "apri" in text) == expected

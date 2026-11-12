@@ -366,13 +366,11 @@ effect costs about 5 ms per sentence.
 
 CLAUDIO can start by itself 30 s after you log in to Windows (Task Scheduler, your user only,
 no admin rights, no console window: `pythonw.exe`, logs in `logs/`). Nothing is registered
-until you run one of these from the project folder (each is safe to run twice):
+until you run this from the project folder (`install` is safe to run twice; `--dry-run` only
+shows what it would do):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -DryRun   # show only
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1           # install
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
-uv run python -m claudio.autostart install|uninstall|status [--dry-run]       # the same in Python
+uv run python -m claudio.autostart install|uninstall|status [--dry-run]
 ```
 
 The task runs `python -m claudio.supervisor`, which starts CLAUDIO and starts it again after a

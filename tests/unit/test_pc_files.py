@@ -76,13 +76,13 @@ def test_search_terms_are_cleaned() -> None:
         files.search_terms("'%;")
 
 
-def test_walk_search(policy: PathPolicy, home: Path) -> None:
+def test_walk_found(policy: PathPolicy, home: Path) -> None:
     (home / "AppData").mkdir()
     (home / "AppData" / "fattura cache.pdf").write_text("x")
-    found = files.walk_search(["FATTURA"], policy.search_roots(), None, 5, 2.0)
+    found = files.walk(["FATTURA"], policy.search_roots(), None, 5, 2.0).found
     assert [f.path.name for f in found] == ["fattura luce.pdf"]  # AppData skipped
-    assert files.walk_search(["fattura"], policy.search_roots(), "picture", 5, 2.0) == []
-    folders = files.walk_search(["down"], policy.search_roots(), "folder", 5, 2.0)
+    assert files.walk(["fattura"], policy.search_roots(), "picture", 5, 2.0).found == []
+    folders = files.walk(["down"], policy.search_roots(), "folder", 5, 2.0).found
     assert [f.path.name for f in folders] == ["Downloads"]
 
 

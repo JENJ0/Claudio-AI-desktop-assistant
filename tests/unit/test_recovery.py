@@ -484,7 +484,7 @@ async def test_no_second_opinion_on_the_answer_to_claudes_question(
         fake_vad, vad_settings, matcher, [question, "Pasta."], whisper
     )
     r.fallback = claude
-    assistant.claude_min_words = 3  # Claude is on: the window answers what is not a command
+    assistant.intake.claude_min_words = 3  # Claude is on: the window answers what is not a command
     await talk(assistant, make_frames, speaker, requests=2)
     assert whisper.prompts == []  # "Pasta." is the answer: no second opinion, no "basta"
     assert [row["outcome"] for row in assistant.history][:2] == ["ok", "ok"]
@@ -507,7 +507,7 @@ async def test_the_answer_to_claudes_question_is_never_stopped_on_a_guess(
     )
     guesser.guess = Guess("basta", 0.6, "stop")
     r.fallback = claude
-    assistant.claude_min_words = 3
+    assistant.intake.claude_min_words = 3
     assistant.intake.noise = NoiseSettings()
     stt = assistant.transcriber
     assistant.stt_segments = lambda: (

@@ -308,12 +308,11 @@ o `jarvis`. L'effetto costa circa 5 ms a frase.
 
 CLAUDIO può partire da solo 30 s dopo l'accesso a Windows (Utilità di pianificazione, solo il
 tuo utente, senza diritti di amministratore, senza finestra: `pythonw.exe`, log in `logs/`).
-Non si registra niente finché non esegui, dalla cartella del progetto:
+Non si registra niente finché non esegui, dalla cartella del progetto (`install` si può
+ripetere; `--dry-run` mostra soltanto cosa farebbe):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -DryRun   # solo mostra
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1           # installa
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
+uv run python -m claudio.autostart install|uninstall|status [--dry-run]
 ```
 
 Il task esegue `python -m claudio.supervisor`, che avvia CLAUDIO e lo riavvia dopo un crash:
