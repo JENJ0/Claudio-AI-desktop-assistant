@@ -297,7 +297,7 @@ DEFINITIONS: list[dict[str, Any]] = [
                 "command": {"type": "string", "description": "The exact PowerShell command."},
                 "purpose": {
                     "type": "string",
-                    "description": "What it does, in a few spoken words in JenJo's language, "
+                    "description": "What it does, in a few spoken Italian words, "
                     "e.g. vedere quali programmi usano più memoria.",
                 },
             },

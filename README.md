@@ -168,7 +168,7 @@ Claudio's character is in `data/CLAUDIO.md`, made at the first start from `confi
 (Handsome Jack from Borderlands: cocky, ironic, helpful). Edit it by hand and restart; updates
 never touch it, and `<!-- notes -->` are not sent. It is read once and goes after the system
 prompt, so it is cached: keep it short (`personality_max_chars = 3000`). Claudio answers in
-Italian unless the request is plainly English or you ask for English.
+Italian only.
 
 ## Memory
 
