@@ -48,7 +48,7 @@ from claudio.brain.prompts import (
     REFUSED,
     system_prompt,
 )
-from claudio.config import ClaudeSettings, PcSettings, in_language
+from claudio.config import ClaudeSettings, PcSettings
 from claudio.cost.pricing import CacheTtl, Usage
 from claudio.cost.tracker import BudgetState, CostTracker
 from claudio.intake import Hearing
@@ -106,8 +106,8 @@ NO_FOCUS_RESULT = (
 )
 WARM_EVERY_S = 15.0  # an idle connection older than this may be closed: open a fresh one
 RTT_FRESH_S = 30.0  # a warm-up's round trip belongs to a request asked this soon after it
-# The bridges, in every language: said aloud, never in the history (Haiku copied them, 05/11).
-_BRIDGES = frozenset(b.strip() for b in (*BRIDGE.values(), *BRIDGE_RUN.values()))
+# The bridges: said aloud, never in the history (Haiku copied them, 05/11).
+_BRIDGES = frozenset(b.strip() for b in (BRIDGE, BRIDGE_RUN))
 # What the history keeps of a reply cut short (read by Claude, never said aloud).
 CUT_NOTE = "[cut off: JenJo interrupted here]"
 CUT_BEFORE_NOTE = "[no answer: JenJo interrupted before it started]"
@@ -386,16 +386,16 @@ class ClaudeBrain:
         if self.client is None:
             log.warning("Claude: chiave API mancante (ANTHROPIC_API_KEY nel file .env)")
             self.last_call = {"claude_error": "no_key"}
-            yield in_language(NO_KEY, language)
+            yield NO_KEY
             return
         status = self.tracker.check()
         if status.state is BudgetState.BLOCKED:
             log.warning("Claude bloccato: budget di oggi finito (%d%%)", status.percent)
             self.last_call = {"claude_error": "budget"}
-            yield in_language(BUDGET_BLOCKED, language)
+            yield BUDGET_BLOCKED
             return
         if status.announce:
-            yield in_language(BUDGET_WARNING, language).format(percent=status.percent) + " "
+            yield BUDGET_WARNING.format(percent=status.percent) + " "
         # aclosing: when "basta" closes this generator, the API stream closes too, at once,
         # and its tokens are recorded now (not whenever the garbage collector gets to it).
         async with contextlib.aclosing(self._answer(text, language)) as stream:
@@ -492,7 +492,7 @@ class ClaudeBrain:
                 turn.complete = True
                 self._remember(turn)
             return
-        question = in_language(OFFER, language)
+        question = OFFER
         if turn is None:
             turn = self._turn = _Turn(messages[-1]["content"])
         turn.asked = question
@@ -636,7 +636,7 @@ class ClaudeBrain:
             if gap:
                 yield gap
         elif self.pc.bridge:
-            yield in_language(BRIDGE, language) + " "  # not in turn.parts: Haiku would copy it
+            yield BRIDGE + " "  # not in turn.parts: Haiku would copy it
         retry = {
             **params,
             "max_tokens": self.pc.retry_max_tokens,
@@ -661,7 +661,7 @@ class ClaudeBrain:
         self.last_call.setdefault("tools", []).extend(f"{n}() not_run_cut" for n in turn.not_run)
         said = ""
         if self.last_call.get("cut_retry") != "error":
-            said = _space(turn) + in_language(NOT_RUN_CUT, language)
+            said = _space(turn) + NOT_RUN_CUT
             turn.parts.append(said)
         turn.complete = True
         self._remember(turn)
@@ -763,7 +763,7 @@ class ClaudeBrain:
         if self.pc.bridge and slow and not said_here:
             # The trailing space ends the sentence: the voice says it now. Not in turn.parts:
             # in the history Haiku copied it (05/11 17:04: "Ci guardo", and no action).
-            return in_language(BRIDGE, language) + " "
+            return BRIDGE + " "
         # The space ends the sentence: it is said while the tools run. Without it
         # the splitter held "Ci guardo, socio." for the next round's text (30/10
         # 14:07: the first word came 2.1 s later, after three calls), and 25/10:
@@ -794,7 +794,7 @@ class ClaudeBrain:
             reply = CANCELLED if answer is Answer.NO else NOT_UNDERSTOOD
             log.info("Conferma %s: azione non eseguita", answer.value, extra={"route": "tool"})
             self._note_tools(action.calls, "refused")
-            said = in_language(reply, action.language)
+            said = reply
             action.turn.parts.append(" " + said)
             action.turn.complete = True
             self._remember(action.turn)
@@ -807,7 +807,7 @@ class ClaudeBrain:
         if self.pc.bridge and any(
             c.name in SLOW_TOOLS and c.id not in action.refused for c in action.calls
         ):
-            yield in_language(BRIDGE_RUN, action.language) + " "
+            yield BRIDGE_RUN + " "
         alone = not action.turn.done and not action.handoff
         try:
             results, own = await self._run_calls(
@@ -853,14 +853,12 @@ class ClaudeBrain:
             if c.id not in action.refused and self.tools.level(c) > LEVEL_SAFE
         ]
         what = await self.tools.describe_calls(asked, action.language)
-        plain = in_language(
-            ASK_LEVEL_3 if action.level >= LEVEL_EXPLICIT else ASK_LEVEL_2, action.language
-        )
+        plain = ASK_LEVEL_3 if action.level >= LEVEL_EXPLICIT else ASK_LEVEL_2
         if not what:
             said = plain
         elif second:
             again = ASK_AGAIN_EXPLICIT if action.level >= LEVEL_EXPLICIT else ASK_AGAIN
-            said = in_language(again, action.language).format(what=what)
+            said = again.format(what=what)
         else:  # a clear answer to a question nobody heard: the question itself
             said = f"{what}. {plain}"
         action.asked_again = action.asked_again or second
@@ -1229,7 +1227,7 @@ class ClaudeBrain:
                 log.error("Claude: chiave API non valida (401)")
                 self.last_call["claude_error"] = "auth"
                 leg.end = StreamEnd.ERROR
-                yield in_language(BAD_KEY, language)
+                yield BAD_KEY
                 return
             # Also timeouts. DecodingError: the body arrived corrupted, the reply is just as lost.
             # OSError: a raw socket error, not wrapped (ssl.SSLError: 5 of 240 calls, A/B of 07/11).
@@ -1252,7 +1250,7 @@ class ClaudeBrain:
                 # (a first round with nothing said or run stores nothing anyway: `_remember`).
                 leg.complete = True
                 yield CUT_SHORT
-                yield _space(leg) + in_language(NETWORK_ERROR, language)
+                yield _space(leg) + NETWORK_ERROR
                 return
             except anthropic.APIStatusError as exc:
                 log.error("Claude errore %s: %s", exc.status_code, exc.message)
@@ -1262,7 +1260,7 @@ class ClaudeBrain:
                 # Also an error event during a reply (an overloaded API): as a lost connection.
                 leg.complete = True
                 yield CUT_SHORT
-                yield _space(leg) + in_language(API_ERROR, language)
+                yield _space(leg) + API_ERROR
                 return
             # JSONDecodeError, UnicodeDecodeError and jiter's errors are ValueErrors.
             except ValueError as exc:
@@ -1274,7 +1272,7 @@ class ClaudeBrain:
                 leg.end = StreamEnd.ERROR
                 leg.complete = True  # as a lost connection: the words and the tools stay
                 yield CUT_SHORT
-                yield _space(leg) + in_language(NETWORK_ERROR, language)
+                yield _space(leg) + NETWORK_ERROR
                 return
             finally:
                 self._last_contact = self.clock()
@@ -1292,7 +1290,7 @@ class ClaudeBrain:
         if end is StreamEnd.REFUSED:
             log.info("Claude ha rifiutato la richiesta")
             if not "".join(leg.parts).strip():
-                yield in_language(REFUSED, language)
+                yield REFUSED
             return
         if end is StreamEnd.CUT_CALL:
             # 17:12:48 on 05/11: a long type_text was cut and Claudio said it had written it.
@@ -1309,7 +1307,7 @@ class ClaudeBrain:
             # so a later "continua" makes sense to Claude.
             log.warning("Claude: risposta tagliata al limite di %d token", params["max_tokens"])
             self.last_call["cut"] = "max_tokens"
-            said = " " + in_language(CUT_AT_LIMIT, language)
+            said = " " + CUT_AT_LIMIT
             leg.parts.append(said)
             yield CUT_SHORT
             yield said
@@ -1666,17 +1664,11 @@ def make_client(api_key: str, timeout_s: float, keepalive_s: float = 60.0) -> An
     )
 
 
-def _normalized(phrases: dict[str, list[str]]) -> dict[str, list[str]]:
-    return {
-        lang: [normalize(p, drop_fillers=False) for p in items if p.strip()]
-        for lang, items in phrases.items()
-    }
+def _normalized(phrases: list[str]) -> list[str]:
+    return [normalize(p, drop_fillers=False) for p in phrases if p.strip()]
 
 
-def _says(text: str, language: str, phrases: dict[str, list[str]]) -> bool:
-    """One of the phrases is in `text`: those of its language first, then the others."""
+def _says(text: str, language: str, phrases: list[str]) -> bool:
+    """One of the phrases is in `text`."""
     said = f" {normalize(text, drop_fillers=False)} "
-    ordered = phrases.get(language, []) + [
-        p for lang, ps in phrases.items() if lang != language for p in ps
-    ]
-    return any(f" {p} " in said for p in ordered)
+    return any(f" {p} " in said for p in phrases)

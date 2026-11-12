@@ -231,7 +231,6 @@ async def test_level_2_asks_only_confermi_by_default(tools: PcTools) -> None:
         "it",
     )
     assert q == "Confermi?"
-    assert await tools.question([call("close_window", window="")], "en") == "Do you confirm?"
 
 
 async def test_level_3_still_says_what_will_run(
@@ -252,8 +251,8 @@ async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
         'Scrivo "ciao" in "YouTube - Google Chrome", '
         'poi premo enter in "YouTube - Google Chrome". Confermi?'
     )
-    q = await verbose.question([call("close_window", window="")], "en")
-    assert q == 'I\'ll close the window "Senza nome - Blocco note". Do you confirm?'
+    q = await verbose.question([call("close_window", window="")], "it")
+    assert q == 'Chiudo la finestra "Senza nome - Blocco note". Confermi?'
     q = await verbose.question(
         [call("move_file", source="~/Downloads/a.pdf", destination="~")], "it"
     )
@@ -1119,7 +1118,7 @@ NOT_RUN_TYPE = "[Claudio did not run: type_text, cut at the token limit]"
 SAID_BEFORE = "Aperto, socio. Ora scrivo il piano. Un attimo."
 OPEN_NOTEPAD = ([], "tool_use", [use("open_app", name="blocco note")])
 CUT_TYPE = ([SAID_BEFORE], "max_tokens", [text(SAID_BEFORE), use("type_text", text="Pia")])
-NOT_RUN_SAID = NOT_RUN_CUT["it"]
+NOT_RUN_SAID = NOT_RUN_CUT
 SCENE = "apri il blocco note e scrivi il piano"
 
 
@@ -1748,7 +1747,7 @@ async def test_a_refused_retry_says_so_and_keeps_the_note(pricing: Pricing, tool
     client = ScriptedClient(OPEN_NOTEPAD, CUT_TYPE, ([], "refusal", []))
     b = acting_brain(pricing, client, tools)
     said = await ask(b, SCENE)
-    assert said.endswith(f"{SAID_BEFORE} {REFUSED['it']}") and NOT_RUN_SAID not in said
+    assert said.endswith(f"{SAID_BEFORE} {REFUSED}") and NOT_RUN_SAID not in said
     assert b.last_call["cut_retry"] == "error"
     assert b._history[-1][1].endswith(f"{NOT_RUN_TYPE} {ACTIONS_NOTE}open_app ok]")
 
@@ -3943,9 +3942,6 @@ async def test_a_typing_question_names_the_window_the_keys_go_to(
     keys_call = call("press_keys", keys=["ctrl+w"])
     assert await tools.question([keys_call], "it") == (
         'Premo control W in "YouTube - Google Chrome". Confermi?'
-    )
-    assert await tools.question([keys_call], "en") == (
-        'I\'ll press control W in "YouTube - Google Chrome". Do you confirm?'
     )
 
 

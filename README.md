@@ -89,9 +89,9 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "ripeti", "non ho capito" | says the last reply again |
 | "basta", "stop", "non parlare" | ends the conversation; said while CLAUDIO speaks, cuts it short; also at the end of a phrase that names Claudio ("No, Claudio, non parlare. Claudio, stop."), with no API call |
 
-The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code
-(`phrases_en` and `reply_en` are the English ones). Every other request goes to Claude; with
-`[claude] enabled = false` it gets "Questo non lo so ancora fare" or "I can't do that yet".
+The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code.
+Every other request goes to Claude; with `[claude] enabled = false` it gets "Questo non lo so
+ancora fare".
 
 Actions have a safety level (`level` in `commands.toml`). Level 1 runs at once. Level 2 asks
 "Confermi?" and CLAUDIO listens for the answer right away, without the wake word: "sì", "ok",
@@ -270,8 +270,8 @@ after the worker started (30 s, Claudio's own loading included; 0 = the fallback
 once). With less than `jack_min_free_vram_mb` (6000 MB) free on the graphics card at start,
 a game for instance, replies do not wait at all: the fallback speaks until Jack is ready, and
 a worker that timed out is tried again once the card has room. When Jack is ready Claudio
-says "Sono pronto" (`[startup] announce_ready`). Kokoro (Piper if Kokoro is missing) is the fallback for English
-and for any sentence the worker cannot speak. If the worker does not start, Claudio says so
+says "Sono pronto" (`[startup] announce_ready`). Kokoro (Piper if Kokoro is missing) is the fallback for any sentence
+the worker cannot speak. If the worker does not start, Claudio says so
 out loud ("La voce di Jack non è partita") and the reason is in
 `console.log` (`Jack non disponibile (...)`). The same happens when Whisper cannot use the GPU.
 
@@ -342,8 +342,8 @@ before, is `[stt] initial_prompt`.
 
 The voice is Jack (see "Jack's voice"); the fallback is Nicola (Kokoro, male), and Paola (Piper)
 when Kokoro does not load. `CLAUDIO_TTS__ENGINE=kokoro` or `piper` makes one of them the main
-voice (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` for Riccardo with Piper, male and the fastest). English replies use Michael with Kokoro and Ryan (`en_US-ryan-low`) with
-Piper, set in `[tts.voices.en]`. `CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
+voice (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` for Riccardo with Piper, male and the fastest).
+`CLAUDIO_TTS__LENGTH_SCALE` sets the speed of
 Kokoro and Piper (lower = faster; 0.77 = +30%, the shipped value; Jack's is `jack_speed`).
 
 ## Start at login

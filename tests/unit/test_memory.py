@@ -285,21 +285,6 @@ def test_memory_requests_are_understood(said: str, action: str, text: str) -> No
 
 
 @pytest.mark.parametrize(
-    ("said", "action", "text"),
-    [
-        ("Remember that my sister is Anna.", "remember", "my sister is Anna."),
-        ("From now on call me boss.", "rule", "call me boss."),
-        ("Forget that my sister is Anna", "forget", "my sister is Anna"),
-        ("What do you remember about my sister?", "recall", "my sister?"),
-        ("Forget it.", "forget_it", "Forget it"),
-        ("forget what I just said", "forget_last", "what I just said"),
-    ],
-)
-def test_english_requests_are_understood(said: str, action: str, text: str) -> None:
-    assert parse(said) == Intent(action, text, "en")  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize(
     "said",
     [
         "ricordati di comprare il latte",  # a reminder: Claude says it cannot set them yet
@@ -351,7 +336,6 @@ def test_remember_reads_it_back(voice: MemoryVoice) -> None:
     assert [m.kind for m in voice.store.items()] == ["fact", "rule"]
     long = "ricordati che " + "la casa al mare ha le chiavi nel vaso blu " * 3
     assert reply(voice, long) == "Fatto, me lo ricordo."
-    assert reply(voice, "remember that my cat is Leo") == "I'll remember: my cat is Leo."
 
 
 def test_remember_refuses_a_password(voice: MemoryVoice) -> None:
@@ -450,7 +434,6 @@ def test_a_request_is_not_an_answer(voice: MemoryVoice, said: str) -> None:
 
 
 SISTER_IT = ("mia sorella abita a Torino", "mia sorella si chiama Anna")
-SISTER_EN = ("my sister lives in Turin", "my sister was called Anna")
 MEETINGS = ("mia zia è a una riunione", "mia zia è a un pranzo")
 BIKES = ("Luca ha una moto rossa", "Luca ha una bici blu")
 FATHER_MOTHER = ("mio padre ha 60 anni", "mia madre ha 58 anni")
@@ -476,7 +459,6 @@ FATHER_MOTHER = ("mio padre ha 60 anni", "mia madre ha 58 anni")
             "quella di quando ero piccolo",
             "quella volta di quando ero piccolo",
         ),
-        (SISTER_EN, "forget my sister", "the one about Turin", SISTER_EN[0]),
         (SISTER_IT, "dimentica mia sorella", "quella con Anna", SISTER_IT[1]),
         (SISTER_IT, "dimentica mia sorella", "quella dove abita a Torino", SISTER_IT[0]),
         (SISTER_IT, "dimentica mia sorella", "la cosa di Torino", SISTER_IT[0]),
@@ -509,8 +491,6 @@ def test_a_named_answer_holding_only_the_memorys_words_forgets_it(
         (SISTER_IT, "dimentica mia sorella", "hai detto che abita a Torino"),
         (SISTER_IT, "dimentica mia sorella", "ma abita a Torino"),
         (SISTER_IT, "dimentica mia sorella", "abita a Torino?"),
-        (SISTER_EN, "forget my sister", "is my sister called Anna"),
-        (SISTER_EN, "forget my sister", "which lives in Turin"),
         (SISTER_IT, "dimentica mia sorella", "dove abita a Torino"),
         (SISTER_IT, "dimentica mia sorella", "con chi abita"),
         (MEETINGS, "dimentica mia zia", "che riunione è"),
@@ -641,7 +621,7 @@ def test_the_fixed_commands(voice: MemoryVoice) -> None:
     assert voice.run("wipe") == "Fatto: ho dimenticato tutto."
     assert len(voice.store) == 0
     voice.store.add("solo")
-    assert voice.run("list", "en") == "I remember one thing: solo."
+    assert voice.run("list") == "Ricordo una cosa: solo."
     with pytest.raises(ValueError):
         voice.run("forget_last")  # "dimenticalo" is understood by the voice module now
 

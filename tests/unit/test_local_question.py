@@ -211,7 +211,7 @@ async def test_a_typed_yes_never_confirms_a_local_question(
     assistant = typed_assistant(fake_vad, vad_settings, r)
     await say(r, "chiudi la finestra")  # armed by voice
     reply = await assistant.handle_typed("sì", "it")
-    assert reply.startswith(TYPED_CANCELS_QUESTION["it"])
+    assert reply.startswith(TYPED_CANCELS_QUESTION)
     assert rec.combos == [] and not r.awaiting
 
 
@@ -239,7 +239,7 @@ async def test_a_typed_yes_never_confirms_claudes_question(
     )
     assistant = typed_assistant(fake_vad, vad_settings, r)
     reply = await assistant.handle_typed("sì", "it")
-    assert reply.startswith(TYPED_CANCELS_QUESTION["it"])
+    assert reply.startswith(TYPED_CANCELS_QUESTION)
     assert events == ["cancel", "ask sì"]  # the question is gone before the text is a request
 
 

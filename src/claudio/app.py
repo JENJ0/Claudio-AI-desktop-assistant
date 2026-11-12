@@ -18,7 +18,7 @@ from claudio.audio.own_sound import OwnSound
 from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.audio.vad import dbfs as level_dbfs
-from claudio.config import NoiseSettings, in_language
+from claudio.config import NoiseSettings
 from claudio.echo import is_echo, recent_reply
 from claudio.intake import (
     BARGE_IN,
@@ -1709,7 +1709,7 @@ class Assistant:
                     inter.info["reply"] = rest.rest
             if self.responder.needs_voice:  # level 2-3: confirmed by voice only, never armed here
                 self.responder.cancel_pending()
-                note = in_language(TYPED_NEEDS_VOICE, self.responder.language)
+                note = TYPED_NEEDS_VOICE
                 inter.info["reply"] = note
                 outcome = "needs_voice"
             if self.responder.last_route is not route_before:  # else it never reached the router
@@ -1732,7 +1732,7 @@ class Assistant:
         if not self.responder.needs_voice:
             return ""
         log.info("Messaggio scritto con una domanda a voce in attesa: la annullo")
-        note = in_language(TYPED_CANCELS_QUESTION, self.responder.language)
+        note = TYPED_CANCELS_QUESTION
         self.responder.cancel_pending()
         return note
 
@@ -1837,7 +1837,7 @@ class Assistant:
     async def _say_dropped(self, inter: Interaction) -> None:
         """The answer to a local request given over a reply whose action was stopped: it was
         left, and "Dicevo" does not repeat its promise."""
-        text = in_language(ACTION_STOPPED, self.responder.language)
+        text = ACTION_STOPPED
         self._reply_parts = []
         await self._speak_reply(
             _fixed_reply(text), inter, self._on_resume_audio, self.responder.language, resumed=True
@@ -1881,7 +1881,7 @@ class Assistant:
         self._reply_parts = []
 
         async def text() -> AsyncIterator[str]:
-            yield f"{in_language(RESUME_PREFIX, language)} {rest}"
+            yield f"{RESUME_PREFIX} {rest}"
 
         await self._speak_reply(text(), inter, self._on_resume_audio, language, resumed=True)
         if cut.handle is not None:
@@ -1895,7 +1895,7 @@ class Assistant:
         started playing after "Dicevo:".
         shortcut: one resume; a reply cut again and resumed again loses the words before its
         first cut (and keeps its "Dicevo:"), upgrade when a real session shows it."""
-        prefix = in_language(RESUME_PREFIX, cut.language)
+        prefix = RESUME_PREFIX
         again = [p.removeprefix(prefix).strip() for p in self.speaker.played]
         return [*cut.played[:-1], *again]
 
@@ -2175,13 +2175,7 @@ async def _fixed_reply(text: str) -> AsyncIterator[str]:
 
 
 # A typed message came while a question was waiting for a spoken answer.
-TYPED_CANCELS_QUESTION = {
-    "it": "Ho annullato la domanda a voce.",
-    "en": "I cancelled the spoken question.",
-}
+TYPED_CANCELS_QUESTION = "Ho annullato la domanda a voce."
 
 # A level 2-3 action written in the chat window: it is confirmed by voice only.
-TYPED_NEEDS_VOICE = {
-    "it": "Questa azione va confermata a voce: chiedimela parlando.",
-    "en": "This action needs a spoken confirmation: ask me out loud.",
-}
+TYPED_NEEDS_VOICE = "Questa azione va confermata a voce: chiedimela parlando."

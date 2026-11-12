@@ -52,18 +52,17 @@ NAMED_ANSWER_WORDS = 6  # "quella che abita a Torino"
 # All a named answer may hold besides the memory's own words: "chi abita a Torino" is a question.
 NAMED_ANSWER_CONNECTORS = frozenset(
     {"quella", "quello", "la", "il", "l", "di", "del", "della", "dei", "su", "sul", "sulla"}
-    | {"the", "one", "of", "about"}
 )
 # Only after a lead ("quella che abita a Torino"): at the start they make a question
 # ("che riunione è", "dove abita a Torino"), a delete.
-NAMED_ANSWER_LEADS = frozenset({"quella", "quello", "la", "il", "l", "the", "that"})
-NAMED_ANSWER_AFTER_LEAD = frozenset({"che", "dove", "con", "cosa", "that", "where", "with"})
+NAMED_ANSWER_LEADS = frozenset({"quella", "quello", "la", "il", "l"})
+NAMED_ANSWER_AFTER_LEAD = frozenset({"che", "dove", "con", "cosa"})
 
 # The rule question's own phrases, whole: "sì, tienila come regola" is a yes, "tienila come
-# regola" is not, nor is "come sì" or "sì a". Longest first, so "keep it as a rule" is one.
+# regola" is not, nor is "come sì" or "sì a". Longest first, so "tienila come regola" is one.
 _RULE_QUESTION = (
-    *("tienila come regola", "tienilo come regola", "keep it as a rule"),
-    *("tienila", "tienilo", "keep it"),
+    *("tienila come regola", "tienilo come regola"),
+    *("tienila", "tienilo"),
 )
 RULE_QUESTION_PHRASES = re.compile(rf"\b(?:{'|'.join(_RULE_QUESTION)})\b")
 
@@ -116,111 +115,65 @@ IT_ABOUT = (
     *("di", "su", "riguardo a", "riguardo", "a proposito di", "circa", "del", "della", "dello"),
     *("dei", "degli", "delle", "sul", "sulla", "sullo", "sui", "sugli", "sulle"),
 )
-EN_OPENERS = ("please", "now", "and", "ok", "okay", "so", "also", "oh", "well")
-EN_REMEMBER = ("remember", "don t forget", "do not forget", "keep in mind", "make a note", "note")
-EN_ADVERBS = ("always", "well", "please")
-EN_RULE = ("from now on", "from today on", "going forward", "from here on")
-EN_FORGET = ("forget", "forget about", "stop remembering")
-EN_FORGET_JOIN = ("that", "about")
-EN_FORGET_IT = ("forget it", "forget that")
-EN_FORGET_LAST = ("forget",)
-EN_LAST = ("the last one", "the last thing", "what i just said", "what i just told you")
-EN_DELETE = ("delete", "erase", "remove")
-EN_LAST_MEMORY = ("the last memory",)
-EN_RECALL = ("what do you remember", "what did i tell you", "what do you recall")
-EN_ABOUT = ("about", "of", "on", "regarding")
 # Courtesy at the start or the end of what is remembered is not part of it ("..., grazie").
 _COURTESY = (
     r"(?:grazie(?:[\W_]+mille)?|per[\W_]+favore|per[\W_]+piacere|per[\W_]+cortesia"
-    r"|ti[\W_]+prego|thanks|thank[\W_]+you|please)"
+    r"|ti[\W_]+prego)"
 )
 _COURTESY_END = re.compile(rf"(?:[\W_]+{_COURTESY})+[\W_]*$", re.IGNORECASE)
 _COURTESY_START = re.compile(rf"^(?:{_COURTESY}[\W_]+)+", re.IGNORECASE)
 
 SAY = {
-    "it": {
-        "saved": "Me lo ricordo: {text}.",
-        "saved_long": "Fatto, me lo ricordo.",
-        "rule": "D'accordo, da ora in poi: {text}.",
-        "known": "Lo sapevo già.",
-        "empty": "Cosa devo ricordare?",
-        "too_long": "È troppo lungo: dimmelo in una frase.",
-        "sensitive": "Questo non lo salvo: password e codici andrebbero su internet a ogni "
-        "richiesta.",
-        "full": "Ho la memoria piena: fammi dimenticare qualcosa prima.",
-        "forgot": "Dimenticato: {text}.",
-        "forgot_many": "Fatto, ne ho dimenticati {count}.",
-        "which": "Ne ricordo {count}: {items}. Quale dimentico?",
-        "forget_one": "Dimentico questo: {items}?",
-        "keep_rule": "Da ora in poi: {text}. La tengo come regola?",
-        "kept": "Va bene, non dimentico niente.",
-        "rule_dropped": "Va bene, non la salvo.",
-        "unclear": "Non ho capito: non dimentico niente.",
-        "rule_unclear": "Non ho capito: non la salvo.",
-        "recall": "Mi hai detto: {items}.",
-        "nothing": "Non ricordo ancora niente. Dimmi: ricordati che, e poi la cosa.",
-        "list": "Ricordo {count} cose. Le ultime: {items}.",
-        "list_one": "Ricordo una cosa: {items}.",
-        "nothing_new": "Non ho niente di nuovo da dimenticare.",
-        "not_saved": "Non l'avevo salvato.",
-        "wiped": "Fatto: ho dimenticato tutto.",
-        "ruled": "da ora in poi {text}",
-    },
-    "en": {
-        "saved": "I'll remember: {text}.",
-        "saved_long": "Done, I'll remember it.",
-        "rule": "All right, from now on: {text}.",
-        "known": "I knew that already.",
-        "empty": "What should I remember?",
-        "too_long": "That's too long: tell me in one sentence.",
-        "sensitive": "I won't keep that: passwords and codes would go over the internet with "
-        "every request.",
-        "full": "My memory is full: have me forget something first.",
-        "forgot": "Forgotten: {text}.",
-        "forgot_many": "Done, I forgot {count} of them.",
-        "which": "I remember {count}: {items}. Which one should I forget?",
-        "forget_one": "Shall I forget this: {items}?",
-        "keep_rule": "From now on: {text}. Shall I keep it as a rule?",
-        "kept": "Okay, I won't forget anything.",
-        "rule_dropped": "Okay, I won't keep it.",
-        "unclear": "I didn't catch that: I won't forget anything.",
-        "rule_unclear": "I didn't catch that: I won't keep it.",
-        "recall": "You told me: {items}.",
-        "nothing": "I don't remember anything yet. Say: remember that, and then the thing.",
-        "list": "I remember {count} things. The latest: {items}.",
-        "list_one": "I remember one thing: {items}.",
-        "nothing_new": "There's nothing new to forget.",
-        "not_saved": "I hadn't kept it.",
-        "wiped": "Done: I forgot everything.",
-        "ruled": "from now on {text}",
-    },
+    "saved": "Me lo ricordo: {text}.",
+    "saved_long": "Fatto, me lo ricordo.",
+    "rule": "D'accordo, da ora in poi: {text}.",
+    "known": "Lo sapevo già.",
+    "empty": "Cosa devo ricordare?",
+    "too_long": "È troppo lungo: dimmelo in una frase.",
+    "sensitive": "Questo non lo salvo: password e codici andrebbero su internet a ogni "
+    "richiesta.",
+    "full": "Ho la memoria piena: fammi dimenticare qualcosa prima.",
+    "forgot": "Dimenticato: {text}.",
+    "forgot_many": "Fatto, ne ho dimenticati {count}.",
+    "which": "Ne ricordo {count}: {items}. Quale dimentico?",
+    "forget_one": "Dimentico questo: {items}?",
+    "keep_rule": "Da ora in poi: {text}. La tengo come regola?",
+    "kept": "Va bene, non dimentico niente.",
+    "rule_dropped": "Va bene, non la salvo.",
+    "unclear": "Non ho capito: non dimentico niente.",
+    "rule_unclear": "Non ho capito: non la salvo.",
+    "recall": "Mi hai detto: {items}.",
+    "nothing": "Non ricordo ancora niente. Dimmi: ricordati che, e poi la cosa.",
+    "list": "Ricordo {count} cose. Le ultime: {items}.",
+    "list_one": "Ricordo una cosa: {items}.",
+    "nothing_new": "Non ho niente di nuovo da dimenticare.",
+    "not_saved": "Non l'avevo salvato.",
+    "wiped": "Fatto: ho dimenticato tutto.",
+    "ruled": "da ora in poi {text}",
 }
 
 # The answer to "Quale dimentico?" (normalised words).
 _ORDINALS = {
-    **dict.fromkeys(("primo", "prima", "uno", "first"), 0),
-    **dict.fromkeys(("secondo", "seconda", "due", "second", "two"), 1),
-    **dict.fromkeys(("terzo", "terza", "tre", "third", "three"), 2),
-    **dict.fromkeys(("ultimo", "ultima", "last"), -1),
+    **dict.fromkeys(("primo", "prima", "uno"), 0),
+    **dict.fromkeys(("secondo", "seconda", "due"), 1),
+    **dict.fromkeys(("terzo", "terza", "tre"), 2),
+    **dict.fromkeys(("ultimo", "ultima"), -1),
 }
 _ORDINAL_FILLER = frozenset(
-    {"il", "la", "l", "lo", "quello", "quella", "numero", "ricordo", "cosa", "the", "one"}
-    | {"number", "memory", "e", "ok", "si"}
+    {"il", "la", "l", "lo", "quello", "quella", "numero", "ricordo", "cosa", "e", "ok", "si"}
 )
-_ALL = frozenset({"tutti", "tutte", "entrambi", "entrambe", "both", "all"})
-_ALL_FILLER = frozenset({"e", "due", "tre", "quanti", "i", "le", "gli", "of", "them", "two"})
+_ALL = frozenset({"tutti", "tutte", "entrambi", "entrambe"})
+_ALL_FILLER = frozenset({"e", "due", "tre", "quanti", "i", "le", "gli"})
 _OPENER_WORDS = frozenset(
     {"ok", "okay", "allora", "senti", "ascolta", "scusa", "dai", "beh", "ehm", "eh", "ah", "oh"}
-    | {"comunque", "well", "so"}
+    | {"comunque"}
 )
 _COURTESY_WORDS = frozenset(
-    {"grazie", "mille", "favore", "piacere", "cortesia", "prego", "per", "ti", "please"}
-    | {"thanks", "thank", "you"}
+    {"grazie", "mille", "favore", "piacere", "cortesia", "prego", "per", "ti"}
 )
-_NONE = frozenset(NO_WORDS | {"nessuno", "nessuna", "neither", "none", "nothing", "stare"})
+_NONE = frozenset(NO_WORDS | {"nessuno", "nessuna", "stare"})
 _FORGET_VERBS = frozenset(
-    {"dimentica", "dimenticati", "scordati", "scorda", "cancella", "togli", "elimina"}
-    | {"rimuovi", "forget"}
+    {"dimentica", "dimenticati", "scordati", "scorda", "cancella", "togli", "elimina", "rimuovi"}
 )
 
 
@@ -314,18 +267,11 @@ def _grammar(w: _Words) -> tuple[tuple[Action, re.Pattern[str]], ...]:
     return tuple((a, re.compile(p, re.IGNORECASE | re.DOTALL)) for a, p in patterns)
 
 
-GRAMMARS = {
-    "it": _grammar(
-        _Words("it", IT_OPENERS, IT_REMEMBER, IT_ADVERBS, "che", "sempre di", IT_RULE,
-               IT_FORGET, IT_FORGET_JOIN, IT_FORGET_IT, IT_FORGET_LAST, IT_LAST, IT_DELETE,
-               IT_LAST_MEMORY, IT_RECALL, IT_ABOUT)
-    ),
-    "en": _grammar(
-        _Words("en", EN_OPENERS, EN_REMEMBER, EN_ADVERBS, "that", "always to", EN_RULE,
-               EN_FORGET, EN_FORGET_JOIN, EN_FORGET_IT, EN_FORGET_LAST, EN_LAST, EN_DELETE,
-               EN_LAST_MEMORY, EN_RECALL, EN_ABOUT)
-    ),
-}  # fmt: skip
+GRAMMAR = _grammar(
+    _Words("it", IT_OPENERS, IT_REMEMBER, IT_ADVERBS, "che", "sempre di", IT_RULE,
+           IT_FORGET, IT_FORGET_JOIN, IT_FORGET_IT, IT_FORGET_LAST, IT_LAST, IT_DELETE,
+           IT_LAST_MEMORY, IT_RECALL, IT_ABOUT)
+)  # fmt: skip
 
 
 def without_wake_words(text: str) -> str:
@@ -341,17 +287,16 @@ def without_wake_words(text: str) -> str:
 
 def parse(text: str) -> Intent | None:
     """The memory request in `text`, or None when it is not one. Forgetting or asking about
-    nothing but function words ("dimentica tutto", "forget it all") is not one either."""
+    nothing but function words ("dimentica tutto") is not one either."""
     said = without_wake_words(text)
-    for language, patterns in GRAMMARS.items():
-        for action, pattern in patterns:
-            m = pattern.match(said)
-            if m is None:
-                continue
-            body = _COURTESY_START.sub("", _COURTESY_END.sub("", m.group("body"))).strip()
-            if action in ("forget", "recall") and not stems(body):
-                return None
-            return Intent(action, body, language)
+    for action, pattern in GRAMMAR:
+        m = pattern.match(said)
+        if m is None:
+            continue
+        body = _COURTESY_START.sub("", _COURTESY_END.sub("", m.group("body"))).strip()
+        if action in ("forget", "recall") and not stems(body):
+            return None
+        return Intent(action, body, DEFAULT_LANGUAGE)
     return None
 
 
@@ -414,26 +359,24 @@ class MemoryVoice:
 
     def run(self, do: str, language: str = DEFAULT_LANGUAGE) -> str:
         """A memory command of commands.toml: list or wipe (level 3: "confermo" was heard)."""
-        say = _say(language)
         self._question = None
         if do == "list":
             items = self.store.items()
             if not items:
-                return say["nothing"]
+                return SAY["nothing"]
             latest = _spoken(list(reversed(items[-LIST_MAX:])), language)
             if len(items) == 1:
                 self._talk(items[0])  # "dimenticalo" now means it
             key = "list_one" if len(items) == 1 else "list"
-            return say[key].format(count=len(items), items=latest)
+            return SAY[key].format(count=len(items), items=latest)
         if do == "wipe":
             self._talked = None
-            return say["wiped"] if self.store.clear() else say["nothing"]
+            return SAY["wiped"] if self.store.clear() else SAY["nothing"]
         raise ValueError(f"unknown memory command: {do!r}")
 
     # -- saving --
 
     def _remember(self, intent: Intent, addressed: bool) -> Reply:
-        say = _say(intent.language)
         kind: Kind = "rule" if intent.action == "rule" else "fact"
         if kind == "rule" and not addressed:
             text = " ".join(intent.text.split()).strip(" .!?")
@@ -442,15 +385,15 @@ class MemoryVoice:
             memory, new = self.store.add(intent.text, kind, "jenjo")
         except MemoryRefused as exc:
             self._talked = (None, self.store.clock())  # "ok, dimenticalo": nothing to forget
-            return Reply(say[exc.reason], intent.language, "refused")
+            return Reply(SAY[exc.reason], intent.language, "refused")
         self._talk(memory)
         if not new:
-            return Reply(say["known"], intent.language, "known")
+            return Reply(SAY["known"], intent.language, "known")
         if kind == "rule":
-            return Reply(say["rule"].format(text=memory.text), intent.language, "rule")
+            return Reply(SAY["rule"].format(text=memory.text), intent.language, "rule")
         if len(memory.text) > SPOKEN_MAX:
-            return Reply(say["saved_long"], intent.language, "saved")
-        return Reply(say["saved"].format(text=memory.text), intent.language, "saved")
+            return Reply(SAY["saved_long"], intent.language, "saved")
+        return Reply(SAY["saved"].format(text=memory.text), intent.language, "saved")
 
     # -- forgetting --
 
@@ -474,10 +417,9 @@ class MemoryVoice:
         """ "Dimenticalo" forgets the memory just talked about (None without one: then it is
         not about a memory); after a refusal there is nothing to forget. "Dimentica l'ultimo
         ricordo" with nothing just talked about asks about the last one of this run."""
-        say = _say(intent.language)
         target, refused = self._recent()
         if refused:
-            return Reply(say["not_saved"], intent.language, "not_saved")
+            return Reply(SAY["not_saved"], intent.language, "not_saved")
         if target is not None:
             if not addressed:
                 return self._ask(_Question("forget", (target,), "", intent.language, "", 0.0))
@@ -486,30 +428,28 @@ class MemoryVoice:
             return None
         last = self.store.last_added()
         if last is None:
-            return Reply(say["nothing_new"], intent.language, "nothing_new")
+            return Reply(SAY["nothing_new"], intent.language, "nothing_new")
         return self._ask(_Question("forget", (last,), "", intent.language, "", 0.0))
 
     def _forgot(self, memories: Sequence[Memory], language: str) -> Reply:
-        say = _say(language)
         gone = self.store.remove([m.id for m in memories])
         if self._talked is not None and self._talked[0] in gone:
             self._talked = None
         if len(gone) == 1:
-            return Reply(say["forgot"].format(text=_as_said(gone[0], language)), language, "forgot")
-        return Reply(say["forgot_many"].format(count=len(gone)), language, "forgot")
+            return Reply(SAY["forgot"].format(text=_as_said(gone[0], language)), language, "forgot")
+        return Reply(SAY["forgot_many"].format(count=len(gone)), language, "forgot")
 
     # -- the question and its answer --
 
     def _ask(self, q: _Question) -> Reply:
-        say = _say(q.language)
         if q.kind == "rule":
-            said = say["keep_rule"].format(text=q.rule)
+            said = SAY["keep_rule"].format(text=q.rule)
         elif q.kind == "forget":
-            said = say["forget_one"].format(items=_spoken(q.options, q.language))
+            said = SAY["forget_one"].format(items=_spoken(q.options, q.language))
             self._talk(q.options[0])  # "dimenticalo" now means this one
         else:
             items = _spoken(q.options, q.language)
-            said = say["which"].format(count=len(q.options), items=items)
+            said = SAY["which"].format(count=len(q.options), items=items)
         self._question = _Question(q.kind, q.options, q.rule, q.language, said, self.clock())
         outcome = {"which": "which", "forget": "forget_one", "rule": "rule_asked"}[q.kind]
         return Reply(said, q.language, outcome)
@@ -519,8 +459,7 @@ class MemoryVoice:
         is dropped and `text` answered as usual): a new memory request, any longer phrase,
         a question, a command. Only a no, a yes ("sì", "dimenticalo"), "la seconda", "tutti
         e due" or the words of one of them is an answer."""
-        say = _say(q.language)
-        unclear = say["rule_unclear" if q.kind == "rule" else "unclear"]
+        unclear = SAY["rule_unclear" if q.kind == "rule" else "unclear"]
         words = _answer_words(text)
         if not words:  # said far from the microphone (or nothing): never a yes
             return Reply(unclear, q.language, "unclear")
@@ -535,7 +474,7 @@ class MemoryVoice:
             if q.kind == "forget":
                 return self._forgot(q.options, q.language)  # "Dimenticalo." is the yes
             if q.kind == "rule":
-                return Reply(say["rule_dropped"], q.language, "kept")
+                return Reply(SAY["rule_dropped"], q.language, "kept")
             self._question = q  # which one? "dimenticalo" does not say
             return Reply(q.said, q.language, "which")
         if words[0] in _FORGET_VERBS:  # "dimentica la prima": the answer, if the rest is one
@@ -545,7 +484,7 @@ class MemoryVoice:
         if not words:
             return None
         if words[0] in _NONE or (len(words) <= ANSWER_WORDS and _NONE.intersection(words)):
-            kept = say["rule_dropped" if q.kind == "rule" else "kept"]
+            kept = SAY["rule_dropped" if q.kind == "rule" else "kept"]
             return Reply(kept, q.language, "kept")
         if q.kind != "which":
             if not asked and parse_answer(" ".join(_without_question(q, words))) is Answer.YES:
@@ -591,7 +530,7 @@ class MemoryVoice:
         if len(shown) == 1:
             self._talk(shown[0])
         items = _spoken(shown, intent.language)
-        return Reply(_say(intent.language)["recall"].format(items=items), intent.language, "recall")
+        return Reply(SAY["recall"].format(items=items), intent.language, "recall")
 
     def _talk(self, memory: Memory) -> None:
         self._talked = (memory, self.store.clock())
@@ -663,22 +602,17 @@ def _holds(memory: Memory, said: Sequence[str]) -> bool:
 def _echo(text: str, q: _Question) -> bool:
     """Claudio's own question heard back: mostly its words, among them the question's own
     ("quale", "dimentico", "regola"), which an answer does not repeat."""
-    template = SAY[q.language if q.language in SAY else DEFAULT_LANGUAGE]
     key = {"which": "which", "forget": "forget_one", "rule": "keep_rule"}[q.kind]
-    own = set(normalize(re.sub(r"\{\w+\}", " ", template[key]), drop_fillers=False).split())
+    own = set(normalize(re.sub(r"\{\w+\}", " ", SAY[key]), drop_fillers=False).split())
     own -= STOPWORDS
     heard = set(normalize(text, drop_fillers=False).split())
     return bool(heard & own) and word_share(text, q.said) >= WORD_SHARE
 
 
-def _say(language: str) -> dict[str, str]:
-    return SAY.get(language) or SAY[DEFAULT_LANGUAGE]
-
-
 def _as_said(memory: Memory, language: str) -> str:
     """A rule is read with its "da ora in poi": "chiamami capo" alone sounds like an order."""
     return (
-        _say(language)["ruled"].format(text=memory.text) if memory.kind == "rule" else memory.text
+        SAY["ruled"].format(text=memory.text) if memory.kind == "rule" else memory.text
     )
 
 

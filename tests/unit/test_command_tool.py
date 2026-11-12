@@ -77,7 +77,7 @@ def test_runs_through_the_routers_actions(
 ) -> None:
     assert tool.run({"command": "volume_up", "number": 3}) == "Volume alzato."
     assert rec.keys == [MEDIA_KEYS["volume_up"]] * 3
-    assert tool.run({"command": "shutdown"}, "en") == "See you soon."  # the request's language
+    assert tool.run({"command": "shutdown"}) == "A presto."
     assert system.stopping
 
 
@@ -103,10 +103,10 @@ async def test_runs_on_the_thread_of_the_spending_ledger(
     )
     t = PcTools(FakeDesktop(), PcSettings(), home=tmp_path, commands=tool)
     try:
-        out = await t.run(call(NAME, command="tell_spend"), "en")
+        out = await t.run(call(NAME, command="tell_spend"))
     finally:
         t.close()
-    assert not out.error and "spent" in out.text
+    assert not out.error and "speso" in out.text
 
 
 async def test_the_question_names_the_command(tool: CommandTool, tmp_path: Path) -> None:
@@ -264,18 +264,16 @@ async def test_a_silent_command_stays_silent_after_the_yes(
 
 
 OFF_REPLY = "Mi spengo. Per riaccendermi di' Claudio, accenditi."
-OFF_REPLY_EN = "Turning off. To turn me back on, say Claudio, turn on."
 ASKED_02_11 = (
     "Spegnermi? Va bene, socio, ma il mondo perderà il suo unico vero eroe. Confermi che mi spengo?"
 )
 NOT_UNDERSTOOD_IT = "Non ho capito: non lo faccio."
-NOT_UNDERSTOOD_EN = "I didn't catch that: not doing it."
 
 
 async def unclear_twice(b: ClaudeBrain, said: str, language: str = "it") -> str:
     """An answer not understood is asked once more (Task 3); the second time it cancels."""
     first = "".join([c async for c in b.ask(said, language)])
-    assert first.startswith(("Non ho capito. ", "I didn't catch that. ")), first
+    assert first.startswith("Non ho capito. "), first
     return "".join([c async for c in b.ask(said, language)])
 
 
@@ -344,48 +342,6 @@ async def test_the_waiting_command_said_again_is_a_yes(
     await ask(b, said)
     assert getattr(system, state)
     assert len(client.calls) == 1
-
-
-@pytest.mark.parametrize(
-    ("asked_in", "said", "reply", "runs"),
-    [
-        ("en", "Switch yourself off.", OFF_REPLY_EN, True),
-        ("en", "Sure, go silent.", OFF_REPLY_EN, True),
-        ("it", "Claudio, spegni.", OFF_REPLY, True),
-        ("it", "Switch yourself off.", NOT_UNDERSTOOD_IT, False),
-        ("en", "Spegni.", NOT_UNDERSTOOD_EN, False),  # an Italian repeat, English question
-    ],
-)
-async def test_a_repeat_counts_only_in_the_language_of_the_question(
-    pricing: Pricing,
-    tools: PcTools,
-    system: SystemControl,
-    asked_in: str,
-    said: str,
-    reply: str,
-    runs: bool,
-) -> None:
-    b = acting_brain(pricing, waiting(use(NAME, command="off", last=True)), tools)
-    [_ async for _ in b.ask("garbled words", asked_in)]
-    if runs:
-        assert "".join([c async for c in b.ask(said, asked_in)]) == reply
-    else:
-        assert await unclear_twice(b, said, asked_in) == reply
-    assert system.off is runs
-
-
-async def test_a_repeat_with_the_name_in_the_other_language_is_a_new_call(
-    pricing: Pricing, tools: PcTools, system: SystemControl, matcher: CommandMatcher
-) -> None:
-    """The name over an open question cancels it and the words after it are answered."""
-    client = ScriptedClient(
-        ([], "tool_use", [use(NAME, command="off", last=True)]),
-        (["Non capisco."], "end_turn", []),
-    )
-    r = routed(acting_brain(pricing, client, tools), matcher, system)
-    await say(r, "garbled words", "en")
-    assert await say(r, "Claudio, spegni.", "en") == "Okay, I won't do it. Non capisco."
-    assert not system.off
 
 
 async def test_a_word_close_to_a_phrase_of_another_language_closes_nothing(

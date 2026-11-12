@@ -41,18 +41,10 @@ _REFUSED = {
     "full": "memory full: JenJo must have something forgotten first",
 }
 _SAY = {
-    "it": {
-        "fact": 'mi segno "{text}"',
-        "rule": 'da ora in poi "{text}"',
-        "forget": 'dimentico "{text}"',
-        "more": " e altri {n}",
-    },
-    "en": {
-        "fact": 'I\'ll note "{text}"',
-        "rule": 'from now on "{text}"',
-        "forget": 'I\'ll forget "{text}"',
-        "more": " and {n} more",
-    },
+    "fact": 'mi segno "{text}"',
+    "rule": 'da ora in poi "{text}"',
+    "forget": 'dimentico "{text}"',
+    "more": " e altri {n}",
 }
 
 
@@ -131,7 +123,7 @@ class MemoryTools:
 
     def describe(self, name: str, args: Mapping[str, Any], language: str) -> str:
         """What will happen, read in the confirmation question: a memory to keep in full."""
-        say = _SAY.get(language) or _SAY["it"]
+        say = _SAY
         if name == REMEMBER:
             kind = "rule" if args.get("kind") == "rule" else "fact"
             return say[kind].format(text=" ".join(str(args.get("text", "")).split()))

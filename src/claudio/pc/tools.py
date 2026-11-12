@@ -324,26 +324,14 @@ LEVELS = {
 NAMES = frozenset(LEVELS)
 
 _SAY = {
-    "it": {
-        "type_into": 'scrivo "{text}" in "{window}"',
-        "press_keys_into": 'premo {keys} in "{window}"',
-        "close_window": 'chiudo la finestra "{window}"',
-        "move_file": 'sposto "{source}" in "{destination}"',
-        "run_command": "per {purpose}: il comando è nella chat",
-        "claudio_command": "{phrase}",
-        "then": ", poi ",
-        "active": "attiva",
-    },
-    "en": {
-        "type_into": 'I\'ll type "{text}" in "{window}"',
-        "press_keys_into": 'I\'ll press {keys} in "{window}"',
-        "close_window": 'I\'ll close the window "{window}"',
-        "move_file": 'I\'ll move "{source}" to "{destination}"',
-        "run_command": "to {purpose}: the command is in the chat",
-        "claudio_command": "{phrase}",
-        "then": ", then ",
-        "active": "active",
-    },
+    "type_into": 'scrivo "{text}" in "{window}"',
+    "press_keys_into": 'premo {keys} in "{window}"',
+    "close_window": 'chiudo la finestra "{window}"',
+    "move_file": 'sposto "{source}" in "{destination}"',
+    "run_command": "per {purpose}: il comando è nella chat",
+    "claudio_command": "{phrase}",
+    "then": ", poi ",
+    "active": "attiva",
 }
 
 
@@ -581,16 +569,15 @@ class PcTools:
         memory = any(c.name in memory_tools.NAMES for c in calls)
         read_out = read_out or any(keys_for_the_front(c) for c in calls)
         if top <= LEVEL_CONFIRM and self.settings.confirm_brief and not memory and not read_out:
-            return ASK_LEVEL_2.get(language) or ASK_LEVEL_2[DEFAULT_LANGUAGE]
+            return ASK_LEVEL_2
         what = await self.describe_calls(calls, language)
         ask = ASK_LEVEL_3 if top > LEVEL_CONFIRM else ASK_LEVEL_2
-        ask_text = ask.get(language) or ask[DEFAULT_LANGUAGE]
-        return f"{what}. {ask_text}" if what else ask_text  # a bad call describes as ""
+        return f"{what}. {ask}" if what else ask  # a bad call describes as ""
 
     async def describe_calls(self, calls: Sequence[ToolCall], language: str) -> str:
         """What `calls` will do, read out ("Chiudo la finestra ..., poi premo enter"); the
         second question says it too. "" when no call has a description."""
-        say = _SAY.get(language) or _SAY[DEFAULT_LANGUAGE]
+        say = _SAY
         ids = {c.id for c in self._reply}
         reply = self._reply if all(c.id in ids for c in calls) else list(calls)
         parts = [await self._describe(call, say, language, reply) for call in calls]

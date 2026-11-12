@@ -1,11 +1,10 @@
-"""Kokoro-82M (ONNX) voices: Nicola (Italian, male, the default), Sara, and Michael for English.
+"""Kokoro-82M (ONNX) voices: Nicola (Italian, male, the default) and Sara.
 
 Phonemes come from the espeak-ng bundled with piper-tts, so nothing else to install; the
 model, the voice styles and the phoneme vocabulary are fetched by scripts/download_models.py."""
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import unicodedata
@@ -14,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from claudio.config import DEFAULT_LANGUAGE, TtsSettings
+from claudio.config import TtsSettings
 
 log = logging.getLogger(__name__)
 
@@ -24,14 +23,10 @@ MAX_TOKENS = 510
 # piper's espeak-ng writes the Italian tapped r as "ɾ" and adds a palatal "ʲ"; Kokoro was
 # trained on upstream espeak-ng, which writes a plain "r" and no "ʲ".
 PHONEME_FIXES = str.maketrans({"ɾ": "r", "ʲ": None})
-EN_PHONEME_FIXES = str.maketrans({"ʲ": None})  # "p.m.": pˌiːʲˈɛm
 # Kokoro's own phonemizer ties affricates into one symbol; read as two sounds, "tʃ" drags
 # words like "calcolatrice" and "dieci".
 AFFRICATES = (("tʃ", "ʧ"), ("dʒ", "ʤ"), ("ts", "ʦ"), ("dz", "ʣ"))
-# English keeps "ts" ("cats") and the flap "ɾ" ("better"): Kokoro's English has both.
-EN_AFFRICATES = AFFRICATES[:2]
-ESPEAK_VOICES = {"it": "it", "en": "en-us"}
-VOICE_PREFIXES = {"it": ("if_", "im_"), "en": ("af_", "am_", "bf_", "bm_")}
+VOICE_PREFIXES = ("if_", "im_")
 
 
 def kokoro_files(kokoro_dir: Path) -> tuple[Path, Path, Path]:
@@ -95,48 +90,35 @@ def kokoro_speed(length_scale: float) -> float:
 
 class KokoroSynth:
     sample_rate = SAMPLE_RATE
-    language = DEFAULT_LANGUAGE
 
-    def __init__(
-        self, kokoro_dir: Path, settings: TtsSettings, language: str = DEFAULT_LANGUAGE
-    ) -> None:
+    def __init__(self, kokoro_dir: Path, settings: TtsSettings) -> None:
         import onnxruntime as ort
 
         model, voices, config = kokoro_files(kokoro_dir)
         self.vocab: dict[str, int] = json.loads(config.read_text(encoding="utf-8"))["vocab"]
         self._voices = np.load(voices)
         self._settings = settings
-        self._use_voice(language)
+        self._use_voice()
         self.speed = kokoro_speed(settings.length_scale)
         self._session: Any = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
         self._phonemizer = piper_phonemizer()
 
-    def _use_voice(self, language: str) -> None:
-        voice = self._settings.kokoro_voice_for(language)
+    def _use_voice(self) -> None:
+        voice = self._settings.kokoro_voice
         if voice not in self._voices.files:
-            prefixes = VOICE_PREFIXES.get(language, ("",))
-            known = ", ".join(sorted(v for v in self._voices.files if v.startswith(prefixes)))
+            known = ", ".join(sorted(v for v in self._voices.files if v.startswith(VOICE_PREFIXES)))
             raise ValueError(f"Voce Kokoro '{voice}' sconosciuta (disponibili: {known})")
-        self.language, self.voice = language, voice
+        self.voice = voice
         self._styles = self._voices[voice]  # one style per phoneme count
-
-    def for_language(self, language: str) -> KokoroSynth:
-        """The same model speaking `language` with its voice, without loading it twice."""
-        other = copy.copy(self)
-        other._use_voice(language)
-        return other
 
     def phonemes(self, text: str) -> str:
         import piper.voice as piper_voice
 
         with piper_voice._ESPEAK_PHONEMIZER_LOCK:  # one espeak-ng, also used by Piper's thread
-            sentences = self._phonemizer.phonemize(
-                ESPEAK_VOICES.get(self.language, self.language), text
-            )
+            sentences = self._phonemizer.phonemize("it", text)
         joined = " ".join(unicodedata.normalize("NFC", "".join(s)) for s in sentences)
-        italian = self.language == "it"
-        joined = joined.translate(PHONEME_FIXES if italian else EN_PHONEME_FIXES)
-        for pair, tied in AFFRICATES if italian else EN_AFFRICATES:
+        joined = joined.translate(PHONEME_FIXES)
+        for pair, tied in AFFRICATES:
             joined = joined.replace(pair, tied)
         return joined
 

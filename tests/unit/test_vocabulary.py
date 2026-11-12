@@ -89,11 +89,10 @@ def test_most_recent_first_and_each_name_once(tmp_path: Path) -> None:
     assert len(pick(folder_names([desktop, docs]), limit=3, seen=set())) == 3
 
 
-def test_prompt_text_in_the_language() -> None:
+def test_prompt_text() -> None:
     assert prompt_text("it", ["Dainese"], ["Tesi", "PSS"], ["Rocket League"]) == (
         "Cartelle: Dainese, Tesi, PSS. Programmi: Rocket League."
     )
-    assert prompt_text("en", [], [], ["Steam"]) == "Programs: Steam."
     assert prompt_text("it", [], [], []) == ""
     assert prompt_text("it", [], [], ["Steam"], ["Blocco note"]) == (
         "Programmi: Steam. Finestre aperte: Blocco note."

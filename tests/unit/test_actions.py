@@ -148,46 +148,6 @@ def test_unknown_system_command_raises() -> None:
         SystemControl().apply("reboot")
 
 
-def test_english_replies(matcher, rec) -> None:
-    runner = ActionRunner(rec.ctx(), SystemControl())
-
-    def say(text: str) -> str:
-        match = matcher.match(text, "en")
-        assert match is not None
-        return runner.execute(match, match.language)
-
-    assert say("open chrome") == "Opening Chrome."
-    assert say("what time is it") == "It's 2 oh 5 p.m."
-    assert say("what day is it") == "Today is Sunday, October 18th, 2026."
-    assert say("go to sleep").startswith("Pausing.")
-    assert say("pause") == "I'm already paused."
-    assert say("wake up") == "I'm here."
-    assert say("wake up") == "I'm already awake."
-    assert say("shut down") == "See you soon."
-
-
-@pytest.mark.parametrize(
-    ("h", "m", "text"),
-    [
-        (0, 0, "It's 12 a.m."),
-        (12, 0, "It's 12 p.m."),
-        (9, 0, "It's 9 o'clock."),
-        (9, 30, "It's 9 30 a.m."),
-        (23, 7, "It's 11 oh 7 p.m."),
-    ],
-)
-def test_say_time_english(h, m, text) -> None:
-    assert say_time(datetime(2026, 1, 1, h, m), "en") == text
-
-
-@pytest.mark.parametrize(
-    ("day", "text"),
-    [(1, "Sunday, November 1st"), (2, "Monday, November 2nd"), (11, "Wednesday, November 11th")],
-)
-def test_say_date_english(day, text) -> None:
-    assert say_date(datetime(2026, 11, day), "en") == f"Today is {text}, 2026."
-
-
 def test_tell_spend_without_and_with_a_counter(matcher, rec) -> None:
     from claudio.config import PROJECT_ROOT
     from claudio.cost.ledger import SpendLedger
@@ -207,9 +167,6 @@ def test_tell_spend_without_and_with_a_counter(matcher, rec) -> None:
     tracker.record("claude-haiku-5-5", Usage(output_tokens=500_000))  # $0.25
     runner = ActionRunner(rec.ctx(), tracker=tracker)
     assert runner.execute(match) == "Oggi hai speso 0,25 dollari, il 25 per cento del budget."
-    en = matcher.match("how much did I spend today")
-    assert en is not None
-    assert runner.execute(en, "en") == "Today you spent 0.25 dollars, 25 percent of the budget."
 
 
 class FakeChat:
@@ -240,7 +197,7 @@ def test_chat_opens_once_and_closes(matcher, rec) -> None:
     assert say("apri la chat") == "Apro la chat."
     assert say("fammi scrivere") == "La chat è già aperta."
     assert say("chiudi la chat") == "Chiudo la chat."
-    assert say("close the chat", "en") == "The chat isn't open."
+    assert say("chiudi la chat") == "La chat non è aperta."
     assert chat.calls == ["open", "open", "close", "close"]
 
 

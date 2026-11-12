@@ -15,7 +15,6 @@ import enum
 import re
 from dataclasses import dataclass
 
-from claudio.config import DEFAULT_LANGUAGE
 from claudio.router.matcher import Match
 from claudio.router.normalizer import GREETINGS, is_wake_word, normalize, strip_wake_words
 
@@ -25,22 +24,13 @@ LEVELS = (LEVEL_SAFE, LEVEL_CONFIRM, LEVEL_EXPLICIT)
 ACTION_TTL_S = 60.0  # a question waits this long for its yes, Claude's and the router's alike
 
 # Said when a command does not carry its own question (`confirm` in commands.toml).
-ASK_LEVEL_2 = {"it": "Confermi?", "en": "Do you confirm?"}
-ASK_LEVEL_3 = {
-    "it": "Per procedere dì: confermo.",  # short (JenJo, 23/10): the summary comes before
-    "en": "To go ahead, say: I confirm.",
-}
-CANCELLED = {"it": "Va bene, non lo faccio.", "en": "Okay, I won't do it."}
-NOT_UNDERSTOOD = {"it": "Non ho capito: non lo faccio.", "en": "I didn't catch that: not doing it."}
+ASK_LEVEL_2 = "Confermi?"
+ASK_LEVEL_3 = "Per procedere dì: confermo."  # short (JenJo, 23/10): the summary comes before
+CANCELLED = "Va bene, non lo faccio."
+NOT_UNDERSTOOD = "Non ho capito: non lo faccio."
 # The one second chance of an answer not heard: `what` is the action, read out.
-ASK_AGAIN = {
-    "it": "Non ho capito. {what}: sì o no?",
-    "en": "I didn't catch that. {what}: yes or no?",
-}
-ASK_AGAIN_EXPLICIT = {
-    "it": "Non ho capito. {what}. Per procedere dì: confermo.",
-    "en": "I didn't catch that. {what}. To go ahead, say: I confirm.",
-}
+ASK_AGAIN = "Non ho capito. {what}: sì o no?"
+ASK_AGAIN_EXPLICIT = "Non ho capito. {what}. Per procedere dì: confermo."
 
 # Normalised (lowercase, no accents or punctuation). A refusal anywhere, also in the name's
 # lead-in, wins over a yes.
@@ -165,8 +155,6 @@ def question(match: Match, language: str) -> str:
     """What CLAUDIO asks before running `match`: the command's own `confirm` text (for level 3,
     the summary of what will happen), else the generic one of its level."""
     cmd = match.command
-    own = cmd.confirm_in(language)
-    if own:
-        return own
-    generic = ASK_LEVEL_3 if cmd.level >= LEVEL_EXPLICIT else ASK_LEVEL_2
-    return generic.get(language) or generic[DEFAULT_LANGUAGE]
+    if cmd.confirm:
+        return cmd.confirm
+    return ASK_LEVEL_3 if cmd.level >= LEVEL_EXPLICIT else ASK_LEVEL_2

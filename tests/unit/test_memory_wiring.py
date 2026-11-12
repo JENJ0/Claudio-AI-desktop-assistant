@@ -241,14 +241,6 @@ async def test_dimenticalo_after_a_command_is_not_about_the_memory_before(
     assert len(store) == 1
 
 
-async def test_a_memory_reply_has_the_voice_of_its_own_language(
-    matcher: CommandMatcher, store: MemoryStore
-) -> None:
-    r = responder(matcher, store)
-    await say(r, "remember that my cat is called Leo", "it")
-    assert r.language == "en" and r.last_route["language"] == "en"
-
-
 @pytest.mark.parametrize(("asleep", "back"), [("pause", "resume"), ("off", "on")])
 async def test_a_phrase_ignored_while_asleep_leaves_the_hearing_to_the_next(
     matcher: CommandMatcher, store: MemoryStore, asleep: str, back: str

@@ -12,7 +12,6 @@ import pytest
 from claudio.app import State
 from claudio.brain.claude import LOCAL_NOTE
 from claudio.brain.prompts import OFFER
-from claudio.config import in_language
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.intake import Decision, Kind
 from claudio.metrics import Interaction
@@ -111,7 +110,7 @@ async def test_the_sonnet_offer_is_not_made_while_paused(pricing: Pricing) -> No
     b = brain(pricing, client)
     b.silenced = lambda: True
     said = await ask(b, "spiegami il mutuo variabile")
-    assert in_language(OFFER, "it") not in said
+    assert OFFER not in said
     assert b._offer is None
 
 

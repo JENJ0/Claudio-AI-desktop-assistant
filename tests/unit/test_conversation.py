@@ -101,13 +101,12 @@ def test_media_virtual_key_codes() -> None:
     )
 
 
-async def test_repeat_says_the_last_reply_in_its_language(matcher: CommandMatcher) -> None:
+async def test_repeat_says_the_last_reply(matcher: CommandMatcher) -> None:
     r = responder(matcher, Recorder())
     assert await say(r, "ripeti") == "Non ho ancora detto niente."
-    assert await say(r, "what time is it", "en") == "It's 2 oh 5 p.m."
-    assert await say(r, "ripeti") == "It's 2 oh 5 p.m."
-    assert r.language == "en"  # read by the English voice, as the first time
-    assert await say(r, "ripeti") == "It's 2 oh 5 p.m."  # "ripeti" twice: still the same
+    assert await say(r, "che ore sono") == "Sono le 14 e 5."
+    assert await say(r, "ripeti") == "Sono le 14 e 5."
+    assert await say(r, "ripeti") == "Sono le 14 e 5."  # "ripeti" twice: still the same
     assert r.last_route["command"] == "repeat"
 
 

@@ -7,7 +7,7 @@ import contextlib
 import logging
 import sqlite3
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +16,6 @@ from claudio.config import (
     ERROR_REPLY,
     UNKNOWN_REPLY,
     GuessSettings,
-    in_language,
 )
 from claudio.echo import WORD_SHARE, word_share
 from claudio.intake import (
@@ -76,12 +75,9 @@ Fallback = Callable[[str, str], AsyncGenerator[str, None]]
 GuessCall = Callable[[Doubt, Sequence[Near]], Awaitable[Guess | None]]
 
 # Claude guessed the request without being sure: Claudio asks before answering it.
-DID_YOU_SAY = {"it": "Hai detto: {text}?", "en": "Did you say: {text}?"}
-NOT_THAT = {"it": "Va bene, lascio stare.", "en": "Okay, never mind."}
-MEMORY_ERROR = {
-    "it": "Non riesco a usare la memoria in questo momento.",
-    "en": "I can't use my memory right now.",
-}
+DID_YOU_SAY = "Hai detto: {text}?"
+NOT_THAT = "Va bene, lascio stare."
+MEMORY_ERROR = "Non riesco a usare la memoria in questo momento."
 
 
 @dataclass(frozen=True)
@@ -98,9 +94,8 @@ class LocalResponder:
         self,
         matcher: CommandMatcher,
         actions: ActionRunner,
-        unknown_reply: dict[str, str] | None = None,
-        error_reply: dict[str, str] | None = None,
-        voiced: Collection[str] | None = None,
+        unknown_reply: str | None = None,
+        error_reply: str | None = None,
         fallback: Fallback | None = None,
         fallback_info: Callable[[], dict[str, Any]] | None = None,
         on_prepare: Callable[[], None] | None = None,
@@ -122,7 +117,6 @@ class LocalResponder:
         self.actions = actions
         self.unknown_reply = unknown_reply or UNKNOWN_REPLY
         self.error_reply = error_reply or ERROR_REPLY
-        self.voiced = voiced  # languages with their own voice (None: all of them)
         self.fallback = fallback  # None: "Questo non lo so ancora fare"
         self.fallback_info = fallback_info  # details of the last fallback call, for the metrics
         self.on_prepare = on_prepare  # a request is coming: get ready (Claude's connection)
@@ -342,7 +336,7 @@ class LocalResponder:
         """Claude guessed `text` without being sure: Claudio asks first. The next phrase is
         the answer (awaiting): a yes answers `text` with no second "Confermi?" for a level 2
         command; "no, abbassa il volume" is a new request."""
-        question = in_language(DID_YOU_SAY, language).format(text=quoted(text))
+        question = DID_YOU_SAY.format(text=quoted(text))
         self.claude_replied = False  # a reply of its own, which never goes through respond()
         self._proposal = Proposal(text, language, question)
         self.language = language
@@ -408,18 +402,10 @@ class LocalResponder:
         if self.fallback_stop is not None:
             self.fallback_stop()
 
-    def _reply_language(self, language: str, has_text: bool) -> str:
-        """`language` when there is a reply and a voice for it, else Italian: the text and
-        the voice reading it always agree."""
-        voiced = self.voiced is None or language in self.voiced
-        return language if has_text and voiced else DEFAULT_LANGUAGE
-
     async def respond(
         self, text: str, language: str = DEFAULT_LANGUAGE, named: bool = False
     ) -> AsyncIterator[str]:
-        """Reply in the language of the command's phrase (`language` when none matched):
-        "open chrome" gets an English reply even if Whisper thought it was Italian.
-        Right after a confirmation question, `text` is its answer. The reply is kept for
+        """Right after a confirmation question, `text` is its answer. The reply is kept for
         "ripeti". `named`: the wake audio held the name, though `text` does not."""
         parts: list[str] = []
         self.claude_replied = False
@@ -457,12 +443,6 @@ class LocalResponder:
         match = self.matcher.match(text, language)
         if match and match.command.action == "resume" and not self._has_rest():
             match = None  # nothing to say again: "continua" is a request like any other
-        if match:
-            self.language = self._reply_language(
-                match.language, match.command.has_reply_in(match.language)
-            )
-        else:
-            self.language = self._reply_language(language, bool(self.unknown_reply.get(language)))
         if self.actions.system.off and not _turns_on(match):
             self.last_route = {"route": "off"}
             log.info("Spento, ignoro: %r", HIDDEN, extra={"route": "off"})
@@ -478,7 +458,6 @@ class LocalResponder:
                 yield said
             return
         if match is None and self.fallback is not None:
-            self.language = self._reply_language(language, True)
             log.info("Non è un comando, chiedo a Claude: %r", text, extra={"route": "claude"})
             async for chunk in self._ask_fallback(text):
                 yield chunk
@@ -486,7 +465,7 @@ class LocalResponder:
         if match is None:
             self.last_route = {"route": "unknown", "language": self.language}
             log.info("Richiesta non riconosciuta: %r", text, extra={"route": "unknown"})
-            yield in_language(self.unknown_reply, self.language)
+            yield self.unknown_reply
             return
         async for chunk in self._run_command(match, confirmed):
             yield chunk
@@ -538,11 +517,10 @@ class LocalResponder:
         except (sqlite3.Error, OSError):  # locked by another program, disk full...
             log.exception("Memoria non disponibile")
             self.last_route = {"route": "memory", "memory": "error", "error": True}
-            return in_language(MEMORY_ERROR, self.language)
+            return MEMORY_ERROR
         if reply is None:
             self.memory.moved_on()  # a command or Claude: "dimenticalo" is not about before
             return None
-        self.language = self._reply_language(reply.language, True)
         self.last_route = {
             "route": "memory",
             "memory": reply.outcome,
@@ -614,7 +592,7 @@ class LocalResponder:
         self.language = proposal.language
         self.last_route = {"route": "guess_refused", "guess": proposal.text}
         log.info("Richiesta dedotta rifiutata: %r", proposal.text, extra={"route": "guess"})
-        yield in_language(NOT_THAT if answer is Answer.NO else NOT_UNDERSTOOD, self.language)
+        yield NOT_THAT if answer is Answer.NO else NOT_UNDERSTOOD
 
     async def _ask_fallback(self, text: str) -> AsyncIterator[str]:
         assert self.fallback is not None
@@ -630,7 +608,7 @@ class LocalResponder:
 
     async def _repeat(self, match: Match) -> AsyncIterator[str]:
         if self._last_reply is None:
-            yield str(match.command.param_in("empty", self.language) or "")
+            yield str(match.command.params.get("empty") or "")
             return
         text, self.language = self._last_reply  # same words, same voice
         self.last_route["language"] = self.language
@@ -691,10 +669,10 @@ class LocalResponder:
             return
         if answer is Answer.NO:
             log.info("Conferma rifiutata (livello %d): %s non eseguito", level, match.command.id)
-            yield in_language(CANCELLED, self.language)
+            yield CANCELLED
         else:
             log.info("Conferma non chiara (livello %d): %s non eseguito", level, match.command.id)
-            yield in_language(NOT_UNDERSTOOD, self.language)
+            yield NOT_UNDERSTOOD
 
     def _name_over_question(self, text: str, named: bool = False) -> bool:
         """Not a yes or no at level 2, with the name (in the words, or in the wake audio:
@@ -717,7 +695,7 @@ class LocalResponder:
         self.last_route = {"route": "refused", "answer": "name"}
         if what != "claude":
             self.last_route["command"] = what
-        cancelled = in_language(CANCELLED, self.language)
+        cancelled = CANCELLED
         # The name only in the wake audio, not in the words: the whole phrase is the request.
         rest = after_wake_word(text) if heard_wake_word(text) else text
         claude_next = self.fallback is not None and self.matcher.match(rest, language) is None
@@ -735,7 +713,7 @@ class LocalResponder:
         phrases = match.command.phrases_in(self.language) or match.command.phrases
         what = phrases[0][:1].upper() + phrases[0][1:]
         ask = ASK_AGAIN_EXPLICIT if level >= LEVEL_EXPLICIT else ASK_AGAIN
-        return in_language(ask, self.language).format(what=what)
+        return ask.format(what=what)
 
     async def _execute(self, match: Match) -> AsyncIterator[str]:
         try:
@@ -743,10 +721,7 @@ class LocalResponder:
         except Exception:
             log.exception("Errore eseguendo %s", match.command.id)
             self.last_route["error"] = True
-            self.language = self._reply_language(
-                self.language, bool(self.error_reply.get(self.language))
-            )
-            yield in_language(self.error_reply, self.language)
+            yield self.error_reply
             return
         if reply:
             yield reply

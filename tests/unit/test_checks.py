@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from claudio.checks import kokoro_voices, run_checks
+from claudio.checks import run_checks
 from claudio.config import load_settings
 
 
@@ -19,10 +19,6 @@ def test_missing_models_fail_the_check(tmp_path: Path, caplog: pytest.LogCapture
     text = caplog.text
     assert "commands.toml" in text or "comandi" in text.lower()  # the router was checked
     assert len(caplog.records) >= 5  # one line per check
-
-
-def test_kokoro_voices_without_the_folder(tmp_path: Path) -> None:
-    assert kokoro_voices(tmp_path / "missing") is None
 
 
 # --- IT-1: the Whisper model CLAUDIO will load must be downloaded --------------------------

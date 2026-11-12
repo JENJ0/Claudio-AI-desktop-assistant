@@ -61,7 +61,7 @@ def fixed_replies(settings: Any, from_logs: int) -> list[str]:
     commands.toml, the confirmation lines, "Sono pronto." and, with `from_logs`, the replies
     said at least that many times in logs/sessions/ (one piece each: short enough)."""
     commands = load_commands(settings.resolve(settings.router.commands_file))
-    lines = [STARTUP, ASK_LEVEL_2["it"], ASK_LEVEL_3["it"], CANCELLED["it"], NOT_UNDERSTOOD["it"]]
+    lines = [STARTUP, ASK_LEVEL_2, ASK_LEVEL_3, CANCELLED, NOT_UNDERSTOOD]
     for command in commands:
         lines += [command.reply, command.confirm]
     if from_logs:

@@ -145,31 +145,8 @@ class ActionContext:
         return cls(run=_run, open_path=_open_path, press_key=_press_key, press_combo=_press_combo)
 
 
-EN_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-EN_MONTHS = (
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-)
-
-
 def say_time(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
     h, m = now.hour, now.minute
-    if language == "en":  # "It's 2 oh 5 p.m.": digits with a colon are read "two zero five"
-        h12 = h % 12 or 12
-        suffix = "a.m." if h < 12 else "p.m."
-        if m == 0:
-            return f"It's {h12} o'clock." if h not in (0, 12) else f"It's 12 {suffix}"
-        return f"It's {h12} {'oh ' if m < 10 else ''}{m} {suffix}"
     if h == 1:
         head = "È l'una"
     elif h == 0:
@@ -182,21 +159,12 @@ def say_time(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
 
 
 def say_date(now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
-    if language == "en":
-        d = now.day
-        suffix = "th" if 10 < d % 100 < 14 else {1: "st", 2: "nd", 3: "rd"}.get(d % 10, "th")
-        weekday, month = EN_WEEKDAYS[now.weekday()], EN_MONTHS[now.month - 1]
-        return f"Today is {weekday}, {month} {d}{suffix}, {now.year}."
     day = "primo" if now.day == 1 else str(now.day)
     return f"Oggi è {WEEKDAYS[now.weekday()]} {day} {MONTHS[now.month - 1]} {now.year}."
 
 
 def say_spend(spent: float, budget: float, calls: int, language: str = DEFAULT_LANGUAGE) -> str:
     percent = round(spent / budget * 100) if budget > 0 else 0
-    if language == "en":
-        if calls == 0:
-            return "You haven't spent anything today."
-        return f"Today you spent {spent:.2f} dollars, {percent} percent of the budget."
     if calls == 0:
         return "Oggi non hai speso nulla."
     amount = f"{spent:.2f}".replace(".", ",")
@@ -250,7 +218,7 @@ class ActionRunner:
                 "score": match.score,
             },
         )
-        return spoken if spoken is not None else cmd.reply_in(language)
+        return spoken if spoken is not None else cmd.reply
 
     def _open_app(self, match: Match, language: str) -> None:
         self.ctx.run(APPS[match.command.params["app"]])
@@ -270,7 +238,7 @@ class ActionRunner:
         """The command's reply when something changed, params["already"] when not (pausing
         while already paused)."""
         changed = self.system.apply(match.command.params["do"])
-        return None if changed else str(match.command.param_in("already", language) or "")
+        return None if changed else str(match.command.params.get("already") or "")
 
     def _close_window(self, match: Match, language: str) -> None:
         """Level 2: the responder has already asked and heard a yes."""
@@ -279,17 +247,17 @@ class ActionRunner:
     def _chat(self, match: Match, language: str) -> str | None:
         """params["do"]: open or close; params["already"] when there is nothing to do."""
         if self.chat is None:
-            return str(match.command.param_in("unavailable", language) or "")
+            return str(match.command.params.get("unavailable") or "")
         what = match.command.params["do"]
         if what not in ("open", "close"):
             raise ValueError(f"Comando chat sconosciuto '{what}'")
         changed = self.chat.open() if what == "open" else self.chat.close()
-        return None if changed else str(match.command.param_in("already", language) or "")
+        return None if changed else str(match.command.params.get("already") or "")
 
     def _memory(self, match: Match, language: str) -> str:
         """params["do"]: list, forget_last or wipe (level 3: "confermo" was heard)."""
         if self.memory is None:
-            return str(match.command.param_in("unavailable", language) or "")
+            return str(match.command.params.get("unavailable") or "")
         return self.memory.run(str(match.command.params["do"]), language)
 
     def _tell_spend(self, match: Match, language: str) -> str:

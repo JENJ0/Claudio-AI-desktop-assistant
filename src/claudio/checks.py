@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from claudio.config import DEFAULT_LANGUAGE, Settings, SttSettings
+from claudio.config import Settings, SttSettings
 
 log = logging.getLogger(__name__)
 
@@ -21,17 +21,6 @@ PACKAGES = (
     "piper",
     "rapidfuzz",
 )
-
-
-def kokoro_voices(kokoro_dir: Path) -> set[str] | None:
-    """The voices in Kokoro's voices file; None when it cannot be read (reported apart)."""
-    import numpy as np
-
-    try:
-        with np.load(kokoro_dir / "voices-v1.0.bin") as data:
-            return set(data.files)
-    except (OSError, ValueError):
-        return None
 
 
 # What faster-whisper loads from the model folder; without tokenizer.json it would go online.
@@ -154,29 +143,6 @@ def check_jack(settings: Settings, models: Path, report: Callable[[bool, str], N
             log.warning("WARN voce di Jack non installata (%s): parlerà Kokoro", rel)
 
 
-def check_voices(settings: Settings, models: Path) -> None:
-    """The voice of each language Whisper may hear: a missing one only gets a warning."""
-    for language in (DEFAULT_LANGUAGE,):  # shortcut: no other language; Task 8 removes this loop
-        if settings.tts.engine in ("kokoro", "jack"):  # one model, a voice per language inside it
-            voice = settings.tts.kokoro_voice_for(language)
-            found = kokoro_voices(models / "kokoro")
-            if found is not None and voice not in found and voice != settings.tts.kokoro_voice:
-                log.warning(
-                    "WARN voce Kokoro %s (%s) sconosciuta: risponderò con quella principale",
-                    voice,
-                    language,
-                )
-            continue
-        voice = settings.tts.piper_voice_for(language)
-        if voice != settings.tts.voice and not (models / "piper" / f"{voice}.onnx").is_file():
-            log.warning(
-                "WARN voce %s (%s) mancante: risponderò con quella principale. "
-                "Scaricala con: uv run python scripts/download_models.py --skip-whisper",
-                voice,
-                language,
-            )
-
-
 def check_wake_words(settings: Settings, models: Path, report: Callable[[bool, str], None]) -> None:
     from claudio.wakeword.detector import find_wakeword_model
 
@@ -255,7 +221,6 @@ def run_checks(settings: Settings) -> bool:
     models = settings.resolve(settings.models_dir)
     check_model_files(settings, models, report)
     check_jack(settings, models, report)
-    check_voices(settings, models)
     check_wake_words(settings, models, report)
     gpus = check_gpu(settings, report)
     check_whisper(settings, gpus, report)

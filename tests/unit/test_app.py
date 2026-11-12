@@ -101,16 +101,14 @@ class FakeResponder:
         self, text: str, language: str = "it", named: bool = False
     ) -> AsyncIterator[str]:
         self.seen.append(text)
-        self.language = "en" if "open" in text else language  # the language of the phrase
+        self.language = language
         if "chrome" in text:
             self.last_route = {"route": "local", "command": "open_chrome"}
-            yield "Opening " if self.language == "en" else "Apro "
+            yield "Apro "
             yield "Chrome."
         else:
             self.last_route = {"route": "unknown"}
-            yield (
-                "I can't do that yet." if self.language == "en" else "Questo non lo so ancora fare."
-            )
+            yield "Questo non lo so ancora fare."
 
 
 class FakeSpeaker:
@@ -1395,22 +1393,6 @@ async def test_shutdown_ends_the_run_after_the_reply(fake_vad, vad_settings, mak
     assert speaker.spoken == ["Ok."] and system.stopping
     assert len(assistant.history) == 1  # the second wake word never came: CLAUDIO had closed
     assert assistant.state is State.IDLE
-
-
-async def test_reply_is_spoken_in_the_language_heard(
-    fake_vad, vad_settings, make_frames, tmp_path
-) -> None:
-    for heard, text, spoken, voice in [
-        ("en", "close the door", "I can't do that yet.", "en"),
-        ("it", "open chrome", "Opening Chrome.", "en"),  # the phrase is English
-        ("it", "apri chrome", "Apro Chrome.", "it"),
-    ]:
-        stt = FakeStt(text, language=heard)
-        assistant, _, speaker, _ = build(fake_vad, vad_settings, stt, {3}, tmp_path)
-        frames = make_frames("silence", 640) + make_frames("speech", 1000)
-        await run_frames(assistant, frames + make_frames("silence", 800))
-        assert speaker.spoken == [spoken] and speaker.languages == [voice]
-        assert assistant.history[-1]["stt_language"] == heard
 
 
 def test_history_is_bounded(fake_vad, vad_settings) -> None:

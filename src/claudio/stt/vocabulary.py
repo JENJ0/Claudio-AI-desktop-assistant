@@ -25,10 +25,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-LABELS = {
-    "it": ("Cartelle", "Programmi", "Finestre aperte"),
-    "en": ("Folders", "Programs", "Open windows"),
-}
+LABELS = ("Cartelle", "Programmi", "Finestre aperte")
 SHORTCUTS = (".lnk", ".url")
 # Shortcuts that are not programs anyone asks for by name.
 JUNK_WORDS = frozenset(
@@ -178,9 +175,8 @@ def prompt_text(
 ) -> str:
     """ "Cartelle: Tesi, PSS. Programmi: Rocket League. Finestre aperte: Blocco note."
     (JenJo's own words go first)."""
-    labels = LABELS.get(language, LABELS["en"])
     groups = ([*words, *folders], programs, windows)
-    named = [(label, names) for label, names in zip(labels, groups, strict=True) if names]
+    named = [(label, names) for label, names in zip(LABELS, groups, strict=True) if names]
     return " ".join(f"{label}: {', '.join(names)}." for label, names in named)
 
 

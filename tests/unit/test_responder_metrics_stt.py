@@ -32,52 +32,12 @@ async def test_responder_known_unknown_and_error(matcher) -> None:
     r = make_responder(matcher, fail=True)
     assert await collect(r.respond("apri chrome")) == ["Non ci sono riuscito."]
     assert r.last_route["error"] is True
-    assert await collect(r.respond("open chrome", "en")) == ["I couldn't do it."]
 
 
-async def test_claude_answers_in_a_language_with_no_fixed_reply(matcher) -> None:
-    """No "non lo so fare" in French, so the fixed reply would be Italian. Claude can write it."""
-
-    async def claude(text: str, language: str):
-        yield language
-
-    r = make_responder(matcher)
-    r.fallback = claude
-    assert await collect(r.respond("quelle heure est-il", "fr")) == ["fr"]
-    assert r.language == "fr"
-
-
-async def test_responder_answers_in_the_language_of_the_phrase(matcher) -> None:
-    r = make_responder(matcher)
-    assert await collect(r.respond("Open Chrome, please.", "en")) == ["Opening Chrome."]
-    assert r.language == "en" and r.last_route["language"] == "en"
-    # Whisper thought it was Italian, but the phrase is English: the reply follows the phrase
-    assert await collect(r.respond("open the calculator", "it")) == ["Opening the calculator."]
-    assert r.language == "en"
-    assert await collect(r.respond("book a flight", "en")) == ["I can't do that yet."]
-    assert await collect(r.respond("apri la calcolatrice", "en")) == ["Apro la calcolatrice."]
-    assert r.language == "it"
-
-
-async def test_reply_text_and_voice_agree(matcher, tmp_path) -> None:
-    """No Italian text read by the English voice, nor English text by the Italian one."""
-    from claudio.router.matcher import CommandMatcher, load_commands
-
-    f = tmp_path / "c.toml"
-    f.write_text(
-        '[[command]]\nid="s"\nphrases=["apri spotify"]\nphrases_en=["open spotify"]\n'
-        'action="open_app"\nparams={ app="notepad" }\nreply="Apro Spotify."\n',
-        encoding="utf-8",
-    )
+async def test_the_unknown_and_error_replies_come_from_the_settings(matcher) -> None:
     ctx = ActionContext(run=lambda a: None, open_path=lambda p: None, press_key=lambda k: None)
-    r = LocalResponder(CommandMatcher(load_commands(f)), ActionRunner(ctx))
-    assert await collect(r.respond("open spotify", "en")) == ["Apro Spotify."]
-    assert r.language == "it"  # no reply_en: the Italian reply, with the Italian voice
-    r = LocalResponder(matcher, ActionRunner(ctx), unknown_reply={"it": "Non so."})
-    assert await collect(r.respond("book a flight", "en")) == ["Non so."] and r.language == "it"
-    r = LocalResponder(matcher, ActionRunner(ctx), voiced={"it"})  # no English voice
-    assert await collect(r.respond("open chrome", "en")) == ["Apro Chrome."]
-    assert r.language == "it"
+    r = LocalResponder(matcher, ActionRunner(ctx), unknown_reply="Non so.")
+    assert await collect(r.respond("prenota un volo")) == ["Non so."]
 
 
 def test_interaction_metrics(tmp_path) -> None:

@@ -125,10 +125,7 @@ def escape_text(text: str) -> str:
 
 def spoken(combo: str, language: str) -> str:
     """ "ctrl+shift+t" -> "control maiuscolo T": how the confirmation question says it."""
-    words = {
-        "it": {"ctrl": "control", "shift": "maiuscolo", "win": "Windows", "plus": "più"},
-        "en": {"ctrl": "control", "shift": "shift", "win": "Windows", "plus": "plus"},
-    }.get(language, {})
+    words = {"ctrl": "control", "shift": "maiuscolo", "win": "Windows", "plus": "più"}
     out = []
     for part in combo.split("+"):
         word = words.get(part, part.replace("_", " "))
