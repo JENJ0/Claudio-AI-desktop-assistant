@@ -91,10 +91,6 @@ possibilità di sentire il nome (vedi `wakeword.second_chance`).
 | "ripeti", "non ho capito" | ripete l'ultima risposta |
 | "basta", "stop" | chiude la conversazione; detto mentre Claudio parla, lo interrompe |
 
-Whisper ascolta solo in italiano, quindi le frasi inglesi ancora in
-[config/commands.toml](config/commands.toml) ("open Chrome", "mute"...) in pratica arrivano solo
-dal testo scritto nella finestra della chat; si stanno togliendo.
-
 Le frasi stanno in [config/commands.toml](config/commands.toml): aggiungerne non richiede codice
 (`phrases_en` e `reply_en` sono quelle inglesi). Tutte le altre richieste vanno a Claude; con
 `[claude] enabled = false` ricevono "Questo non lo so ancora fare" o "I can't do that yet".

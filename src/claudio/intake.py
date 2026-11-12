@@ -2,7 +2,7 @@
 
 The Assistant is the audio state machine; this module holds the rules that decide whether a
 phrase is a request. They are pure (no audio, no asyncio): the Assistant runs Whisper when a
-rule asks for it (the retry, the closed list, the name before the request) and calls decide().
+rule asks for it (the closed list, the name before the request) and calls decide().
 
 Drops cost nothing: a false wake ends in silence, the TV in the conversation window or noise
 heard as words ends with the low beep, and none of them reaches Claude."""

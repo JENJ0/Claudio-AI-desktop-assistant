@@ -13,8 +13,8 @@ Engines:
     turbo     Whisper large-v3-turbo (CLAUDIO's model until 29/10)
     large-v3  Whisper large-v3: slower, sometimes more accurate on fast speech
     lista     the "closed list": turbo proposes 5 transcriptions, the first known command wins
-    frase     turbo with a natural-sentence prompt (NATURAL_PROMPT, or --prompt) instead of the
-              command list in [stt] initial_prompt: does it hear "Claudio" and free questions
+    frase     turbo with the natural-sentence prompt (NATURAL_PROMPT, the shipped
+              [stt] initial_prompt, or --prompt): does it hear "Claudio" and free questions
               better?
     nomi      turbo with the names on this PC first in the prompt (folders and programs, as
               [stt] vocabulary does live), then the shipped sentences
@@ -105,7 +105,7 @@ def whisper_engine(
     from claudio.stt.transcriber import WhisperTranscriber
 
     update: dict[str, object] = {"model": model}
-    if prompt is not None:  # in place of the first language's prompt
+    if prompt is not None:  # in place of the shipped initial_prompt
         update["initial_prompt"] = prompt
     stt_settings = settings.stt.model_copy(update=update)
     stt = WhisperTranscriber(stt_settings, settings.resolve(settings.models_dir) / "whisper")

@@ -317,11 +317,12 @@ class WhisperTranscriber:
         return texts
 
     def listen_again(self, audio: np.ndarray, prompt: str, language: str) -> SecondHearing:
-        # `language` is ignored (always Italian): it goes with the language parameter, later.
         """One more transcription of `audio` with `prompt` in place of the usual one, and the
         scorer of any text on the same encoder pass (the command recovery, stt/recovery.py).
         The request's own figures (last_segments) stay as they are. No check
-        for a piece of the prompt: its phrases are what may have been said."""
+        for a piece of the prompt: its phrases are what may have been said.
+        shortcut: `language` is ignored (always Italian), upgrade when the language parameter
+        goes (Task 10-11)."""
         if not audible(audio):
             return SecondHearing("", lambda texts: [NO_FIT] * len(texts))
         audio = audio.astype(np.float32, copy=False)

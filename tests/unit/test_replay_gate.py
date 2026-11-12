@@ -250,7 +250,7 @@ class GateStt(FakeStt):
     device = "cpu"
     model_name = "fake"
 
-    def candidates(self, audio: np.ndarray, language: str | None = None) -> list[str]:
+    def candidates(self, audio: np.ndarray, n: int = 5) -> list[str]:
         return []
 
     def transcribe(self, audio: np.ndarray, quick: bool = False) -> str:

@@ -89,10 +89,6 @@ gets a second chance to hear the name (see `wakeword.second_chance`).
 | "ripeti", "non ho capito" | says the last reply again |
 | "basta", "stop", "non parlare" | ends the conversation; said while CLAUDIO speaks, cuts it short; also at the end of a phrase that names Claudio ("No, Claudio, non parlare. Claudio, stop."), with no API call |
 
-Whisper listens in Italian only, so the English phrases still in
-[config/commands.toml](config/commands.toml) ("open Chrome", "mute"...) are in practice reached only by
-text typed in the chat window; they are being removed.
-
 The phrases live in [config/commands.toml](config/commands.toml): adding more needs no code
 (`phrases_en` and `reply_en` are the English ones). Every other request goes to Claude; with
 `[claude] enabled = false` it gets "Questo non lo so ancora fare" or "I can't do that yet".
