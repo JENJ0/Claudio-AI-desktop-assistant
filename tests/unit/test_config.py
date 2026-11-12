@@ -128,6 +128,17 @@ def test_shipped_config_keeps_the_whisper_prompt() -> None:
     )
 
 
+def test_configuration_error_is_printed_and_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from claudio.__main__ import main
+
+    f = tmp_path / "c.toml"
+    f.write_text("[stt]\nbeam_size = 0\n", encoding="utf-8")
+    assert main(["--config", str(f), "--check"]) == 2  # supervisor.FINAL_EXITS relies on 2
+    assert "Errore di configurazione" in capsys.readouterr().err
+
+
 def test_kokoro_voices_are_read_from_its_file(tmp_path: Path) -> None:
     import numpy as np
 
