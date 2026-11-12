@@ -325,7 +325,7 @@ async def test_paused_responder_answers_only_system_commands(matcher) -> None:
     assert await collect(r.respond("apri chrome")) == ["Apro Chrome."]
 
 
-def test_quick_mode_is_a_short_look_that_remembers_nothing() -> None:
+def test_quick_mode_is_a_short_look_with_the_shipped_prompt() -> None:
     """The wake word's second chance: the shipped prompt (30/10: a lone "Claudio" came out
     "Grazie." without it) and few tokens."""
     import numpy as np
