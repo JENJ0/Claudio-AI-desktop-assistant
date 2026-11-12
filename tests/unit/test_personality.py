@@ -64,7 +64,7 @@ def test_the_personality_replaces_the_neutral_tone() -> None:
 
 
 def test_the_rules_ask_for_short_italian_replies() -> None:
-    assert "Answer in Italian" in SYSTEM_PROMPT and "two at most" in SYSTEM_PROMPT
+    assert "Always answer in Italian" in SYSTEM_PROMPT and "two at most" in SYSTEM_PROMPT
 
 
 async def test_every_call_sends_the_same_frozen_prompt(pricing: Pricing) -> None:

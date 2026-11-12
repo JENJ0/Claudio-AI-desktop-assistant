@@ -168,7 +168,7 @@ Il carattere di Claudio sta in `data/CLAUDIO.md`, creato al primo avvio da `conf
 (Jack il Bello di Borderlands: spaccone, ironico, utile). Modificalo a mano e riavvia; gli
 aggiornamenti non lo toccano e i `<!-- commenti -->` non vengono inviati. Viene letto una volta
 e va dopo il prompt di sistema, quindi in cache: tienilo corto (`personality_max_chars = 3000`).
-Claudio risponde in italiano, in inglese solo se la frase è chiaramente inglese o glielo chiedi.
+Claudio risponde solo in italiano.
 
 ## Memoria
 
