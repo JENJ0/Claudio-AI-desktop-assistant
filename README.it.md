@@ -299,10 +299,8 @@ La voce è Jack (Qwen3-TTS, in un processo separato sulla GPU). Il suo modello a
 repo: se manca, Claudio lo dice all'avvio e parla Nicola (Kokoro, maschile), o Paola (Piper) se
 Kokoro non si carica. Come installarlo: README inglese, sezione "Jack's voice". `CLAUDIO_TTS__ENGINE=kokoro` o `piper` ne fa la voce principale
 (`CLAUDIO_TTS__VOICE=it_IT-riccardo-x_low` per Riccardo con Piper, maschile e la più veloce). Le risposte in inglese usano Michael con Kokoro e Ryan (`en_US-ryan-low`) con
-Piper, impostate in `[tts.voices.en]`, con lo stesso effetto. La velocità di Kokoro e Piper si regola con `CLAUDIO_TTS__LENGTH_SCALE`
-(più basso = più veloce, 0.77 = +30%, il valore di serie); quella di Jack con `jack_speed`. Il tono robotico è
-`CLAUDIO_TTS__EFFECT`: `none` (predefinito: la voce pulita), `ultron_estremo`, `estremo`, `ultron`
-o `jarvis`. L'effetto costa circa 5 ms a frase.
+Piper, impostate in `[tts.voices.en]`. La velocità di Kokoro e Piper si regola con `CLAUDIO_TTS__LENGTH_SCALE`
+(più basso = più veloce, 0.77 = +30%, il valore di serie); quella di Jack con `jack_speed`.
 
 ## Avvio all'accesso
 

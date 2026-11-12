@@ -109,11 +109,10 @@ voice = "it_IT-paola-medium" # Piper voice
 length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% faster)
 # noise_scale / noise_w_scale (Piper): voice variation (0 = identical every time); unset = default
 use_cuda = false           # Piper only
-effect = "none"            # none | estremo | jarvis | ultron | ultron_estremo (robotic tone; "none" with Jack)
 
 # engine = "jack": Handsome Jack's voice (Qwen3-TTS + RVC) in a worker process with its own venv.
 # If the worker cannot start or answer, Kokoro/Piper speaks. Paths are relative to models/;
-# set the effect to "none" with Jack. Personal use only. See README ("Jack's voice").
+# Personal use only. See README ("Jack's voice").
 # jack_python = "voices/jack/worker/env/Scripts/python.exe"
 # jack_checkpoint = "voices/jack/ft/1.7B-calmo/checkpoint-epoch-7"   # calm Jack only, JenJo 29/10 (was ft/1.7B/checkpoint-epoch-7)
 # jack_rvc_model = "voices/jack/rvc/Applio/logs/jack/jack_100e_2800s.pth"

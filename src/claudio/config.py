@@ -200,7 +200,6 @@ class TtsSettings(BaseModel):
     noise_scale: float | None = Field(None, ge=0)  # None = the voice's own default
     noise_w_scale: float | None = Field(None, ge=0)
     use_cuda: bool = False
-    effect: Literal["none", "estremo", "jarvis", "ultron", "ultron_estremo"] = "none"
     # Engine "jack": a worker process with its own venv; paths are relative to models_dir.
     jack_python: Path = Path("voices/jack/worker/env/Scripts/python.exe")
     jack_checkpoint: Path = Path("voices/jack/ft/1.7B-calmo/checkpoint-epoch-7")  # JenJo, 29/10

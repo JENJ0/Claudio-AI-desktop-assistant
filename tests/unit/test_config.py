@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from claudio.config import DEFAULT_CONFIG, ConfigError, PcSettings, load_settings
+from claudio.config import DEFAULT_CONFIG, ConfigError, PcSettings, Settings, load_settings
 
 
 @pytest.mark.parametrize("names", [[""], ["notepad", "  "]])
@@ -155,3 +155,13 @@ def test_kokoro_voices_are_read_from_its_file(tmp_path: Path) -> None:
     with (tmp_path / "voices-v1.0.bin").open("wb") as fh:
         np.savez(fh, am_michael=np.zeros(3), im_nicola=np.zeros(3))
     assert kokoro_voices(tmp_path) == {"am_michael", "im_nicola"}
+
+
+def test_an_old_effect_line_in_dotenv_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The voice effects are gone: a .env that still sets one must not stop Claudio."""
+    env = tmp_path / ".env"
+    env.write_text("CLAUDIO_TTS__EFFECT=none\n", encoding="utf-8")
+    monkeypatch.setitem(Settings.model_config, "env_file", env)
+    assert load_settings(DEFAULT_CONFIG).tts.engine == "jack"

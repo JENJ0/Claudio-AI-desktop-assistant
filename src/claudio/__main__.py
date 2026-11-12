@@ -393,7 +393,6 @@ def build_speaker(
     """`start_player` False: the caller opens the audio output (run_assistant does it on the
     main thread, as this runs in a loader thread there)."""
     from claudio.audio.player import AudioPlayer
-    from claudio.tts.effects import VoiceEffect
     from claudio.tts.speaker import StreamingSpeaker
 
     synth, name = build_synth(settings, jack)
@@ -401,12 +400,10 @@ def build_speaker(
     player = AudioPlayer(settings.audio.output_sample_rate, settings.audio.output_device)
     if start_player:
         player.start()
-    effect = VoiceEffect(settings.tts.effect) if settings.tts.effect != "none" else None
     speaker = StreamingSpeaker(
         synth,
         player,
         settings.audio.beep_volume,
-        effect,
         {language: voice for language, (voice, _) in voices.items()},
         first_clause_chars=settings.tts.first_clause_chars,
         group_chars=settings.tts.jack_group_chars if settings.tts.engine == "jack" else 0,
@@ -416,11 +413,10 @@ def build_speaker(
     speaker.warm_up()
     others = "".join(f", {lang}: {label}" for lang, (_, label) in voices.items())
     log.info(
-        "TTS: %s (%d Hz)%s%s",
+        "TTS: %s (%d Hz)%s",
         name,
         synth.sample_rate,
         others,
-        tr(", effetto {effect}", effect=settings.tts.effect) if effect else "",
     )
     return speaker
 
