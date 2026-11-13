@@ -183,6 +183,12 @@ class LocalResponder:
                 return True
         return False
 
+    def is_resume(self, text: str) -> bool:
+        """`text` is "continua" / "riprendi" (exact phrases): said while CLAUDIO speaks, it asks
+        to go on, with what is playing or with an older reply still waiting."""
+        match = self.matcher.match(text)
+        return match is not None and match.command.action == "resume"
+
     @property
     def awaiting(self) -> bool:
         """True after a confirmation question: the assistant listens again, no wake word."""
