@@ -19,7 +19,7 @@ from claudio.audio.ring_buffer import RingBuffer
 from claudio.audio.vad import Endpointer, EndpointEvent
 from claudio.audio.vad import dbfs as level_dbfs
 from claudio.config import NoiseSettings
-from claudio.echo import is_echo, recent_reply
+from claudio.echo import echo_around_name, is_echo, recent_reply
 from claudio.intake import (
     BARGE_IN,
     CONVERSATION,
@@ -1576,8 +1576,11 @@ class Assistant:
         recent = recent_reply(self.speaker.played, "".join(self._reply_parts) or reply or "")
         # After the reply only its end counts: a follow-up may reuse its words ("e Marte?").
         reply = "".join(self._reply_parts) if reply is None else recent
-        if heard_wake_word(text) and not heard_wake_word(reply):
-            return False  # the name is JenJo talking to CLAUDIO
+        if heard_wake_word(text):
+            if not heard_wake_word(reply):
+                return False  # the name is JenJo talking to CLAUDIO
+            # The reply says it too (a story about CLAUDIO, H2 12/11): the words around it tell.
+            return echo_around_name(text, " ".join(self.speaker.played), recent)
         min_similarity = self.barge_in.echo_similarity if self.barge_in is not None else 0.0
         return is_echo(text, recent, reply, min_similarity) or echo_of(text, reply)
 
