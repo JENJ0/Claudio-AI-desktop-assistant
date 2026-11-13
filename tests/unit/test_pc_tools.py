@@ -251,9 +251,7 @@ async def test_the_question_says_what_will_run(verbose: PcTools) -> None:
     )
     q = await verbose.question([call("close_window", window="")])
     assert q == 'Chiudo la finestra "Senza nome - Blocco note". Confermi?'
-    q = await verbose.question(
-        [call("move_file", source="~/Downloads/a.pdf", destination="~")]
-    )
+    q = await verbose.question([call("move_file", source="~/Downloads/a.pdf", destination="~")])
     assert q.startswith('Sposto "a.pdf" in "~')
 
 
