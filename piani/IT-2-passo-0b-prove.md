@@ -347,6 +347,20 @@ Dopo la H1 parte la corsia B.
 
 **Scrivimi:** H2 bis, i passi che non tornano. Il log della sessione lo controllo io.
 
+**Esito H2 bis (13/11):** la correzione dell'eco funziona dal vivo (sessione `2026-11-13_15-17`). «Claudio, che ore sono?» e «Claudio, alza il volume» sopra storie piene di «Claudio» hanno interrotto la storia, e 30 secondi di una storia con «Claudio» in quasi ogni frase sono passati senza che si fermasse da sola. Passi 1 e 3 giusti. Passo 2 no: «continua» dopo la domanda sulla Luna è andato a Claude, che ha inventato un seguito (la storia rispondeva a una frase incerta, e una risposta di Claude cancellava il pezzo). Passo 4: volume e «Dicevo» giusti, poi «Riprendi?» detto sopra il «Dicevo» è andato a Claude, e la ripresa dopo ha detto «Dicevo: Dicevo:». Passo 5 non fatto a parte. Gli altri problemi della sessione vanno ai loro gruppi: la voce di Jack fuori registro suonata lo stesso a G4; Whisper («chiedi» per «chiudi», «ti sta» per «dista», «chi è di te» per «chiuditi») a G5; il Blocco note («chiudi tutti e due») a G6. Le riprese si correggono in G2 bis (`piani/IT-2-passo-0b-G2-bis-task.md`) e si rifanno dal vivo con H2 ter.
+
+### H2 ter. «continua» e «riprendi» dopo G2 bis (circa 10 minuti, meno di 5 centesimi)
+
+**Perché:** G2 bis ha cambiato le riprese. Il pezzo mancante resta anche dopo una risposta di Claude; «continua» detto mentre Claudio parla segue il contesto (se c'è una storia in sospeso torna a quella, altrimenti va avanti); «Dicevo:» si dice una volta sola. **Claudio acceso sulla versione nuova:** se era già acceso, «Claudio, chiuditi» e poi `uv run claudio`.
+
+1. «Claudio, raccontami una storia lunga su di te». Dopo due frasi: «Claudio, basta». Poi «Claudio, quanto dista la Luna?». Atteso: risponde sulla Luna. Poi «Claudio, continua»: **«Dicevo:»** e il resto della storia, non una storia nuova.
+2. Di nuovo una storia. Dopo due frasi: «Claudio, alza il volume». Atteso: alza il volume e riprende con «Dicevo:». **Mentre dice «Dicevo»**: «Claudio, riprendi». Atteso: **va avanti** senza fermarsi.
+3. Di nuovo una storia. Dopo due frasi: «Claudio, basta». Poi «Claudio, quanto dista la Luna?» e, **mentre risponde sulla Luna**: «Claudio, continua». Atteso: lascia la Luna e dice «Dicevo:» con il resto della storia. Rifallo senza «basta»: la domanda sulla Luna detta sopra la storia, poi «Claudio, continua» mentre risponde. Atteso uguale.
+4. Di nuovo una storia. Dopo due frasi: «Claudio, che ore sono?». Appena comincia «Dicevo:», di nuovo «Claudio, che ore sono?». Atteso: l'ora, poi **un solo «Dicevo:»**.
+5. «Claudio, raccontami una storia lunga su di te» e **non dire nulla** fino alla fine. Atteso: arriva in fondo senza fermarsi da sola.
+
+**Scrivimi:** H2 ter, i passi che non tornano. Il log della sessione lo controllo io.
+
 ---
 
 ## Adesso: G3c

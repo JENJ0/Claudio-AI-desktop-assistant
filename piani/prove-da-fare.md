@@ -24,8 +24,8 @@ qui ci sono solo ordine e stato.
 
 | # | Prova | Quando | Durata e costo | Perché adesso | Stato |
 | --- | --- | --- | --- | --- | --- |
-| 1 | [C1. Claudio dopo la pulizia](F1-passo-C-prove.md#c1-claudio-dopo-la-pulizia-circa-5-minuti-meno-di-1-centesimo) | dopo il push del Passo C; il passo 8 dal 18/11 | circa 5 minuti, meno di 1 centesimo | prova sul PC vero la pulizia del Passo C e il prompt nuovo | da fare |
-| 2 | [H2 bis. Il nome sopra una storia su Claudio](IT-2-passo-0b-prove.md#h2-bis-il-nome-sopra-una-storia-su-claudio-circa-10-minuti-meno-di-5-centesimi) | dopo il push della correzione di G2 | circa 10 minuti, meno di 5 centesimi | prova dal vivo la correzione dell'eco trovata da H2 | da fare |
+| 1 | [C1. Claudio dopo la pulizia](F1-passo-C-prove.md#c1-claudio-dopo-la-pulizia-circa-5-minuti-meno-di-1-centesimo) | il passo 8 dal 18/11 | circa 2 minuti, gratis | prova la pulizia dei log più vecchi di 30 giorni | passi 1-7 fatti il 13/11; resta il passo 8 |
+| 2 | [H2 ter. «continua» e «riprendi» dopo G2 bis](IT-2-passo-0b-prove.md#h2-ter-continua-e-riprendi-dopo-g2-bis-circa-10-minuti-meno-di-5-centesimi) | dopo il push di G2 bis | circa 10 minuti, meno di 5 centesimi | prova dal vivo le riprese corrette dopo H2 bis | da fare |
 | 3 | [F. Altre due sessioni per il corpus](IT-2-passo-0b-prove.md#f-altre-due-sessioni-per-il-corpus-2-volte-in-giorni-diversi) | 2 volte, in giorni diversi | ogni volta 15-20 minuti d'uso normale, poi le etichette (la prova B ne ha chiesti circa 40) | dà le etichette per G3b e il corpus per G5 | da fare, 0 di 2 |
 
 ## Per chi aggiorna questo file

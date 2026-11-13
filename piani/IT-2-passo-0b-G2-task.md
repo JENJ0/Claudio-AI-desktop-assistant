@@ -143,7 +143,7 @@ Prima di toccare gli interrupt, per non scrivere test sopra finti che mentono.
 **Regole:**
 1. Ripresa da sola **solo** se la richiesta che ha tagliato è stata risolta dal router locale. Dopo Claude mai.
 2. `worth_resuming` guarda solo la lunghezza. Una storia che finisce con «Vuoi il seguito?» si riprende; se `responder.awaiting`, no.
-3. Comando locale `resume`, frasi «continua», «riprendi», «continua la storia», «riprendi la storia», «vai avanti», `go on`, `continue`: ridice il testo mancante esatto, 0 $, chi ascolta sente anche «Dicevo:». Solo se c'è un testo mancante; altrimenti la frase va a Claude come oggi. Il testo vale fino a `history_reset_s`, sparisce allo spegnimento e a una nuova risposta di Claude arrivata in fondo.
+3. Comando locale `resume`, frasi «continua», «riprendi», «continua la storia», «riprendi la storia», «vai avanti», `go on`, `continue`: ridice il testo mancante esatto, 0 $, chi ascolta sente anche «Dicevo:». Solo se c'è un testo mancante; altrimenti la frase va a Claude come oggi. Il testo vale fino a `history_reset_s`, sparisce allo spegnimento e a una nuova risposta di Claude arrivata in fondo. **Cambiata il 13/11 (G2 bis, decisione di JenJo):** una risposta di Claude arrivata in fondo non cancella più il testo; lo cancella una risposta di Claude più nuova interrotta, tranne quando a interromperla è proprio «continua».
 4. Dopo il testo ridetto, `reply_cut` aggiorna la cronologia, così Claude sa cosa è stato detto.
 5. Una richiesta locale sopra una risposta con un'azione fermata: dice `ACTION_STOPPED = {"it": "Ho lasciato stare l'azione di prima.", "en": "I dropped the action from before."}` e non riprende, così «Dicevo» non ripete la promessa.
 

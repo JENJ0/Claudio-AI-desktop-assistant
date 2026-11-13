@@ -35,9 +35,10 @@ vero parte e risponde in italiano. Se un passo non torna, fermati e scrivimi qua
 4. «Claudio, apri il blocco note.» Atteso: si apre.
 5. «Claudio, quanto fa dodici per sette?» Atteso: risponde Claude, in italiano.
 6. «Claudio, raccontami una storia lunga.» Mentre parla: «Claudio, stop.» Atteso: si ferma.
-7. «Claudio, skip.» Atteso: non è più un comando (prima saltava la canzone). Va bene se risponde
-   Claude, se dice che non lo sa fare o se ti chiede se intendevi «canzone successiva»; non deve
-   saltare la canzone da solo.
+7. «Claudio, skip.» Atteso: non è più un comando locale (prima il router saltava la canzone). Va
+   bene se risponde Claude, se dice che non lo sa fare, se ti chiede se intendevi «canzone
+   successiva» o se salta la canzone con il suo strumento (`claudio_command`, decisione di JenJo
+   del 13/11): conta che non lo faccia il router locale.
 8. Privacy dei log. Dal 18/11/2026 in poi (30 giorni dopo la prima riga, del 18/10), all'avvio
    Claudio toglie dai log le righe più vecchie di `retention_days`. Dopo un avvio:
 
@@ -52,3 +53,9 @@ vero parte e risponde in italiano. Se un passo non torna, fermati e scrivimi qua
    togliere: salta questo passo.
 
 **Scrivimi:** C1, i passi che non tornano e, se l'hai fatto, cosa mostra il passo 8.
+
+**Esito C1 (13/11):** passi 2-7 superati (sessione `2026-11-13_15-13`): avvio senza avvisi, ora e
+Blocco note dal router locale, 12×7 da Claude in italiano, «stop» ferma la storia. Al passo 7
+Claude ha capito «skip» e ha saltato la canzone con `claudio_command(media_next)`: va bene
+(JenJo), il criterio è corretto qui sopra. Il passo 1 (`--check`) non lascia tracce nei log.
+Resta il passo 8, dal 18/11.
