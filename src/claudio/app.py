@@ -55,6 +55,7 @@ from claudio.resume import (
     RESUME_PREFIX,
     DrainedStream,
     ends_the_reply,
+    is_story,
     remainder,
     worth_resuming,
 )
@@ -157,6 +158,7 @@ class CutReply:
     rest: str = ""
     handle: object | None = None  # Claude's turn that was cut: "Dicevo" completes its history
     dropped: bool = False  # its action was stopped: not resumed, the words would repeat the promise
+    story: bool | None = None  # judged on the original reply once resumed; None: judge its text
 
 
 class Assistant:
@@ -302,6 +304,9 @@ class Assistant:
         self._back_to_rest = False
         # The reply this request cut, while its answer plays: kept for "continua" only after it.
         self._pending_rest: CutReply | None = None
+        # The story a local answer was going back to, when a new request cut that answer: the
+        # new request goes back to it instead (H2 ter 13/11, the time asked twice).
+        self._carried: CutReply | None = None
         responder.can_resume = self._can_resume
         self.system.subscribe(self._forget_rest_when_off)  # also from the tray menu
         self.system.subscribe(self._end_questions_when_silenced)
@@ -723,16 +728,19 @@ class Assistant:
         # The reply before: the conversation window may be hearing its echo.
         self._said, self._reply_parts = "".join(self._reply_parts), []
         cut, self._cut = self._cut, None
+        carried, self._carried = self._carried, None
         try:
             text, segments = await self._hear_phrase(audio, inter)
             decision = await self._decide(audio, text, inter, segments)
             outcome = decision.kind.value
             if decision.kind is Kind.RELISTEN:
                 self._cut, cut = cut, None  # still the same request
+                self._carried = carried
                 self._relisten(inter, segments)
                 return
             if decision.kind is Kind.CONTINUE:
                 self._cut, cut = cut, None  # still the same request
+                self._carried = carried
                 self._continue(inter, audio, text)
                 return
             if decision.dropped:
@@ -741,8 +749,9 @@ class Assistant:
                     await self._beep_now("cancel")
                 return
             reply = await self._reply_to(decision, audio, segments, inter)
-            resume = await self._unsaid(cut)  # the reply this request cut, read to its end
-            self._pending_rest = resume if resume is not None and not resume.dropped else None
+            # The reply this request cut, read to its end; or the story a cut local answer carried.
+            resume = await self._unsaid(cut) or carried
+            self._pending_rest = resume if self._story_rest(resume) else None
             if self._stop_before_reply:  # "basta" while Whisper worked: nothing is asked or said
                 outcome = "stopped"
                 await self._beep_now("cancel")
@@ -803,12 +812,16 @@ class Assistant:
             if local and ok:
                 await self._say_dropped(inter)
         elif local and ok and not resume.unsure:
+            if self._unsaid_rest is resume:
+                self._unsaid_rest = None  # a carried story: said now, not again with "continua"
             await self._resume_reply(resume, request, inter, barge.resume_s)
-        elif not (self.system.off or ends_the_reply(request)):
+        elif not (self.system.off or ends_the_reply(request)) and self._story_rest(resume):
             if resume.unsure:
                 # The answer to a phrase Whisper doubted never goes on by itself (30/10: "Dicevo:
                 # Non è chiaro cosa intendi..." after a misheard "chiudi la chat"): only "continua".
                 log.info("Risposta a una frase incerta: la riprendo solo con «continua»")
+            elif local and self._takeover is not None:
+                self._carried = resume  # this local answer was cut: the next request goes back
             self._unsaid_rest = resume
 
     async def _hear_phrase(
@@ -1480,6 +1493,7 @@ class Assistant:
         try:
             async with self._stt_lock:
                 text = await asyncio.to_thread(barge.transcribe, audio)
+                text = await self._resume_in_closed_list(audio, text)
         except Exception:
             log.exception("Ascolto durante la risposta non riuscito")
         finally:
@@ -1527,6 +1541,28 @@ class Assistant:
             self._interaction.info["barge_in"] = self._kept(text)
         self.speaker.interrupt()
         self.speaker.duck(None)
+
+    async def _resume_in_closed_list(self, audio: np.ndarray, text: str) -> str:
+        """ "Claudio, continuo." said over the reply (H2 ter, 13/11): Whisper's n-best may hold
+        "continua". Only a phrase with the name that no command understands, and not the
+        reply's echo, pays for the extra pass. The caller holds the Whisper lock."""
+        if (
+            self.closed_list is None
+            or not heard_wake_word(text)
+            or not self.intake.wants_closed_list(text, self.responder)
+            or self._is_echo(text)
+        ):
+            return text
+        try:
+            candidates = await asyncio.to_thread(self.closed_list, audio)
+        except Exception:
+            log.exception("Lista chiusa sopra la risposta non riuscita")
+            return text
+        found = next((c for c in candidates if self.responder.is_resume(c)), None)
+        if found is None:
+            return text
+        log.info("Lista chiusa sopra la risposta: %r -> %r", self._kept(text), found)
+        return found
 
     def _judge_barge_in(self, text: str, audio: np.ndarray, dbfs: float | None) -> None:
         if self._interaction is not None and dbfs is not None:
@@ -1775,8 +1811,8 @@ class Assistant:
             handle = None
             if self._interrupted and not resumed:  # before the stream is closed
                 handle = self.responder.reply_cut(list(self.speaker.played))
-                if handle is not None and not self._back_to_rest:
-                    self._unsaid_rest = None  # a newer Claude reply: the older text is stale
+                if handle is not None and not self._back_to_rest and self._may_be_story(drained):
+                    self._unsaid_rest = None  # a newer Claude story: the older text is stale
             kept = self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0
             if kept:
                 self.responder.stop_acting()  # kept for its words: no action may follow from it
@@ -1804,13 +1840,30 @@ class Assistant:
         if (
             self.responder.awaiting
             or self.responder.action_dropped(handle)
-            or not worth_resuming(drained.text, barge.resume_min_chars)
+            or not is_story(drained.text, barge.resume_min_chars)
         ):
             return
         played = list(self.speaker.played)
         rest = remainder(drained.text, played)
         if rest:
             self._unsaid_rest = CutReply(drained, played, self.clock(), rest=rest, handle=handle)
+
+    def _story_rest(self, resume: CutReply | None) -> bool:
+        """Only a story waits for "continua" (JenJo, H2 ter 13/11): never a short answer, which
+        would take the story's place. A resumed reply was judged a story the first time."""
+        if resume is None or resume.dropped or self.barge_in is None:
+            return False
+        if resume.story is not None:  # a "Dicevo: ..." keeps the verdict on what it resumed
+            return resume.story
+        return is_story(resume.stream.text, self.barge_in.resume_min_chars)
+
+    def _may_be_story(self, drained: DrainedStream) -> bool:
+        """A cut Claude reply that is a story, or still being written (no telling yet): a whole
+        short answer leaves the older story waiting."""
+        if not drained.ended:
+            return True
+        min_chars = self.barge_in.resume_min_chars if self.barge_in is not None else 0
+        return is_story(drained.text, min_chars)
 
     def _typed_continue(self, route_before: dict[str, Any]) -> bool:
         route = self.responder.last_route
@@ -1891,7 +1944,9 @@ class Assistant:
             self.responder.reply_cut(self._heard_in_all(cut), handle=cut.handle)
         if self._cut is not None:
             # Cut again: still the answer to the request it was judged on, not to this one.
-            self._cut = replace(self._cut, unsure=cut.unsure, resumed=True)
+            self._cut = replace(
+                self._cut, unsure=cut.unsure, resumed=True, story=self._story_rest(cut)
+            )
 
     def _heard_in_all(self, cut: CutReply) -> list[str]:
         """What JenJo heard of a resumed reply: the pieces before the one said again, then what

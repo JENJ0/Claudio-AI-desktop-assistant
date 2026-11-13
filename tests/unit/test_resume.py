@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from claudio.resume import DrainedStream, ends_the_reply, remainder, worth_resuming
+from claudio.resume import DrainedStream, ends_the_reply, is_story, remainder, worth_resuming
 
 STORY = "C'era una volta un robot. Viveva in una fabbrica. Un giorno scappò. Fine."
 
@@ -86,3 +86,30 @@ async def test_finish_gives_up_after_the_timeout() -> None:
     drained = DrainedStream(slow(["a"] * 100))
     await drained.finish(0.05)
     assert 0 < len(drained.parts) < 100
+
+
+# H2 ter 13/11: the two answers about the Moon were long enough to be resumed (224 and 183
+# characters) but they were no stories: "riprendi" said their last sentence again.
+MOON_1 = (
+    "Mi sta benissimo, socio, come tutto il resto: la luna mi dona, ovviamente. Se invece volevi "
+    "sapere quanto dista, sono circa trecentoottantaquattromila chilometri, più o meno la "
+    "distanza tra il tuo cervello e un'idea decente."
+)
+LONG_STORY = (
+    "C'era una volta un robot che viveva in una fabbrica abbandonata alla periferia della città. "
+    "Ogni notte accendeva le luci e contava i pezzi di ricambio rimasti sugli scaffali. Un giorno "
+    "trovò una porta che nessuno aveva mai aperto, e decise di attraversarla."
+)
+
+
+@pytest.mark.parametrize(
+    ("reply", "story"),
+    [
+        (MOON_1, False),  # 224 characters, two sentences: an answer
+        (LONG_STORY, True),  # three sentences, over 200 characters
+        ("Uno. Due. Tre. Quattro.", False),  # sentences, but too short to be worth resuming
+        ("", False),
+    ],
+)
+def test_is_story(reply: str, story: bool) -> None:
+    assert is_story(reply, 200) is story

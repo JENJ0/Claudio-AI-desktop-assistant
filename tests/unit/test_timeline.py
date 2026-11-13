@@ -1106,6 +1106,113 @@ async def test_continua_over_the_answer_that_cut_the_story_goes_back_to_it(make_
     assert api_calls(scene) == 2
 
 
+# Answers as long as H2 ter's (over resume_min_chars, so length alone keeps them) but two
+# sentences: no stories.
+PARIS = text_reply(
+    "Parigi è la capitale della Francia, socio, e ci vivono più di due milioni di persone, "
+    "senza contare i turisti. ",
+    "Sta sulla Senna, ha la torre Eiffel e un museo così grande che una settimana non basta "
+    "per vederlo tutto.",
+)
+MADRID = text_reply(
+    "Madrid è la capitale della Spagna, socio, sta proprio al centro del paese e d'estate fa un "
+    "caldo da non credere. ",
+    "Ha un palazzo reale enorme e un museo del Prado pieno di quadri che tu chiameresti "
+    "semplicemente vecchi.",
+)
+
+
+def story_resumed(scene: Scene) -> bool:
+    """ "Dicevo:" said the story's end, not an answer's."""
+    return any(s.startswith(RESUME) and SENTENCES[-1] in s for s in scene.speaker.spoken)
+
+
+async def test_riprendi_after_questions_over_short_answers_goes_back_to_the_story(
+    make_scene,
+) -> None:
+    """H2 ter 13/11 step 1: a question said over a short answer erased the story, and
+    "riprendi" said that answer's last sentence again. Only stories wait for "continua"."""
+    scene = make_scene(
+        text_reply(*STORY), PARIS, MADRID, text_reply("Dimmi."), sentence_frames=PLAY
+    )
+    await stop_the_story(scene)
+    await scene.say("qual è la capitale della Francia")
+    await scene.until(lambda: any("Parigi" in p for p in scene.speaker.played))
+    await scene.say_over("e quella della Spagna")
+    await scene.until(lambda: any("Madrid" in p for p in scene.speaker.played))
+    await scene.say_over("riprendi")
+    await idle(scene)
+    assert story_resumed(scene) and api_calls(scene) == 3
+
+
+async def test_continuo_over_the_resumed_story_is_read_in_the_closed_list(make_scene) -> None:
+    """H2 ter 13/11: Whisper wrote "Claudio, continuo." over the reply; its n-best held
+    "continua", but only the request after the cut looked at it. Now the check over the reply
+    does: rule A, the story goes on, no cut and no Claude."""
+    scene = make_scene(text_reply(*STORY), text_reply("Dimmi."), sentence_frames=PLAY)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("che ore sono")
+    await scene.until(lambda: any(p.startswith(RESUME) for p in scene.speaker.played))
+    scene.assistant.closed_list = lambda audio: ["Claudio, continua."]  # this phrase's n-best
+    await scene.say_over("Claudio, continuo.")
+    await idle(scene)
+    assert [r["outcome"] for r in scene.rows] == ["interrupted", "ok"]
+    assert api_calls(scene) == 1
+
+
+async def test_the_time_cut_by_another_time_goes_back_to_the_story(make_scene) -> None:
+    """H2 ter 13/11 step 4: the time took 10 s (Jack failed), so JenJo asked again over it. The
+    story the first local answer was going back to goes on after the second one."""
+    scene = make_scene(
+        text_reply(*STORY), text_reply("Dimmi."), sentence_frames=PLAY, start_frames=60
+    )
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("che ore sono")
+    await scene.until(lambda: scene.assistant.state is State.RESPONDING)  # the time is silent
+    await scene.say_over("Claudio, che ore sono?")  # as said live: with the name
+    await idle(scene)
+    assert resumed(scene) and api_calls(scene) == 1
+    # Said once: nothing is left for "continua", and a third request does not say it again.
+    assert scene.assistant._unsaid_rest is None
+    await scene.say("che ore sono")
+    await idle(scene)
+    assert sum(s.startswith(RESUME) for s in scene.speaker.spoken) == 1
+
+
+async def test_a_resumed_short_answer_never_takes_the_story_place(make_scene) -> None:
+    """Review of 13/11: a short answer resumed by length ("Dicevo: ...") counted as a story
+    once resumed, so cut again it took the waiting story's place."""
+    scene = make_scene(
+        text_reply(*STORY), PARIS, MADRID, text_reply("Dimmi."), sentence_frames=PLAY
+    )
+    await stop_the_story(scene)
+    await scene.say("qual è la capitale della Francia")
+    await scene.until(lambda: any("Parigi" in p for p in scene.speaker.played))
+    await scene.say_over("che ore sono")  # local: the answer goes on by length, "Dicevo"
+    await scene.until(lambda: any(p.startswith(RESUME) for p in scene.speaker.played))
+    await scene.say_over("e quella della Spagna")
+    await idle(scene)
+    await scene.say("riprendi")
+    await idle(scene)
+    assert story_resumed(scene)
+
+
+async def test_a_short_answer_stopped_with_basta_leaves_the_story_waiting(make_scene) -> None:
+    scene = make_scene(text_reply(*STORY), PARIS, text_reply("Dimmi."), sentence_frames=PLAY)
+    await stop_the_story(scene)
+    await scene.say("qual è la capitale della Francia")
+    await scene.until(lambda: any("Parigi" in p for p in scene.speaker.played))
+    await scene.say_over("basta")
+    await idle(scene)
+    await scene.say("continua")
+    await idle(scene)
+    assert story_resumed(scene) and api_calls(scene) == 2
+
+
 async def test_memory_request_over_a_story_resumes_it(make_scene, tmp_path: Path) -> None:
     """A memory answer is local too (free): the story goes on after it."""
     scene = make_scene(text_reply(*STORY), sentence_frames=PLAY, window_s=4.0)
@@ -1129,9 +1236,11 @@ async def test_a_reply_cut_after_a_bridge_keeps_no_bridge_in_the_history(make_sc
     assert BRIDGE not in answer
 
 
-async def test_a_newer_cut_claude_reply_clears_the_older_rest(make_scene) -> None:
+@pytest.mark.parametrize("chunk_wait", [3, 30], ids=["three-sentences-in", "one-sentence-in"])
+async def test_a_newer_cut_claude_reply_clears_the_older_rest(make_scene, chunk_wait: int) -> None:
     """Story A is whole when "basta" cuts it; story B is still being written when "basta" cuts
-    it: "continua" is for B (Claude), never A's rest."""
+    it: "continua" is for B (Claude), never A's rest. With one sentence of B in, it is no story
+    yet by count, but it is still arriving: it counts as one (G2 ter)."""
     scene = make_scene(
         text_reply(*STORY),
         text_reply(*STORY * 3),
@@ -1140,7 +1249,7 @@ async def test_a_newer_cut_claude_reply_clears_the_older_rest(make_scene) -> Non
     )
     await stop_the_story(scene)
     assert scene.assistant._unsaid_rest is not None
-    scene.client.chunk_wait = 3
+    scene.client.chunk_wait = chunk_wait
     await stop_the_story(scene)
     assert scene.assistant._unsaid_rest is None
     await scene.say("continua")
