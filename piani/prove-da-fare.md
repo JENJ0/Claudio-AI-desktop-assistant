@@ -4,7 +4,7 @@ Le prove aperte, nell'ordine in cui farle. I passi completi stanno nel file del 
 [IT-2-passo-0b-prove.md](IT-2-passo-0b-prove.md) o [F1-passo-C-prove.md](F1-passo-C-prove.md):
 qui ci sono solo ordine e stato.
 
-**Aggiornato:** 13/11/2026.
+**Aggiornato:** 14/11/2026.
 
 ## Come si fa una prova
 
@@ -24,6 +24,7 @@ qui ci sono solo ordine e stato.
 
 | # | Prova | Quando | Durata e costo | Perché adesso | Stato |
 | --- | --- | --- | --- | --- | --- |
+| 0 | [W. Quante volte «Claudio» non sveglia Claudio](IT-2-passo-0b-prove.md#w-quante-volte-claudio-non-sveglia-claudio-circa-10-minuti-meno-di-3-centesimi) | adesso, prima di G3a | circa 10 minuti, meno di 3 centesimi | conta i mancati veri della parola d'attivazione, con e senza gioco: decide se serve T2 e cosa va a G5 | da fare |
 | 1 | [C1. Claudio dopo la pulizia](F1-passo-C-prove.md#c1-claudio-dopo-la-pulizia-circa-5-minuti-meno-di-1-centesimo) | il passo 8 dal 18/11 | circa 2 minuti, gratis | prova la pulizia dei log più vecchi di 30 giorni | passi 1-7 fatti il 13/11; resta il passo 8 |
 | 2 | [F. Altre due sessioni per il corpus](IT-2-passo-0b-prove.md#f-altre-due-sessioni-per-il-corpus-2-volte-in-giorni-diversi) | 2 volte, in giorni diversi | ogni volta 15-20 minuti d'uso normale, poi le etichette (la prova B ne ha chiesti circa 40) | dà le etichette per G3b e il corpus per G5 | da fare, 0 di 2 |
 

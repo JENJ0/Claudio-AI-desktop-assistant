@@ -391,8 +391,23 @@ Le riprese si correggono in G2 ter (`piani/IT-2-passo-0b-G2-ter-task.md`) e si r
 **Esito H2 quater (13/11, notte, sessioni `2026-11-13_23-20` e `2026-11-13_23-23`):** la logica delle riprese è giusta in tutti i passi (JenJo). G2 è chiuso. Restano tre problemi, per altri gruppi:
 
 - **Con un gioco aperto la GPU è piena.** All'avvio di Jack erano occupati 16.276 MB su 16 GB, contro 13.100 senza gioco (Phantom Blade Zero). Al primo tentativo Whisper ha impiegato 14,4 s per una frase e Jack 8,5 s per la prima frase. Va a F8 (la modalità gioco come segnale) o a G8.
-- **La parola d'attivazione non scatta da sola.** Le 6 attivazioni della sessione sono arrivate tutte dalla seconda possibilità di Whisper (punteggio del modello 0,27-0,72, sotto soglia); 2 volte anche Whisper ha sentito altro («Grazie.», «Questa è l'una.») e Claudio non ha risposto. Va a G5, con la comprensione («su di te» → «solita'», «suddita»).
+- **La parola d'attivazione passa sempre da Whisper.** Corretto il 14/11 dall'indagine W (sotto): è voluto. Il modello «claudio» ha `confirm = true`, quindi ogni sua rilevazione passa da Whisper; i punteggi 0,27-0,72 sono **sopra** la sua soglia di 0,25, e sono solo il primo fotogramma sopra soglia, non il picco. «Grazie.» (23:24:05) era un sospiro di JenJo scartato giustamente; resta un solo mancato possibile, «Questa è l'una.» (23:26:19), in cui il nome non ha fatto scattare il modello. La comprensione («su di te» → «solita'», «suddita») va a G5.
 - **Voce robotica:** 23 controlli con avviso su 33, 22 riprese scartate, 3 suonate lo stesso. Senza gioco (20:24) era simile. Va a G4.
+
+---
+
+## Adesso: W (parola d'attivazione)
+
+### W. Quante volte «Claudio» non sveglia Claudio (circa 10 minuti, meno di 3 centesimi)
+
+**Perché:** l'indagine del 14/11 non ha trovato un modello peggiorato: i punteggi sono come dal 24/10 e il gioco non li abbassa. Ora il log dice se Whisper conferma una rilevazione sopra soglia («Conferma di Whisper») o salva un quasi-colpo sotto soglia («Seconda possibilità»), con il picco e i fotogrammi persi mentre Whisper ascoltava. Questa prova conta i mancati veri, senza gioco e con il gioco, e il log dice per ognuno se il modello è scattato. **Claudio acceso sulla versione nuova:** se era già acceso, «Claudio, chiuditi» e poi `uv run claudio`. Tieni un foglio per segnare i mancati.
+
+1. Gioco chiuso. Dieci volte «Claudio, che ore sono?» a voce normale, aspettando ogni volta la risposta. Atteso: risponde tutte e dieci le volte. Segna quante volte non risponde e, se puoi, l'ora.
+2. Gioco chiuso. Cinque volte solo «Claudio», poi «che ore sono?» dopo il bip. Atteso: il bip tutte e cinque le volte.
+3. Apri Phantom Blade Zero con l'audio come lo usi di solito e rifai il passo 1. Atteso: come al passo 1, forse più lento.
+4. Gioco aperto. Tre volte: «Claudio, raccontami una storia lunga su di te», dopo due frasi «Claudio, basta» e **subito dopo** «Claudio, che ore sono?». Atteso: l'ora tutte e tre le volte.
+
+**Scrivimi:** W, quante volte non ha risposto in ogni passo (e le ore, se le hai). Il log lo controllo io: un mancato con «blocchi sopra soglia durante il controllo» è il caso di T2; un mancato senza nessuna riga vuol dire che il modello non è scattato, e soglia o nuovo addestramento vanno a G5.
 
 ---
 
