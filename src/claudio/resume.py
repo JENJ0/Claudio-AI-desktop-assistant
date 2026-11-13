@@ -8,7 +8,7 @@ import contextlib
 from collections.abc import AsyncIterator, Sequence
 
 from claudio.router.normalizer import normalize
-from claudio.tts.sentence_splitter import joined_reply
+from claudio.tts.sentence_splitter import SentenceSplitter, joined_reply
 
 # The new request ends the old reply instead of pausing it ("ok, va bene, grazie").
 CLOSERS = frozenset(
@@ -97,6 +97,20 @@ def worth_resuming(reply: str, min_chars: int) -> bool:
     characters. A story ending with "Vuoi il seguito?" is still one (17:08, 05/11); a reply that
     waits for a yes is the caller's to keep out."""
     return len(reply.strip()) >= min_chars
+
+
+# A story has at least this many sentences: an answer ("quanto dista la Luna?") has one or two,
+# even when it is long enough to be worth resuming (H2 ter, 13/11: 224 characters, 2 sentences).
+STORY_SENTENCES = 3
+
+
+def is_story(reply: str, min_chars: int) -> bool:
+    """A reply "continua" goes back to (JenJo, 13/11): worth resuming, and made of
+    STORY_SENTENCES sentences or more, counted the way the voice splits them."""
+    if not worth_resuming(reply, min_chars):
+        return False  # the cheap check first: a short reply never reaches the splitter
+    splitter = SentenceSplitter(max_chars=len(reply) + 1)  # whole sentences: none cut for length
+    return len(splitter.feed(reply)) + len(splitter.flush()) >= STORY_SENTENCES
 
 
 def ends_the_reply(request: str) -> bool:
