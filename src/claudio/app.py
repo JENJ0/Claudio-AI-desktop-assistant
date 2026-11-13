@@ -316,6 +316,11 @@ class Assistant:
         # are the rest of the request.
         self._since_check: deque[np.ndarray] = deque(maxlen=HELD_FRAMES)
         self._checking = False
+        # The check under way: started by a detection over its threshold (Whisper confirms
+        # the model) or by a near miss under it (a second chance), and the scores of the
+        # detections it dropped while Whisper listened.
+        self._check_detected = False
+        self._late: list[float] = []
         self._checks: set[asyncio.Task[None]] = set()
         self._stt_lock = asyncio.Lock()  # Whisper is used by one thing at a time
         self._recent = RingBuffer(int(endpointer.sample_rate * WAKE_CHECK_S))
@@ -399,9 +404,11 @@ class Assistant:
             if detection is not None:
                 self._on_wake(*detection)
         elif detection is not None and self._weak(*detection):
-            if not self._checking:
+            if self._checking:
+                self._late.append(detection[1])
+            else:
                 log.debug("Wake word debole (%.2f): Whisper controlla il nome", detection[1])
-            self._on_near_miss(*detection)
+            self._on_near_miss(*detection, detected=True)
         elif detection is not None:
             name, score = detection
             voice = self._wake_voice(name, score)
@@ -485,7 +492,7 @@ class Assistant:
         keep = int(LEAD_IN_S * self.endpointer.sample_rate)
         return self._prewake[-keep:] if keep else self._prewake[:0]
 
-    def _on_near_miss(self, name: str, score: float) -> None:
+    def _on_near_miss(self, name: str, score: float, detected: bool = False) -> None:
         heard = self._recent.get()
         if self._checking and self._weak(name, score):
             return  # the same phrase fires for many frames: Whisper is already listening to it
@@ -493,6 +500,7 @@ class Assistant:
             self._log_near_miss(name, score, heard)
             return
         self._checking = True
+        self._check_detected, self._late = detected, []
         task = asyncio.create_task(self._second_chance(name, score, heard))
         self._checks.add(task)
         task.add_done_callback(self._checks.discard)
@@ -526,6 +534,8 @@ class Assistant:
     async def _hear_second_chance(self, name: str, score: float, heard: np.ndarray) -> None:
         off = self.system.off  # the state when it was heard, not after Whisper's pass
         text, voice, info = await self._hear_name(heard)
+        if self._late and max(self._late) > score:
+            info["wake_peak"] = round(max(self._late), 3)
         # A weak detection said fast often loses the name ("apri cancolatrice"): a command
         # counts. Off, the only command understood is "accenditi".
         weak = self._weak(name, score) and bool(text) and self.responder.understands(text)
@@ -548,11 +558,7 @@ class Assistant:
             self._log_near_miss(name, score, heard, rejected="no_voice", **info)
             return
         if heard_wake_word(text) or weak:
-            log.info(
-                "Seconda possibilità: Whisper ha sentito %r (punteggio %.2f): attivo",
-                self._kept(text),
-                score,
-            )
+            log.info("%s sentito %r (%s): attivo", *self._check_words(name, score, text, info))
             self._on_wake(name, score, second_chance=self._kept(text), **info)
             if (
                 not self.endpointer.started
@@ -571,8 +577,27 @@ class Assistant:
             log.info("Whisper non ha capito %r (punteggio %.2f): ascolto e verifico", text, score)
             self._on_wake(name, score, wake_unclear=text, **info)
             return
-        log.info("Seconda possibilità: Whisper ha sentito %r: niente da fare", self._kept(text))
+        log.info("%s sentito %r (%s): niente da fare", *self._check_words(name, score, text, info))
         self._log_near_miss(name, score, heard, second_chance=text, rejected="no_name", **info)
+
+    def _check_words(
+        self, name: str, score: float, text: str, info: dict[str, Any]
+    ) -> tuple[str, str, str]:
+        """A check's log line: over its threshold Whisper only confirms the model (H2 quater,
+        13/11, read "Seconda possibilità ... 0.28" as a model under its 0.25). The score is the
+        first frame over the threshold: the peak and the frames dropped while Whisper listened
+        tell whether a word was cut (the evidence T2 of plan W waits for)."""
+        if self._check_detected:
+            head, side = "Conferma di Whisper: ha", "sopra"
+        else:
+            head, side = "Seconda possibilità: Whisper ha", "sotto"
+        detail = f"{name} {score:.2f} {side} soglia"
+        if self._late:
+            detail += (
+                f", picco {max(score, *self._late):.2f}, "
+                f"{len(self._late)} blocchi sopra soglia durante il controllo"
+            )
+        return head, self._kept(text), f"{detail}, {info['second_chance_ms']} ms"
 
     async def _turns_on(self, heard: np.ndarray, text: str) -> str | None:
         """Off, a second chance that heard words but not the name: Whisper's other
