@@ -361,6 +361,33 @@ Dopo la H1 parte la corsia B.
 
 **Scrivimi:** H2 ter, i passi che non tornano. Il log della sessione lo controllo io.
 
+**Esito H2 ter (13/11, sera, sessione `2026-11-13_20-24`):**
+
+- **Passo 1 no.** «riprendi» ha ridetto l'ultima frase della prima risposta sulla Luna. La domanda detta sopra quella risposta breve aveva cancellato la storia, e la risposta (2 frasi, 224 caratteri) contava come da riprendere.
+- **Passo 2 sì.** «Claudio riprendi» sopra il «Dicevo» ha dato «Sto già continuando», e la storia è andata avanti.
+- **Passo 3 no.** Whisper ha capito «continuo»; la lista chiusa lo correggeva solo dopo il taglio, e Claude ha inventato un «Dicevo:».
+- **Passo 4 no.** L'ora ci ha messo 10 s: Jack ha scartato la ripresa, il suo worker non ha risposto in 15 s, poi ha parlato Kokoro. La seconda «che ore sono», detta durante l'attesa, ha fatto perdere il «Dicevo» automatico: la storia è tornata solo con «continua».
+- **Passo 5** non fatto a parte.
+
+Gli altri problemi della sessione vanno ai loro gruppi:
+
+- Voce di Jack (19 controlli con avviso su 26, 20 riprese scartate, tono che oscilla) a G4.
+- Risposte lente a G4/G7: la prima frase di Jack va da 0,2 a 3,2 s, mentre la prima parola di Claude sta fra 0,9 e 1,6 s.
+- Comprensione a G5: «quanto ti sta la luna» due volte, «solita'».
+
+Le riprese si correggono in G2 ter (`piani/IT-2-passo-0b-G2-ter-task.md`) e si rifanno dal vivo con H2 quater.
+
+### H2 quater. Le riprese dopo G2 ter (circa 10 minuti, meno di 5 centesimi)
+
+**Perché:** con G2 ter «continua» torna solo alle storie, mai a una risposta breve; un «continuo» capito male viene corretto anche mentre Claudio parla; un'ora chiesta due volte non fa perdere la storia. **Claudio acceso sulla versione nuova:** se era già acceso, «Claudio, chiuditi» e poi `uv run claudio`.
+
+1. «Claudio, raccontami una storia lunga su di te». Dopo due frasi: «Claudio, basta». Poi «Claudio, quanto dista la Luna?» e, mentre risponde, «Claudio, e quanto dista Marte?». Mentre risponde su Marte: «Claudio, riprendi». Atteso: **«Dicevo:» e il resto della storia**, non l'ultima frase di una risposta.
+2. Di nuovo una storia. Dopo due frasi: «Claudio, alza il volume». Mentre dice «Dicevo»: «Claudio, continua». Atteso: **va avanti** senza fermarsi, anche se Whisper capisce «continuo».
+3. Di nuovo una storia. Dopo due frasi: «Claudio, che ore sono?» e, prima che risponda o mentre risponde, di nuovo «Claudio, che ore sono?». Atteso: l'ora, poi **«Dicevo:» e la storia** senza dire «continua».
+4. «Claudio, raccontami una storia lunga su di te» e **non dire nulla** fino alla fine. Atteso: arriva in fondo senza fermarsi da sola.
+
+**Scrivimi:** H2 quater, i passi che non tornano. Il log della sessione lo controllo io.
+
 ---
 
 ## Adesso: G3c
