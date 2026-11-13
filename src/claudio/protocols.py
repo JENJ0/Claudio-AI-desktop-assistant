@@ -86,6 +86,10 @@ class Responder(Protocol):
         CLAUDIO speaks, it interrupts."""
         ...
 
+    def is_resume(self, text: str) -> bool:
+        """`text` is "continua" / "riprendi": said while CLAUDIO speaks, it asks to go on."""
+        ...
+
     def cancel_pending(
         self, silence: bool = False, cut: bool = False, takeover: bool = False
     ) -> None:

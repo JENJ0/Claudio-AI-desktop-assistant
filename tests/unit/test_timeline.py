@@ -18,6 +18,7 @@ import pytest
 from claudio.app import Interaction, State, _fixed_reply
 from claudio.brain.claude import CUT_BEFORE_NOTE, CUT_NOTE
 from claudio.brain.prompts import BRIDGE
+from claudio.intake import Segment
 from claudio.memory.store import MemoryStore
 from claudio.memory.voice import MemoryVoice
 from claudio.resume import ACTION_STOPPED, DrainedStream, remainder
@@ -978,17 +979,131 @@ async def test_continua_after_switching_off_and_on_goes_to_claude(make_scene) ->
     assert scene.rows[-1]["route"] == "claude" and not resumed(scene)
 
 
-async def test_a_later_claude_answer_clears_the_rest(make_scene) -> None:
-    scene = make_scene(
-        text_reply(*STORY), text_reply("Parigi."), text_reply("Dimmi."), sentence_frames=PLAY
-    )
+async def test_a_later_claude_answer_keeps_the_rest(make_scene) -> None:
+    """H2 bis 13/11, JenJo's rule: a question to Claude in between ("quanto dista la Luna?")
+    leaves the story's missing text to "continua", for free."""
+    scene = make_scene(text_reply(*STORY), text_reply("Parigi."), sentence_frames=PLAY)
     await stop_the_story(scene)
     await scene.say("qual è la capitale della Francia")
     await idle(scene)
-    assert scene.assistant._unsaid_rest is None
+    assert scene.assistant._unsaid_rest is not None
     await scene.say("continua")
     await idle(scene)
-    assert scene.rows[-1]["route"] == "claude" and not resumed(scene)
+    assert scene.rows[-1].get("command") == "continue_reply" and resumed(scene)
+    assert api_calls(scene) == 2
+
+
+async def test_a_story_for_a_doubtful_request_waits_for_continua(make_scene) -> None:
+    """H2 bis 13/11 step 2: the story answered a phrase Whisper doubted, so it does not go on
+    by itself after a question to Claude; "continua" still says its missing text, for free."""
+    scene = make_scene(
+        text_reply(*STORY),
+        text_reply("Parigi."),
+        text_reply("Dimmi."),
+        sentence_frames=PLAY,
+    )
+    scene.assistant.on_heard = scene.responder.heard
+    scene.assistant.unsure_logprob = -0.2
+    scene.assistant.stt_segments = lambda: [Segment(0.05, -0.65)]
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    scene.assistant.stt_segments = None  # only the story's request was doubtful
+    await scene.say_over("qual è la capitale della Francia")
+    await idle(scene)
+    assert scene.row(0)["stt_unsure"] is True and not resumed(scene)
+    await scene.say("continua")
+    await idle(scene)
+    assert scene.rows[-1].get("command") == "continue_reply" and resumed(scene)
+    assert api_calls(scene) == 2
+
+
+async def test_riprendi_over_the_resumed_story_lets_it_go_on(make_scene) -> None:
+    """H2 bis 13/11 step 4, JenJo's rule A: "Riprendi?" said over "Dicevo: ..." asks for what is
+    already playing. Nothing older waits, so CLAUDIO goes on: no cut, no Claude."""
+    scene = make_scene(text_reply(*STORY), text_reply("Dimmi."), sentence_frames=PLAY)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("che ore sono")
+    await scene.until(lambda: any(p.startswith(RESUME) for p in scene.speaker.played))
+    await scene.say_over("riprendi")
+    await idle(scene)
+    assert [r["outcome"] for r in scene.rows] == ["interrupted", "ok"]
+    assert api_calls(scene) == 1
+
+
+async def test_a_resumed_story_cut_again_says_dicevo_once(make_scene) -> None:
+    """H2 bis 13/11: the second "Dicevo" said "Dicevo: Dicevo: Uscì di casa..."."""
+    scene = make_scene(text_reply(*STORY), text_reply("Dimmi."), sentence_frames=PLAY)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("che ore sono")
+    await scene.until(lambda: any(p.startswith(RESUME) for p in scene.speaker.played))
+    await scene.say_over("che ore sono")
+    await idle(scene)
+    resumes = [s for s in scene.speaker.spoken if s.startswith(RESUME)]
+    assert len(resumes) == 2 and resumes[-1].count(RESUME) == 1
+    assert api_calls(scene) == 1
+
+
+async def test_continua_over_another_answer_goes_back_to_the_story(make_scene) -> None:
+    """JenJo's rule B (13/11): the story waits for "continua" and Claude is answering something
+    else: "continua" means the story, so the answer stops and the story goes on, for free."""
+    scene = make_scene(
+        text_reply(*STORY),
+        text_reply("Parigi è la capitale. ", "Sta sulla Senna. ", "Ha la torre Eiffel."),
+        text_reply("Dimmi."),
+        sentence_frames=PLAY,
+    )
+    await stop_the_story(scene)
+    await scene.say("qual è la capitale della Francia")
+    await scene.until_speaking()
+    await scene.say_over("continua")
+    await idle(scene)
+    assert scene.rows[-1].get("command") == "continue_reply" and resumed(scene)
+    assert api_calls(scene) == 2
+
+
+async def test_continua_over_an_answer_still_written_drops_it_at_once(make_scene) -> None:
+    """Review of 13/11: rule B threw the answer away only after reading it to its end (up to
+    5 s of wait and every word paid)."""
+    answer = [f"Parigi, frase {n}. " for n in range(10)]
+    scene = make_scene(
+        text_reply(*STORY),
+        text_reply(*answer),
+        text_reply("Dimmi."),
+        sentence_frames=PLAY,
+    )
+    await stop_the_story(scene)
+    scene.client.chunk_wait = 20  # only the answer is slow: the story arrived whole
+    await scene.say("qual è la capitale della Francia")
+    await scene.until_speaking()
+    await scene.say_over("continua")
+    await idle(scene)
+    assert scene.rows[-1].get("command") == "continue_reply" and resumed(scene)
+    assert scene.client.streams[1].chunks_read < len(answer)
+
+
+async def test_continua_over_the_answer_that_cut_the_story_goes_back_to_it(make_scene) -> None:
+    """JenJo's example 2 (13/11): the question cut the story itself, no "basta". While its
+    answer plays the story is not yet kept for "continua", but it waits all the same."""
+    scene = make_scene(
+        text_reply(*STORY),
+        text_reply("Parigi è la capitale. ", "Sta sulla Senna. ", "Ha la torre Eiffel."),
+        text_reply("Dimmi."),
+        sentence_frames=PLAY,
+    )
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("qual è la capitale della Francia")
+    await scene.until(lambda: any("Parigi" in p for p in scene.speaker.played))
+    await scene.say_over("continua")
+    await idle(scene)
+    assert scene.rows[-1].get("command") == "continue_reply" and resumed(scene)
+    assert api_calls(scene) == 2
 
 
 async def test_memory_request_over_a_story_resumes_it(make_scene, tmp_path: Path) -> None:

@@ -298,6 +298,10 @@ class Assistant:
         # The text a "continua" says again: a cut reply that was not resumed by itself, or one
         # stopped with "basta" after it was fully written. None: nothing is missing.
         self._unsaid_rest: CutReply | None = None
+        # "continua" cut the reply to go back to `_unsaid_rest`: the cut does not make it stale.
+        self._back_to_rest = False
+        # The reply this request cut, while its answer plays: kept for "continua" only after it.
+        self._pending_rest: CutReply | None = None
         responder.can_resume = self._can_resume
         self.system.subscribe(self._forget_rest_when_off)  # also from the tray menu
         self.system.subscribe(self._end_questions_when_silenced)
@@ -711,6 +715,8 @@ class Assistant:
         follow_up = False
         self._interrupted = False
         self._takeover = None
+        self._back_to_rest = False
+        self._pending_rest = None
         # Not reset (asked_question reads it): a row takes the route only if this request
         # assigned a new one.
         route_before = self.responder.last_route
@@ -736,6 +742,7 @@ class Assistant:
                 return
             reply = await self._reply_to(decision, audio, segments, inter)
             resume = await self._unsaid(cut)  # the reply this request cut, read to its end
+            self._pending_rest = resume if resume is not None and not resume.dropped else None
             if self._stop_before_reply:  # "basta" while Whisper worked: nothing is asked or said
                 outcome = "stopped"
                 await self._beep_now("cancel")
@@ -775,6 +782,7 @@ class Assistant:
     ) -> None:
         """What comes after the answer: "continua" says the missing text, a local answer given
         over a cut reply goes back to it ("Dicevo"), anything else keeps it for "continua"."""
+        self._pending_rest = None  # from here it is resumed or kept in `_unsaid_rest`
         barge = self.barge_in
         if self.system.off:
             self._unsaid_rest = None  # nothing is kept while off
@@ -787,17 +795,20 @@ class Assistant:
             if rest is not None and ok:
                 await self._resume_reply(rest, request, inter, barge.rest_s)
             return
-        if mine and route.get("route") == "claude" and not self._interrupted:
-            self._unsaid_rest = None  # Claude went on from the history: the old text is stale
+        # A question to Claude in between leaves the rest to "continua" (JenJo, H2 bis 13/11).
         if resume is None:
             return
         local = mine and route.get("route") in ("local", "memory")
         if resume.dropped:
             if local and ok:
                 await self._say_dropped(inter)
-        elif local and ok:
+        elif local and ok and not resume.unsure:
             await self._resume_reply(resume, request, inter, barge.resume_s)
         elif not (self.system.off or ends_the_reply(request)):
+            if resume.unsure:
+                # The answer to a phrase Whisper doubted never goes on by itself (30/10: "Dicevo:
+                # Non è chiaro cosa intendi..." after a misheard "chiudi la chat"): only "continua".
+                log.info("Risposta a una frase incerta: la riprendo solo con «continua»")
             self._unsaid_rest = resume
 
     async def _hear_phrase(
@@ -1522,6 +1533,8 @@ class Assistant:
             self._interaction.info["barge_dbfs"] = round(dbfs, 1)
         if text and self.responder.is_stop(text):
             self._stop_reply(text)
+        elif text and self.responder.is_resume(text):
+            self._go_on_asked(audio, text)
         elif self._is_talking_to_me(text):
             self._take_over(audio, text)
         elif self._says_stop(text):
@@ -1536,6 +1549,17 @@ class Assistant:
             if text and (saved := self._save_rejected(audio, "barge_ignored")):
                 log.info("Salvato in %s (%.0f dBFS)", saved, dbfs if dbfs is not None else 0)
             self.speaker.duck(None)
+
+    def _go_on_asked(self, audio: np.ndarray, text: str) -> None:
+        """ "continua" said over a reply (JenJo, 13/11): with an older reply still waiting, this
+        one stops and that one goes on; else it asks for what is playing, which goes on."""
+        older = self._can_resume() or self._pending_rest is not None
+        if older and not self._is_echo(text):
+            self._back_to_rest = True
+            self._take_over(audio, text)
+            return
+        log.info("Sto già continuando: %r", self._kept(text))
+        self.speaker.duck(None)
 
     def _is_talking_to_me(self, text: str) -> bool:
         """Words said over the reply: two or more, the name or a command, and not the
@@ -1751,11 +1775,13 @@ class Assistant:
             handle = None
             if self._interrupted and not resumed:  # before the stream is closed
                 handle = self.responder.reply_cut(list(self.speaker.played))
-                if handle is not None:
+                if handle is not None and not self._back_to_rest:
                     self._unsaid_rest = None  # a newer Claude reply: the older text is stale
             kept = self._takeover is not None and self.barge_in and self.barge_in.resume_s > 0
             if kept:
                 self.responder.stop_acting()  # kept for its words: no action may follow from it
+            # "continua" went back to an older reply: this one is dropped now, not read to its end.
+            kept = kept and not self._back_to_rest
             if kept and (resumed or self.speaker.played):  # else not a word was heard: no "Dicevo"
                 played, now = list(self.speaker.played), self.clock()
                 unsure = bool(inter.info.get("stt_unsure"))
@@ -1823,13 +1849,12 @@ class Assistant:
     async def _unsaid(self, cut: CutReply | None) -> CutReply | None:
         """The reply this request cut, with its last words (Claude is usually done by now):
         `cut` with only the part that was not said, None when nothing is left or it is not
-        worth going on with: the answer to a phrase Whisper was unsure of, a short reply or a
-        question (30/10: "Dicevo: Non è chiaro cosa intendi, socio: chi ha fatto cosa?" after
-        "Chi ce l'ha fatta?", misheard for "chiudi la chat", which had replaced it)."""
+        worth going on with: a short reply, a question, or the answer to a phrase Whisper was
+        unsure of that is still being written (no wait, no money for words nobody hears)."""
         if cut is None:
             return None
         assert self.barge_in is not None
-        if cut.unsure:
+        if cut.unsure and not cut.stream.ended:
             cut.stream.cancel()
             log.info("Non riprendo la risposta interrotta: rispondeva a una frase incerta")
             return None
@@ -1852,7 +1877,8 @@ class Assistant:
         """ "Dicevo: ..." and the rest of a reply, if it was cut no longer than `max_age_s` ago."""
         if self.system.off or ends_the_reply(request) or self.clock() - cut.at > max_age_s:
             return  # off ("spegniti" cut it): nothing more is said
-        rest = cut.rest
+        # A resumed reply cut in its first sentence starts with "Dicevo:" already (H2 bis 13/11).
+        rest = cut.rest.removeprefix(RESUME_PREFIX).lstrip()
         log.info("Riprendo la risposta interrotta: %r", rest[:60])
         inter.info["resumed"] = True
         self._reply_parts = []
