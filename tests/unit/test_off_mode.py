@@ -905,9 +905,7 @@ async def test_a_phrase_still_going_when_mi_spengo_ends_leaves_nothing_on_disk(
 @pytest.mark.parametrize(
     ("said", "options", "in_the_log"),
     [
-        pytest.param(
-            f"Claudio, lo {WORD}.", {}, f"Trascritto: {HIDDEN_IN_THE_LOG}", id="a phrase"
-        ),
+        pytest.param(f"Claudio, lo {WORD}.", {}, f"Trascritto: {HIDDEN_IN_THE_LOG}", id="a phrase"),
         pytest.param(
             "Sono le 14 e 5.",
             {"claude_min_words": 1, "only_addressed": False},

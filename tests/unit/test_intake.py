@@ -39,9 +39,7 @@ class Commands(FakeResponder):
 
 def decide(text: str, responder=None, f: RequestFilter | None = None, **heard):
     f = f or RequestFilter(noise=NOISE)
-    return f.decide(
-        text, Heard(**{"wake_word": "hey_claudio", **heard}), responder or Commands()
-    )
+    return f.decide(text, Heard(**{"wake_word": "hey_claudio", **heard}), responder or Commands())
 
 
 # -- decide() --

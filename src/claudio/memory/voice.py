@@ -482,9 +482,7 @@ class MemoryVoice:
             return Reply(kept, "kept")
         if q.kind != "which":
             if not asked and parse_answer(" ".join(_without_question(q, words))) is Answer.YES:
-                return (
-                    self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options)
-                )
+                return self._keep_rule(q) if q.kind == "rule" else self._forgot(q.options)
             return None
         return self._which_answer(words, text, q)
 

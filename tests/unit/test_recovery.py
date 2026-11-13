@@ -442,9 +442,7 @@ async def test_never_a_second_opinion(
     if state:
         setattr(r.actions.system, state, True)
     assert not assistant._may_recover(decision, heard)
-    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x")) is not bool(
-        state
-    )
+    assert assistant._may_recover(Decision(Kind.ANSWER, "Pasta."), Heard("x")) is not bool(state)
 
 
 async def test_no_second_opinion_on_a_memory_request(

@@ -424,9 +424,7 @@ async def test_finish_saves_the_gain_before_the_level_moves(
         make_frames("silence", 80) + make_frames("speech", 800) + make_frames("silence", 800),
     )
     assert assistant.history[-1]["gain_db"] == 6.0
-    assert sink.notes == [
-        ("ok.wav", {"whisper_prompt": "Cartelle: Tesi.", "gain_db": 6.0})
-    ]
+    assert sink.notes == [("ok.wav", {"whisper_prompt": "Cartelle: Tesi.", "gain_db": 6.0})]
 
 
 async def test_a_timeout_note_has_no_prompt_of_an_earlier_request(
@@ -1148,18 +1146,14 @@ class SeenLevel:
 
 
 class FailingResponder(FakeResponder):
-    async def respond(
-        self, text: str, named: bool = False
-    ) -> AsyncIterator[str]:
+    async def respond(self, text: str, named: bool = False) -> AsyncIterator[str]:
         self.seen.append(text)
         raise RuntimeError("Claude non risponde")
         yield ""  # an async generator
 
 
 class StopResponder(FakeResponder):
-    async def respond(
-        self, text: str, named: bool = False
-    ) -> AsyncIterator[str]:
+    async def respond(self, text: str, named: bool = False) -> AsyncIterator[str]:
         self.seen.append(text)
         self.last_route = {"route": "local", "command": "stop"}
         yield "Ok."
@@ -1172,9 +1166,7 @@ class SwitchingResponder(FakeResponder):
         super().__init__()
         self.level = level
 
-    async def respond(
-        self, text: str, named: bool = False
-    ) -> AsyncIterator[str]:
+    async def respond(self, text: str, named: bool = False) -> AsyncIterator[str]:
         self.level.microphone = "Webcam"
         async for part in super().respond(text, named):
             yield part
@@ -1290,9 +1282,7 @@ class SystemResponder(FakeResponder):
         super().__init__()
         self.system = system
 
-    async def respond(
-        self, text: str, named: bool = False
-    ) -> AsyncIterator[str]:
+    async def respond(self, text: str, named: bool = False) -> AsyncIterator[str]:
         self.seen.append(text)
         command = {"dormi": "pause", "svegliati": "resume", "spegniti": "shutdown"}.get(text)
         if command:
