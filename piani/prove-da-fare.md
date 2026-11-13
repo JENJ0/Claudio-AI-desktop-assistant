@@ -4,7 +4,7 @@ Le prove aperte, nell'ordine in cui farle. I passi completi stanno nel file del 
 [IT-2-passo-0b-prove.md](IT-2-passo-0b-prove.md) o [F1-passo-C-prove.md](F1-passo-C-prove.md):
 qui ci sono solo ordine e stato.
 
-**Aggiornato:** 12/11/2026.
+**Aggiornato:** 13/11/2026.
 
 ## Come si fa una prova
 
@@ -25,7 +25,8 @@ qui ci sono solo ordine e stato.
 | # | Prova | Quando | Durata e costo | Perché adesso | Stato |
 | --- | --- | --- | --- | --- | --- |
 | 1 | [C1. Claudio dopo la pulizia](F1-passo-C-prove.md#c1-claudio-dopo-la-pulizia-circa-5-minuti-meno-di-1-centesimo) | dopo il push del Passo C; il passo 8 dal 18/11 | circa 5 minuti, meno di 1 centesimo | prova sul PC vero la pulizia del Passo C e il prompt nuovo | da fare |
-| 2 | [F. Altre due sessioni per il corpus](IT-2-passo-0b-prove.md#f-altre-due-sessioni-per-il-corpus-2-volte-in-giorni-diversi) | 2 volte, in giorni diversi | ogni volta 15-20 minuti d'uso normale, poi le etichette (la prova B ne ha chiesti circa 40) | dà le etichette per G3b e il corpus per G5 | da fare, 0 di 2 |
+| 2 | [H2 bis. Il nome sopra una storia su Claudio](IT-2-passo-0b-prove.md#h2-bis-il-nome-sopra-una-storia-su-claudio-circa-10-minuti-meno-di-5-centesimi) | dopo il push della correzione di G2 | circa 10 minuti, meno di 5 centesimi | prova dal vivo la correzione dell'eco trovata da H2 | da fare |
+| 3 | [F. Altre due sessioni per il corpus](IT-2-passo-0b-prove.md#f-altre-due-sessioni-per-il-corpus-2-volte-in-giorni-diversi) | 2 volte, in giorni diversi | ogni volta 15-20 minuti d'uso normale, poi le etichette (la prova B ne ha chiesti circa 40) | dà le etichette per G3b e il corpus per G5 | da fare, 0 di 2 |
 
 ## Per chi aggiorna questo file
 

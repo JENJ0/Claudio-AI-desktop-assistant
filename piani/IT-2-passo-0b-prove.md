@@ -335,6 +335,18 @@ Dopo la H1 parte la corsia B.
 
 **Esito H2 (12/11):** conferme (passi 6-10), contesto e azioni fermate (11-12) e tasti (13-15) giusti. **«Dicevo» e «continua» (passi 1-3) no.** Nel `console.log` della sessione `2026-11-12_19-07` il filtro dell'eco ha scartato 6 volte la voce di JenJo sopra la storia («La mia voce nel microfono, la ignoro: 'Claudio, che ore sono?'», 19:08:12-19:09:15): l'interruzione non è mai partita, e «stop» ferma senza riprendere, per scelta. «Continua» non è arrivato. **Va a G2, che si riapre:** prima un test a timeline sul filtro dell'eco.
 
+### H2 bis. Il nome sopra una storia su Claudio (circa 10 minuti, meno di 5 centesimi)
+
+**Perché:** in H2 il filtro dell'eco scartava «Claudio, ...» detto sopra una storia in cui Claudio è il protagonista. La correzione di G2 (13/11) guarda le parole intorno al nome. **Claudio acceso sulla versione nuova:** se era già acceso, «Claudio, chiuditi» e poi `uv run claudio`.
+
+1. «Claudio, raccontami una storia lunga su di te». Dopo due frasi: «Claudio, che ore sono?». Atteso: dice l'ora, poi **«Dicevo:»** e la storia riprende.
+2. Di nuovo una storia su di te. Dopo due frasi: «Claudio, quanto dista la Luna?». Atteso: risponde, **senza «Dicevo»**. Poi «Claudio, continua»: ridice il pezzo mancante, con «Dicevo:».
+3. Di nuovo una storia su di te. Dopo due frasi: «Claudio, basta». Poi «Claudio, continua». Atteso: ridice il pezzo mancante o continua da dove l'hai fermata. **Non inventa una puntata nuova.**
+4. Di nuovo una storia su di te. Appena lo senti dire «Claudio» nella storia: «Claudio, volume su». Atteso: alza il volume, poi «Dicevo:».
+5. «Claudio, raccontami una storia lunga su di te» e **non dire nulla** fino alla fine. Atteso: arriva in fondo senza fermarsi da sola (la sua eco non deve interromperla).
+
+**Scrivimi:** H2 bis, i passi che non tornano. Il log della sessione lo controllo io.
+
 ---
 
 ## Adesso: G3c
