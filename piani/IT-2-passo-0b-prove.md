@@ -388,6 +388,12 @@ Le riprese si correggono in G2 ter (`piani/IT-2-passo-0b-G2-ter-task.md`) e si r
 
 **Scrivimi:** H2 quater, i passi che non tornano. Il log della sessione lo controllo io.
 
+**Esito H2 quater (13/11, notte, sessioni `2026-11-13_23-20` e `2026-11-13_23-23`):** la logica delle riprese è giusta in tutti i passi (JenJo). G2 è chiuso. Restano tre problemi, per altri gruppi:
+
+- **Con un gioco aperto la GPU è piena.** All'avvio di Jack erano occupati 16.276 MB su 16 GB, contro 13.100 senza gioco (Phantom Blade Zero). Al primo tentativo Whisper ha impiegato 14,4 s per una frase e Jack 8,5 s per la prima frase. Va a F8 (la modalità gioco come segnale) o a G8.
+- **La parola d'attivazione non scatta da sola.** Le 6 attivazioni della sessione sono arrivate tutte dalla seconda possibilità di Whisper (punteggio del modello 0,27-0,72, sotto soglia); 2 volte anche Whisper ha sentito altro («Grazie.», «Questa è l'una.») e Claudio non ha risposto. Va a G5, con la comprensione («su di te» → «solita'», «suddita»).
+- **Voce robotica:** 23 controlli con avviso su 33, 22 riprese scartate, 3 suonate lo stesso. Senza gioco (20:24) era simile. Va a G4.
+
 ---
 
 ## Adesso: G3c
