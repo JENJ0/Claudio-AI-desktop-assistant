@@ -37,6 +37,23 @@ STORY = [  # a long reply, one sentence per chunk (as Haiku streams it)
 ]
 ASKING_STORY = [*STORY[:-1], STORY[-1] + " ", "Vuoi il seguito?"]  # Haiku's habit
 SENTENCES = [s.strip() for s in STORY]
+# H2 12/11: Claude's stories had CLAUDIO as their hero, so the name no longer told JenJo's voice
+# from the reply's echo. Over HERO "Claudio, che ore sono?" is mostly the reply's words
+# (claudio, che, ore); over MOON its long words sound like the reply's (claudio, sono ~ solo).
+HERO = [
+    "C'era una volta un eroe bellissimo di nome Claudio. ",
+    "Era così bello che gli specchi chiedevano un autografo. ",
+    "Trovò un socio che cercava da tre ore la porta che aveva davanti. ",
+    "Claudio lo salvò, naturalmente. ",
+    "Il robot esplose di ammirazione, letteralmente.",
+]
+MOON = [
+    "Un'altra? Insaziabile, socio, ma il genio non si nega. ",
+    "C'era una volta una luna abbandonata, dove un solo ristorante serviva zuppa di roccia. ",
+    "Ci arrivò Claudio, ovviamente il cliente più bello della storia. ",
+    "Il cuoco, un robot arrugginito, gli disse che nessuno finiva mai il piatto. ",
+    "Claudio sorrise e lo finì in tre cucchiaiate.",
+]
 PLAY = 15  # frames a sentence lasts: 1.2 s
 RESUME = "Dicevo"
 
@@ -784,6 +801,54 @@ async def test_17_13_story_then_new_request_does_not_resume(make_scene) -> None:
     assert [r["outcome"] for r in scene.rows[:2]] == ["interrupted", "ok"]
     assert scene.row(1)["route"] == "claude"
     assert not resumed(scene)
+
+
+@pytest.mark.parametrize("story", [HERO, MOON], ids=["word-share", "echo-of"])
+async def test_the_name_over_a_story_about_claudio_is_jenjo(make_scene, story: list[str]) -> None:
+    """H2 12/11 steps 1-3: the name said over a reply that says it too was taken for the echo,
+    so no request over a story about CLAUDIO ever stopped it."""
+    scene = make_scene(text_reply(*story), sentence_frames=PLAY, window_s=4.0)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.advance(1.5)
+    await scene.say_over("Claudio, che ore sono?")
+    await idle(scene)
+    assert [r["outcome"] for r in scene.rows[:2]] == ["interrupted", "ok"]
+    assert "Sono le 14 e 5." in scene.speaker.spoken
+    assert resumed(scene)
+
+
+@pytest.mark.parametrize(
+    "echo",
+    [
+        "Claudio lo salvò naturalmente",
+        "Claudio?",
+        "un eroe bellissimo di nome Claudio",  # the first sentence, judged late
+    ],
+)
+async def test_the_echo_of_a_sentence_with_the_name_is_still_echo(make_scene, echo: str) -> None:
+    """The story has said the name: its echo, or the lone name while the sentence playing says
+    it, does not stop the reply."""
+    scene = make_scene(text_reply(*HERO), sentence_frames=PLAY, window_s=4.0)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.until(lambda: scene.speaker.played[-1:] == [HERO[3].strip()])
+    await scene.say_over(echo)
+    await idle(scene)
+    assert scene.row(0)["outcome"] == "ok"
+
+
+async def test_a_short_command_over_a_sentence_with_the_name_is_jenjo(make_scene) -> None:
+    """The last sentences say "Claudio lo salvò": the name's letters alone made a short command
+    look like them (review of 13/11)."""
+    scene = make_scene(text_reply(*HERO), sentence_frames=PLAY, window_s=4.0)
+    await scene.say("raccontami una storia")
+    await scene.until_speaking()
+    await scene.until(lambda: scene.speaker.played[-1:] == [HERO[4].strip()])
+    await scene.say_over("Claudio, volume su")
+    await idle(scene)
+    assert [r["outcome"] for r in scene.rows[:2]] == ["interrupted", "ok"]
+    assert scene.row(1)["route"] == "local"
 
 
 async def test_dicevo_after_a_claude_answer_keeps_both_lines(make_scene) -> None:
