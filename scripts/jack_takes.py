@@ -30,19 +30,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from claudio.config import load_settings  # noqa: E402
-from claudio.router.matcher import load_commands  # noqa: E402
-from claudio.safety.confirmation import (  # noqa: E402
-    ASK_LEVEL_2,
-    ASK_LEVEL_3,
-    CANCELLED,
-    NOT_UNDERSTOOD,
-)
+from claudio.tts import fixed  # noqa: E402
 from claudio.tts.jack import JackSynth, worker_command  # noqa: E402
 from claudio.tts.takes import TakeStore, voice_profile  # noqa: E402
 from claudio.tts.voice_check import TakeJudge, semitones  # noqa: E402
 from jack_variants import Silent, wer  # noqa: E402
-
-STARTUP = "Sono pronto."  # said once everything has loaded (__main__.announce_ready)
 
 
 @dataclass
@@ -60,10 +52,7 @@ def fixed_replies(settings: Any, from_logs: int) -> list[str]:
     """What Jack says word for word again and again: the Italian replies and questions of
     commands.toml, the confirmation lines, "Sono pronto." and, with `from_logs`, the replies
     said at least that many times in logs/sessions/ (one piece each: short enough)."""
-    commands = load_commands(settings.resolve(settings.router.commands_file))
-    lines = [STARTUP, ASK_LEVEL_2, ASK_LEVEL_3, CANCELLED, NOT_UNDERSTOOD]
-    for command in commands:
-        lines += [command.reply, command.confirm]
+    lines = fixed.fixed_replies(settings)
     if from_logs:
         said: Counter[str] = Counter()
         for log in (ROOT / "logs" / "sessions").glob("*/conversazione.md"):
