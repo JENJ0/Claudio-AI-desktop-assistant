@@ -48,6 +48,27 @@ def test_env_overrides_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert load_settings(f).stt.device == "cpu"
 
 
+def test_the_elevenlabs_key_comes_from_the_environment_and_stays_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = tmp_path / "c.toml"
+    f.write_text("", encoding="utf-8")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-eleven-test")
+    s = load_settings(f)
+    assert s.elevenlabs_api_key is not None
+    assert s.elevenlabs_api_key.get_secret_value() == "sk-eleven-test"
+    assert "sk-eleven-test" not in repr(s)
+
+
+def test_a_dotenv_with_the_elevenlabs_key_is_accepted(tmp_path: Path) -> None:
+    """With extra="forbid" an unknown .env line stops Claudio at startup (14/11, guide V0)."""
+    env = tmp_path / ".env"
+    env.write_text("ELEVENLABS_API_KEY=sk-eleven-test\n", encoding="utf-8")
+    s = Settings(_env_file=env)
+    assert s.elevenlabs_api_key is not None
+    assert s.elevenlabs_api_key.get_secret_value() == "sk-eleven-test"
+
+
 def test_invalid_value_has_clear_message(tmp_path: Path) -> None:
     f = tmp_path / "c.toml"
     f.write_text('[vad]\nthreshold = 2\n[stt]\ndevice = "tpu"\n', encoding="utf-8")

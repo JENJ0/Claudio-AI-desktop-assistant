@@ -563,6 +563,8 @@ class Settings(BaseSettings):
     pc: PcSettings = PcSettings()
     # The Claude API key, only from .env or the environment (never in the TOML, never logged).
     anthropic_api_key: SecretStr | None = Field(None, validation_alias="ANTHROPIC_API_KEY")
+    # The ElevenLabs key (the online voice, G11), same rules as the Claude key.
+    elevenlabs_api_key: SecretStr | None = Field(None, validation_alias="ELEVENLABS_API_KEY")
     chat: ChatSettings = ChatSettings()
     memory: MemorySettings = MemorySettings()
     logging: LoggingSettings = LoggingSettings()
