@@ -110,6 +110,31 @@ def test_a_failed_probe_stops_before_any_paid_request(monkeypatch, tmp_path) -> 
     assert streams == [] and not (tmp_path / "out").exists()
 
 
+def test_the_benchmark_synth_never_reads_the_take_cache(monkeypatch, tmp_path) -> None:
+    import types
+
+    import pytest
+    from pydantic import SecretStr
+
+    import claudio.__main__ as entry
+    from claudio.config import TtsSettings
+
+    class FakeEleven:
+        cache: object | None = object()
+
+        def probe(self) -> str:
+            return "HTTP 401"
+
+    fake = FakeEleven()
+    settings = types.SimpleNamespace(elevenlabs_api_key=SecretStr("k"), tts=TtsSettings())
+    monkeypatch.setattr(bench, "load_settings", lambda: settings)
+    monkeypatch.setattr(entry, "make_elevenlabs", lambda settings, fallback: fake)
+    monkeypatch.setattr(bench, "OUT", tmp_path / "out")
+    with pytest.raises(SystemExit):
+        bench.run_elevenlabs(1)
+    assert fake.cache is None
+
+
 def test_run_voice_writes_every_row_to_csv_as_it_goes(monkeypatch, tmp_path) -> None:
     import csv
 

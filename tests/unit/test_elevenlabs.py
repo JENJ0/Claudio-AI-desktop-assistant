@@ -335,7 +335,10 @@ def _settings(
     from claudio.config import Settings
 
     base = Settings(
-        models_dir=tmp_path, tts={"engine": engine}, cost={"db_file": tmp_path / "spend.db"}
+        models_dir=tmp_path,
+        data_dir=tmp_path / "data",
+        tts={"engine": engine},
+        cost={"db_file": tmp_path / "spend.db"},
     )
     return base.model_copy(update={"elevenlabs_api_key": SecretStr(key_value) if key else None})
 
@@ -454,6 +457,8 @@ def test_make_elevenlabs_forwards_the_settings(monkeypatch, tmp_path) -> None:
                 "timeout_s": 2.5,
                 "lufs": -20,
                 "credits": calls[0][1]["credits"],
+                "cache": calls[0][1]["cache"],
+                "fixed": calls[0][1]["fixed"],
             },
         )
     ]
@@ -915,3 +920,217 @@ def test_a_notice_without_notify_is_logged(caplog: pytest.LogCaptureFixture) -> 
     play(synth, "uno")
     assert WARN_TEXT in caplog.text and "non detto a voce" in caplog.text
     assert len(account.rows(synth)) == 1
+
+
+# --- the cache of fixed replies ---------------------------------------------------------------
+
+FIXED = "Apro Chrome."
+
+
+def cached_synth(tmp_path, server: Server, fallback: Any = None, **kwargs: Any) -> ElevenLabsSynth:
+    from claudio.tts.eleven_cache import TakeCache
+
+    cache = TakeCache(tmp_path / "eleven_cache", "profile")
+    return make(server, fallback, cache=cache, fixed=frozenset({FIXED, "Fatto."}), **kwargs)
+
+
+def wav_files(tmp_path) -> list:
+    return sorted((tmp_path / "eleven_cache").glob("*.wav"))
+
+
+def test_a_fixed_piece_is_generated_once_then_played_from_disk(tmp_path, caplog) -> None:
+    caplog.set_level(logging.INFO)
+    account = Account(1000)
+    synth = cached_synth(tmp_path, account.server, credits=VoiceCredits(VoiceLedger(":memory:")))
+    first = play(synth, FIXED)
+    synth.begin_reply()
+    second = play(synth, FIXED)
+    assert account.tts_calls == 1  # the subscription probe is free and not a synthesis
+    assert second.tolist() == first.tolist() == [1, 2]
+    assert synth.last_cost is None and synth.last_first_ms is not None
+    assert "frase fissa da disco" in caplog.text
+    assert len(account.rows(synth)) == 1
+
+
+def test_a_fixed_piece_goes_online_without_previous_text(tmp_path) -> None:
+    server = audio(samples(1, 2))
+    synth = cached_synth(tmp_path, server)
+    play(synth, "Una frase qualsiasi.")
+    play(synth, FIXED)
+    assert "previous_text" not in server.body(1)
+    play(synth, "Dopo.")
+    assert server.body(2)["previous_text"] == FIXED
+
+
+def test_a_cache_hit_sets_previous_text_for_the_next_online_piece(tmp_path) -> None:
+    server = audio(samples(1, 2))
+    synth = cached_synth(tmp_path, server)
+    play(synth, FIXED)  # generated and saved: request 0
+    synth.begin_reply()
+    play(synth, FIXED)  # played from disk: no request
+    play(synth, "Dopo.")
+    assert len(server.requests) == 2
+    assert server.body(1)["previous_text"] == FIXED
+
+
+def test_a_cache_hit_stops_after_cancel(tmp_path) -> None:
+    synth = cached_synth(tmp_path, audio(samples(1)))
+    synth.cache.save(FIXED, np.ones(SAMPLE_RATE * 2, dtype=np.int16), SAMPLE_RATE)  # 4 slices
+    chunks = synth.stream(FIXED)
+    assert len(next(chunks)) > 0
+    synth.cancel()
+    assert list(chunks) == []
+
+
+def test_other_text_is_never_cached(tmp_path) -> None:
+    server = audio(samples(1, 2))
+    synth = cached_synth(tmp_path, server)
+    play(synth, "Una frase di Claude.")
+    play(synth, "Una frase di Claude.")
+    assert len(server.requests) == 2
+    assert wav_files(tmp_path) == []
+
+
+def test_a_cut_or_cancelled_generation_is_not_saved(tmp_path) -> None:
+    def gen() -> Iterator[bytes]:
+        yield samples(1, 2)
+        raise httpx2.ReadError("cut")
+
+    cut = Server(lambda request: httpx2.Response(200, content=gen()))
+    synth = cached_synth(tmp_path, cut)
+    assert play(synth, FIXED).tolist() == [1, 2]
+    assert wav_files(tmp_path) == []
+
+    server = audio(samples(1), samples(2), samples(3))
+    synth = cached_synth(tmp_path, server)
+    for _chunk in synth.stream(FIXED):
+        synth.cancel()
+    assert wav_files(tmp_path) == []
+    synth.begin_reply()
+    play(synth, FIXED)
+    assert len(server.requests) == 2  # the next time goes online again
+    assert len(wav_files(tmp_path)) == 1
+
+
+def test_a_broken_cache_file_goes_online_again(tmp_path) -> None:
+    server = audio(samples(1, 2))
+    synth = cached_synth(tmp_path, server)
+    play(synth, FIXED)
+    (path,) = wav_files(tmp_path)
+    path.write_bytes(b"not a wav")
+    synth.begin_reply()
+    assert play(synth, FIXED).tolist() == [1, 2]
+    assert len(server.requests) == 2
+    synth.begin_reply()
+    assert play(synth, FIXED).tolist() == [1, 2]
+    assert len(server.requests) == 2  # rewritten and good
+
+
+@pytest.mark.parametrize("reason", ["credits", "error"])
+def test_the_fallback_reply_never_reads_the_cache(tmp_path, reason: str) -> None:
+    account = Account(1000)
+    synth = cached_synth(tmp_path, account.server, credits=VoiceCredits(VoiceLedger(":memory:")))
+    play(synth, FIXED)  # now in the cache
+    synth.begin_reply()
+    reads: list[tuple] = []
+    real_load = synth.cache.load
+    synth.cache.load = lambda *args: reads.append(args) or real_load(*args)
+    if reason == "credits":
+        account.used = 40000
+        synth.probe()
+        assert synth.credits is not None and synth.credits.exhausted()
+    else:
+        account.tts_status = 500
+        play(synth, "Prima.")  # error at the start of the reply: the rest is the fallback's
+    calls = account.tts_calls
+    assert play(synth, FIXED).tolist() == [7] * 10
+    assert reads == []
+    assert account.tts_calls == calls
+
+
+def test_make_elevenlabs_has_the_cache(tmp_path) -> None:
+    from claudio import __main__ as entry
+    from claudio.tts.eleven_cache import TakeCache, eleven_profile
+
+    settings = _settings(tmp_path)
+    synth = entry.make_elevenlabs(settings, FakeFallback())
+    assert synth is not None
+    assert isinstance(synth.cache, TakeCache)
+    assert synth.cache.folder == tmp_path / "data" / "eleven_cache"
+    assert synth.cache.profile == eleven_profile(settings.tts)
+    assert "Sono pronto." in synth.fixed
+    assert not (tmp_path / "data" / "eleven_cache").exists()
+
+
+class Switch:
+    """A server that answers with audio or fails, as `mode` says."""
+
+    def __init__(self) -> None:
+        self.mode = "ok"
+        self.server = Server(self._respond)
+
+    def _respond(self, request: httpx2.Request) -> httpx2.Response:
+        if self.mode == "down":
+            raise httpx2.ConnectError("no route")
+        if self.mode == "cut":
+
+            def gen() -> Iterator[bytes]:
+                yield samples(1, 2)
+                raise httpx2.ReadError("cut")
+
+            return httpx2.Response(200, content=gen())
+        return httpx2.Response(200, content=iter([samples(1, 2)]))
+
+
+def cached_and_switch(tmp_path):
+    switch = Switch()
+    fallback = FakeFallback()
+    synth = cached_synth(tmp_path, switch.server, fallback)
+    play(synth, FIXED)  # in the cache now
+    synth.begin_reply()
+    return switch, fallback, synth
+
+
+def spy_on_reads(synth: ElevenLabsSynth) -> list[tuple]:
+    reads: list[tuple] = []
+    real_load = synth.cache.load
+    synth.cache.load = lambda *args: reads.append(args) or real_load(*args)
+    return reads
+
+
+def test_after_a_failure_before_audio_a_fixed_piece_skips_the_cache(tmp_path) -> None:
+    switch, _fallback, synth = cached_and_switch(tmp_path)
+    reads = spy_on_reads(synth)
+    switch.mode = "down"
+    play(synth, "Una frase di Claude.")  # fails before audio: the voice is down
+    synth.begin_reply()
+    requests = len(switch.server.requests)
+    assert play(synth, FIXED).tolist() == [7] * 10  # the fallback speaks it, not the cache
+    assert reads == []
+    assert len(switch.server.requests) == requests + 1  # it went online first
+
+
+def test_a_success_brings_the_cache_back(tmp_path) -> None:
+    switch, _, synth = cached_and_switch(tmp_path)
+    switch.mode = "down"
+    play(synth, "Una frase di Claude.")
+    synth.begin_reply()
+    switch.mode = "ok"
+    play(synth, FIXED)  # goes online (cache skipped) and gets a 200
+    synth.begin_reply()
+    requests = len(switch.server.requests)
+    assert play(synth, FIXED).tolist() == [1, 2]
+    assert len(switch.server.requests) == requests  # from disk again
+
+
+def test_a_cut_or_cancelled_request_does_not_mark_the_voice_down(tmp_path) -> None:
+    switch, _, synth = cached_and_switch(tmp_path)
+    switch.mode = "cut"
+    play(synth, "Una frase di Claude.")  # cut after audio
+    synth.begin_reply()
+    for _chunk in synth.stream("Un'altra frase."):
+        synth.cancel()  # cancelled after the first chunk
+    synth.begin_reply()
+    requests = len(switch.server.requests)
+    assert play(synth, FIXED).tolist() == [1, 2]
+    assert len(switch.server.requests) == requests

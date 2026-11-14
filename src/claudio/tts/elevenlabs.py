@@ -16,6 +16,7 @@ import httpx2
 import numpy as np
 
 from claudio.cost.voice import VoiceCredits
+from claudio.tts.eleven_cache import TakeCache
 from claudio.tts.loudness import LevelGuard, to_float
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ class ElevenLabsSynth:
         transport: httpx2.BaseTransport | None = None,
         credits: VoiceCredits | None = None,
         notify: Callable[[str], None] | None = None,
+        cache: TakeCache | None = None,
+        fixed: frozenset[str] = frozenset(),
     ) -> None:
         self._key = key
         self._voice_id = voice_id
@@ -74,6 +77,9 @@ class ElevenLabsSynth:
         self.notify = notify  # may be set after construction; called outside any lock
         self._retry_probe = True  # one more read after the first success if usage is unknown
         self._probe_due = False  # set when billing; the probe runs before the next request
+        self.cache = cache  # recordings of the fixed pieces, spoken only by this voice
+        self.fixed = fixed  # the pieces (stripped) worth keeping
+        self._down = False  # a request failed before audio: no cache until one gets a 200
         self._out_logged = False  # one "credits finished" line per period, not per sentence
 
     @staticmethod
@@ -143,7 +149,12 @@ class ElevenLabsSynth:
         if not self._fallback_reply and not self._online_allowed():
             self._fallback_reply = True  # out of credits: quietly, until the reset
         if not self._fallback_reply:
-            failure = yield from self._online(text, generation)
+            fixed = self.cache is not None and text.strip() in self.fixed
+            saved = self._load_fixed(text) if fixed and not self._down else None
+            if saved is not None:
+                yield from self._play_saved(text, saved, generation)
+                return
+            failure = yield from self._online(text, generation, keep=fixed)
             if failure is None or self._is_cancelled(generation):
                 return
             self._fallback_reply = True
@@ -217,9 +228,31 @@ class ElevenLabsSynth:
 
     # -- online request ---------------------------------------------------------------------
 
-    def _body(self, text: str) -> dict[str, Any]:
+    def _load_fixed(self, text: str) -> np.ndarray | None:
+        assert self.cache is not None
+        return self.cache.load(text, SAMPLE_RATE)
+
+    def _play_saved(self, text: str, pcm: np.ndarray, generation: int) -> Iterator[np.ndarray]:
+        """A fixed piece from disk: no request, no credits."""
+        started = time.perf_counter()
+        self.last_cost = None
+        self.last_first_ms = None
+        self.sample_rate = SAMPLE_RATE
+        step = SAMPLE_RATE // 2  # half a second at a time, like the online chunks
+        for start in range(0, len(pcm), step):
+            if self._is_cancelled(generation):
+                return
+            if self.last_first_ms is None:
+                self.last_first_ms = (time.perf_counter() - started) * 1000
+            yield pcm[start : start + step]
+        if self._is_cancelled(generation):
+            return
+        self._previous_text = text
+        log.info("ElevenLabs: frase fissa da disco (%d caratteri)", len(text))
+
+    def _body(self, text: str, with_previous: bool = True) -> dict[str, Any]:
         body: dict[str, Any] = {"text": text, "model_id": self._model, "language_code": "it"}
-        if self._previous_text is not None:
+        if with_previous and self._previous_text is not None:
             body["previous_text"] = self._previous_text
         if self._settings:
             body["voice_settings"] = self._settings
@@ -228,9 +261,12 @@ class ElevenLabsSynth:
     def _is_cancelled(self, generation: int) -> bool:
         return self._generation != generation
 
-    def _online(self, text: str, generation: int) -> Generator[np.ndarray, None, str | None]:
+    def _online(
+        self, text: str, generation: int, keep: bool = False
+    ) -> Generator[np.ndarray, None, str | None]:
         """Yields the audio; the return value is None when done (or cut, or cancelled), or the
-        reason when nothing was spoken and the fallback must take over."""
+        reason when nothing was spoken and the fallback must take over. With `keep` (a fixed
+        piece) the request has no previous_text and a complete one is saved in the cache."""
         self.last_cost = None
         self.last_first_ms = None
         if self._guard is not None:
@@ -241,10 +277,14 @@ class ElevenLabsSynth:
         paid = False  # a 200 was received: counted once, however the request ends
         cost: int | None = None
         leftover = b""
+        kept: list[np.ndarray] = []
         path = f"/v1/text-to-speech/{self._voice_id}/stream"
         try:
             with self._client.stream(
-                "POST", path, params={"output_format": "pcm_24000"}, json=self._body(text)
+                "POST",
+                path,
+                params={"output_format": "pcm_24000"},
+                json=self._body(text, with_previous=not keep),
             ) as response:
                 self._response = response
                 mine = response
@@ -259,6 +299,7 @@ class ElevenLabsSynth:
                 header = response.headers.get("character-cost")
                 cost = int(header) if header and header.isdigit() else None
                 self.last_cost = cost
+                self._down = False
                 paid = True  # before the cancel check: a barge-in during the wait is still paid
                 if self._is_cancelled(generation):
                     return None
@@ -274,7 +315,10 @@ class ElevenLabsSynth:
                         self.last_first_ms = (time.perf_counter() - started) * 1000
                         spoken = True
                     self.sample_rate = SAMPLE_RATE
-                    yield self._level(np.frombuffer(data[:usable], dtype="<i2"))
+                    chunk = self._level(np.frombuffer(data[:usable], dtype="<i2"))
+                    if keep:
+                        kept.append(chunk)
+                    yield chunk
                 if not spoken:
                     raise _OnlineError("risposta senza audio")
         except (httpx2.HTTPError, httpx2.StreamError, _OnlineError) as exc:
@@ -286,6 +330,7 @@ class ElevenLabsSynth:
             if spoken:  # cut in the middle: no second voice
                 log.warning("ElevenLabs interrotto a metà frase (%s)", reason)
                 return None
+            self._down = True
             return reason
         finally:
             if paid:  # also when cut or cancelled: the budget errs on the safe side
@@ -295,6 +340,8 @@ class ElevenLabsSynth:
         if self._is_cancelled(generation):
             return None
         self._previous_text = text
+        if keep and self.cache is not None and kept:  # only here: complete, not cut, not cancelled
+            self.cache.save(text, np.concatenate(kept), SAMPLE_RATE)
         log.info(
             "ElevenLabs: %d caratteri, costo %s, primo chunk %s ms",
             len(text),

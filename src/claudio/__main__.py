@@ -378,6 +378,10 @@ def make_elevenlabs(settings: Settings, fallback: Any) -> ElevenLabsSynth | None
     credits = VoiceCredits(
         VoiceLedger(settings.resolve(settings.cost.db_file)), settings.cost.warn_at
     )
+    from claudio.tts.eleven_cache import TakeCache, eleven_profile
+    from claudio.tts.fixed import fixed_pieces
+
+    cache = TakeCache(settings.resolve(settings.data_dir) / "eleven_cache", eleven_profile(tts))
     return ElevenLabsSynth(
         key,
         tts.eleven_voice_id,
@@ -388,6 +392,8 @@ def make_elevenlabs(settings: Settings, fallback: Any) -> ElevenLabsSynth | None
         timeout_s=tts.eleven_timeout_s,
         lufs=tts.jack_lufs,
         credits=credits,
+        cache=cache,
+        fixed=fixed_pieces(settings),
     )
 
 

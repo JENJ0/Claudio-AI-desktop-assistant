@@ -317,6 +317,7 @@ def run_elevenlabs(reps: int) -> None:
     eleven = make_elevenlabs(settings, NoFallback())
     if eleven is None:
         raise SystemExit("ELEVENLABS_API_KEY non valida in .env")
+    eleven.cache = None  # the benchmark measures the network and the credits, never the disk
     if problem := eleven.probe():  # free: stops a doomed run before the first paid request
         raise SystemExit(
             f"ElevenLabs non risponde ({problem}): benchmark fermato, nessun credito speso"
