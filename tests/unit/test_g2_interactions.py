@@ -17,6 +17,7 @@ from claudio.intake import Decision, Kind
 from claudio.metrics import Interaction
 from claudio.router.actions import VK_F4, VK_MENU
 from claudio.router.matcher import CommandMatcher
+from claudio.safety.confirmation import CANCELLED, NOT_UNDERSTOOD
 from tests.unit import test_timeline
 from tests.unit.test_actions import Recorder
 from tests.unit.test_claude_brain import HANDOFF, Monotonic, ScriptedClient, ask, brain
@@ -209,6 +210,117 @@ async def test_named_by_the_wake_audio_is_a_new_request_over_the_local_question(
     assert "Va bene" in reply and "Sono le" in reply
     assert rec.combos == []
     assert not r.awaiting
+
+
+async def test_the_same_command_with_the_name_over_its_question_only_asks_it_again(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    r = local(matcher, rec, clock)
+    q = await say(r, "chiudi la finestra")
+    assert await say(r, "Claudio, chiudi la finestra") == q
+    assert r.awaiting
+    assert rec.combos == []
+    await say(r, "sì")
+    assert rec.combos == [CLOSE]
+
+
+async def test_the_same_command_named_by_the_wake_audio_only_asks_it_again(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    r = local(matcher, rec, clock)
+    q = await say(r, "chiudi la finestra")
+    assert "".join([c async for c in r.respond("chiudi la finestra", named=True)]) == q
+    assert r.awaiting
+    assert rec.combos == []
+    await say(r, "sì")
+    assert rec.combos == [CLOSE]
+
+
+async def test_the_same_command_with_the_name_after_the_second_question_asks_again(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    r = local(matcher, rec, clock)
+    q = await say(r, "chiudi la finestra")
+    await say(r, "boh")  # the second question
+    assert await say(r, "Claudio, chiudi la finestra") == q
+    assert r.awaiting
+    assert rec.combos == []
+    assert await say(r, "boh") == NOT_UNDERSTOOD
+    assert not r.awaiting
+    assert rec.combos == []
+
+
+async def test_the_question_asked_again_by_name_gets_a_new_deadline(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    r = local(matcher, rec, clock)
+    await say(r, "chiudi la finestra")
+    clock.t += 55
+    await say(r, "Claudio, chiudi la finestra")
+    assert r.last_route == {
+        "route": "confirm",
+        "command": "close_window",
+        "level": 2,
+        "asked_again_by_name": True,
+    }
+    clock.t += 50  # past the first deadline, inside the new one
+    assert r.awaiting
+    await say(r, "sì")
+    assert rec.combos == [CLOSE]
+
+
+async def test_the_first_question_by_name_still_allows_the_second_question(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    r = local(matcher, rec, clock)
+    await say(r, "chiudi la finestra")
+    await say(r, "Claudio, chiudi la finestra")
+    assert await say(r, "boh") == "Non ho capito. Chiudi la finestra: sì o no?"
+    assert r.awaiting
+
+
+async def test_the_question_asked_again_by_name_counts_as_heard(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    r = local(matcher, rec, clock)
+    q = await say(r, "chiudi la finestra")
+    r.reply_cut([])  # nothing of the question was played
+    assert await say(r, "Claudio, chiudi la finestra") == q
+    assert await say(r, "sì") == "Fatto."
+    assert rec.combos == [CLOSE]
+
+
+async def test_a_named_router_command_over_the_local_question_is_not_noted_as_cancelled(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    notes: list[tuple[str, str]] = []
+
+    async def claude(text: str) -> AsyncIterator[str]:
+        yield "Non so."
+
+    r = local(matcher, rec, clock, fallback=claude, fallback_note=lambda q, a: notes.append((q, a)))
+    await say(r, "chiudi la finestra")
+    reply = await say(r, "Claudio, che ore sono")
+    assert "Sono le" in reply
+    assert ("Claudio, che ore sono", CANCELLED) not in notes, notes
+
+
+async def test_the_same_level_3_command_with_the_name_only_asks_it_again(
+    matcher: CommandMatcher,
+) -> None:
+    rec, clock = Recorder(), Monotonic()
+    r = local(matcher, rec, clock)
+    q = await say(r, "dimentica tutto")
+    assert await say(r, "Claudio, dimentica tutto") == q
+    assert r.awaiting
+    assert rec.combos == []
 
 
 async def test_an_unnamed_request_still_answers_the_question_as_unclear(

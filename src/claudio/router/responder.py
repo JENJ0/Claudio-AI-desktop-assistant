@@ -611,7 +611,7 @@ class LocalResponder:
         if self._name_over_question(
             text, named
         ):  # level 2 on purpose: "Claudio, sì" at level 3 asks again
-            async for chunk in self._cancel_by_name(text, match.command.id):
+            async for chunk in self._cancel_by_name(text, match.command.id, pending):
                 yield chunk
             return
         unheard = not pending.heard
@@ -668,10 +668,27 @@ class LocalResponder:
             and not (self.fallback_repeats is not None and self.fallback_repeats(text))
         )
 
-    async def _cancel_by_name(self, text: str, what: str) -> AsyncIterator[str]:
+    async def _cancel_by_name(
+        self, text: str, what: str, waiting: Pending | None = None
+    ) -> AsyncIterator[str]:
         """A new call, not an answer ("Claudio, che idea hai?", 05/11 17:20): the open question
         (Claude's or the router's) is cancelled and the words after the name are answered as a
-        request of their own, router first. Nothing after the name: only the cancel."""
+        request of their own, router first. Nothing after the name: only the cancel. The same
+        command said again with the name: no cancel, only the question again (`waiting`)."""
+        # The name only in the wake audio, not in the words: the whole phrase is the request.
+        rest = after_wake_word(text) if heard_wake_word(text) else text
+        again = self.matcher.match(rest) if rest else None
+        if waiting is not None and again is not None and _same_command(again, waiting.match):
+            self._pending = replace(waiting, asked=self.clock(), heard=True)
+            self.last_route = {
+                "route": "confirm",
+                "command": what,
+                "level": waiting.level,
+                "asked_again_by_name": True,
+            }
+            log.info("Il nome sopra la domanda: stesso comando, chiedo di nuovo (%s)", what)
+            yield question(waiting.match)
+            return
         log.info("Il nome sopra la domanda: %s annullato", what)
         if what == "claude" and self.fallback_cancel is not None:
             self.fallback_cancel(False)  # the brain notes the calls as not run
@@ -679,9 +696,7 @@ class LocalResponder:
         if what != "claude":
             self.last_route["command"] = what
         cancelled = CANCELLED
-        # The name only in the wake audio, not in the words: the whole phrase is the request.
-        rest = after_wake_word(text) if heard_wake_word(text) else text
-        claude_next = self.fallback is not None and self.matcher.match(rest) is None
+        claude_next = self.fallback is not None and again is None
         if what != "claude" and rest and claude_next and self.fallback_note is not None:
             self.fallback_note(text, cancelled)  # Claude answers next: its history must say so
         yield cancelled
@@ -729,6 +744,10 @@ def quoted(text: str) -> str:
     case ("Spegniti." -> "spegniti") unless the word is an acronym ("PC")."""
     text = text.strip().rstrip(".?!")
     return text[:1].lower() + text[1:] if text[1:2].islower() else text
+
+
+def _same_command(a: Match, b: Match) -> bool:
+    return a.command.id == b.command.id and a.number == b.number
 
 
 def _is_system(match: Match | None) -> bool:
