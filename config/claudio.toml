@@ -213,7 +213,7 @@ answer_deaf_voice_ms = 100 # this much voice lost while deaf before an answer: i
 
 [cost]
 pricing_file = "config/pricing.toml"  # prices per model and cache multipliers (never in the code)
-db_file = "data/spend.db"             # SQLite ledger of every Claude call (tokens, cache, cost)
+db_file = "data/spend.db"             # SQLite ledger of every Claude call (tokens, cache, cost) and every ElevenLabs request (characters, credits)
 daily_budget = 2.58                   # USD per day: at most 80 $ in a 31-day month, out of the 100 $ of Max API credits. Warning at warn_at, Claude blocked at 100 %
 warn_at = 0.8                         # local commands keep working when the budget is spent
 

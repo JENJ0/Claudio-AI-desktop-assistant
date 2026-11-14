@@ -54,6 +54,7 @@ Costruire "Claudio", un assistente vocale per Windows in Python che:
 - Cronologia breve e senza riassunti: le ultime domande e risposte (`history_turns`), azzerata dopo un silenzio (`history_reset_s`) e al riavvio; `max_tokens` sempre limitato.
 - Screenshot solo se leggere la finestra non basta o se chiedo qualcosa di visivo, a bassa risoluzione. La regola sta solo nel prompt (prompt di sistema e descrizione di `look_at_screen`): il codice non la impone.
 - Contatore di spesa per ogni richiesta, salvato su SQLite, con budget giornaliero configurabile, avviso vocale all'80% e blocco al 100%.
+- Voce online (ElevenLabs): il costo di ogni richiesta (intestazione `character-cost`) va su SQLite (tabella `voice` di `data/spend.db`); uso e limite del mese si leggono dall'API all'avvio. Avviso vocale una volta al mese all'80%; al 100%, o quando l'API risponde 402 (crediti finiti), parla Jack locale fino al reset e lo dice. Il tetto proprio della chiave non si legge dall'API.
 - Modelli in `config/claudio.toml`, prezzi in `config/pricing.toml`, mai scritti nel codice. I default di `ClaudeSettings` in `config.py` sono ancora Haiku con thinking spento: vale la configurazione, e si sistemano al verdetto D6 (R2).
 
 ## Sicurezza
