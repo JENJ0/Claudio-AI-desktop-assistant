@@ -332,6 +332,8 @@ def build_synth(settings: Settings, jack: JackSynth | None = None) -> tuple[Any,
         return build_base_synth(settings)
     synth, name = _jack_over_base(settings, jack)
     if settings.tts.engine == "elevenlabs" and (online := make_elevenlabs(settings, synth)):
+        if problem := online.probe():  # kept in the chain: the network may come back
+            log.warning("Voce online non disponibile (%s): parla %s", problem, name)
         return online, f"ElevenLabs (fallback {name})"
     return synth, name
 
@@ -406,7 +408,7 @@ def build_speaker(
         player,
         settings.audio.beep_volume,
         first_clause_chars=settings.tts.first_clause_chars,
-        group_chars=group_chars(settings.tts),
+        group_chars=group_chars(settings.tts, synth),
         group_first_chars=settings.tts.jack_group_first_chars,
         group_pause_s=settings.tts.jack_group_pause_ms / 1000,
     )
@@ -415,9 +417,22 @@ def build_speaker(
     return speaker
 
 
-def group_chars(tts: TtsSettings) -> int:
-    """How many characters of a reply go to the voice together (0 = sentence by sentence)."""
-    return {"jack": tts.jack_group_chars, "elevenlabs": tts.eleven_group_chars}.get(tts.engine, 0)
+def group_chars(tts: TtsSettings, synth: Any) -> int:
+    """How many characters of a reply go to the voice together (0 = sentence by sentence),
+    by the voice actually on top of the chain: with no ElevenLabs key Jack speaks."""
+    from claudio.tts.elevenlabs import ElevenLabsSynth
+    from claudio.tts.jack import JackSynth
+
+    if isinstance(synth, ElevenLabsSynth):
+        return tts.eleven_group_chars
+    return tts.jack_group_chars if isinstance(synth, JackSynth) else 0
+
+
+def online_voice_ok(synth: Any) -> bool:
+    """True when the voice on top is ElevenLabs and its startup probe found no problem."""
+    from claudio.tts.elevenlabs import ElevenLabsSynth
+
+    return isinstance(synth, ElevenLabsSynth) and synth.problem is None
 
 
 def jack_wait_s(settings: Settings, gpu: GpuMemory | None) -> float | None:
@@ -438,12 +453,18 @@ def jack_wait_s(settings: Settings, gpu: GpuMemory | None) -> float | None:
 
 
 def startup_notices(
-    settings: Settings, jack_running: bool, stt_device: str, gpu_busy: bool = False
+    settings: Settings,
+    jack_running: bool,
+    stt_device: str,
+    gpu_busy: bool = False,
+    online_ok: bool = True,
 ) -> list[str]:
     """What Claudio says out loud at startup when it runs degraded: a warning in the console
     alone went unnoticed (on 23/10 Jack's worker failed and Kokoro answered all evening)."""
     notices = []
-    if settings.tts.engine == "jack" and not jack_running:
+    if settings.tts.engine == "elevenlabs" and not online_ok:
+        notices.append("La voce online non è partita: uso quella locale.")
+    if settings.tts.jack_in_chain and not jack_running:
         notices.append("La voce di Jack non è partita: uso quella di riserva.")
         if gpu_busy:  # a fact, maybe not the cause: the cause is in the log
             notices.append("All'avvio la scheda video era quasi piena.")
@@ -788,7 +809,16 @@ async def run_assistant(
         asyncio.create_task(serve_inbox(assistant, chat, settings)) if settings.chat.typed else None
     )
     ready = asyncio.create_task(
-        announce_ready(assistant, settings, jack, jack_error, transcriber.device, t0, gpu_busy)
+        announce_ready(
+            assistant,
+            settings,
+            jack,
+            jack_error,
+            transcriber.device,
+            t0,
+            gpu_busy,
+            online_ok=online_voice_ok(speaker.synth),
+        )
     )
     run = asyncio.create_task(assistant.run(capture.frames()))
     closer = asyncio.create_task(close_when_idle(assistant, system, run))
@@ -830,6 +860,7 @@ async def announce_ready(
     stt_device: str,
     t0: float,
     gpu_busy: bool = False,
+    online_ok: bool = True,
 ) -> None:
     """Once Jack's worker has loaded too (or failed), say so: the notices of a degraded start
     and a short "ready", in Jack's voice when it is there. Claudio already listens by then."""
@@ -841,7 +872,7 @@ async def announce_ready(
             "Jack non disponibile (%s): uso %s", jack_error[0], type(jack.fallback).__name__
         )
     log.info("Avvio completo in %.1f s", time.perf_counter() - t0)
-    notices = startup_notices(settings, jack_running, stt_device, gpu_busy)
+    notices = startup_notices(settings, jack_running, stt_device, gpu_busy, online_ok)
     for notice in notices:
         log.warning("Avviso a voce: %s", notice)
     if settings.startup.announce_ready:

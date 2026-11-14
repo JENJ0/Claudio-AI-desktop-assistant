@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from claudio.__main__ import load_all
+from claudio.__main__ import load_all, startup_notices
 
 
 def sleeper(value: str, seconds: float = 0.3):
@@ -102,3 +102,32 @@ async def test_run_text_acts_for_real(tmp_path, monkeypatch) -> None:
     )
     await entry.run_text(settings, "apri il blocco note")
     assert ran
+
+
+def _with_engine(engine: str):
+    from claudio.config import Settings
+
+    base = Settings()
+    return base.model_copy(update={"tts": base.tts.model_copy(update={"engine": engine})})
+
+
+def test_startup_notice_when_the_online_voice_did_not_start() -> None:
+    notices = startup_notices(
+        _with_engine("elevenlabs"), jack_running=True, stt_device="cuda", online_ok=False
+    )
+    assert notices == ["La voce online non è partita: uso quella locale.", "Il motivo è nel log."]
+
+
+def test_jack_notice_also_with_the_elevenlabs_engine() -> None:
+    notices = startup_notices(
+        _with_engine("elevenlabs"), jack_running=False, stt_device="cuda", online_ok=True
+    )
+    assert "La voce di Jack non è partita: uso quella di riserva." in notices
+
+
+@pytest.mark.parametrize("engine", ["jack", "kokoro", "piper"])
+def test_no_online_notice_for_the_other_engines(engine: str) -> None:
+    notices = startup_notices(
+        _with_engine(engine), jack_running=True, stt_device="cuda", online_ok=False
+    )
+    assert notices == []

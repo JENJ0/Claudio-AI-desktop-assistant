@@ -336,11 +336,14 @@ def _settings(tmp_path, *, key: bool = True, engine: str = "elevenlabs"):
     )
 
 
-def _no_probe(monkeypatch) -> None:
-    def boom(self) -> None:
-        raise AssertionError("build_synth must not call probe()")
+def _fake_probe(monkeypatch, problem: str | None = None) -> None:
+    """The startup probe without the network: sets `.problem` like the real one."""
 
-    monkeypatch.setattr(ElevenLabsSynth, "probe", boom)
+    def probe(self) -> str | None:
+        self.problem = problem
+        return problem
+
+    monkeypatch.setattr(ElevenLabsSynth, "probe", probe)
 
 
 def test_build_synth_chains_elevenlabs_jack_and_the_base(monkeypatch, tmp_path) -> None:
@@ -350,7 +353,7 @@ def test_build_synth_chains_elevenlabs_jack_and_the_base(monkeypatch, tmp_path) 
     base = FakeFallback()
     monkeypatch.setattr(entry, "build_base_synth", lambda settings: (base, "Kokoro im_nicola"))
     monkeypatch.setattr(jack_module.JackSynth, "start", lambda self: None)
-    _no_probe(monkeypatch)
+    _fake_probe(monkeypatch)
     synth, name = entry.build_synth(_settings(tmp_path))
     assert isinstance(synth, ElevenLabsSynth)
     assert isinstance(synth.fallback, jack_module.JackSynth)
@@ -368,7 +371,7 @@ def test_build_synth_without_jack_chains_elevenlabs_to_the_base(monkeypatch, tmp
     base = FakeFallback()
     monkeypatch.setattr(entry, "build_base_synth", lambda settings: (base, "Kokoro im_nicola"))
     monkeypatch.setattr(jack_module.JackSynth, "start", refuse)
-    _no_probe(monkeypatch)
+    _fake_probe(monkeypatch)
     synth, name = entry.build_synth(_settings(tmp_path))
     assert isinstance(synth, ElevenLabsSynth) and synth.fallback is base
     assert name == "ElevenLabs (fallback Kokoro im_nicola)"
@@ -389,11 +392,32 @@ def test_build_synth_without_the_key_keeps_jack(monkeypatch, tmp_path, caplog) -
     assert "sk_" not in caplog.text
 
 
-def test_build_speaker_groups_by_engine(monkeypatch, tmp_path) -> None:
+def test_build_synth_probes_the_online_voice_and_keeps_it_on_failure(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    from claudio import __main__ as entry
+    from claudio.tts import jack as jack_module
+
+    monkeypatch.setattr(
+        entry, "build_base_synth", lambda settings: (FakeFallback(), "Kokoro im_nicola")
+    )
+    monkeypatch.setattr(jack_module.JackSynth, "start", lambda self: None)
+    _fake_probe(monkeypatch, "HTTP 401")
+    with caplog.at_level(logging.WARNING):
+        synth, _ = entry.build_synth(_settings(tmp_path))
+    assert isinstance(synth, ElevenLabsSynth) and synth.problem == "HTTP 401"
+    assert any(
+        r.levelno == logging.WARNING and "HTTP 401" in r.getMessage() for r in caplog.records
+    )
+    assert "sk_test_SECRET123" not in caplog.text
+
+
+def test_build_speaker_groups_by_the_voice_on_top(monkeypatch, tmp_path) -> None:
     import sys
     import types
 
     from claudio import __main__ as entry
+    from claudio.tts import jack as jack_module
 
     class StubPlayer:
         def __init__(self, sample_rate: int, *args: Any) -> None:
@@ -405,12 +429,20 @@ def test_build_speaker_groups_by_engine(monkeypatch, tmp_path) -> None:
     monkeypatch.setitem(
         sys.modules, "claudio.audio.player", types.SimpleNamespace(AudioPlayer=StubPlayer)
     )
-    monkeypatch.setattr(entry, "build_synth", lambda settings, jack=None: (FakeFallback(), "x"))
     monkeypatch.setattr("claudio.tts.speaker.StreamingSpeaker.warm_up", lambda self: None)
-    for engine, expected in (("elevenlabs", 111), ("jack", 170), ("kokoro", 0)):
-        base = _settings(tmp_path, engine=engine)
+    monkeypatch.setattr(jack_module.JackSynth, "start", lambda self: None)
+    monkeypatch.setattr(entry, "build_base_synth", lambda settings: (FakeFallback(), "base"))
+    _fake_probe(monkeypatch)
+    cases = (
+        ("elevenlabs", True, 111),
+        ("elevenlabs", False, 170),  # no key: Jack speaks, with his own grouping
+        ("jack", True, 170),
+        ("kokoro", True, 0),
+    )
+    for engine, key, expected in cases:
+        base = _settings(tmp_path, engine=engine, key=key)
         settings = base.model_copy(
             update={"tts": base.tts.model_copy(update={"eleven_group_chars": 111})}
         )
         speaker = entry.build_speaker(settings, start_player=False)
-        assert speaker.group_chars == expected, engine
+        assert speaker.group_chars == expected, (engine, key)
