@@ -131,3 +131,28 @@ def test_no_online_notice_for_the_other_engines(engine: str) -> None:
         _with_engine(engine), jack_running=True, stt_device="cuda", online_ok=False
     )
     assert notices == []
+
+
+def test_no_notice_when_the_online_voice_and_jack_started() -> None:
+    notices = startup_notices(
+        _with_engine("elevenlabs"), jack_running=True, stt_device="cuda", online_ok=True
+    )
+    assert notices == []
+
+
+def test_online_voice_ok() -> None:
+    import httpx2
+
+    from claudio.__main__ import online_voice_ok
+    from claudio.tts.elevenlabs import ElevenLabsSynth
+
+    def synth_answering(status: int) -> ElevenLabsSynth:
+        transport = httpx2.MockTransport(lambda request: httpx2.Response(status))
+        return ElevenLabsSynth("KEY", "VOICE", "m", object(), transport=transport)
+
+    ok, refused = synth_answering(200), synth_answering(401)
+    ok.probe()
+    refused.probe()
+    assert online_voice_ok(ok) is True
+    assert online_voice_ok(refused) is False
+    assert online_voice_ok(object()) is False

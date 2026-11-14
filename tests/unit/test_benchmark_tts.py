@@ -80,3 +80,74 @@ def test_a_cut_row_does_not_change_the_wer_average() -> None:
     assert bench.needs_wer(bench.Row("eleven", 1, 3, audio=np.ones(3, dtype=np.int16)))
     line = next(x for x in bench.table_lines([ok, cut]) if x.startswith("eleven") and "caldo" in x)
     assert "0.100" in line
+
+
+def test_a_failed_probe_stops_before_any_paid_request(monkeypatch, tmp_path) -> None:
+    import types
+
+    import pytest
+    from pydantic import SecretStr
+
+    import claudio.__main__ as entry
+    from claudio.config import TtsSettings
+
+    streams: list[str] = []
+
+    class FakeEleven:
+        def probe(self) -> str:
+            return "HTTP 401"
+
+        def stream(self, text: str):
+            streams.append(text)
+            return iter(())
+
+    settings = types.SimpleNamespace(elevenlabs_api_key=SecretStr("k"), tts=TtsSettings())
+    monkeypatch.setattr(bench, "load_settings", lambda: settings)
+    monkeypatch.setattr(entry, "make_elevenlabs", lambda settings, fallback: FakeEleven())
+    monkeypatch.setattr(bench, "OUT", tmp_path / "out")
+    with pytest.raises(SystemExit, match="HTTP 401"):
+        bench.run_elevenlabs(1)
+    assert streams == [] and not (tmp_path / "out").exists()
+
+
+def test_run_voice_writes_every_row_to_csv_as_it_goes(monkeypatch, tmp_path) -> None:
+    import csv
+
+    monkeypatch.setattr(bench, "IDLE_S", 0)
+
+    def once(text: str, index: int) -> bench.Row:
+        row = bench.Row("", index, 0, 10.0, 20.0, cost=5)
+        if index == 1:
+            row.error = "E" * 300
+        return row
+
+    bench.run_voice("eleven", once, 2, tmp_path)
+    records = list(csv.reader((tmp_path / "rows.csv").open(encoding="utf-8", newline="")))
+    assert len(records) == 1 + 2 * len(bench.SENTENCES)
+    assert any(len(r[-1]) == 300 for r in records[1:])
+
+
+def test_zero_retention_probe_says_whether_a_history_item_was_made(capsys) -> None:
+    import httpx2
+
+    def probe_with(headers: dict[str, str]) -> str:
+        transport = httpx2.MockTransport(lambda r: httpx2.Response(200, headers=headers))
+        with httpx2.Client(base_url="https://x.test", transport=transport) as client:
+            bench.zero_retention_probe(client, "KEY", "VOICE", "m")
+        return capsys.readouterr().out
+
+    assert "cronologia: no" in probe_with({"character-cost": "6"})
+    assert "cronologia: sì" in probe_with({"History-Item-Id": "abc"})
+
+
+def test_reps_below_one_is_refused(monkeypatch) -> None:
+    import pytest
+
+    def must_not_run(reps: int) -> None:
+        raise AssertionError("spent credits")
+
+    monkeypatch.setattr(bench, "run_elevenlabs", must_not_run)
+    monkeypatch.setattr(sys, "argv", ["benchmark_tts.py", "--elevenlabs", "--reps", "0"])
+    with pytest.raises(SystemExit) as stop:
+        bench.main()
+    assert stop.value.code == 2

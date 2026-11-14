@@ -325,7 +325,9 @@ def make_jack(settings: Settings, session: Path | None = None) -> JackSynth:
 
 def build_synth(settings: Settings, jack: JackSynth | None = None) -> tuple[Any, str]:
     """The configured voice; Piper if Kokoro cannot start, so Claudio always speaks.
-    With engine "jack" that voice is the fallback of Jack's worker. `jack` is a worker
+    With engine "jack" that voice is the fallback of Jack's worker. With "elevenlabs" the
+    online voice is on top, Jack (or the base voice) is its fallback, and it is probed at
+    build (a failed probe keeps it in the chain). `jack` is a worker
     already starting in the background (run_assistant); without it one is started here and
     waited for (--text)."""
     if not settings.tts.jack_in_chain:
@@ -361,9 +363,17 @@ def make_elevenlabs(settings: Settings, fallback: Any) -> ElevenLabsSynth | None
     if settings.elevenlabs_api_key is None:
         log.warning("ELEVENLABS_API_KEY manca in .env: parla la voce locale")
         return None
+    key = settings.elevenlabs_api_key.get_secret_value()
+    # A bad character makes httpx2 raise at build time or h11 print the key in its error.
+    if not key or not key.isascii() or not key.isprintable() or key != key.strip():
+        log.warning(
+            "ELEVENLABS_API_KEY in .env non valida (vuota, spazi o caratteri non ammessi): "
+            "parla la voce locale"
+        )
+        return None
     tts = settings.tts
     return ElevenLabsSynth(
-        settings.elevenlabs_api_key.get_secret_value(),
+        key,
         tts.eleven_voice_id,
         tts.eleven_model,
         fallback,

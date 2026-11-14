@@ -128,14 +128,14 @@ jack_rvc = "none"          # JenJo 28/10, until Qwen3 is retrained on Jack. Or "
                            # "none" = Qwen3 alone: right pronunciation, timbre from the checkpoint
 jack_pitch_fix = false     # true = RVC pitch cleaned (octave errors, jitter): against the robotic tone
 # Compare settings by ear: uv run python scripts/jack_variants.py (WAVs + WER in logs/jack-variants/)
+first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
 # engine = "elevenlabs": the online voice; the key is ELEVENLABS_API_KEY in .env. Jack, then Kokoro/Piper, speak when it fails.
-# eleven_voice_id = "K5aUZ2v5ZGQmACb8D757"  # the voice, from the ElevenLabs library (letters and digits only)
-# eleven_model = "eleven_v4_turbo"          # the ElevenLabs model
+eleven_voice_id = "K5aUZ2v5ZGQmACb8D757"  # the voice, from the ElevenLabs library (letters and digits only)
+eleven_model = "eleven_v4_turbo"          # the ElevenLabs model
 # eleven_stability = 0.5                    # 0-1; unset = the voice's own saved settings
 # eleven_similarity = 0.75                  # 0-1; unset = the voice's own saved settings
 # eleven_timeout_s = 3                      # connection and read timeout: past it the fallback voice speaks the reply
-# eleven_group_chars = 0                    # sentences said together up to this many characters (0 = one by one)
-first_clause_chars = 25    # the first piece of a reply may end at a comma once this long (0 = off)
+# eleven_group_chars = 0                    # sentences said together up to this many characters (0 = one by one); the groups also follow jack_group_first_chars / jack_group_pause_ms
 
 # Words Jack says wrong, written the way he should say them (whole words, any case). English
 # words get read in English: an accent on the stressed vowel keeps them Italian-sounding.

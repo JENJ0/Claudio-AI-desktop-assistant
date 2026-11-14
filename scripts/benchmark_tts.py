@@ -10,6 +10,7 @@ uv run python scripts/benchmark_tts.py --elevenlabs --reps 12
 from __future__ import annotations
 
 import argparse
+import csv
 import logging
 import math
 import statistics
@@ -107,8 +108,22 @@ def run_voice(
 
                 sf.write(folder / f"{name}_{index + 1}_{rep}.wav", row.audio, row.rate, "PCM_16")
             rows.append(row)
+            if folder is not None:
+                _append_csv(folder / "rows.csv", row)
             print(f"  {name} giro {rep} frase {index + 1}: {_brief(row)}", flush=True)
     return rows
+
+
+def _append_csv(path: Path, row: Row) -> None:
+    """One line per row, written at once: a crash later in the run keeps the paid numbers."""
+    is_new = not path.exists()
+    with path.open("a", encoding="utf-8", newline="") as file:
+        writer = csv.writer(file)
+        if is_new:
+            writer.writerow(["voice", "sentence", "rep", "first_ms", "total_ms", "cost", "error"])
+        writer.writerow(
+            [row.voice, row.index + 1, row.rep, row.first_ms, row.total_ms, row.cost, row.error]
+        )
 
 
 def _brief(row: Row) -> str:
@@ -202,13 +217,18 @@ def dialogue_once(client: Any, key: str, voice_id: str, model: str) -> Callable[
 
 
 def zero_retention_probe(client: Any, key: str, voice_id: str, model: str) -> None:
-    """One request with enable_logging=false (enterprise only): status and masked error."""
+    """One request with enable_logging=false (enterprise only): status, masked error, and
+    whether a history item was made (no history-item-id header = zero retention applied)."""
     import try_elevenlabs as smoke
 
     attempt = smoke.try_once(
         client, key, "tts", voice_id, model, SENTENCES[0], params={"enable_logging": "false"}
     )
-    print(f"Zero retention (enable_logging=false): HTTP {attempt.status} {attempt.error}")
+    has_history = any(k.lower() == "history-item-id" for k in attempt.headers)
+    print(
+        f"Zero retention (enable_logging=false): HTTP {attempt.status} {attempt.error} "
+        f"cronologia: {'sì' if has_history else 'no'} (no = zero retention applicata)"
+    )
 
 
 def needs_wer(row: Row) -> bool:
@@ -294,12 +314,17 @@ def run_elevenlabs(reps: int) -> None:
         f"{chars} caratteri online: stima {credit_estimate(chars)} crediti, "
         "più la prova a zero retention"
     )
+    eleven = make_elevenlabs(settings, NoFallback())
+    if eleven is None:
+        raise SystemExit("ELEVENLABS_API_KEY non valida in .env")
+    if problem := eleven.probe():  # free: stops a doomed run before the first paid request
+        raise SystemExit(
+            f"ElevenLabs non risponde ({problem}): benchmark fermato, nessun credito speso"
+        )
     folder = OUT / datetime.now().strftime("%Y%m%d_%H%M%S")
     folder.mkdir(parents=True, exist_ok=True)
     rows: list[Row] = []
 
-    eleven = make_elevenlabs(settings, NoFallback())
-    assert eleven is not None  # the key is there
     speak = stream_once(eleven.stream, lambda: eleven.sample_rate, lambda: eleven.last_cost)
 
     def eleven_once(text: str, index: int) -> Row:
@@ -337,7 +362,10 @@ def run_elevenlabs(reps: int) -> None:
             )
         finally:
             jack.close()
-    transcribe_rows(settings, rows)
+    try:
+        transcribe_rows(settings, rows)
+    except Exception as exc:  # the paid rows are in rows.csv: the table still prints
+        print(f"WER non calcolato ({type(exc).__name__}: {exc})")
     print()
     print("\n".join(table_lines(rows)))
     print(f"WAV in {folder}")
@@ -352,6 +380,8 @@ def main() -> None:
     parser.add_argument("--reps", type=int, default=12, help="repetitions with --elevenlabs")
     args = parser.parse_args()
     if args.elevenlabs:
+        if args.reps < 1:
+            parser.error("--reps deve essere almeno 1")
         run_elevenlabs(args.reps)
         return
     settings = load_settings()

@@ -325,15 +325,15 @@ def test_a_cancel_that_closes_the_response_midway_ends_quietly(status: int) -> N
 # --- configuration and the voice chain (task 2) ---------------------------------------------
 
 
-def _settings(tmp_path, *, key: bool = True, engine: str = "elevenlabs"):
+def _settings(
+    tmp_path, *, key: bool = True, engine: str = "elevenlabs", key_value: str = "sk_test_SECRET123"
+):
     from pydantic import SecretStr
 
     from claudio.config import Settings
 
     base = Settings(models_dir=tmp_path, tts={"engine": engine})
-    return base.model_copy(
-        update={"elevenlabs_api_key": SecretStr("sk_test_SECRET123") if key else None}
-    )
+    return base.model_copy(update={"elevenlabs_api_key": SecretStr(key_value) if key else None})
 
 
 def _fake_probe(monkeypatch, problem: str | None = None) -> None:
@@ -390,6 +390,63 @@ def test_build_synth_without_the_key_keeps_jack(monkeypatch, tmp_path, caplog) -
     assert name == "Jack (fallback Kokoro im_nicola)"
     assert any("ELEVENLABS_API_KEY" in r.getMessage() for r in caplog.records)
     assert "sk_" not in caplog.text
+
+
+MALFORMED_KEYS = ["", "sk_abc\r", "sk_abc ", " sk_abc", "sk_abc”"]
+
+
+@pytest.mark.parametrize("bad", MALFORMED_KEYS)
+def test_a_malformed_key_keeps_the_local_voice(tmp_path, caplog, bad: str) -> None:
+    from claudio.__main__ import make_elevenlabs
+
+    with caplog.at_level(logging.WARNING):
+        assert make_elevenlabs(_settings(tmp_path, key_value=bad), FakeFallback()) is None
+    assert any("ELEVENLABS_API_KEY" in r.getMessage() for r in caplog.records)
+    assert "sk_abc" not in caplog.text
+
+
+def test_build_synth_with_a_malformed_key_keeps_jack(monkeypatch, tmp_path) -> None:
+    from claudio import __main__ as entry
+    from claudio.tts import jack as jack_module
+
+    monkeypatch.setattr(entry, "build_base_synth", lambda settings: (FakeFallback(), "Kokoro"))
+    monkeypatch.setattr(jack_module.JackSynth, "start", lambda self: None)
+    synth, _ = entry.build_synth(_settings(tmp_path, key_value="sk_abc”"))
+    assert isinstance(synth, jack_module.JackSynth)
+
+
+def test_make_elevenlabs_forwards_the_settings(monkeypatch, tmp_path) -> None:
+    from claudio import __main__ as entry
+    from claudio.config import Settings
+    from claudio.tts import elevenlabs as module
+
+    calls: list[tuple[tuple, dict]] = []
+
+    class Recorder:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            calls.append((args, kwargs))
+
+    monkeypatch.setattr(module, "ElevenLabsSynth", Recorder)
+    base = _settings(tmp_path)
+    tts = base.tts.model_copy(
+        update={
+            "eleven_voice_id": "VOICE",
+            "eleven_model": "MODEL",
+            "eleven_stability": 0.3,
+            "eleven_similarity": 0.6,
+            "eleven_timeout_s": 2.5,
+            "jack_lufs": -20,
+        }
+    )
+    settings: Settings = base.model_copy(update={"tts": tts})
+    fallback = FakeFallback()
+    entry.make_elevenlabs(settings, fallback)
+    assert calls == [
+        (
+            ("sk_test_SECRET123", "VOICE", "MODEL", fallback),
+            {"stability": 0.3, "similarity": 0.6, "timeout_s": 2.5, "lufs": -20},
+        )
+    ]
 
 
 def test_build_synth_probes_the_online_voice_and_keeps_it_on_failure(

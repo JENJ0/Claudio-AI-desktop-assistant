@@ -61,6 +61,7 @@ def test_json_formatter_includes_extra_fields() -> None:
 
 def test_setup_logging_writes_json_file(tmp_path) -> None:
     setup_logging(tmp_path, "INFO")
+    assert logging.getLogger("httpx2").level == logging.WARNING  # one INFO line per request
     logging.getLogger("claudio.test").info("ciao à", extra={"route": "local"})
     for handler in logging.getLogger().handlers:
         handler.flush()

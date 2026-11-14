@@ -221,3 +221,12 @@ def test_jack_in_chain(engine: str, expected: bool) -> None:
     from claudio.config import TtsSettings
 
     assert TtsSettings(engine=engine).jack_in_chain is expected
+
+
+def test_the_shipped_config_names_the_online_model_and_voice() -> None:
+    import tomllib
+
+    raw = tomllib.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))["tts"]  # raw: a comment fails
+    assert raw["eleven_model"] == "eleven_v4_turbo"
+    assert raw["eleven_voice_id"] == "K5aUZ2v5ZGQmACb8D757"
+    assert raw["engine"] == "jack"

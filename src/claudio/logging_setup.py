@@ -55,5 +55,5 @@ def setup_logging(
     root.addHandler(file_handler)
 
     # Third-party libraries are chatty at INFO.
-    for noisy in ("faster_whisper", "httpx", "huggingface_hub", "urllib3"):
+    for noisy in ("faster_whisper", "httpx", "httpx2", "huggingface_hub", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
