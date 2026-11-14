@@ -121,7 +121,7 @@ def check_model_files(
         models / "piper" / f"{settings.tts.voice}.onnx",
         models / "piper" / f"{settings.tts.voice}.onnx.json",
     ]
-    if settings.tts.engine in ("kokoro", "jack"):  # Jack's fallback is Kokoro
+    if settings.tts.engine != "piper":  # Kokoro is the base voice and every fallback
         from claudio.tts.kokoro import KOKORO_FILES
 
         wanted += [models / "kokoro" / name for name in KOKORO_FILES]
@@ -132,9 +132,9 @@ def check_model_files(
 
 def check_jack(settings: Settings, models: Path, report: Callable[[bool, str], None]) -> None:
     """Optional: without it Kokoro speaks (a warning, not an error)."""
-    if settings.tts.engine != "jack":
-        return
     tts = settings.tts
+    if not tts.jack_in_chain:
+        return
     for rel in (tts.jack_python, tts.jack_checkpoint, tts.jack_rvc_model, tts.jack_applio):
         if (models / rel).exists():
             report(True, f"modello {rel}")

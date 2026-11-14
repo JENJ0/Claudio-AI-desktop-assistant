@@ -16,6 +16,7 @@ from claudio import __version__
 from claudio.config import (
     ConfigError,
     Settings,
+    TtsSettings,
     load_settings,
 )
 from claudio.gpu import GpuMemory, GpuSampler, has_room, read_gpu
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from claudio.stt.recovery import CommandRecovery, Rescorer
     from claudio.stt.transcriber import WhisperTranscriber
     from claudio.system import SystemControl
+    from claudio.tts.elevenlabs import ElevenLabsSynth
     from claudio.tts.jack import JackSynth
     from claudio.tts.speaker import StreamingSpeaker
     from claudio.wakeword.detector import OpenWakeWordDetector
@@ -326,8 +328,16 @@ def build_synth(settings: Settings, jack: JackSynth | None = None) -> tuple[Any,
     With engine "jack" that voice is the fallback of Jack's worker. `jack` is a worker
     already starting in the background (run_assistant); without it one is started here and
     waited for (--text)."""
-    if settings.tts.engine != "jack":
+    if not settings.tts.jack_in_chain:
         return build_base_synth(settings)
+    synth, name = _jack_over_base(settings, jack)
+    if settings.tts.engine == "elevenlabs" and (online := make_elevenlabs(settings, synth)):
+        return online, f"ElevenLabs (fallback {name})"
+    return synth, name
+
+
+def _jack_over_base(settings: Settings, jack: JackSynth | None) -> tuple[Any, str]:
+    """Jack with the base voice as his fallback; the base voice alone if Jack does not start."""
     from claudio.tts.jack import WorkerError
 
     fallback, fallback_name = build_base_synth(settings)
@@ -342,11 +352,31 @@ def build_synth(settings: Settings, jack: JackSynth | None = None) -> tuple[Any,
     return jack, f"Jack (fallback {fallback_name})"
 
 
+def make_elevenlabs(settings: Settings, fallback: Any) -> ElevenLabsSynth | None:
+    """The online voice over `fallback`; None (a warning) without ELEVENLABS_API_KEY."""
+    from claudio.tts.elevenlabs import ElevenLabsSynth
+
+    if settings.elevenlabs_api_key is None:
+        log.warning("ELEVENLABS_API_KEY manca in .env: parla la voce locale")
+        return None
+    tts = settings.tts
+    return ElevenLabsSynth(
+        settings.elevenlabs_api_key.get_secret_value(),
+        tts.eleven_voice_id,
+        tts.eleven_model,
+        fallback,
+        stability=tts.eleven_stability,
+        similarity=tts.eleven_similarity,
+        timeout_s=tts.eleven_timeout_s,
+        lufs=tts.jack_lufs,
+    )
+
+
 def build_base_synth(settings: Settings) -> tuple[Any, str]:
     from claudio.tts.speaker import PiperSynth, voice_path
 
     models = settings.resolve(settings.models_dir)
-    if settings.tts.engine in ("kokoro", "jack"):
+    if settings.tts.engine != "piper":
         try:
             from claudio.tts.kokoro import KokoroSynth
 
@@ -376,13 +406,18 @@ def build_speaker(
         player,
         settings.audio.beep_volume,
         first_clause_chars=settings.tts.first_clause_chars,
-        group_chars=settings.tts.jack_group_chars if settings.tts.engine == "jack" else 0,
+        group_chars=group_chars(settings.tts),
         group_first_chars=settings.tts.jack_group_first_chars,
         group_pause_s=settings.tts.jack_group_pause_ms / 1000,
     )
     speaker.warm_up()
     log.info("TTS: %s (%d Hz)", name, synth.sample_rate)
     return speaker
+
+
+def group_chars(tts: TtsSettings) -> int:
+    """How many characters of a reply go to the voice together (0 = sentence by sentence)."""
+    return {"jack": tts.jack_group_chars, "elevenlabs": tts.eleven_group_chars}.get(tts.engine, 0)
 
 
 def jack_wait_s(settings: Settings, gpu: GpuMemory | None) -> float | None:
@@ -638,7 +673,7 @@ async def run_assistant(
     # Jack's worker is a process of its own: it loads (8-30 s) while everything else does,
     # and Claudio listens without waiting for it (a reply meanwhile waits jack_first_wait_s,
     # or not at all when a game fills the graphics card).
-    jack = make_jack(settings, session) if settings.tts.engine == "jack" else None
+    jack = make_jack(settings, session) if settings.tts.jack_in_chain else None
     jack_error: list[Exception | None] = []
     gpu_busy = False
     if jack is not None:

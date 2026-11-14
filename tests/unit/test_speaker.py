@@ -390,3 +390,44 @@ async def test_first_sound_delay_is_ready_when_first_audio_fires() -> None:
     assert seen == [pytest.approx(0.35)]  # 0.25 s ahead, then 0.1 s of silence
     await speaker.speak(stream(""))
     assert speaker.first_sound_delay_s == 0.0  # a new reply starts from zero
+
+
+async def test_after_basta_the_next_sentence_never_reaches_the_voice() -> None:
+    """The window between "basta" and the producer being cancelled must not start a new
+    (billed, for an online voice) render."""
+
+    class InterruptingSynth(FakeSynth):
+        def synthesize(self, text: str) -> np.ndarray:
+            audio = super().synthesize(text)
+            speaker._cancel.set()  # "basta" lands while the first sentence is rendered
+            return audio
+
+    synth = InterruptingSynth()
+    speaker = StreamingSpeaker(synth, FakePlayer())
+
+    async def text():  # no pause: the whole reply is already there
+        yield "Prima frase. Seconda frase."
+
+    queue: asyncio.Queue = asyncio.Queue()
+    await speaker._produce(text(), queue)  # alone: nothing cancels the producer
+    assert [text for text, _ in synth.calls] == ["Prima frase."]
+
+
+def test_warm_up_says_hello_with_the_last_voice_of_the_chain() -> None:
+    class Link:
+        sample_rate = 22050
+
+        def __init__(self, fallback=None) -> None:
+            self.fallback = fallback
+            self.said: list[str] = []
+
+        def synthesize(self, text: str) -> np.ndarray:
+            self.said.append(text)
+            return np.zeros(10, dtype=np.int16)
+
+    last = Link()
+    middle = Link(last)
+    first = Link(middle)
+    del last.fallback  # the end of the chain has none
+    StreamingSpeaker(first, FakePlayer()).warm_up()
+    assert (first.said, middle.said, last.said) == ([], [], ["Ciao."])

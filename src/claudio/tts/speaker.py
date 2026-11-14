@@ -134,9 +134,12 @@ class StreamingSpeaker:
                 chunks.close()  # an abandoned stream stops the worker
 
     def warm_up(self) -> None:
-        """The first sentence of a voice is slow: say one now. Jack's worker warms up by
-        itself, so its fallback is warmed instead (it speaks if Jack is not there in time)."""
-        base = getattr(self.synth, "fallback", self.synth)
+        """The first sentence of a voice is slow: say one now. Online voices and Jack's worker
+        need no warming, so the end of the fallback chain is warmed instead (it speaks if the
+        others are not there in time)."""
+        base = self.synth
+        while (fallback := getattr(base, "fallback", None)) is not None:
+            base = fallback
         base.synthesize("Ciao.")
 
     async def beep(self, kind: str = "wake") -> None:
@@ -203,6 +206,8 @@ class StreamingSpeaker:
             else:
                 pieces = split_stream(text_stream, first_clause_chars=self.first_clause_chars)
             async for sentence in pieces:
+                if self._cancel.is_set():  # "basta": no new render (billed, if online)
+                    break
                 log.debug("TTS: %s", sentence)
                 text: str | None = sentence
                 async for audio, rate in self.render_stream(sentence):

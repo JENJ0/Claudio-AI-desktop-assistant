@@ -329,7 +329,7 @@ def test_kokoro_files_are_checked_only_for_the_engines_that_speak_with_kokoro(
     _, piper = run(settings_for(tmp_path, engine="piper"), caplog)
     assert not any("kokoro" in line for line in piper)
     first_feature = f"INFO OK   modello wakeword{os.sep}melspectrogram.onnx"
-    for engine in ("kokoro", "jack"):
+    for engine in ("kokoro", "jack", "elevenlabs"):
         ok, lines = run(settings_for(tmp_path, engine=engine), caplog)
         assert ok is False  # nothing of Kokoro is installed
         errors = [line for line in lines if line.startswith("ERROR ERR  modello kokoro")]
@@ -355,6 +355,8 @@ def test_jack_files_are_optional_and_a_missing_one_is_only_a_warning(
     assert sum("Jack non installata" in line for line in lines) == 3
     _, others = run(settings_for(tmp_path, engine="kokoro"), caplog)
     assert not any("Jack" in line for line in others)
+    _, online = run(settings_for(tmp_path, engine="elevenlabs"), caplog)
+    assert sum("Jack non installata" in line for line in online) == 3  # Jack is in its chain
 
 
 def test_each_wake_word_is_reported_apart(

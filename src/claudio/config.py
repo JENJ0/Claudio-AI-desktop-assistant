@@ -130,7 +130,7 @@ class SttSettings(BaseModel):
 
 
 class TtsSettings(BaseModel):
-    engine: Literal["kokoro", "piper", "jack"] = "kokoro"
+    engine: Literal["kokoro", "piper", "jack", "elevenlabs"] = "kokoro"
     kokoro_voice: str = "im_nicola"
     voice: str = "it_IT-paola-medium"  # Piper: engine "piper", and the fallback
     length_scale: float = Field(1.0, gt=0)
@@ -217,6 +217,22 @@ class TtsSettings(BaseModel):
     # The first piece of a reply may end at a comma once it is this long: the voice starts
     # before the whole first sentence has arrived from Claude (0 = whole sentences only).
     first_clause_chars: int = Field(25, ge=0, le=200)
+    # Engine "elevenlabs": the online voice; Jack, then Kokoro/Piper, take over when it fails.
+    # The key is ELEVENLABS_API_KEY in .env (Settings.elevenlabs_api_key).
+    eleven_voice_id: str = Field("K5aUZ2v5ZGQmACb8D757", pattern=r"^[A-Za-z0-9]{1,64}$")
+    eleven_model: str = Field("eleven_v4_turbo", min_length=1)
+    # None = the voice's own saved settings; a value is sent as voice_settings.
+    eleven_stability: float | None = Field(None, ge=0, le=1)
+    eleven_similarity: float | None = Field(None, ge=0, le=1)
+    # Connection and read timeout: past it the reply is spoken by the fallback voice.
+    eleven_timeout_s: float = Field(3.0, gt=0, le=30)
+    # Like jack_group_chars, for this engine (0 = sentence by sentence).
+    eleven_group_chars: int = Field(0, ge=0, le=2000)
+
+    @property
+    def jack_in_chain(self) -> bool:
+        """Jack's worker is part of the voice chain (as the voice or as ElevenLabs' fallback)."""
+        return self.engine in ("jack", "elevenlabs")
 
 
 UNKNOWN_REPLY = "Questo non lo so ancora fare."

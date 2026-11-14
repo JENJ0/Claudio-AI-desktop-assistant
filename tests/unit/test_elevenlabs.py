@@ -320,3 +320,97 @@ def test_a_cancel_that_closes_the_response_midway_ends_quietly(status: int) -> N
     synth._is_cancelled = cancelling  # type: ignore[method-assign]
     assert play(synth).size == 0
     assert fallback.calls == 0
+
+
+# --- configuration and the voice chain (task 2) ---------------------------------------------
+
+
+def _settings(tmp_path, *, key: bool = True, engine: str = "elevenlabs"):
+    from pydantic import SecretStr
+
+    from claudio.config import Settings
+
+    base = Settings(models_dir=tmp_path, tts={"engine": engine})
+    return base.model_copy(
+        update={"elevenlabs_api_key": SecretStr("sk_test_SECRET123") if key else None}
+    )
+
+
+def _no_probe(monkeypatch) -> None:
+    def boom(self) -> None:
+        raise AssertionError("build_synth must not call probe()")
+
+    monkeypatch.setattr(ElevenLabsSynth, "probe", boom)
+
+
+def test_build_synth_chains_elevenlabs_jack_and_the_base(monkeypatch, tmp_path) -> None:
+    from claudio import __main__ as entry
+    from claudio.tts import jack as jack_module
+
+    base = FakeFallback()
+    monkeypatch.setattr(entry, "build_base_synth", lambda settings: (base, "Kokoro im_nicola"))
+    monkeypatch.setattr(jack_module.JackSynth, "start", lambda self: None)
+    _no_probe(monkeypatch)
+    synth, name = entry.build_synth(_settings(tmp_path))
+    assert isinstance(synth, ElevenLabsSynth)
+    assert isinstance(synth.fallback, jack_module.JackSynth)
+    assert synth.fallback.fallback is base
+    assert name == "ElevenLabs (fallback Jack (fallback Kokoro im_nicola))"
+
+
+def test_build_synth_without_jack_chains_elevenlabs_to_the_base(monkeypatch, tmp_path) -> None:
+    from claudio import __main__ as entry
+    from claudio.tts import jack as jack_module
+
+    def refuse(self) -> None:
+        raise jack_module.WorkerError("no worker")
+
+    base = FakeFallback()
+    monkeypatch.setattr(entry, "build_base_synth", lambda settings: (base, "Kokoro im_nicola"))
+    monkeypatch.setattr(jack_module.JackSynth, "start", refuse)
+    _no_probe(monkeypatch)
+    synth, name = entry.build_synth(_settings(tmp_path))
+    assert isinstance(synth, ElevenLabsSynth) and synth.fallback is base
+    assert name == "ElevenLabs (fallback Kokoro im_nicola)"
+
+
+def test_build_synth_without_the_key_keeps_jack(monkeypatch, tmp_path, caplog) -> None:
+    from claudio import __main__ as entry
+    from claudio.tts import jack as jack_module
+
+    base = FakeFallback()
+    monkeypatch.setattr(entry, "build_base_synth", lambda settings: (base, "Kokoro im_nicola"))
+    monkeypatch.setattr(jack_module.JackSynth, "start", lambda self: None)
+    with caplog.at_level(logging.WARNING):
+        synth, name = entry.build_synth(_settings(tmp_path, key=False))
+    assert isinstance(synth, jack_module.JackSynth) and synth.fallback is base
+    assert name == "Jack (fallback Kokoro im_nicola)"
+    assert any("ELEVENLABS_API_KEY" in r.getMessage() for r in caplog.records)
+    assert "sk_" not in caplog.text
+
+
+def test_build_speaker_groups_by_engine(monkeypatch, tmp_path) -> None:
+    import sys
+    import types
+
+    from claudio import __main__ as entry
+
+    class StubPlayer:
+        def __init__(self, sample_rate: int, *args: Any) -> None:
+            self.sample_rate = sample_rate
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setitem(
+        sys.modules, "claudio.audio.player", types.SimpleNamespace(AudioPlayer=StubPlayer)
+    )
+    monkeypatch.setattr(entry, "build_synth", lambda settings, jack=None: (FakeFallback(), "x"))
+    monkeypatch.setattr("claudio.tts.speaker.StreamingSpeaker.warm_up", lambda self: None)
+    for engine, expected in (("elevenlabs", 111), ("jack", 170), ("kokoro", 0)):
+        base = _settings(tmp_path, engine=engine)
+        settings = base.model_copy(
+            update={"tts": base.tts.model_copy(update={"eleven_group_chars": 111})}
+        )
+        speaker = entry.build_speaker(settings, start_player=False)
+        assert speaker.group_chars == expected, engine

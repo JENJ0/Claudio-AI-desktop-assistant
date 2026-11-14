@@ -184,3 +184,40 @@ def test_an_old_effect_line_in_dotenv_is_ignored(
     settings = load_settings(DEFAULT_CONFIG)
     assert settings.tts.length_scale == 0.9  # the file was read
     assert settings.tts.engine == "jack"
+
+
+def test_tts_accepts_the_elevenlabs_engine_and_its_fields() -> None:
+    from claudio.config import TtsSettings
+
+    tts = TtsSettings(
+        engine="elevenlabs",
+        eleven_voice_id="abc123",
+        eleven_model="eleven_v4_turbo",
+        eleven_stability=0.5,
+        eleven_similarity=0.8,
+        eleven_timeout_s=2.5,
+        eleven_group_chars=120,
+    )
+    assert tts.engine == "elevenlabs" and tts.eleven_group_chars == 120
+    default = TtsSettings()
+    assert default.eleven_voice_id == "K5aUZ2v5ZGQmACb8D757"
+    assert default.eleven_model == "eleven_v4_turbo"
+    assert default.eleven_stability is None and default.eleven_similarity is None
+    assert default.eleven_timeout_s == 3.0 and default.eleven_group_chars == 0
+
+
+def test_a_voice_id_outside_letters_and_digits_is_refused() -> None:
+    from claudio.config import TtsSettings
+
+    with pytest.raises(ValidationError):
+        TtsSettings(eleven_voice_id="../x")
+
+
+@pytest.mark.parametrize(
+    ("engine", "expected"),
+    [("kokoro", False), ("piper", False), ("jack", True), ("elevenlabs", True)],
+)
+def test_jack_in_chain(engine: str, expected: bool) -> None:
+    from claudio.config import TtsSettings
+
+    assert TtsSettings(engine=engine).jack_in_chain is expected
