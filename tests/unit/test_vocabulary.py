@@ -171,3 +171,15 @@ def test_a_failed_window_reading_leaves_them_out() -> None:
     vocabulary = Vocabulary(lambda: [], lambda: [], words=["Tesi"], windows=broken)
     vocabulary.refresh = lambda: None  # type: ignore[method-assign]
     assert vocabulary.text() == "Cartelle: Tesi."
+
+
+def test_names_are_the_prompts_names_in_order() -> None:
+    vocabulary = Vocabulary(
+        lambda: [],
+        lambda: [],
+        words=["Tesi"],
+        windows=lambda: ["Senza titolo - Blocco note", "Tesi"],
+    )
+    vocabulary.refresh = lambda: None  # type: ignore[method-assign]
+    assert vocabulary.names() == ["Tesi", "Blocco note"]
+    assert vocabulary.text() == "Cartelle: Tesi. Finestre aperte: Blocco note."

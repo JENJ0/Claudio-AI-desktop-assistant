@@ -262,12 +262,21 @@ class Vocabulary:
     def text(self) -> str:
         """The names for Whisper's prompt; JenJo's words only until the first reading ends.
         An old list is still used while a new one is read."""
+        folders, programs, windows = self._groups()
+        return prompt_text(self.words, folders, programs, windows)
+
+    def names(self) -> list[str]:
+        """The same names as `text()`, in the same order, as a plain list."""
+        folders, programs, windows = self._groups()
+        return [*self.words, *folders, *programs, *windows]
+
+    def _groups(self) -> tuple[list[str], list[str], list[str]]:
         if self.clock() - self._read_at > self.refresh_s:
             self.refresh()
         folders, programs = self._names or ([], [])
         seen = {n.casefold() for n in (*self.words, *folders, *programs)}
         windows = [w for w in self.open_windows() if w.casefold() not in seen]
-        return prompt_text(self.words, folders, programs, windows)
+        return folders, programs, windows
 
     def open_windows(self) -> list[str]:
         """The open windows' names, read again after `windows_s` (one request asks twice:
