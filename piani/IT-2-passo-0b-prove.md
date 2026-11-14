@@ -409,6 +409,13 @@ Le riprese si correggono in G2 ter (`piani/IT-2-passo-0b-G2-ter-task.md`) e si r
 
 **Scrivimi:** W, quante volte non ha risposto in ogni passo (e le ore, se le hai). Il log lo controllo io: un mancato con «blocchi sopra soglia durante il controllo» è il caso di T2; un mancato senza nessuna riga vuol dire che il modello non è scattato, e soglia o nuovo addestramento vanno a G5.
 
+**Esito W (14/11, notte, sessione `2026-11-14_00-38`, cuffie come uscita, 0,021 $):** W è chiuso, T2 non si fa.
+
+- **Senza gioco** ogni attivazione registrata è riuscita: 5 dalla wake word, «claudio» 0,26-0,96 con picchi fino a 0,97, controllo di Whisper 152-232 ms, prima parola 0,9-1,4 s. I mancati non sono stati contati, ma nessun controllo fallito contiene un pezzo di nome. Il passo 1 ha misurato soprattutto la finestra di conversazione (ripetizioni entro 6 s dalla risposta): per contare i mancati della wake word servono pause di almeno 10 s.
+- **I respiri** fanno scattare «claudio» fino a 0,9 e Whisper sente «Grazie.»: circa 25 controlli scartati in 50 minuti, giustamente. I loro WAV in `logs/audio/rejected` servono come esempi negativi se G5 addestra di nuovo il modello.
+- **Col gioco** (GPU al 99%, 440-810 MB liberi): Whisper 1,0-9,0 s invece di 0,15-0,33, prima frase della voce 2,4-7,0 s invece di 0,23-0,73, prima parola 3,8-13,4 s invece di 0,9-1,4, voce a scatti. Va a F8 o G8, con la GPU piena di H2 quater.
+- **Due bip senza richiesta**, vanno a G5: «hey_claudio» a 0,63 su una frase detta da JenJo a un'altra persona («Perché avete 10 minuti di coda?», poi scartata dalla verifica) e a 0,54 alle 01:25:32 («Nessuna richiesta dopo la wake word»). Sempre a G5: «Claudio, chiuditi» capito «chiediti» è finito a Claude, che ha chiesto conferma.
+
 ---
 
 ## Adesso: G3c
