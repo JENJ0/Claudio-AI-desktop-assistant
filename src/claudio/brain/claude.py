@@ -256,6 +256,8 @@ class ClaudeBrain:
         not its own. The note holds no ACTIONS_NOTE, so `_read_outside` never reads it."""
         if not self.settings.history_turns:
             return  # no history is sent, and the deque would not be bounded
+        if not question.strip():
+            return  # a dropped answer reaches the router as "": the API refuses an empty turn
         self._forget_if_idle()
         self._history.append((question, f"{answer} {LOCAL_NOTE}"))
         self._last_turn = self.clock()

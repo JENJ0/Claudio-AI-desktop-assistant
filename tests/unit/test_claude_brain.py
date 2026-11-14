@@ -2018,3 +2018,20 @@ async def test_guess_stays_on_haiku_with_sonnet_as_main(pricing: Pricing) -> Non
     assert GuessSettings().model == "claude-haiku-5-5"
     g = Guesser(None, tracker(pricing, 1.0), ClaudeSettings(model=SONNET), GuessSettings(), [])
     assert g.model == "claude-haiku-5-5"
+
+
+async def test_an_unheard_answer_leaves_no_empty_turn_in_claudes_history(
+    matcher: CommandMatcher, pricing: Pricing
+) -> None:
+    """14/11 23:55: intake passed "Sì, confermo." on as "" (deaf_answer), the router asked
+    again and noted ("", question) for Claude: every request got a 400 ("user messages must
+    have non-empty content") until the empty turn slid out of the history."""
+    client = FakeClient(["Risposta."])
+    b = brain(pricing, client)
+    r = LocalResponder(
+        matcher, ActionRunner(Recorder().ctx()), fallback=b.ask, fallback_note=b.note_local
+    )
+    await say(r, "chiudi la finestra")
+    await say(r, "")  # the dropped answer: the question is asked again
+    await ask(b, "che ore sono")
+    assert all(str(m["content"]).strip() for m in client.calls[-1]["messages"])
