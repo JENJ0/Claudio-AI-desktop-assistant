@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import date, datetime
 from pathlib import Path
 
@@ -25,6 +26,23 @@ CREATE TABLE IF NOT EXISTS calls (
 )
 """
 INDEX = "CREATE INDEX IF NOT EXISTS calls_day ON calls (day)"
+
+VOICE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS voice (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,                      -- local time, ISO 8601
+    day TEXT NOT NULL,                     -- local date
+    model TEXT NOT NULL,
+    characters INTEGER NOT NULL,           -- characters sent to the voice
+    credits INTEGER                        -- the character-cost header; NULL when missing
+);
+CREATE TABLE IF NOT EXISTS voice_notices (
+    period INTEGER NOT NULL,               -- reset unix time of the billing period
+    level TEXT NOT NULL,                   -- warn | out
+    ts TEXT NOT NULL,
+    PRIMARY KEY (period, level)
+);
+"""
 
 
 class SpendLedger:
@@ -72,3 +90,47 @@ class SpendLedger:
 
     def close(self) -> None:
         self._db.close()
+
+
+class VoiceLedger:
+    """ElevenLabs credits per request, and the notices already given per billing period.
+
+    The synth writes from different threads, so it has its own connection and a lock.
+    """
+
+    def __init__(self, path: Path | str) -> None:
+        if str(path) != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(str(path), check_same_thread=False)
+        with self._lock:
+            self._db.executescript(VOICE_SCHEMA)
+            self._db.commit()
+
+    def record(self, model: str, characters: int, credits: int | None, when: datetime) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO voice (ts, day, model, characters, credits) VALUES (?, ?, ?, ?, ?)",
+                (
+                    when.isoformat(timespec="seconds"),
+                    when.date().isoformat(),
+                    model,
+                    characters,
+                    credits,
+                ),
+            )
+            self._db.commit()
+
+    def claim_notice(self, period: int, level: str, when: datetime) -> bool:
+        """True only the first time a notice is claimed for this period."""
+        with self._lock:
+            cursor = self._db.execute(
+                "INSERT OR IGNORE INTO voice_notices (period, level, ts) VALUES (?, ?, ?)",
+                (period, level, when.isoformat(timespec="seconds")),
+            )
+            self._db.commit()
+            return cursor.rowcount == 1
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
