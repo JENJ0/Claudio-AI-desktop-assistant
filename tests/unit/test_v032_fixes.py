@@ -46,7 +46,14 @@ def tools(desk: FakeDesktop, tmp_path: Path) -> Any:
         ("Felice.", False),  # one word: only as the answer to a question
         ("Vai via.", False),
         ("Ma dai.", False),
-        ("Scrivi.", False),
+        ("Scrivi.", True),  # a lone request verb is a request
+        ("Procedi.", True),
+        ("Cosa?", False),  # a lone question word is not
+        ("Perché?", False),
+        ("Come mai?", True),
+        ("Allora cosa?", True),
+        ("Dove?", False),
+        ("Quando?", False),
     ],
 )
 def test_short_requests(text: str, wanted: bool) -> None:

@@ -106,6 +106,19 @@ def test_conversation_window_with_claude() -> None:
     assert decide("dimmi di più sul meteo", f=f, wake_word=CONVERSATION).kind is Kind.ANSWER
 
 
+def test_a_lone_request_verb_is_a_request_but_a_lone_question_word_is_not() -> None:
+    f = RequestFilter(claude_min_words=3, only_addressed=False)
+    assert decide("Scrivi.", f=f, wake_word=CONVERSATION).kind is Kind.ANSWER
+    assert decide("Cosa?", f=f, wake_word=CONVERSATION).kind is Kind.NOT_REQUEST
+
+
+def test_a_lone_question_word_after_a_question_from_claude_is_the_answer() -> None:
+    f = RequestFilter(claude_min_words=3, only_addressed=False)
+    responder = Commands()
+    responder.asked_question = True
+    assert decide("Cosa?", responder, f=f, wake_word=CONVERSATION).kind is Kind.ANSWER
+
+
 def test_a_short_phrase_with_the_name_is_a_request() -> None:
     """26/10 19:52: "Claudio QDT." (chiuditi) in the window was dropped as the TV."""
     f = RequestFilter(claude_min_words=3, only_addressed=True)

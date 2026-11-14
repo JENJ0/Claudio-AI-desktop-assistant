@@ -321,38 +321,9 @@ class RequestFilter:
         return not wake_confirmed(text, responder.understands(text))
 
 
-# How a follow-up request to Claudio usually starts, when it is not a question.
-REQUEST_STARTS = frozenset(
+# Question words: alone they ask nothing, so a lone one is not a request.
+QUESTION_STARTS = frozenset(
     [
-        "dimmi",
-        "spiegami",
-        "raccontami",
-        "descrivimi",
-        "dammi",
-        "fammi",
-        "consigliami",
-        "suggeriscimi",
-        "traduci",
-        "calcola",
-        "elenca",
-        "riassumi",
-        "continua",
-        "aiutami",
-        "scrivi",
-        "scrivila",
-        "scrivilo",
-        "scrivimi",
-        "apri",
-        "aprila",
-        "aprilo",
-        "chiudi",
-        "cerca",
-        "trova",
-        "leggi",
-        "leggimi",
-        "mostrami",
-        "fallo",
-        "procedi",
         "perche",
         "come",
         "cosa",
@@ -361,25 +332,6 @@ REQUEST_STARTS = frozenset(
         "quando",
         "quale",
         "quanto",
-        "tell",
-        "explain",
-        "describe",
-        "give",
-        "show",
-        "recommend",
-        "suggest",
-        "translate",
-        "calculate",
-        "list",
-        "summarize",
-        "continue",
-        "help",
-        "write",
-        "open",
-        "close",
-        "find",
-        "read",
-        "look",
         "why",
         "how",
         "what",
@@ -388,6 +340,63 @@ REQUEST_STARTS = frozenset(
         "when",
         "which",
     ]
+)
+
+# How a follow-up request to Claudio usually starts: a request verb or a question word.
+REQUEST_STARTS = (
+    frozenset(
+        [
+            "dimmi",
+            "spiegami",
+            "raccontami",
+            "descrivimi",
+            "dammi",
+            "fammi",
+            "consigliami",
+            "suggeriscimi",
+            "traduci",
+            "calcola",
+            "elenca",
+            "riassumi",
+            "continua",
+            "aiutami",
+            "scrivi",
+            "scrivila",
+            "scrivilo",
+            "scrivimi",
+            "apri",
+            "aprila",
+            "aprilo",
+            "chiudi",
+            "cerca",
+            "trova",
+            "leggi",
+            "leggimi",
+            "mostrami",
+            "fallo",
+            "procedi",
+            "tell",
+            "explain",
+            "describe",
+            "give",
+            "show",
+            "recommend",
+            "suggest",
+            "translate",
+            "calculate",
+            "list",
+            "summarize",
+            "continue",
+            "help",
+            "write",
+            "open",
+            "close",
+            "find",
+            "read",
+            "look",
+        ]
+    )
+    | QUESTION_STARTS
 )
 
 
@@ -412,9 +421,14 @@ def addressed_to_claudio(text: str) -> bool:
 
 
 def short_request(text: str) -> bool:
-    """Two words with a request verb after the fillers: "allora scrivi", "aprila pure"."""
+    """A request verb after the fillers, even alone ("Scrivi."); a question word needs
+    two words ("Come mai?", not "Cosa?")."""
     tokens = normalize(text, drop_fillers=True).split()
-    return len(tokens) >= 1 and words(text) >= 2 and tokens[0] in REQUEST_STARTS
+    return (
+        bool(tokens)
+        and tokens[0] in REQUEST_STARTS
+        and (words(text) >= 2 or tokens[0] not in QUESTION_STARTS)
+    )
 
 
 def words(text: str) -> int:
