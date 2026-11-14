@@ -73,14 +73,20 @@ def request(endpoint: str, voice_id: str, model: str, text: str) -> tuple[str, d
 
 
 def try_once(
-    client: httpx2.Client, key: str, endpoint: str, voice_id: str, model: str, text: str
+    client: httpx2.Client,
+    key: str,
+    endpoint: str,
+    voice_id: str,
+    model: str,
+    text: str,
+    params: dict[str, str] | None = None,
 ) -> Attempt:
     attempt = Attempt(endpoint, model)
     path, body = request(endpoint, voice_id, model, text)
     start = time.perf_counter()
     try:
-        params = {"output_format": "pcm_24000"}
-        with client.stream("POST", path, params=params, json=body) as response:
+        query = {"output_format": "pcm_24000", **(params or {})}
+        with client.stream("POST", path, params=query, json=body) as response:
             attempt.status = response.status_code
             attempt.headers = {
                 k: v for k, v in response.headers.items() if k.lower() != "set-cookie"

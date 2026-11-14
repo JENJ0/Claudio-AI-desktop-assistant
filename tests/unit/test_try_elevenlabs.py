@@ -74,3 +74,17 @@ def test_the_dialogue_endpoint_puts_the_voice_in_the_inputs() -> None:
         "format": "pcm_24000",
         "body": {"inputs": [{"text": "Ciao.", "voice_id": "VOICE"}], "model_id": "eleven_v4"},
     }
+
+
+def test_try_once_sends_extra_params() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.update(dict(request.url.params))
+        return httpx2.Response(200, content=b"\x01\x00")
+
+    with answering(handler) as client:
+        smoke.try_once(
+            client, KEY, "tts", "VOICE", "eleven_v4", "Ciao.", params={"enable_logging": "false"}
+        )
+    assert seen == {"output_format": "pcm_24000", "enable_logging": "false"}
