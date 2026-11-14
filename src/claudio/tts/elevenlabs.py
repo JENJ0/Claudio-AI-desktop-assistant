@@ -9,12 +9,13 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from typing import Any
 
 import httpx2
 import numpy as np
 
+from claudio.cost.voice import VoiceCredits
 from claudio.tts.loudness import LevelGuard, to_float
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,10 @@ ERROR_BODY_CHARS = 200
 
 class _OnlineError(Exception):
     """The online voice answered, but not with audio."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class ElevenLabsSynth:
@@ -41,6 +46,8 @@ class ElevenLabsSynth:
         timeout_s: float = 3.0,
         lufs: float = -24.0,
         transport: httpx2.BaseTransport | None = None,
+        credits: VoiceCredits | None = None,
+        notify: Callable[[str], None] | None = None,
     ) -> None:
         self._key = key
         self._voice_id = voice_id
@@ -63,6 +70,11 @@ class ElevenLabsSynth:
         self._fallback_reply = False  # an earlier piece of this reply went to the fallback
         self._generation = 0  # cancel() bumps it: a stream older than this one is cancelled
         self._response: httpx2.Response | None = None
+        self.credits = credits
+        self.notify = notify  # may be set after construction; called outside any lock
+        self._retry_probe = True  # one more read after the first success if usage is unknown
+        self._probe_due = False  # set when billing; the probe runs before the next request
+        self._out_logged = False  # one "credits finished" line per period, not per sentence
 
     @staticmethod
     def _voice_settings(stability: float | None, similarity: float | None) -> dict[str, float]:
@@ -84,7 +96,21 @@ class ElevenLabsSynth:
             self.problem = self._mask(f"{type(exc).__name__}: {exc}")
         else:
             self.problem = None if response.status_code == 200 else f"HTTP {response.status_code}"
+            if self.problem is None:
+                self._read_credits(response)
         return self.problem
+
+    def _read_credits(self, response: httpx2.Response) -> None:
+        """Bookkeeping must never change the probe: any error here is only logged."""
+        if self.credits is None:
+            return
+        try:
+            self.credits.update(response.json())
+            log.info(self.credits.summary())
+        except Exception as exc:
+            log.warning(
+                "Crediti ElevenLabs non letti (%s)", self._mask(f"{type(exc).__name__}: {exc}")
+            )
 
     # -- synth interface --------------------------------------------------------------------
 
@@ -114,6 +140,8 @@ class ElevenLabsSynth:
         """int16 chunks as they arrive. An error before any audio leaves the rest of the reply
         to the fallback; one in the middle just ends the sentence (a second voice would repeat)."""
         generation = self._generation
+        if not self._fallback_reply and not self._online_allowed():
+            self._fallback_reply = True  # out of credits: quietly, until the reset
         if not self._fallback_reply:
             failure = yield from self._online(text, generation)
             if failure is None or self._is_cancelled(generation):
@@ -121,6 +149,71 @@ class ElevenLabsSynth:
             self._fallback_reply = True
             log.warning("ElevenLabs non risponde (%s): uso la voce di ripiego", failure)
         yield from self._fallback_chunks(text, generation)
+
+    # -- credits ----------------------------------------------------------------------------
+
+    def _online_allowed(self) -> bool:
+        """False when the credits are finished (no request until the monthly reset)."""
+        credits = self.credits
+        if credits is None:
+            return True
+        try:
+            if self._probe_due or credits.stale():  # free read: after the reset or a failed start
+                self._probe_due = False
+                self.probe()
+            if not credits.exhausted():
+                self._out_logged = False
+                return True
+        except Exception as exc:
+            self._bookkeeping_failed(exc)
+            return True
+        if not self._out_logged:
+            self._out_logged = True
+            log.info("Crediti ElevenLabs finiti: parla la voce locale fino al reset")
+        return False
+
+    def _bill(self, text: str, cost: int | None) -> None:
+        """Count a request that produced audio. Errors here are logged, never raised."""
+        credits = self.credits
+        if credits is None:
+            return
+        try:
+            notice = credits.spend(self._model, len(text), cost)
+            if self._retry_probe and not credits.known:
+                self._retry_probe = False
+                self._probe_due = True  # not here: this may run on the event loop (barge-in)
+        except Exception as exc:
+            self._bookkeeping_failed(exc)
+            return
+        self._say(notice)
+
+    def _mark_out(self) -> None:
+        """HTTP 402: the credits are out until the reset. Never raises."""
+        if self.credits is None:
+            return
+        try:
+            notice = self.credits.mark_out()
+        except Exception as exc:
+            self._bookkeeping_failed(exc)
+            return
+        self._say(notice)
+
+    def _say(self, notice: str | None) -> None:
+        if not notice:
+            return
+        if self.notify is None:  # --text, benchmark: the notice is saved as said, so keep a trace
+            log.warning("Avviso crediti (non detto a voce): %s", notice)
+            return
+        try:
+            self.notify(notice)
+        except Exception as exc:
+            self._bookkeeping_failed(exc)
+
+    def _bookkeeping_failed(self, exc: Exception) -> None:
+        log.warning(
+            "Conteggio crediti ElevenLabs non riuscito (%s)",
+            self._mask(f"{type(exc).__name__}: {exc}"),
+        )
 
     # -- online request ---------------------------------------------------------------------
 
@@ -145,6 +238,8 @@ class ElevenLabsSynth:
         started = time.perf_counter()
         mine: httpx2.Response | None = None
         spoken = False
+        paid = False  # a 200 was received: counted once, however the request ends
+        cost: int | None = None
         leftover = b""
         path = f"/v1/text-to-speech/{self._voice_id}/stream"
         try:
@@ -153,13 +248,20 @@ class ElevenLabsSynth:
             ) as response:
                 self._response = response
                 mine = response
+                if response.status_code != 200:
+                    if self._is_cancelled(generation):
+                        return None
+                    detail = self._mask(response.read().decode("utf-8", "replace"))
+                    raise _OnlineError(
+                        f"HTTP {response.status_code} {detail[:ERROR_BODY_CHARS]}",
+                        response.status_code,
+                    )
+                header = response.headers.get("character-cost")
+                cost = int(header) if header and header.isdigit() else None
+                self.last_cost = cost
+                paid = True  # before the cancel check: a barge-in during the wait is still paid
                 if self._is_cancelled(generation):
                     return None
-                if response.status_code != 200:
-                    detail = self._mask(response.read().decode("utf-8", "replace"))
-                    raise _OnlineError(f"HTTP {response.status_code} {detail[:ERROR_BODY_CHARS]}")
-                cost = response.headers.get("character-cost")
-                self.last_cost = int(cost) if cost and cost.isdigit() else None
                 for data in response.iter_bytes():
                     if self._is_cancelled(generation):
                         return None
@@ -179,11 +281,15 @@ class ElevenLabsSynth:
             if self._is_cancelled(generation):
                 return None
             reason = self._mask(f"{type(exc).__name__}: {exc}")
+            if isinstance(exc, _OnlineError) and exc.status == 402:
+                self._mark_out()  # any 402 counts: no body parsing
             if spoken:  # cut in the middle: no second voice
                 log.warning("ElevenLabs interrotto a metà frase (%s)", reason)
                 return None
             return reason
         finally:
+            if paid:  # also when cut or cancelled: the budget errs on the safe side
+                self._bill(text, cost)
             if self._response is mine:  # a newer stream may own it by now
                 self._response = None
         if self._is_cancelled(generation):

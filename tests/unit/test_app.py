@@ -1459,6 +1459,17 @@ async def test_announce_waits_for_the_request_in_progress(fake_vad, vad_settings
     assert assistant.state is State.IDLE
 
 
+async def test_announce_waits_while_claudio_is_off(fake_vad, vad_settings) -> None:
+    assistant, _, speaker, _ = build(fake_vad, vad_settings, FakeStt(), set())
+    assistant.system.off = True
+    task = asyncio.create_task(assistant.announce("Attenzione."))
+    await asyncio.sleep(0.12)
+    assert speaker.spoken == []  # "spegniti": no reply of its own either
+    assistant.system.off = False
+    await task
+    assert speaker.spoken == ["Attenzione."]
+
+
 class LiteralResponder(FakeResponder):
     """No local command understands the phrase: it is for Claude."""
 

@@ -156,3 +156,15 @@ def test_online_voice_ok() -> None:
     assert online_voice_ok(ok) is True
     assert online_voice_ok(refused) is False
     assert online_voice_ok(object()) is False
+
+
+def test_startup_notices_say_the_credits() -> None:
+    credit = "Attenzione, la voce online ha usato l'80 per cento dei crediti del mese."
+    alone = startup_notices(
+        _with_engine("elevenlabs"), True, "cuda", online_ok=True, credit_notice=credit
+    )
+    assert alone == [credit]  # not a failure: no "Il motivo è nel log."
+    failing = startup_notices(
+        _with_engine("elevenlabs"), False, "cuda", online_ok=True, credit_notice=credit
+    )
+    assert failing.index(credit) < failing.index("Il motivo è nel log.")

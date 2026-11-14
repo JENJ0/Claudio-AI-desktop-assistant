@@ -371,7 +371,13 @@ def make_elevenlabs(settings: Settings, fallback: Any) -> ElevenLabsSynth | None
             "parla la voce locale"
         )
         return None
+    from claudio.cost.ledger import VoiceLedger
+    from claudio.cost.voice import VoiceCredits
+
     tts = settings.tts
+    credits = VoiceCredits(
+        VoiceLedger(settings.resolve(settings.cost.db_file)), settings.cost.warn_at
+    )
     return ElevenLabsSynth(
         key,
         tts.eleven_voice_id,
@@ -381,7 +387,34 @@ def make_elevenlabs(settings: Settings, fallback: Any) -> ElevenLabsSynth | None
         similarity=tts.eleven_similarity,
         timeout_s=tts.eleven_timeout_s,
         lufs=tts.jack_lufs,
+        credits=credits,
     )
+
+
+def startup_credit_notice(synth: Any) -> str | None:
+    """The credits notice of the online voice (None for other voices). Call it once: it
+    claims the notice, so a second call returns nothing."""
+    from claudio.tts.elevenlabs import ElevenLabsSynth
+
+    if isinstance(synth, ElevenLabsSynth) and synth.credits is not None:
+        return synth.credits.startup_notice()
+    return None
+
+
+def announcer(assistant: Any, loop: asyncio.AbstractEventLoop) -> Callable[[str], None]:
+    """A `notify` for the online voice: says `text` through the assistant, after the reply.
+    Safe from any thread, including the loop's own; it never waits for the announcement."""
+    tasks: set[asyncio.Task[None]] = set()  # a task nobody references can be garbage collected
+
+    def schedule(text: str) -> None:
+        task = loop.create_task(assistant.announce(text))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    def notify(text: str) -> None:
+        loop.call_soon_threadsafe(schedule, text)
+
+    return notify
 
 
 def build_base_synth(settings: Settings) -> tuple[Any, str]:
@@ -468,10 +501,11 @@ def startup_notices(
     stt_device: str,
     gpu_busy: bool = False,
     online_ok: bool = True,
+    credit_notice: str | None = None,
 ) -> list[str]:
     """What Claudio says out loud at startup when it runs degraded: a warning in the console
     alone went unnoticed (on 23/10 Jack's worker failed and Kokoro answered all evening)."""
-    notices = []
+    notices: list[str] = []
     if settings.tts.engine == "elevenlabs" and not online_ok:
         notices.append("La voce online non è partita: uso quella locale.")
     if settings.tts.jack_in_chain and not jack_running:
@@ -480,7 +514,10 @@ def startup_notices(
             notices.append("All'avvio la scheda video era quasi piena.")
     if settings.stt.device == "auto" and stt_device == "cpu":
         notices.append("La scheda video non è disponibile: ti capisco più lentamente.")
-    if notices:
+    failed = bool(notices)
+    if credit_notice:
+        notices.append(credit_notice)
+    if failed:  # the credits notice alone is not a failure
         notices.append("Il motivo è nel log.")
     return notices
 
@@ -818,6 +855,10 @@ async def run_assistant(
     inbox = (
         asyncio.create_task(serve_inbox(assistant, chat, settings)) if settings.chat.typed else None
     )
+    from claudio.tts.elevenlabs import ElevenLabsSynth
+
+    if isinstance(speaker.synth, ElevenLabsSynth):
+        speaker.synth.notify = announcer(assistant, asyncio.get_running_loop())
     ready = asyncio.create_task(
         announce_ready(
             assistant,
@@ -828,6 +869,7 @@ async def run_assistant(
             t0,
             gpu_busy,
             online_ok=online_voice_ok(speaker.synth),
+            credit_notice=startup_credit_notice(speaker.synth),
         )
     )
     run = asyncio.create_task(assistant.run(capture.frames()))
@@ -871,6 +913,7 @@ async def announce_ready(
     t0: float,
     gpu_busy: bool = False,
     online_ok: bool = True,
+    credit_notice: str | None = None,
 ) -> None:
     """Once Jack's worker has loaded too (or failed), say so: the notices of a degraded start
     and a short "ready", in Jack's voice when it is there. Claudio already listens by then."""
@@ -882,7 +925,9 @@ async def announce_ready(
             "Jack non disponibile (%s): uso %s", jack_error[0], type(jack.fallback).__name__
         )
     log.info("Avvio completo in %.1f s", time.perf_counter() - t0)
-    notices = startup_notices(settings, jack_running, stt_device, gpu_busy, online_ok)
+    notices = startup_notices(
+        settings, jack_running, stt_device, gpu_busy, online_ok, credit_notice
+    )
     for notice in notices:
         log.warning("Avviso a voce: %s", notice)
     if settings.startup.announce_ready:

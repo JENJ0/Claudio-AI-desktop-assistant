@@ -1998,7 +1998,7 @@ class Assistant:
     async def announce(self, text: str) -> None:
         """Say something of Claudio's own (e.g. "ready" at startup) between two requests,
         never over one."""
-        while self.state is not State.IDLE:
+        while self.state is not State.IDLE or self._silenced():  # off or paused: after turn-on
             await asyncio.sleep(0.05)
         self._set_state(State.RESPONDING)  # the wake word waits until this is said
         try:

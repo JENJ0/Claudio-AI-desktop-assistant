@@ -13,6 +13,8 @@ import httpx2
 import numpy as np
 import pytest
 
+from claudio.cost.ledger import VoiceLedger
+from claudio.cost.voice import OUT_TEXT, WARN_TEXT, VoiceCredits
 from claudio.tts.elevenlabs import SAMPLE_RATE, ElevenLabsSynth
 
 KEY = "sk_test_SECRET123"
@@ -332,7 +334,9 @@ def _settings(
 
     from claudio.config import Settings
 
-    base = Settings(models_dir=tmp_path, tts={"engine": engine})
+    base = Settings(
+        models_dir=tmp_path, tts={"engine": engine}, cost={"db_file": tmp_path / "spend.db"}
+    )
     return base.model_copy(update={"elevenlabs_api_key": SecretStr(key_value) if key else None})
 
 
@@ -444,9 +448,16 @@ def test_make_elevenlabs_forwards_the_settings(monkeypatch, tmp_path) -> None:
     assert calls == [
         (
             ("sk_test_SECRET123", "VOICE", "MODEL", fallback),
-            {"stability": 0.3, "similarity": 0.6, "timeout_s": 2.5, "lufs": -20},
+            {
+                "stability": 0.3,
+                "similarity": 0.6,
+                "timeout_s": 2.5,
+                "lufs": -20,
+                "credits": calls[0][1]["credits"],
+            },
         )
     ]
+    assert isinstance(calls[0][1]["credits"], VoiceCredits)
 
 
 def test_build_synth_probes_the_online_voice_and_keeps_it_on_failure(
@@ -503,3 +514,404 @@ def test_build_speaker_groups_by_the_voice_on_top(monkeypatch, tmp_path) -> None
         )
         speaker = entry.build_speaker(settings, start_player=False)
         assert speaker.group_chars == expected, (engine, key)
+
+
+# -- credits ------------------------------------------------------------------------------------
+
+RESET = 2_000_000_000  # an arbitrary future instant; the tests move the clock around it
+
+
+class Account:
+    """A fake ElevenLabs: the subscription endpoint and the TTS endpoint, with a clock."""
+
+    def __init__(
+        self,
+        used: int,
+        *,
+        cost: str | None = "24",
+        subscription_status: int = 200,
+        tts_status: int = 200,
+    ) -> None:
+        self.used = used
+        self.reset = RESET
+        self.cost = cost
+        self.subscription_status = subscription_status
+        self.tts_status = tts_status
+        self.now = float(RESET - 1000)
+        self.subscription_calls = 0
+        self.tts_calls = 0
+        self.notices: list[str] = []
+        self.server = Server(self._respond)
+
+    def _respond(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/v1/user/subscription":
+            self.subscription_calls += 1
+            if self.subscription_status != 200:
+                return httpx2.Response(self.subscription_status)
+            return httpx2.Response(
+                200,
+                json={
+                    "character_count": self.used,
+                    "character_limit": 40000,
+                    "next_character_count_reset_unix": self.reset,
+                },
+            )
+        self.tts_calls += 1
+        if self.tts_status != 200:
+            return httpx2.Response(self.tts_status, text="denied")
+        headers = {"character-cost": self.cost} if self.cost is not None else {}
+        return httpx2.Response(200, content=samples(1, 2), headers=headers)
+
+    def synth(self, *, probe: bool = True, fallback: Any = None) -> ElevenLabsSynth:
+        credits = VoiceCredits(VoiceLedger(":memory:"), 0.8, clock=lambda: self.now)
+        synth = make(self.server, fallback, credits=credits, notify=self.notices.append)
+        if probe:
+            synth.probe()
+        return synth
+
+    def rows(self, synth: ElevenLabsSynth) -> list[tuple[int, int | None]]:
+        assert synth.credits is not None
+        db = synth.credits._ledger._db
+        return db.execute("SELECT characters, credits FROM voice ORDER BY id").fetchall()
+
+
+def test_probe_reads_the_credits(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    account = Account(13661)
+    synth = account.synth()
+    assert synth.credits is not None and synth.credits.known
+    assert any(synth.credits.summary() in record.getMessage() for record in caplog.records)
+
+
+def test_a_broken_subscription_body_does_not_change_the_probe(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = Server(lambda request: httpx2.Response(200, content=b"not json"))
+    credits = VoiceCredits(VoiceLedger(":memory:"))
+    synth = make(server, credits=credits)
+    assert synth.probe() is None
+    assert not credits.known
+    assert "non letti" in caplog.text
+
+
+def test_each_request_is_recorded_and_counted() -> None:
+    account = Account(1000)
+    synth = account.synth()
+    play(synth, "ciao a tutti")
+    account.cost = None
+    play(synth, "senza costo")
+    assert account.rows(synth) == [(12, 24), (11, None)]
+
+
+def test_crossing_80_percent_notifies_once() -> None:
+    account = Account(31990)
+    synth = account.synth()
+    play(synth, "uno")
+    play(synth, "due")
+    assert account.notices == [WARN_TEXT]
+
+
+def test_out_of_credits_speaks_the_fallback_until_the_reset(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    account = Account(39990)
+    fallback = FakeFallback()
+    synth = account.synth(fallback=fallback)
+    play(synth, "una")  # the cost 24 takes the account to 100%
+    assert len(account.notices) == 1
+    assert account.notices[0].startswith(OUT_TEXT.split("{")[0])
+    synth.begin_reply()
+    calls = account.tts_calls
+    assert play(synth, "due").tolist() == [7] * 10
+    play(synth, "tre")
+    assert account.tts_calls == calls  # no request at all
+    assert fallback.calls == 2
+    assert caplog.text.count("Crediti ElevenLabs finiti") == 1  # one line, not one per sentence
+    account.now = RESET + 60
+    account.used = 5
+    synth.begin_reply()
+    assert play(synth, "dopo il reset").tolist() == [1, 2]
+    assert account.subscription_calls == 2
+    assert account.tts_calls == calls + 1
+
+
+def test_a_refused_key_below_100_percent_uses_the_fallback_quietly() -> None:
+    account = Account(34800, tts_status=401)  # 87%
+    synth = account.synth()
+    assert play(synth, "uno").tolist() == [7] * 10
+    assert account.notices == []
+    account.tts_status = 200
+    synth.begin_reply()
+    assert play(synth, "due").tolist() == [1, 2]
+
+
+def test_a_failed_startup_probe_is_retried_after_the_first_success() -> None:
+    account = Account(1000, subscription_status=503)
+    synth = account.synth()
+    assert synth.credits is not None and not synth.credits.known
+    account.subscription_status = 200
+    play(synth, "uno")
+    assert account.subscription_calls == 1  # never inside the stream's bookkeeping
+    play(synth, "due")  # the probe runs before the next request
+    assert account.subscription_calls == 2 and synth.credits.known
+    play(synth, "tre")
+    assert account.subscription_calls == 2  # once only
+
+
+def test_a_402_means_out_of_credits() -> None:
+    account = Account(1000, tts_status=402)
+    fallback = FakeFallback()
+    synth = account.synth(fallback=fallback)
+    assert play(synth, "uno").tolist() == [7] * 10
+    assert len(account.notices) == 1 and account.notices[0].startswith("Crediti della voce")
+    assert synth.credits is not None and synth.credits.exhausted()
+    synth.begin_reply()
+    assert play(synth, "due").tolist() == [7] * 10
+    assert account.tts_calls == 1  # the next reply makes no online request
+    assert len(account.notices) == 1
+    account.now = RESET + 60  # after the rollover the online voice is back
+    account.reset = RESET + 30 * 86400
+    account.used = 5
+    account.tts_status = 200
+    synth.begin_reply()
+    assert play(synth, "tre").tolist() == [1, 2]
+
+
+def test_a_402_without_credits_changes_nothing() -> None:
+    server = Server(lambda request: httpx2.Response(402, text="x"))
+    fallback = FakeFallback()
+    synth = make(server, fallback)
+    assert play(synth, "uno").tolist() == [7] * 10
+    synth.begin_reply()
+    play(synth, "due")
+    assert len(server.requests) == 2  # retried: no state
+
+
+def test_a_402_notice_without_notify_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    account = Account(1000, tts_status=402)
+    synth = account.synth()
+    synth.notify = None
+    play(synth, "uno")
+    assert "Avviso crediti (non detto a voce)" in caplog.text
+
+
+def test_a_real_rollover_brings_the_online_voice_and_the_notices_back() -> None:
+    account = Account(39990)
+    synth = account.synth()
+    play(synth, "una")  # 100%: the notice of the old period
+    assert len(account.notices) == 1
+    account.now = RESET + 60
+    account.reset = RESET + 30 * 86400
+    account.used = 31990  # the new period, already near 80%
+    calls = account.subscription_calls
+    synth.begin_reply()
+    assert play(synth, "due").tolist() == [1, 2]  # online again
+    assert account.subscription_calls == calls + 1
+    assert synth.credits is not None and not synth.credits.stale()
+    for text in ("tre", "quattro"):
+        synth.begin_reply()
+        play(synth, text)
+    assert account.subscription_calls == calls + 1  # the re-probes stopped
+    assert account.notices[1:] == [WARN_TEXT]  # a notice of the new period is possible again
+
+
+def test_barge_in_close_bills_once_and_makes_no_call() -> None:
+    account = Account(1000, subscription_status=503)  # the one-time retry probe is due
+    synth = account.synth()
+    account.subscription_status = 200
+    stream = synth.stream("ciao")
+    next(stream)
+    synth.cancel()
+    before = (account.subscription_calls, account.tts_calls)
+    stream.close()
+    assert (account.subscription_calls, account.tts_calls) == before
+    assert account.rows(synth) == [(4, 24)]
+
+
+def test_a_request_cut_in_the_middle_is_billed() -> None:
+    def gen() -> Iterator[bytes]:
+        yield samples(1, 2)
+        raise httpx2.ReadError("cut")
+
+    server = Server(
+        lambda request: httpx2.Response(200, content=gen(), headers={"character-cost": "9"})
+    )
+    credits = VoiceCredits(VoiceLedger(":memory:"))
+    synth = make(server, credits=credits)
+    assert play(synth, "ciao").tolist() == [1, 2]
+    rows = credits._ledger._db.execute("SELECT characters, credits FROM voice").fetchall()
+    assert rows == [(4, 9)]
+
+
+def test_a_cancelled_200_request_is_billed_once() -> None:
+    account = Account(1000)
+    synth = account.synth()
+    stream = synth.stream("ciao")
+    next(stream)
+    synth.cancel()
+    list(stream)
+    assert account.rows(synth) == [(4, 24)]
+    assert synth.credits is not None and "1024 su" in synth.credits.summary()
+
+
+def test_a_cancelled_request_still_notifies() -> None:
+    account = Account(31990)
+    synth = account.synth()
+    stream = synth.stream("ciao")
+    next(stream)
+    synth.cancel()
+    list(stream)
+    assert account.notices == [WARN_TEXT]
+
+
+def test_a_request_without_a_200_is_not_billed() -> None:
+    account = Account(1000, tts_status=500)
+    synth = account.synth()
+    play(synth, "ciao")
+    assert account.rows(synth) == []
+
+
+def test_a_completed_request_is_billed_exactly_once() -> None:
+    account = Account(1000)
+    synth = account.synth()
+    play(synth, "ciao")
+    assert account.rows(synth) == [(4, 24)]
+
+
+class BrokenCredits:
+    """Every call raises, like SQLite 'database is locked'."""
+
+    known = True
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        def fail(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError(f"{name}: database is locked {KEY}")
+
+        return fail
+
+
+def test_bookkeeping_errors_never_stop_the_voice(caplog: pytest.LogCaptureFixture) -> None:
+    server = audio(samples(1, 2))
+    synth = make(server, credits=BrokenCredits(), notify=lambda text: None)
+    assert synth.probe() is None
+    assert play(synth, "ciao").tolist() == [1, 2]
+    assert "database is locked" in caplog.text
+    assert KEY not in caplog.text
+
+
+def test_a_failing_notify_never_stops_the_voice() -> None:
+    def boom(text: str) -> None:
+        raise RuntimeError("no speaker")
+
+    account = Account(39990)
+    synth = account.synth()
+    synth.notify = boom
+    assert play(synth, "ciao").tolist() == [1, 2]
+
+
+def _cancel_while_answering(status: int) -> tuple[ElevenLabsSynth, FakeFallback]:
+    """A barge-in that lands while the POST waits for its first byte."""
+    holder: list[ElevenLabsSynth] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        holder[0].cancel()
+        return httpx2.Response(status, content=samples(1, 2), headers={"character-cost": "9"})
+
+    fallback = FakeFallback()
+    credits = VoiceCredits(VoiceLedger(":memory:"))
+    notices: list[str] = []
+    synth = make(Server(respond), fallback, credits=credits, notify=notices.append)
+    holder.append(synth)
+    return synth, fallback
+
+
+def test_a_cancel_before_the_200_arrives_is_still_billed() -> None:
+    synth, fallback = _cancel_while_answering(200)
+    assert play(synth, "ciao").size == 0
+    assert fallback.calls == 0
+    assert synth.credits is not None
+    rows = synth.credits._ledger._db.execute("SELECT characters, credits FROM voice").fetchall()
+    assert rows == [(4, 9)]
+
+
+def test_a_cancel_before_a_non_200_is_quiet_and_not_billed() -> None:
+    synth, fallback = _cancel_while_answering(500)
+    assert play(synth, "ciao").size == 0
+    assert fallback.calls == 0
+    assert synth.credits is not None
+    assert synth.credits._ledger._db.execute("SELECT COUNT(*) FROM voice").fetchone()[0] == 0
+
+
+def test_make_elevenlabs_counts_credits_in_the_spend_db(tmp_path) -> None:
+    import sqlite3
+
+    from claudio.__main__ import make_elevenlabs
+
+    synth = make_elevenlabs(_settings(tmp_path), FakeFallback())
+    assert synth is not None and isinstance(synth.credits, VoiceCredits)
+    with sqlite3.connect(tmp_path / "spend.db") as db:
+        tables = {row[0] for row in db.execute("select name from sqlite_master")}
+    assert "voice" in tables
+
+
+def test_startup_credit_notice_is_claimed_once_from_the_synth(tmp_path) -> None:
+    from claudio.__main__ import startup_credit_notice
+
+    class Credits:
+        calls = 0
+
+        def startup_notice(self) -> str:
+            self.calls += 1
+            return "avviso"
+
+    synth = make_elevenlabs_with(tmp_path)
+    synth.credits = Credits()
+    assert startup_credit_notice(synth) == "avviso"
+    assert synth.credits.calls == 1
+    assert startup_credit_notice(FakeFallback()) is None
+
+
+def make_elevenlabs_with(tmp_path):
+    from claudio.__main__ import make_elevenlabs
+
+    synth = make_elevenlabs(_settings(tmp_path), FakeFallback())
+    assert synth is not None
+    return synth
+
+
+async def test_notify_announces_after_the_reply() -> None:
+    import asyncio
+    import threading
+
+    from claudio.__main__ import announcer
+
+    told: list[str] = []
+    done = asyncio.Event()
+
+    class Assistant:
+        async def announce(self, text: str) -> None:
+            told.append(text)
+            done.set()
+
+    loop = asyncio.get_running_loop()
+    notify = announcer(Assistant(), loop)
+    thread = threading.Thread(target=notify, args=("dal thread",))
+    thread.start()
+    thread.join()
+    await asyncio.wait_for(done.wait(), 2)
+    assert told == ["dal thread"]
+    done.clear()
+    notify("dal loop")  # from the loop's own thread: returns at once, announces later
+    assert told == ["dal thread"]
+    await asyncio.wait_for(done.wait(), 2)
+    assert told == ["dal thread", "dal loop"]
+
+
+def test_a_notice_without_notify_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    account = Account(31990)
+    synth = account.synth()
+    synth.notify = None  # claudio --text and the benchmark leave it unset
+    play(synth, "uno")
+    assert WARN_TEXT in caplog.text and "non detto a voce" in caplog.text
+    assert len(account.rows(synth)) == 1
