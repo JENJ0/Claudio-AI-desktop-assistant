@@ -183,7 +183,7 @@ def test_an_old_effect_line_in_dotenv_is_ignored(
     monkeypatch.setitem(Settings.model_config, "env_file", env)
     settings = load_settings(DEFAULT_CONFIG)
     assert settings.tts.length_scale == 0.9  # the file was read
-    assert settings.tts.engine == "jack"
+    assert settings.tts.engine == "elevenlabs"
 
 
 def test_tts_accepts_the_elevenlabs_engine_and_its_fields() -> None:
@@ -229,4 +229,4 @@ def test_the_shipped_config_names_the_online_model_and_voice() -> None:
     raw = tomllib.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))["tts"]  # raw: a comment fails
     assert raw["eleven_model"] == "eleven_v4_turbo"
     assert raw["eleven_voice_id"] == "K5aUZ2v5ZGQmACb8D757"
-    assert raw["engine"] == "jack"
+    assert raw["engine"] == "elevenlabs"

@@ -92,7 +92,7 @@ no_speech_threshold = 0.6
 cpu_threads = 4
 
 [tts]
-engine = "jack"            # "elevenlabs" (online, falls back to Jack), "jack" (Claudio's voice, JenJo 23/10), "kokoro" (Nicola) or "piper"; the others are fallbacks
+engine = "elevenlabs"      # "elevenlabs" (online, falls back to Jack; JenJo 14/11 after the benchmark), "jack" (Claudio's voice, JenJo 23/10), "kokoro" (Nicola) or "piper"; the others are fallbacks
 kokoro_voice = "im_nicola" # Kokoro Italian voices: im_nicola, if_sara
 voice = "it_IT-paola-medium" # Piper voice
 length_scale = 0.77        # both engines: < 1 speaks faster (0.77 = about 30% faster)
