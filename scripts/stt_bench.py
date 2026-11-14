@@ -5,6 +5,7 @@ how many commands come out right and the time per sentence.
     uv run python scripts/stt_bench.py
     uv run python scripts/stt_bench.py --details
     uv run python scripts/stt_bench.py --variants live live+beam1 parakeet
+    uv run python scripts/stt_bench.py --variants live scribe --allow-cloud
 
 A variant is a "+"-joined list of changes from how CLAUDIO transcribes today ("live"):
     live      about the gain CLAUDIO learns on that microphone (its sentences' typical loudest
@@ -23,12 +24,16 @@ A variant is a "+"-joined list of changes from how CLAUDIO transcribes today ("l
     turbo     Whisper large-v3-turbo instead of [stt] model
     novad     the whole recording instead of Silero's cut
     parakeet  NVIDIA Parakeet TDT 0.6B v3 instead of Whisper (uv pip install onnx-asr)
+    scribe    ElevenLabs Scribe v3 in the cloud instead of Whisper, the names on this PC as
+              keyterms ("scribe+vuoto": none). It costs credits and needs --allow-cloud
 
 "falsi": sentences that are no command, heard as one (the closed list and the second opinion
 must keep them at 0). "tagli": sentences Silero ended before the voice did (a pause
 mid-sentence). With --details an empty transcription says why (Silero heard no voice, Whisper
 took it for silence or for a known hallucination). Every transcription goes to
 data/stt_testset/risultati.json.
+Scribe's paid responses go to logs/stt-bench/scribe-<date_time>.jsonl (microphone, sentence,
+variant, response).
 """
 
 from __future__ import annotations
@@ -38,15 +43,18 @@ import gc
 import io
 import json
 import logging
+import math
 import re
 import statistics
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import numpy as np
 
 from claudio import intake
@@ -58,6 +66,7 @@ from claudio.router.matcher import CommandMatcher, load_commands
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import try_elevenlabs as smoke
 from stt_testset import BLOCK, MUTE_DBFS, OUT, SAMPLE_RATE, peak_dbfs, read_sentences
 
 PARTS = (
@@ -71,8 +80,15 @@ PARTS = (
     "turbo",
     "novad",
     "parakeet",
+    "scribe",
 )
 DEFAULT_VARIANTS = ("live", "live+grezzo", "live+frasi", "live+vuoto", "live+novad", "live+beam1")
+MAX_KEYTERMS = 100  # above it ElevenLabs bills at least 20 s per request
+SCRIBE_MODEL = "scribe_v3"
+# "Speech to Text 330 credits per minute" (https://elevenlabs.io/pricing, FAQ) = 5.5 per second.
+CREDITS_PER_S = 5.5
+# Keyterms cost 20% more (convert page) or 25% (https://elevenlabs.io/pricing/api): the higher one.
+KEYTERM_SURCHARGE = 0.25
 MAX_GAIN_DB = 30.0  # [audio] auto_gain's ceiling
 SAME_WORD = {"hey": "ehi", "ei": "ehi", "eh": "ehi"}  # ways of writing the same word
 
@@ -85,7 +101,7 @@ class Variant:
     beam: int | None = None  # None: [stt] beam_size
     model: str = ""  # "": [stt] model
     vad: bool = True
-    engine: str = "whisper"  # whisper | parakeet
+    engine: str = "whisper"  # whisper | parakeet | scribe
     recover: bool = False  # the closed list and Whisper's second opinion, as live
 
 
@@ -102,7 +118,7 @@ def parse_variant(text: str) -> Variant:
         beam=1 if "beam1" in parts else None,
         model="large-v3" if "large" in parts else "large-v3-turbo" if "turbo" in parts else "",
         vad="novad" not in parts,
-        engine="parakeet" if "parakeet" in parts else "whisper",
+        engine="parakeet" if "parakeet" in parts else "scribe" if "scribe" in parts else "whisper",
         recover="recupero" in parts,
     )
 
@@ -173,6 +189,8 @@ class Score:
     ms: list[float] = field(default_factory=list)
     cuts: int = 0
     why: dict[int, str] = field(default_factory=dict)  # sentence index -> why it came out empty
+    responses: dict[int, dict[str, Any]] = field(default_factory=dict)  # index -> Scribe's answer
+    sent_s: dict[int, float] = field(default_factory=dict)  # index -> seconds of audio sent
 
 
 class Notes(logging.Handler):
@@ -295,6 +313,75 @@ def parakeet(cache: dict[str, object]) -> Callable[[np.ndarray, Variant], str]:
     return lambda audio, _variant: str(engine(audio))
 
 
+def keyterms(names: Sequence[str], limit: int = MAX_KEYTERMS) -> list[str]:
+    """The names Scribe accepts (a bad one fails the whole request with a 422), first `limit`."""
+    ok = [n for n in names if not set(n) & set("<>{}[]\\") and len(n) <= 50 and len(n.split()) <= 5]
+    return ok[:limit]
+
+
+def pcm_bytes(audio: np.ndarray) -> bytes:
+    """Float32 in [-1, 1] as 16-bit little-endian PCM, rounded and clipped."""
+    return np.clip(np.rint(audio * 32768.0), -32768, 32767).astype("<i2").tobytes()
+
+
+class Scribe:
+    """ElevenLabs Scribe v3 (speech to text, paid per second): one request per sentence."""
+
+    def __init__(
+        self,
+        key: str,
+        keyterms: Sequence[str],
+        log: Path,
+        transport: httpx2.BaseTransport | None = None,
+    ) -> None:
+        self.key = key
+        self.keyterms = list(keyterms)
+        self.log = log
+        self.last: dict[str, Any] | None = None
+        self.client = httpx2.Client(
+            base_url=smoke.API,
+            headers={"xi-api-key": key},
+            timeout=httpx2.Timeout(30.0, connect=5.0),
+            transport=transport,
+        )
+
+    def __call__(self, audio: np.ndarray, variant: Variant) -> str:
+        data: dict[str, Any] = {
+            "model_id": SCRIBE_MODEL,
+            "language_code": "it",
+            "file_format": "pcm_s16le_16",
+            "tag_audio_events": "false",
+        }
+        if variant.prompt == "nomi" and self.keyterms:
+            data["keyterms"] = self.keyterms  # a list: one repeated multipart field each
+        files = {"file": ("audio.pcm", pcm_bytes(audio), "application/octet-stream")}
+        try:
+            response = self.client.post("/v1/speech-to-text", data=data, files=files)
+        except httpx2.HTTPError as exc:
+            raise SystemExit(self.failure(f"{type(exc).__name__}: {exc}")) from None
+        if response.status_code != 200:
+            raise SystemExit(
+                self.failure(f"{response.status_code} {smoke.mask(response.text, self.key)[:300]}")
+            )
+        self.last = response.json()
+        return str(self.last.get("text", "")).strip()
+
+    def save(self, microphone: str, sentence: int, variant: str) -> None:
+        """Append the last paid answer to the log at once: a later crash keeps it."""
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "microphone": microphone,
+            "sentence": sentence,
+            "variant": variant,
+            "response": self.last,
+        }
+        with self.log.open("a", encoding="utf-8") as out:
+            out.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def failure(self, detail: str) -> str:
+        return f"Scribe: {smoke.mask(detail, self.key)}"
+
+
 def run(
     variant: Variant,
     microphone: Microphone,
@@ -325,7 +412,7 @@ def run(
                 score.texts.append("")  # CLAUDIO does not transcribe it either
                 score.why[i] = "sotto -60 dBFS: non trascritta"
                 continue
-            if not warm:
+            if not warm and variant.engine != "scribe":  # every Scribe request is paid
                 transcribe(audio, variant)  # warm-up: the first pass on the GPU is slow
                 warm = True
             notes.lines.clear()
@@ -333,6 +420,10 @@ def run(
             text = transcribe(audio, variant)
             score.ms.append((time.perf_counter() - start) * 1000)  # only what was transcribed
             score.texts.append(text)
+            if isinstance(transcribe, Scribe) and transcribe.last is not None:
+                score.responses[i] = transcribe.last
+                transcribe.save(microphone.name, microphone.numbers[i], variant.name)
+                score.sent_s[i] = audio.size / SAMPLE_RATE
             if not text:
                 score.why[i] = "; ".join(notes.lines) or f"{engine} non ha scritto niente"
     finally:
@@ -346,6 +437,51 @@ def command_of(matcher: CommandMatcher, text: str) -> str | None:
     return match.command.id if match else None
 
 
+def p95(values: list[float]) -> float:
+    """As benchmark_tts.summarize: the 95th percentile, inclusive; one value is its own p95."""
+    if len(values) < 2:
+        return values[0] if values else 0.0
+    return statistics.quantiles(values, n=20, method="inclusive")[-1]
+
+
+def scribe_credits(seconds: float, keyterms: bool) -> int:
+    """Estimate of the credits for `seconds` of audio (Silero's cut sends less), rounded up once;
+    the per-request rounding of the billing is not modelled, so it is not a ceiling."""
+    return math.ceil(seconds * CREDITS_PER_S * ((1 + KEYTERM_SURCHARGE) if keyterms else 1))
+
+
+def word_logprobs(response: dict[str, Any]) -> list[tuple[str, float]]:
+    """(text, logprob) of the spoken words; spacing and audio events do not count."""
+    return [
+        (w["text"], w["logprob"])
+        for w in response.get("words") or []
+        if w.get("type") == "word" and is_number(w.get("logprob"))
+    ]
+
+
+def is_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def median_or_dash(values: list[float]) -> str:
+    return f"{statistics.median(values):.2f}" if values else "—"
+
+
+def scribe_line(references: list[str], score: Score) -> str:
+    """Seconds billed and the median logprob per word, in right and wrong sentences."""
+    billed = 0.0
+    good: list[float] = []
+    bad: list[float] = []
+    for i, response in score.responses.items():
+        billed += response.get("audio_duration_secs") or score.sent_s.get(i, 0.0)
+        ok = not word_errors(words(references[i]), words(score.texts[i]))
+        (good if ok else bad).extend(logprob for _, logprob in word_logprobs(response))
+    return (
+        f"  {score.variant}: {billed:.1f} s fatturati; logprob per parola (mediana): "
+        f"frasi giuste {median_or_dash(good)}, sbagliate {median_or_dash(bad)}"
+    )
+
+
 def report(
     microphone: Microphone,
     references: list[str],
@@ -356,16 +492,20 @@ def report(
     print(f"\n== {microphone.name}: {len(references)} frasi, guadagno +{microphone.gain_db:.0f} dB")
     expected = [command_of(matcher, r) for r in references]
     commands = sum(1 for c in expected if c)
-    head = f"  {'variante':<22} {'WER':>6}  {'comandi':>8}  {'falsi':>5}  {'ms/frase':>8}"
-    print(f"{head}  {'tagli':>5}")
+    head = f"  {'variante':<22} {'WER':>6}  {'comandi':>8}  {'falsi':>5}"
+    print(f"{head}  {'media ms':>8} {'mediana ms':>10} {'p95 ms':>6}  {'tagli':>5}")
     for s in scores:
         heard = [command_of(matcher, t) for t in s.texts]
         right = sum(1 for c, h in zip(expected, heard, strict=True) if c and h == c)
         false = sum(1 for c, h in zip(expected, heard, strict=True) if h and not c)
+        mean, median = (statistics.mean(s.ms), statistics.median(s.ms)) if s.ms else (0, 0)
         print(
             f"  {s.variant:<22} {wer(references, s.texts):>6.1%}  {right:>3}/{commands:<4}"
-            f"  {false:>5}  {statistics.mean(s.ms) if s.ms else 0:>8.0f}  {s.cuts:>5}"
+            f"  {false:>5}  {mean:>8.0f} {median:>10.0f} {p95(s.ms):>6.0f}  {s.cuts:>5}"
         )
+    for s in scores:
+        if s.responses:
+            print(scribe_line(references, s))
     if details:
         for i, reference in enumerate(references):
             wrong = [s for s in scores if word_errors(words(reference), words(s.texts[i]))]
@@ -373,7 +513,67 @@ def report(
                 print(f"  {microphone.numbers[i]:02d} «{reference}»")
                 for s in wrong:
                     why = f"  ({s.why[i]})" if i in s.why else ""
-                    print(f"       {s.variant:<20} {s.texts[i]!r}{why}")
+                    print(f"       {s.variant:<20} {s.texts[i]!r}{why}{scribe_words(s, i)}")
+
+
+def scribe_words(score: Score, i: int) -> str:
+    """With --details: the words Scribe heard in a wrong sentence, each with its logprob."""
+    if i not in score.responses:
+        return ""
+    pairs = word_logprobs(score.responses[i])
+    listed = ", ".join(f"{text} {logprob:.2f}" for text, logprob in pairs)
+    return f"  [{listed}]" if listed else ""
+
+
+def new_scribe(settings: Settings, names: bool) -> Scribe:
+    """The one Scribe client of the run; `names`: the names on this PC go as keyterms."""
+    if settings.elevenlabs_api_key is None:
+        raise SystemExit(
+            "ELEVENLABS_API_KEY manca in .env: segui la guida V0 in piani/IT-2-passo-0b-prove.md"
+        )
+    terms: list[str] = []
+    if names:
+        from claudio.__main__ import build_vocabulary
+
+        vocabulary = build_vocabulary(settings)
+        vocabulary.read_now()
+        terms = keyterms(vocabulary.names())
+        print(f"  Scribe: {len(terms)} keyterms (i nomi di questo PC)")
+    log = settings.resolve(Path("logs/stt-bench")) / f"scribe-{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+    return Scribe(settings.elevenlabs_api_key.get_secret_value(), terms, log)
+
+
+def print_scribe_estimate(
+    scribe: Scribe, variants: list[Variant], microphones: list[Microphone]
+) -> None:
+    seconds = sum(r.size for m in microphones for r in m.recordings) / SAMPLE_RATE
+    for variant in variants:
+        credits = scribe_credits(seconds, bool(scribe.keyterms) and variant.prompt == "nomi")
+        print(
+            f"  {variant.name}: circa {credits} crediti "
+            f"(stima, senza arrotondamenti per richiesta; {seconds:.0f} s di WAV)"
+        )
+    print(f"  Ogni risposta pagata va in {scribe.log}")
+
+
+def used_credits(scribe: Scribe) -> int | None:
+    """The subscription's counter, or None (the helper has printed why)."""
+    data = smoke.subscription(scribe.client, scribe.key)
+    count = data.get("character_count") if data else None
+    return count if isinstance(count, int) else None
+
+
+def print_scribe_spent(scribe: Scribe, before: int | None) -> None:
+    print(f"  Log delle risposte Scribe: {scribe.log}")
+    if before is None:
+        print("  Crediti spesi: non misurabili (abbonamento non letto), vedi il contatore online")
+        return
+    time.sleep(5)  # the counter lags a few seconds
+    after = used_credits(scribe)
+    if after is None:
+        print("  Crediti spesi: non misurabili (seconda lettura fallita)")
+        return
+    print(f"  Crediti spesi: {after - before}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -383,12 +583,39 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--variants", nargs="+", default=list(DEFAULT_VARIANTS))
     parser.add_argument("--details", action="store_true", help="ogni frase sbagliata")
     parser.add_argument("--set", type=Path, default=OUT, help="la cartella del set di prova")
+    parser.add_argument(
+        "--allow-cloud", action="store_true", help="permette le varianti scribe (costano crediti)"
+    )
     args = parser.parse_args(argv)
     if isinstance(sys.stdout, io.TextIOWrapper):  # accents and «» also in a redirected file
         sys.stdout.reconfigure(encoding="utf-8")
     variants = [parse_variant(v) for v in args.variants]
+    scribe_variants = [v for v in variants if v.engine == "scribe"]
+    if scribe_variants and not args.allow_cloud:
+        raise SystemExit("La variante scribe costa crediti ElevenLabs: aggiungi --allow-cloud")
 
     settings = load_settings()
+    scribe = None
+    if scribe_variants:
+        scribe = new_scribe(settings, any(v.prompt == "nomi" for v in scribe_variants))
+    try:
+        benchmark(settings, args, variants, scribe)
+    finally:
+        if scribe:
+            scribe.client.close()
+
+
+def run_order(variants: list[Variant], default_model: str) -> list[Variant]:
+    """Grouped by engine and model, Scribe last: a later crash must not lose paid numbers."""
+    return sorted(
+        variants, key=lambda v: (v.engine == "scribe", v.engine, v.model or default_model)
+    )
+
+
+def benchmark(
+    settings: Settings, args: argparse.Namespace, variants: list[Variant], scribe: Scribe | None
+) -> None:
+    scribe_variants = [v for v in variants if v.engine == "scribe"]
     matcher = CommandMatcher(
         load_commands(settings.resolve(settings.router.commands_file)),
         settings.router.fuzzy_threshold,
@@ -401,11 +628,17 @@ def main(argv: list[str] | None = None) -> None:
     results: dict[str, dict[str, list[str]]] = {m.name: {} for m in microphones}
     scores: dict[str, list[Score]] = {m.name: [] for m in microphones}
     cache: dict[str, object] = {}
+    credits_before = None
+    if scribe:
+        print_scribe_estimate(scribe, scribe_variants, microphones)
+        credits_before = used_credits(scribe)
     # Grouped by engine and model: each big model is loaded once.
     model_of = {v.name: v.model or settings.stt.model for v in variants}
-    for variant in sorted(variants, key=lambda v: (v.engine, model_of[v.name])):
+    for variant in run_order(variants, settings.stt.model):
         transcribe = None  # it holds the last model: let it go before the next one loads
-        if variant.engine == "parakeet":
+        if variant.engine == "scribe":
+            transcribe = scribe
+        elif variant.engine == "parakeet":
             transcribe = parakeet(cache)
         else:
             transcribe = whisper_engine(settings, model_of[variant.name], cache)
@@ -414,14 +647,16 @@ def main(argv: list[str] | None = None) -> None:
             score = run(variant, mic, transcribe, endpointer)
             scores[mic.name].append(score)
             results[mic.name][variant.name] = score.texts
+    out = args.set / "risultati.json"
+    out.write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
     order = {v.name: i for i, v in enumerate(variants)}
     for mic in microphones:
         references = [sentences[n - 1] for n in mic.numbers]
         ranked = sorted(scores[mic.name], key=lambda s: order[s.variant])
         report(mic, references, ranked, matcher, args.details)
-    out = args.set / "risultati.json"
-    out.write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\nTutte le trascrizioni: {out}")
+    if scribe:
+        print_scribe_spent(scribe, credits_before)
 
 
 if __name__ == "__main__":

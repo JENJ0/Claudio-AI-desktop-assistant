@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 
+import httpx2
 import numpy as np
 import pytest
 
@@ -279,3 +281,199 @@ def test_report_scores_words_and_commands(matcher, capsys) -> None:
     assert rows["live+vuoto"][1:3] == ["85.7%", "0/1"]  # 2 + 4 words wrong of 7
     assert "01 «Claudio, apri Chrome.»" in out and "'Claudio, abri come.'" in out
     assert "02 «Che tempo fa domani?»" in out and "''  (silenzio)" in out
+
+
+def scribe_transport(requests: list[httpx2.Request], status: int = 200, body: str = ""):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if status != 200:
+            return httpx2.Response(status, text=body)
+        answer = {
+            "text": " Apri Chrome.",
+            "language_code": "ita",
+            "audio_duration_secs": 1.0,
+            "words": [{"text": "Apri", "type": "word", "logprob": -0.1}],
+        }
+        return httpx2.Response(200, json=answer)
+
+    return httpx2.MockTransport(handler)
+
+
+def test_scribe_is_a_variant() -> None:
+    assert bench.parse_variant("scribe").engine == "scribe"
+    assert bench.parse_variant("scribe").prompt == "nomi"
+    assert bench.parse_variant("scribe+vuoto").prompt == "vuoto"
+
+
+def test_keyterms_follow_scribes_rules() -> None:
+    banned = ["Foto [2020]", "back\\slash", "a b c d e f", "x" * 51]
+    kept = bench.keyterms(["Tesi", *banned, *[f"n{i}" for i in range(120)]])
+    assert kept[0] == "Tesi" and len(kept) == 100
+    assert not set(banned) & set(kept)
+
+
+def test_pcm_bytes_give_back_the_recording() -> None:
+    rec = np.array([0, 1, -1, 32767, -32768], np.int16)
+    assert bench.pcm_bytes(rec.astype(np.float32) / 32768.0) == rec.astype("<i2").tobytes()
+    loud = bench.pcm_bytes(np.array([2.0, -2.0], np.float32))
+    assert loud == np.array([32767, -32768], "<i2").tobytes()
+
+
+def test_scribe_sends_pcm_and_keyterms(tmp_path) -> None:
+    requests: list[httpx2.Request] = []
+    log = tmp_path / "logs" / "scribe.jsonl"
+    scribe = bench.Scribe("k-test", ["Tesi", "PSS"], log, scribe_transport(requests))
+    audio = tone(1.0)
+    assert scribe(audio, bench.parse_variant("scribe")) == "Apri Chrome."
+    assert len(requests) == 1 and requests[0].method == "POST"
+    assert requests[0].url.path == "/v1/speech-to-text"
+    assert requests[0].headers["xi-api-key"] == "k-test"
+    body = requests[0].content
+    for field in (
+        b'name="model_id"\r\n\r\nscribe_v3',
+        b'name="language_code"\r\n\r\nit',
+        b'name="file_format"\r\n\r\npcm_s16le_16',
+        b'name="tag_audio_events"\r\n\r\nfalse',
+        bench.pcm_bytes(audio),
+    ):
+        assert field in body
+    assert body.count(b'name="keyterms"') == 2
+    assert scribe.last is not None and scribe.last["audio_duration_secs"] == 1.0
+    assert not log.exists()  # __call__ alone writes nothing: run() saves, outside the timing
+
+
+def test_scribe_without_names_sends_no_keyterms(tmp_path) -> None:
+    requests: list[httpx2.Request] = []
+    scribe = bench.Scribe("k-test", ["Tesi"], tmp_path / "s.jsonl", scribe_transport(requests))
+    scribe(tone(1.0), bench.parse_variant("scribe+vuoto"))
+    assert b'name="keyterms"' not in requests[0].content
+
+
+def test_scribe_stops_on_an_error_without_the_key(tmp_path) -> None:
+    variant = bench.parse_variant("scribe")
+    unauthorized = scribe_transport([], 401, "bad key k-test")
+    with pytest.raises(SystemExit) as stopped:
+        bench.Scribe("k-test", [], tmp_path / "s.jsonl", unauthorized)(tone(1.0), variant)
+    assert "401" in str(stopped.value) and "k-test" not in str(stopped.value)
+    assert not (tmp_path / "s.jsonl").exists()
+
+    def down(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("no route for k-test")
+
+    with pytest.raises(SystemExit) as stopped:
+        bench.Scribe("k-test", [], tmp_path / "s.jsonl", httpx2.MockTransport(down))(
+            tone(1.0), variant
+        )
+    assert "k-test" not in str(stopped.value)
+
+
+def test_scribe_error_is_masked_before_it_is_cut(tmp_path) -> None:
+    body = "x" * 297 + "k-test"  # the key straddles the 300-character cut
+    failing = scribe_transport([], 500, body)
+    with pytest.raises(SystemExit) as stopped:
+        bench.Scribe("k-test", [], tmp_path / "s.jsonl", failing)(
+            tone(1.0), bench.parse_variant("scribe")
+        )
+    assert "k-t" not in str(stopped.value)
+
+
+def test_run_pays_each_sentence_once(fake_vad, vad_settings, tmp_path) -> None:
+    voice = (np.concatenate((silence(0.3), tone(0.8, 0.2), silence(0.3))) * 32768).astype(np.int16)
+    longer = np.concatenate((voice, voice))
+    mic = bench.Microphone("C270", testset.OUT, [1, 2], [voice, longer], gain_db=0.0)
+    requests: list[httpx2.Request] = []
+    scribe = bench.Scribe("k-test", [], tmp_path / "s.jsonl", scribe_transport(requests))
+    endpointer = Endpointer(fake_vad, vad_settings, SR)
+    score = bench.run(bench.parse_variant("scribe+novad"), mic, scribe, endpointer)
+    assert len(requests) == 2 and set(score.responses) == {0, 1}
+    assert score.sent_s[0] == pytest.approx(len(voice) / SR)
+    assert len(score.ms) == 2
+    lines = [json.loads(x) for x in (tmp_path / "s.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(x["microphone"], x["sentence"], x["variant"]) for x in lines] == [
+        ("C270", 1, "scribe+novad"),
+        ("C270", 2, "scribe+novad"),
+    ]
+    assert lines[0]["response"] == score.responses[0]
+
+
+def test_report_times_mean_median_p95(matcher, capsys) -> None:
+    mic = bench.Microphone("C270", testset.OUT, [1, 2], [], gain_db=0.0)
+    references = ["Claudio, apri Chrome.", "Che tempo fa domani?"]
+    two = bench.Score("live", list(references), [100, 300])
+    one = bench.Score("live+vuoto", list(references), [250])
+    none = bench.Score("live+beam1", list(references), [])
+    bench.report(mic, references, [two, one, none], matcher, details=False)
+    out = capsys.readouterr().out
+    assert "media" in out and "mediana" in out and "p95" in out
+    rows = {line.split()[0]: line.split() for line in out.splitlines() if line.startswith("  live")}
+    assert rows["live"][4:7] == ["200", "200", "290"]
+    assert rows["live+vuoto"][4:7] == ["250", "250", "250"]
+    assert rows["live+beam1"][4:7] == ["0", "0", "0"]
+
+
+def test_report_scribe_billed_seconds_and_logprobs(matcher, capsys) -> None:
+    mic = bench.Microphone("C270", testset.OUT, [1, 2], [], gain_db=0.0)
+    references = ["Claudio, apri Chrome.", "Che tempo fa domani?"]
+
+    def word(text: str, logprob: float, kind: str = "word") -> dict:
+        return {"text": text, "type": kind, "logprob": logprob}
+
+    responses = {
+        0: {
+            "audio_duration_secs": 1.5,
+            "words": [word("Claudio,", -0.1), word(" ", -5.0, "spacing"), word("apri", -0.1)],
+        },
+        1: {"words": [word("Che", -0.9), word("fa?", -0.9), word("(risata)", -7.0, "audio_event")]},
+    }
+    scribe = bench.Score(
+        "scribe",
+        ["Claudio, apri Chrome.", "Che tempo fa?"],
+        [300, 320],
+        responses=responses,
+        sent_s={0: 1.6, 1: 2.0},  # sentence 1 has no audio_duration_secs: the audio sent counts
+    )
+    bench.report(mic, references, [scribe], matcher, details=True)
+    out = capsys.readouterr().out
+    assert "scribe: 3.5 s fatturati" in out
+    assert "frasi giuste -0.10" in out and "sbagliate -0.90" in out
+    assert "fa? -0.90" in out and "risata" not in out
+
+
+def test_report_scribe_without_wrong_sentences_shows_a_dash(matcher, capsys) -> None:
+    mic = bench.Microphone("C270", testset.OUT, [1], [], gain_db=0.0)
+    scribe = bench.Score("scribe", ["Pasta."], [300], responses={0: {}}, sent_s={0: 1.0})
+    bench.report(mic, ["Pasta."], [scribe], matcher, details=False)  # no words: no crash
+    assert "frasi giuste —, sbagliate —" in capsys.readouterr().out
+
+
+def test_report_survives_odd_scribe_responses(matcher, capsys) -> None:
+    mic = bench.Microphone("C270", testset.OUT, [1, 2], [], gain_db=0.0)
+    references = ["Pasta.", "Ciao."]
+    odd = {0: {"words": None}, 1: {"words": [{"text": "ciao", "type": "word"}]}}
+    scribe = bench.Score(
+        "scribe", ["Pasta.", "Ciao."], [300, 300], responses=odd, sent_s={0: 1.0, 1: 1.0}
+    )
+    bench.report(mic, references, [scribe], matcher, details=True)
+    assert "frasi giuste —, sbagliate —" in capsys.readouterr().out
+
+
+def test_scribe_runs_last() -> None:
+    variants = [bench.parse_variant(v) for v in ("scribe", "live", "parakeet", "live+large")]
+    names = [v.name for v in bench.run_order(variants, "small")]
+    assert names[-1] == "scribe"
+    assert names == ["parakeet", "live+large", "live", "scribe"]
+
+
+def test_scribe_credits() -> None:
+    assert bench.scribe_credits(152.1, keyterms=True) == 1046
+    assert bench.scribe_credits(152.1, keyterms=False) == 837
+
+
+def test_scribe_needs_allow_cloud(monkeypatch) -> None:
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("settings or WAVs read before the --allow-cloud check")
+
+    monkeypatch.setattr(bench, "load_settings", forbidden)
+    monkeypatch.setattr(bench, "load_microphones", forbidden)
+    with pytest.raises(SystemExit, match="--allow-cloud"):
+        bench.main(["--variants", "live", "scribe"])
