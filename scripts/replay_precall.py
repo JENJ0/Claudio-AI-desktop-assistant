@@ -88,14 +88,14 @@ async def replay_once(
             "cost": float(recovery.info.get("guess_cost", 0.0)),
             "error": recovery.info.get("guess_error"),
         }
-        before = (len(rec.keys), len(rec.combos), len(rec.ran), len(rec.opened))
+        before = (len(rec.keys), len(rec.closed), len(rec.ran), len(rec.opened))
         if recovery.verdict is Verdict.ACT:  # what the router does with the reading
             reply = "".join([c async for c in responder.respond(recovery.said)])
             item["reply"] = reply[:80]
             item["asked_confirm"] = responder.awaiting
             item["effects"] = (
                 len(rec.keys) - before[0],
-                len(rec.combos) - before[1],
+                len(rec.closed) - before[1],
                 len(rec.ran) - before[2],
                 len(rec.opened) - before[3],
             )

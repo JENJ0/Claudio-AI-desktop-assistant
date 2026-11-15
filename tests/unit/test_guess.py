@@ -33,7 +33,7 @@ from claudio.intake import (
     verdict,
 )
 from claudio.metrics import Interaction
-from claudio.router.actions import MEDIA_KEYS, VK_F4, VK_MENU, ActionRunner
+from claudio.router.actions import MEDIA_KEYS, ActionRunner
 from claudio.router.matcher import Command, CommandMatcher, Near, load_commands
 from claudio.router.responder import LocalResponder
 from claudio.wakeword.verifier import after_clipped_name
@@ -433,7 +433,7 @@ async def test_a_refusal_of_closing_the_window_presses_nothing(matcher: CommandM
     r, _, rec = responder(matcher, Guess("chiudi la finestra", 0.6, "close_window"))
     await r.guess(Doubt("Chiudi la fenestra.", "not_a_request"))
     assert await say(r, "non chiudere la finestra") == "Va bene, lascio stare."
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_the_questions_own_echo_is_no_answer(matcher: CommandMatcher) -> None:
@@ -451,14 +451,14 @@ async def test_unsure_guess_asks_and_a_yes_needs_no_second_question(
     recovery = await r.guess(Doubt("Chiudi la fenestra.", "not_a_request"))
     assert recovery is not None and recovery.verdict is Verdict.ASK
     assert await say(r, "sì, grazie") == "Fatto."  # no "Confermi?" after "Hai detto"
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
 
 
 async def test_a_yes_with_more_words_after_it_answers_the_guess(matcher: CommandMatcher) -> None:
     r, _, rec = responder(matcher, None)
     r.propose("chiudi la finestra")
     assert await say(r, "sì, grazie mille davvero") == "Fatto."
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
 
 
 @pytest.mark.parametrize("guessed", ["spegniti", "chiudi la finestra"])
@@ -469,7 +469,7 @@ async def test_a_phrase_that_is_not_only_a_yes_does_not_answer_the_guess(
     r, _, rec = responder(matcher, None)
     r.propose(guessed)
     await say(r, said)
-    assert not r.actions.system.off and (VK_MENU, VK_F4) not in rec.combos
+    assert not r.actions.system.off and 7 not in rec.closed
 
 
 @pytest.mark.parametrize("said", ["si chiama Anna", "sì ma dopo", "ok ci penso", "certo ci penso"])
@@ -495,7 +495,7 @@ async def test_a_yes_that_repeats_the_guess_answers_it(matcher: CommandMatcher) 
     r, _, rec = responder(matcher, None)
     r.propose("chiudi la finestra")
     assert await say(r, "sì, chiudi la finestra") == "Fatto."
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
 
 
 @pytest.mark.parametrize("said", ["No, Claudio.", "Non Claudio.", "Mai Claudio."])
@@ -505,7 +505,7 @@ async def test_a_refusal_with_the_name_refuses_the_guess(
     r, _, rec = responder(matcher, None)
     r.propose("spegniti")
     assert await say(r, said) != ""
-    assert not r.actions.system.off and rec.combos == []
+    assert not r.actions.system.off and rec.closed == []
     assert r.last_route["route"] == "guess_refused"
 
 
@@ -515,7 +515,7 @@ async def test_a_question_mark_after_the_yes_does_not_run_the_guess(
     r, _, rec = responder(matcher, None)
     r.propose("chiudi la finestra")
     await say(r, "Sì? Chiudi la finestra.")
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_a_yes_that_repeats_switching_off_switches_off(matcher: CommandMatcher) -> None:
@@ -529,7 +529,7 @@ async def test_the_guess_repeated_without_a_yes_is_still_the_echo(matcher: Comma
     r, _, rec = responder(matcher, None)
     r.propose("chiudi la finestra")
     assert await say(r, "chiudi la finestra") == ""
-    assert rec.combos == [] and r.last_route["route"] == "guess_echo"
+    assert rec.closed == [] and r.last_route["route"] == "guess_echo"
 
 
 async def test_a_yes_and_another_request_is_a_new_request(matcher: CommandMatcher) -> None:
@@ -543,7 +543,7 @@ async def test_a_yes_and_another_request_is_a_new_request(matcher: CommandMatche
     r = LocalResponder(matcher, ActionRunner(rec.ctx()), fallback=claude)
     r.propose("chiudi la finestra")
     assert await say(r, "sì, chiudi la porta") == "Ok."
-    assert rec.combos == [] and asked == ["sì, chiudi la porta"]
+    assert rec.closed == [] and asked == ["sì, chiudi la porta"]
 
 
 async def test_a_yes_to_a_guessed_level_3_command_still_needs_its_confermo() -> None:
@@ -551,9 +551,9 @@ async def test_a_yes_to_a_guessed_level_3_command_still_needs_its_confermo() -> 
     r, _, rec = responder(CommandMatcher([level_3]), None)
     r.propose("cancella tutto")
     assert "confermo" in await say(r, "sì")
-    assert rec.combos == [] and r.awaiting and r.last_route["route"] == "confirm"
+    assert rec.closed == [] and r.awaiting and r.last_route["route"] == "confirm"
     await say(r, "confermo")
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
 
 
 async def test_sure_level_2_command_still_asks_its_own_question(matcher: CommandMatcher) -> None:
@@ -561,7 +561,7 @@ async def test_sure_level_2_command_still_asks_its_own_question(matcher: Command
     recovery = await r.guess(Doubt("Chiudi la fenestra.", "not_a_request"))
     assert recovery is not None and recovery.verdict is Verdict.ACT
     assert (await say(r, recovery.said)).endswith("Confermi?")
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_silence_after_the_question_does_nothing(matcher: CommandMatcher) -> None:
@@ -923,7 +923,7 @@ async def test_a_level_2_reading_never_becomes_a_yes(
     )
     await talk(assistant, make_frames, speaker, requests=1)
     assert len(fake.calls) == 1 and assistant.history[0]["guess_verdict"] == "act"
-    assert rec.combos == [] and r.awaiting  # the router's own "Confermi?", nothing pressed
+    assert rec.closed == [] and r.awaiting  # the router's own "Confermi?", nothing pressed
     assert any("Confermi" in s for s in speaker.spoken)
 
 

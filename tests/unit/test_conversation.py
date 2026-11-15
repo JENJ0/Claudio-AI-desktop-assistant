@@ -253,10 +253,10 @@ async def test_a_stop_at_the_end_is_still_a_refusal_at_confirmi(matcher: Command
     r = responder(matcher, rec)
     await say(r, "chiudi la finestra")
     assert await say(r, "Claudio, stop.") == "Va bene, non lo faccio."
-    assert rec.combos == [] and r.last_route["route"] == "refused"
+    assert rec.closed == [] and r.last_route["route"] == "refused"
     await say(r, "chiudi la finestra")
     assert await say(r, SAID_ON_01_11) == "Va bene, non lo faccio."
-    assert rec.combos == [] and r.last_route["route"] == "refused"
+    assert rec.closed == [] and r.last_route["route"] == "refused"
 
 
 async def test_a_stop_at_the_end_still_answers_hai_detto(matcher: CommandMatcher) -> None:
@@ -267,7 +267,7 @@ async def test_a_stop_at_the_end_still_answers_hai_detto(matcher: CommandMatcher
     assert r.last_route["route"] == "guess_refused"
     r.propose("chiudi la finestra")
     assert await say(r, SAID_ON_01_11) == "Va bene, lascio stare."
-    assert rec.combos == [] and r.last_route["route"] == "guess_refused"
+    assert rec.closed == [] and r.last_route["route"] == "guess_refused"
 
 
 async def test_off_and_paused_come_before_a_stop_at_the_end(matcher: CommandMatcher) -> None:
@@ -659,7 +659,7 @@ async def test_basta_cancels_a_question_being_asked(
         barge_in=barge(vad_settings, ["basta"]),
     )
     await speak_over(assistant, make_frames, speaker)
-    assert speaker.cut and not r.awaiting and rec.combos == []
+    assert speaker.cut and not r.awaiting and rec.closed == []
     assert len(assistant.history) == 1
 
 

@@ -10,7 +10,7 @@ import pytest
 
 from claudio.app import Assistant, State
 from claudio.audio.vad import Endpointer
-from claudio.router.actions import VK_F4, VK_MENU, ActionRunner
+from claudio.router.actions import ActionRunner
 from claudio.router.matcher import Command, CommandMatcher, Match, load_commands
 from claudio.router.responder import LocalResponder
 from claudio.safety.confirmation import Answer, parse_answer, question
@@ -294,10 +294,10 @@ async def test_level_2_asks_then_runs_on_yes(matcher: CommandMatcher) -> None:
     rec = Recorder()
     r = responder(matcher, rec)
     assert await say(r, "chiudi la finestra") == "Chiudo la finestra in primo piano. Confermi?"
-    assert r.awaiting and rec.combos == []
+    assert r.awaiting and rec.closed == []
     assert r.last_route["route"] == "confirm"
     assert await say(r, "sì") == "Fatto."
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
     assert not r.awaiting and r.last_route["route"] == "confirmed"
 
 
@@ -309,7 +309,7 @@ async def test_level_2_refused_or_unclear_does_nothing(matcher: CommandMatcher) 
     await say(r, "chiudi la finestra")
     assert await say(r, "apri chrome") == "Non ho capito. Chiudi la finestra: sì o no?"
     assert await say(r, "apri chrome") == "Non ho capito: non lo faccio."  # the second time
-    assert rec.combos == [] and rec.ran == []  # Chrome was not opened either
+    assert rec.closed == [] and rec.ran == []  # Chrome was not opened either
     assert r.last_route["answer"] == "unclear"
 
 
@@ -321,10 +321,10 @@ async def test_a_phrase_that_is_not_only_a_yes_does_not_run_the_command(
     r = responder(matcher, rec)
     await say(r, "chiudi la finestra")
     await say(r, said)
-    assert rec.combos == []
+    assert rec.closed == []
     if r.awaiting:  # unclear: asked once more, then cancelled (a refusal cancels at once)
         await say(r, said)
-    assert rec.combos == [] and not r.awaiting
+    assert rec.closed == [] and not r.awaiting
 
 
 async def test_cancel_pending(matcher: CommandMatcher) -> None:
@@ -334,7 +334,7 @@ async def test_cancel_pending(matcher: CommandMatcher) -> None:
     r.cancel_pending()
     assert not r.awaiting
     assert await say(r, "sì") == "Questo non lo so ancora fare."  # a later "sì" runs nothing
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_paused_never_asks(matcher: CommandMatcher) -> None:
@@ -398,7 +398,7 @@ async def test_the_answer_needs_no_wake_word(fake_vad, vad_settings, make_frames
     await feed(assistant, speaker, make_frames, answer=True)
     assert speaker.spoken == ["Chiudo la finestra in primo piano. Confermi?", "Fatto."]
     assert speaker.beeps == ["wake", "wake"]  # the second beep: "I'm listening for the answer"
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
     rows = assistant.history
     assert [r["route"] for r in rows] == ["confirm", "confirmed"]
     assert rows[1]["wake_word"] == "follow_up"
@@ -411,7 +411,7 @@ async def test_silence_after_the_question_leaves_it_waiting_and_nothing_runs(
     assistant, speaker, rec, r = build(fake_vad, vad_settings, matcher, ["chiudi la finestra"])
     await feed(assistant, speaker, make_frames, answer=False)
     assert speaker.beeps == ["wake", "wake", "cancel"]
-    assert rec.combos == [] and r.awaiting  # the question waits (ACTION_TTL_S), run by nothing
+    assert rec.closed == [] and r.awaiting  # the question waits (ACTION_TTL_S), run by nothing
     assert [row["outcome"] for row in assistant.history] == ["ok", "timeout"]
     assert assistant.state is State.IDLE
 

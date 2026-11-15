@@ -14,7 +14,6 @@ from claudio.app import Assistant, State
 from claudio.audio.own_sound import OwnSound
 from claudio.audio.vad import Endpointer
 from claudio.config import NoiseSettings
-from claudio.router.actions import VK_F4, VK_MENU
 from claudio.router.matcher import Command, CommandMatcher
 from tests.unit.test_actions import Recorder
 from tests.unit.test_app import AudioClock, FakeResponder, FakeSpeaker, FakeWake
@@ -217,7 +216,7 @@ async def test_claudio_never_confirms_its_own_question(fake_vad, vad_settings) -
 
     await play(assistant, steps())
     assert "confermo" in speaker.spoken[0]
-    assert rec.combos == []  # nothing ran
+    assert rec.closed == []  # nothing ran
     assert "Confermo." not in stt.heard  # the echo never reached Whisper
     assert [row["outcome"] for row in assistant.history] == ["ok", "timeout"]
 
@@ -239,7 +238,7 @@ async def test_the_answer_after_the_tail_is_heard(fake_vad, vad_settings, matche
 
     await play(assistant, steps())
     assert speaker.spoken == ["Chiudo la finestra in primo piano. Confermi?", "Fatto."]
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
     assert stt.heard == ["chiudi la finestra", "sì"]
 
 
@@ -265,7 +264,7 @@ async def test_a_yes_with_voice_lost_while_deaf_runs_nothing(
 
     await play(assistant, steps())
     assert stt.heard == ["chiudi la finestra", "va bene"]
-    assert (rec.combos == [(VK_MENU, VK_F4)]) is runs
+    assert (rec.closed == [7]) is runs
     if not runs:
         assert assistant.history[1]["intake"] == "deaf_answer"
         assert speaker.spoken[1] == "Non ho capito. Chiudi la finestra: sì o no?"

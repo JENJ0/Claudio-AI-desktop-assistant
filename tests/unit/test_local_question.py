@@ -17,7 +17,7 @@ from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.memory.store import MemoryStore
 from claudio.memory.voice import MemoryVoice
-from claudio.router.actions import VK_F4, VK_MENU, ActionRunner
+from claudio.router.actions import ActionRunner
 from claudio.router.matcher import CommandMatcher
 from claudio.router.responder import LocalResponder
 from claudio.safety.confirmation import ACTION_TTL_S
@@ -54,7 +54,7 @@ async def test_the_confirmation_holds_at_59_seconds(matcher: CommandMatcher) -> 
     clock.t += 59
     assert r.awaiting
     assert await say(r, "Claudio, confermo") == "Fatto."
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
 
 
 async def test_the_confirmation_is_over_at_61_seconds(matcher: CommandMatcher) -> None:
@@ -64,7 +64,7 @@ async def test_the_confirmation_is_over_at_61_seconds(matcher: CommandMatcher) -
     clock.t += 61
     assert not r.awaiting and not r.needs_voice
     assert await say(r, "Claudio, confermo") == "Questo non lo so ancora fare."  # a normal request
-    assert rec.combos == [] and r.last_route["route"] == "unknown"
+    assert rec.closed == [] and r.last_route["route"] == "unknown"
 
 
 async def test_silence_leaves_the_question_waiting_and_a_no_refuses(
@@ -76,7 +76,7 @@ async def test_silence_leaves_the_question_waiting_and_a_no_refuses(
     r.cancel_pending(silence=True)
     assert r.awaiting
     assert await say(r, "Claudio, no") == "Va bene, non lo faccio."
-    assert rec.combos == [] and r.last_route["route"] == "refused"
+    assert rec.closed == [] and r.last_route["route"] == "refused"
 
 
 async def test_cancel_without_silence_still_clears_the_question(matcher: CommandMatcher) -> None:
@@ -212,7 +212,7 @@ async def test_a_typed_yes_never_confirms_a_local_question(
     await say(r, "chiudi la finestra")  # armed by voice
     reply = await assistant.handle_typed("sì")
     assert reply.startswith(TYPED_CANCELS_QUESTION)
-    assert rec.combos == [] and not r.awaiting
+    assert rec.closed == [] and not r.awaiting
 
 
 async def test_a_typed_yes_never_confirms_claudes_question(
@@ -259,7 +259,7 @@ async def test_switching_off_or_pausing_ends_every_question(
     r.actions.system.apply("on")
     assert not r.awaiting
     assert await say(r, "Claudio, sì") == "Questo non lo so ancora fare."
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_a_pause_ends_claudes_question_and_the_proposal_too(
@@ -317,7 +317,7 @@ async def test_a_blank_or_unclear_answer_asks_once_more_then_cancels(
     assert await say(r, blank) == CLOSE_AGAIN
     assert r.awaiting and r.last_route.get("asked_again") is True
     assert await say(r, blank) == "Non ho capito: non lo faccio."
-    assert not r.awaiting and rec.combos == []
+    assert not r.awaiting and rec.closed == []
 
 
 async def test_the_scene_of_17_16_09_asks_once_then_cancels(matcher: CommandMatcher) -> None:
@@ -326,7 +326,7 @@ async def test_the_scene_of_17_16_09_asks_once_then_cancels(matcher: CommandMatc
     await say(r, "chiudi la finestra")
     assert await say(r, "Si apre il blocco note.") == CLOSE_AGAIN
     assert await say(r, "Si apre il blocco note.") == "Non ho capito: non lo faccio."
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_after_the_second_question_a_yes_runs_and_a_no_cancels(
@@ -340,7 +340,7 @@ async def test_after_the_second_question_a_yes_runs_and_a_no_cancels(
     await say(r, "chiudi la finestra")
     await say(r, "")
     assert await say(r, "no") == "Va bene, non lo faccio."
-    assert rec.combos == [(VK_MENU, VK_F4)] and not r.awaiting
+    assert rec.closed == [7] and not r.awaiting
 
 
 async def test_the_second_question_waits_a_full_ttl(matcher: CommandMatcher) -> None:
@@ -380,7 +380,7 @@ async def test_the_name_over_an_open_question_cancels_it_and_answers_the_request
     reply = await say(r, "Claudio, che ore sono")
     assert reply.startswith("Va bene, non lo faccio. ") and len(reply) > 30
     assert r.last_route["command"] == "tell_time" and not r.awaiting
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_the_name_cancels_the_second_question_too(matcher: CommandMatcher) -> None:
@@ -396,7 +396,7 @@ async def test_the_name_with_nothing_after_it_only_cancels(matcher: CommandMatch
     r = local(matcher, rec, Monotonic())
     await say(r, "chiudi la finestra")
     assert await say(r, "Certo. Hey Claudio.") == "Va bene, non lo faccio."
-    assert not r.awaiting and rec.combos == []
+    assert not r.awaiting and rec.closed == []
 
 
 async def test_hey_claudio_si_is_still_a_yes(matcher: CommandMatcher) -> None:
@@ -404,7 +404,7 @@ async def test_hey_claudio_si_is_still_a_yes(matcher: CommandMatcher) -> None:
     r = local(matcher, rec, Monotonic())
     await say(r, "chiudi la finestra")
     assert await say(r, "Hey Claudio, sì.") == "Fatto."
-    assert rec.combos == [(VK_MENU, VK_F4)]
+    assert rec.closed == [7]
 
 
 async def test_the_scene_of_17_20_17_cancels_and_answers_in_one_stream(

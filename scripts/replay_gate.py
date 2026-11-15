@@ -882,7 +882,7 @@ class Mark:
     ran: int = 0
     opened: int = 0
     keys: int = 0
-    combos: int = 0
+    closed: int = 0
     fired: int = 0
     tool_uses: int = 0
     misses: int = 0
@@ -901,7 +901,7 @@ def take_mark(harness: Harness) -> Mark:
         len(rec.ran),
         len(rec.opened),
         len(rec.keys),
-        len(rec.combos),
+        len(rec.closed),
         harness.detections.count,
         len(client.tool_uses) if client is not None else 0,
         len(client.misses) if client is not None else 0,
@@ -964,7 +964,7 @@ def read_outcome(
         *(" ".join(a) for a in rec.ran[since.ran : end.ran]),
         *(f"open {p}" for p in rec.opened[since.opened : end.opened]),
         *(f"key {k}" for k in rec.keys[since.keys : end.keys]),
-        *(f"combo {c}" for c in rec.combos[since.combos : end.combos]),
+        *(f"close {h}" for h in rec.closed[since.closed : end.closed]),
     )
     client = harness.client
     uses = client.tool_uses[since.tool_uses : end.tool_uses] if client is not None else []
@@ -1197,7 +1197,7 @@ def require_recorder(harness: Harness) -> None:
     if not (
         ctx.run == rec.ran.append
         and ctx.press_key == rec.keys.append
-        and ctx.press_combo == rec.combos.append
+        and ctx.close_window == rec.close
         and ctx.open_path == rec.opened.append
     ):
         raise RealActionBlocked("il gate non è sul Recorder: non parto")

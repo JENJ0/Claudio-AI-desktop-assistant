@@ -15,7 +15,6 @@ from claudio.brain.prompts import OFFER
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.intake import Decision, Kind
 from claudio.metrics import Interaction
-from claudio.router.actions import VK_F4, VK_MENU
 from claudio.router.matcher import CommandMatcher
 from claudio.safety.confirmation import CANCELLED, NOT_UNDERSTOOD
 from tests.unit import test_timeline
@@ -41,7 +40,7 @@ ASK_CALL = (
     "tool_use",
     [text("Scrivo ciao."), use("type_text", text="ciao", **INTO_CHROME)],
 )
-CLOSE = (VK_MENU, VK_F4)
+CLOSE = 7  # the handle of Recorder.front
 
 
 # --- I1: off or pause while Claude thinks -------------------------------------------------
@@ -103,7 +102,7 @@ async def test_a_pause_ends_a_question_the_router_asked_before_it(
     assert await say(r, "sì") == ""  # the pause: only the system commands are answered
     r.actions.system.apply("resume")
     assert await say(r, "Claudio, sì") != "Fatto."
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_the_sonnet_offer_is_not_made_while_paused(pricing: Pricing) -> None:
@@ -135,7 +134,7 @@ async def test_a_yes_over_the_playing_local_confermi_runs_the_command_once(make_
     await scene.until(lambda: any("Confermi?" in p for p in scene.speaker.played))
     await scene.say_over("Claudio, sì")
     await idle(scene)
-    assert scene.recorder.combos == [CLOSE]
+    assert scene.recorder.closed == [CLOSE]
     assert scene.client.calls == []  # the yes never went to Haiku
 
 
@@ -145,7 +144,7 @@ async def test_a_no_over_the_playing_local_confermi_cancels_it(make_scene) -> No
     await scene.until(lambda: any("Confermi?" in p for p in scene.speaker.played))
     await scene.say_over("Claudio, no")
     await idle(scene)
-    assert scene.recorder.combos == []
+    assert scene.recorder.closed == []
     assert scene.client.calls == []
     assert not scene.responder.awaiting
 
@@ -158,12 +157,12 @@ async def test_a_yes_over_a_local_confermi_that_never_played_has_it_said_again(
     assert scene.assistant.state is State.RESPONDING
     await scene.say_over("Claudio, sì")
     await idle(scene, poll_s=0.002)
-    assert scene.recorder.combos == []  # nobody heard the question: no yes yet
+    assert scene.recorder.closed == []  # nobody heard the question: no yes yet
     assert sum("Confermi?" in s for s in scene.speaker.spoken) == 2  # said again, once
     scene.speaker.start_frames = 0
     await scene.say("Claudio, sì")
     await idle(scene)
-    assert scene.recorder.combos == [CLOSE]
+    assert scene.recorder.closed == [CLOSE]
     assert scene.client.calls == []
 
 
@@ -179,7 +178,7 @@ async def test_a_lone_name_then_a_request_cancels_a_waiting_local_question(make_
     await scene.say("che ore sono")
     await idle(scene)
     assert any("Sono le 14 e 5." in s for s in scene.speaker.spoken)
-    assert scene.recorder.combos == []
+    assert scene.recorder.closed == []
     assert not scene.responder.awaiting
 
 
@@ -208,7 +207,7 @@ async def test_named_by_the_wake_audio_is_a_new_request_over_the_local_question(
     await say(r, "chiudi la finestra")
     reply = "".join([c async for c in r.respond("che ore sono", named=True)])
     assert "Va bene" in reply and "Sono le" in reply
-    assert rec.combos == []
+    assert rec.closed == []
     assert not r.awaiting
 
 
@@ -220,9 +219,9 @@ async def test_the_same_command_with_the_name_over_its_question_only_asks_it_aga
     q = await say(r, "chiudi la finestra")
     assert await say(r, "Claudio, chiudi la finestra") == q
     assert r.awaiting
-    assert rec.combos == []
+    assert rec.closed == []
     await say(r, "sì")
-    assert rec.combos == [CLOSE]
+    assert rec.closed == [CLOSE]
 
 
 async def test_the_same_command_named_by_the_wake_audio_only_asks_it_again(
@@ -233,9 +232,9 @@ async def test_the_same_command_named_by_the_wake_audio_only_asks_it_again(
     q = await say(r, "chiudi la finestra")
     assert "".join([c async for c in r.respond("chiudi la finestra", named=True)]) == q
     assert r.awaiting
-    assert rec.combos == []
+    assert rec.closed == []
     await say(r, "sì")
-    assert rec.combos == [CLOSE]
+    assert rec.closed == [CLOSE]
 
 
 async def test_the_same_command_with_the_name_after_the_second_question_asks_again(
@@ -247,10 +246,10 @@ async def test_the_same_command_with_the_name_after_the_second_question_asks_aga
     await say(r, "boh")  # the second question
     assert await say(r, "Claudio, chiudi la finestra") == q
     assert r.awaiting
-    assert rec.combos == []
+    assert rec.closed == []
     assert await say(r, "boh") == NOT_UNDERSTOOD
     assert not r.awaiting
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_the_question_asked_again_by_name_gets_a_new_deadline(
@@ -270,7 +269,7 @@ async def test_the_question_asked_again_by_name_gets_a_new_deadline(
     clock.t += 50  # past the first deadline, inside the new one
     assert r.awaiting
     await say(r, "sì")
-    assert rec.combos == [CLOSE]
+    assert rec.closed == [CLOSE]
 
 
 async def test_the_first_question_by_name_still_allows_the_second_question(
@@ -293,7 +292,7 @@ async def test_the_question_asked_again_by_name_counts_as_heard(
     r.reply_cut([])  # nothing of the question was played
     assert await say(r, "Claudio, chiudi la finestra") == q
     assert await say(r, "sì") == "Fatto."
-    assert rec.combos == [CLOSE]
+    assert rec.closed == [CLOSE]
 
 
 async def test_a_named_router_command_over_the_local_question_is_not_noted_as_cancelled(
@@ -320,7 +319,7 @@ async def test_the_same_level_3_command_with_the_name_only_asks_it_again(
     q = await say(r, "dimentica tutto")
     assert await say(r, "Claudio, dimentica tutto") == q
     assert r.awaiting
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_an_unnamed_request_still_answers_the_question_as_unclear(
@@ -350,7 +349,7 @@ async def test_a_local_question_cancelled_by_the_name_is_noted_as_not_done(
     await say(r, "chiudi la finestra")
     await say(r, "Claudio, che tempo fa domani")
     assert ("Claudio, che tempo fa domani", "Va bene, non lo faccio.") in notes, notes
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 @pytest.mark.parametrize("answer", ["sì"])
@@ -388,7 +387,7 @@ async def test_a_shaky_lone_name_does_not_turn_a_yes_into_a_new_request(make_sce
     await scene.say("Ehi Claudio.")
     await scene.say("Sì.")
     await idle(scene)
-    assert scene.recorder.combos == [CLOSE]  # the question was answered and run
+    assert scene.recorder.closed == [CLOSE]  # the question was answered and run
     assert scene.client.calls == []
 
 
@@ -404,7 +403,7 @@ async def test_a_shaky_lone_name_leaves_an_unclear_phrase_as_an_unclear_answer(
     await idle(scene)
     assert not any("Sono le 14 e 5." in s for s in scene.speaker.spoken)
     assert scene.responder.awaiting  # asked once more
-    assert scene.recorder.combos == [] and scene.client.calls == []
+    assert scene.recorder.closed == [] and scene.client.calls == []
 
 
 async def test_a_sure_lone_name_still_cancels_the_question_by_name(make_scene) -> None:
@@ -416,7 +415,7 @@ async def test_a_sure_lone_name_still_cancels_the_question_by_name(make_scene) -
     await scene.say("che ore sono")
     await idle(scene)
     assert any("Sono le 14 e 5." in s for s in scene.speaker.spoken)
-    assert scene.recorder.combos == [] and not scene.responder.awaiting
+    assert scene.recorder.closed == [] and not scene.responder.awaiting
 
 
 # --- a late answer after a lone name needs a sure name too ------------------------------------
@@ -436,13 +435,13 @@ async def _late_yes_after_a_lone_name(make_scene, name_logprob: float):
 
 async def test_a_shaky_lone_name_does_not_let_a_late_yes_run(make_scene) -> None:
     scene = await _late_yes_after_a_lone_name(make_scene, -1.0)
-    assert scene.recorder.combos == [] and scene.client.calls == []
+    assert scene.recorder.closed == [] and scene.client.calls == []
 
 
 @pytest.mark.parametrize("name_logprob", [-0.5, -0.9])  # -0.9 is the threshold: it counts
 async def test_a_sure_lone_name_lets_a_late_yes_run(make_scene, name_logprob: float) -> None:
     scene = await _late_yes_after_a_lone_name(make_scene, name_logprob)
-    assert scene.recorder.combos == [CLOSE] and scene.client.calls == []
+    assert scene.recorder.closed == [CLOSE] and scene.client.calls == []
     assert scene.rows[-1]["relisten_logprob"] == name_logprob
 
 

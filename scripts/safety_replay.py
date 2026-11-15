@@ -22,7 +22,6 @@ import soundfile as sf
 import replay_gate as g  # scripts/ is on sys.path for the callers
 from claudio.audio.capture import apply_gain
 from claudio.config import PROJECT_ROOT, load_settings
-from claudio.router.actions import VK_F4, VK_MENU
 
 GAIN_DB = 14.0  # the headset's gain in the live path
 OPENING = "2026-11-05_17-00/audio/20261105-171603-648_ok.wav"  # asks "Confermi?" for close_window
@@ -120,7 +119,7 @@ def error_result(exc: Exception) -> Result:
 def settled(harness: g.Harness) -> bool:
     """The question is over: its action ran, or the answer was final (a refusal, an unclear one
     after the second question). Nothing more is fed: a later clip would be a new request."""
-    if (VK_MENU, VK_F4) in harness.recorder.combos:
+    if harness.recorder.closed:
         return True
     return any(
         r.get("route") in ("confirmed", "refused") for r in list(harness.assistant.history)[1:]
@@ -145,7 +144,7 @@ def run_scene(harness: g.Harness, first: Path, second: Path, prompt: str) -> Res
     assert rows and rows[0].get("route") == "confirm", (
         "la scena non ha fatto la domanda «Confermi?»"
     )
-    ran = (VK_MENU, VK_F4) in harness.recorder.combos
+    ran = bool(harness.recorder.closed)
     return Result(
         ran,
         len(rows) > 1 and rows[1].get("route") == "confirmed",

@@ -6,9 +6,12 @@ import pytest
 from claudio.router import actions
 from claudio.router.actions import (
     KNOWN_FOLDERS,
+    NO_WINDOW,
     ActionContext,
     ActionRunner,
-    _press_combo,
+    Target,
+    _close_handle,
+    _press_key,
     say_date,
     say_time,
 )
@@ -23,15 +26,21 @@ class Recorder:
         self.ran: list[list[str]] = []
         self.opened: list[str] = []
         self.keys: list[int] = []
-        self.combos: list[tuple[int, ...]] = []
+        self.closed: list[int] = []
+        self.front: Target | None = Target(7, "*Appunti - Blocco note")
         self.folder = folder
+
+    def close(self, handle: int) -> bool:
+        self.closed.append(handle)
+        return True
 
     def ctx(self) -> ActionContext:
         return ActionContext(
             run=self.ran.append,
             open_path=self.opened.append,
             press_key=self.keys.append,
-            press_combo=self.combos.append,
+            front_window=lambda: self.front,
+            close_window=self.close,
             now=lambda: datetime(2026, 10, 18, 14, 5),
             folder_lookup=lambda _id: self.folder,
             home=Path("/home/jenjo"),
@@ -209,12 +218,20 @@ def test_chat_without_launcher_says_so(matcher, rec) -> None:
 
 def test_no_test_can_press_a_real_key() -> None:
     with pytest.raises(AssertionError, match="real key"):
-        _press_combo((VK_F24,))  # no effect on any window, should this guard ever go
+        _press_key(VK_F24)  # no effect on any window, should this guard ever go
+
+
+def test_no_test_can_close_a_real_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    import win32gui
+
+    monkeypatch.setattr(win32gui, "IsWindow", lambda handle: True)
+    with pytest.raises(AssertionError, match="real window"):
+        _close_handle(0)  # handle 0 is no window: the guard must stop it first
 
 
 @pytest.mark.parametrize(
     ("field", "arg"),
-    [("run", ["x"]), ("open_path", "x"), ("press_key", 1), ("press_combo", (1, 2))],
+    [("run", ["x"]), ("open_path", "x"), ("press_key", 1), ("close_window", 7)],
 )
 def test_default_context_refuses_every_real_action(field: str, arg: object) -> None:
     with pytest.raises(RuntimeError, match=r"ActionContext\.real\(\)"):
@@ -235,8 +252,68 @@ def test_real_context_uses_the_real_functions(monkeypatch: pytest.MonkeyPatch) -
     assert ran == [["notepad"]]
 
 
-def test_runner_without_context_refuses_alt_f4(matcher) -> None:
+def test_runner_without_context_refuses_closing(matcher) -> None:
     match = matcher.match("chiudi la finestra")
     assert match is not None
+    runner = ActionRunner()  # the 05/11 accident: the default context reads no desktop
+    assert runner.execute(match) == NO_WINDOW
     with pytest.raises(RuntimeError, match=r"ActionContext\.real\(\)"):
-        ActionRunner().execute(match)  # the 05/11 accident; conftest fails if a key goes out
+        runner.execute(match, Target(7, "x"))
+
+
+@pytest.mark.parametrize(
+    ("title", "name"),
+    [
+        ("*La Luna dista - Blocco note", "Blocco note"),
+        ("Windows PowerShell", "Windows PowerShell"),
+        ("a.py - Claudio - Visual Studio Code", "Visual Studio Code"),
+    ],
+)
+def test_target_name(title: str, name: str) -> None:
+    assert Target(1, title).name == name
+
+
+def test_target_is_read_only_for_close_window(matcher, rec) -> None:
+    runner = ActionRunner(rec.ctx())
+    close, other = matcher.match("chiudi la finestra"), matcher.match("apri chrome")
+    assert close is not None and other is not None
+    assert runner.target(close) == rec.front
+    assert runner.target(other) is None
+
+
+def test_close_with_target_sends_wm_close_to_that_handle(matcher, rec) -> None:
+    match = matcher.match("chiudi la finestra")
+    assert match is not None
+    assert ActionRunner(rec.ctx()).execute(match, Target(7, "x - Blocco note")) == "Fatto."
+    assert rec.closed == [7]
+
+
+def test_close_of_a_vanished_window_says_so(matcher, rec) -> None:
+    match = matcher.match("chiudi la finestra")
+    assert match is not None
+    ctx = rec.ctx()
+    ctx.close_window = lambda handle: False
+    assert ActionRunner(ctx).execute(match, Target(7, "x")) == "La finestra non c'è più."
+
+
+def test_close_without_target_reads_the_front_window(matcher, rec) -> None:
+    match = matcher.match("chiudi la finestra")
+    assert match is not None
+    ActionRunner(rec.ctx()).execute(match)
+    assert rec.closed == [7]
+    rec.closed.clear()
+    rec.front = None
+    assert ActionRunner(rec.ctx()).execute(match) == NO_WINDOW
+    assert rec.closed == []
+
+
+def test_default_context_has_no_front_window() -> None:
+    assert ActionContext().front_window() is None
+
+
+def test_real_context_wires_front_window_and_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed: list[int] = []
+    monkeypatch.setattr(actions, "_front_window", lambda: Target(3, "t"))
+    monkeypatch.setattr(actions, "_close_handle", lambda h: closed.append(h) is None)
+    ctx = ActionContext.real()
+    assert ctx.front_window() == Target(3, "t") and ctx.close_window(3) and closed == [3]

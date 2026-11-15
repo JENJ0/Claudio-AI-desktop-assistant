@@ -1005,7 +1005,7 @@ def test_a_tool_that_never_ran_is_not_counted_as_run() -> None:
     row = {"tools": ["open_app(Chrome) ok", "type_text() not_run_cut", "run_command(x) error"]}
     harness = SimpleNamespace(
         assistant=SimpleNamespace(history=[row], _interaction=None),
-        recorder=SimpleNamespace(ran=[], opened=[], keys=[], combos=[]),
+        recorder=SimpleNamespace(ran=[], opened=[], keys=[], closed=[]),
         client=None,
         levels=[],
         command_levels={},
@@ -1662,7 +1662,7 @@ def test_voice_in_the_first_moments_is_heard_in_a_follow_up_too(
     ]
     result = rg.run_gate(scene, harness, corpus)
     assert result.passed == [first, last], result.reasons
-    assert harness.recorder.combos  # the yes was heard: the window was closed on the Recorder
+    assert harness.recorder.closed  # the yes was heard: the window was closed on the Recorder
 
 
 def test_the_wait_in_a_wav_is_listened_for_as_live(settings: Settings, tmp_path: Path) -> None:

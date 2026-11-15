@@ -29,17 +29,22 @@ class FakeVad:
 
 
 @pytest.fixture(autouse=True)
-def no_real_key_presses(monkeypatch: pytest.MonkeyPatch) -> None:
+def no_real_key_or_close(monkeypatch: pytest.MonkeyPatch) -> None:
     """Second defence: `ActionContext()` now refuses real actions, but a test that builds
-    `ActionContext.real()` and says "chiudi la finestra" would send a real Alt+F4 to the window
-    in front (05/11: a probe closed the editor this way). Use `Recorder().ctx()`."""
+    `ActionContext.real()` and says "chiudi la finestra" would really close the window in
+    front (05/11: a probe closed the editor this way). Use `Recorder().ctx()`."""
     if sys.platform != "win32":
         return
+    import win32gui
 
     def refuse(*args: object) -> None:
         raise AssertionError("a test pressed a real key")
 
+    def refuse_close(*args: object) -> None:
+        raise AssertionError("a test closed a real window")
+
     monkeypatch.setattr(ctypes.windll.user32, "keybd_event", refuse)
+    monkeypatch.setattr(win32gui, "PostMessage", refuse_close)  # WM_CLOSE, as in actions.py
 
 
 @pytest.fixture(autouse=True)

@@ -1099,10 +1099,10 @@ async def test_while_off_an_open_question_is_dropped_not_answered(
     system.apply("off")
     assert await say(r, "sì") == ""
     assert r.last_route == {"route": "off"}
-    assert rec.combos == [] and asked == [] and not r.awaiting
+    assert rec.closed == [] and asked == [] and not r.awaiting
     assert (await say(r, "accenditi")).startswith("Eccomi") and not system.off
     await say(r, "sì")  # now an ordinary request: the question is gone
-    assert rec.combos == []
+    assert rec.closed == []
 
 
 async def test_a_story_cut_by_spegniti_does_not_go_on_while_off(

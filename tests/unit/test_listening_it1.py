@@ -13,7 +13,6 @@ import pytest
 from claudio.app import Assistant, BargeIn, State
 from claudio.audio.vad import Endpointer
 from claudio.config import VadSettings
-from claudio.router.actions import VK_F4, VK_MENU
 from claudio.router.matcher import CommandMatcher
 from tests.conftest import FakeVad
 from tests.unit.test_app import AudioClock, FakeWake
@@ -303,7 +302,7 @@ async def test_a_phrase_still_going_over_a_question_answers_it(
     assert speaker.spoken[0].endswith("Confermi?") and speaker.beeps == ["wake"]
     assert assistant.history[0]["barge_in"] == "Claudio, sì."  # judged before its row is written
     assert assistant.history[1]["wake_word"] == "barge_in"
-    assert assistant.history[1]["route"] == "confirmed" and rec.combos == [(VK_MENU, VK_F4)]
+    assert assistant.history[1]["route"] == "confirmed" and rec.closed == [7]
 
 
 # --- 2.3: the barge-in threshold, before the gain -------------------------------------------

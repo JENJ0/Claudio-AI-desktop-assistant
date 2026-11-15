@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from claudio.chat.launcher import ChatLauncher
 from claudio.cost.tracker import CostTracker
@@ -34,7 +34,9 @@ MEDIA_KEYS = {
     "next_track": 0xB0,
     "previous_track": 0xB1,
 }
-VK_MENU, VK_F4 = 0x12, 0x73  # Alt, F4: closes the window in front
+WM_CLOSE = 0x0010
+NO_WINDOW = "Non vedo una finestra da chiudere."
+GONE = "La finestra non c'è più."
 APPS: dict[str, list[str]] = {
     # "start" resolves Chrome through its App Paths registration.
     "chrome": ["cmd", "/c", "start", "", "chrome"],
@@ -111,19 +113,39 @@ def _press_key(vk: int) -> None:
     user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
 
 
-def _press_combo(vks: tuple[int, ...]) -> None:
-    """Hold the keys down in order, release them in reverse (Alt+F4)."""
-    import ctypes
+def _front_window() -> Target | None:
+    import win32gui
 
-    user32 = ctypes.windll.user32
-    for vk in vks:
-        user32.keybd_event(vk, 0, 0, 0)
-    for vk in reversed(vks):
-        user32.keybd_event(vk, 0, 2, 0)
+    handle = win32gui.GetForegroundWindow()
+    title = win32gui.GetWindowText(handle) if handle else ""
+    return Target(handle, title) if title else None
 
 
-def _refuse(*args: object) -> None:
+def _close_handle(handle: int) -> bool:
+    """WM_CLOSE as the X button: the app may still ask to save."""
+    import win32gui
+
+    if not win32gui.IsWindow(handle):
+        return False
+    win32gui.PostMessage(handle, WM_CLOSE, 0, 0)
+    return True
+
+
+def _refuse(*args: object) -> NoReturn:
     raise RuntimeError("a real action needs ActionContext.real()")
+
+
+@dataclass(frozen=True)
+class Target:
+    """A window the close command is about: its handle and full title."""
+
+    handle: int
+    title: str
+
+    @property
+    def name(self) -> str:
+        """The app part of the title: no leading `*`, nothing before the last " - "."""
+        return self.title.lstrip("* ").rsplit(" - ", 1)[-1].strip()
 
 
 @dataclass
@@ -134,14 +156,21 @@ class ActionContext:
     run: Callable[[list[str]], None] = _refuse
     open_path: Callable[[str], None] = _refuse
     press_key: Callable[[int], None] = _refuse
-    press_combo: Callable[[tuple[int, ...]], None] = _refuse
+    front_window: Callable[[], Target | None] = lambda: None
+    close_window: Callable[[int], bool] = _refuse
     now: Callable[[], datetime] = datetime.now
     folder_lookup: Callable[[str], Path | None] = known_folder
     home: Path = field(default_factory=Path.home)
 
     @classmethod
     def real(cls) -> ActionContext:
-        return cls(run=_run, open_path=_open_path, press_key=_press_key, press_combo=_press_combo)
+        return cls(
+            run=_run,
+            open_path=_open_path,
+            press_key=_press_key,
+            front_window=_front_window,
+            close_window=_close_handle,
+        )
 
 
 def say_time(now: datetime) -> str:
@@ -195,14 +224,20 @@ class ActionRunner:
             "tell_date": lambda m: say_date(self.ctx.now()),
             "system": self._system,
             "tell_spend": self._tell_spend,
-            "close_window": self._close_window,
             "chat": self._chat,
             "memory": self._memory,
         }
 
-    def execute(self, match: Match) -> str:
-        """Run the command's action; return the text to speak."""
+    def target(self, match: Match) -> Target | None:
+        """The window the command is about (only close_window has one), read now."""
+        return self.ctx.front_window() if match.command.action == "close_window" else None
+
+    def execute(self, match: Match, target: Target | None = None) -> str:
+        """Run the command's action; return the text to speak. `target` is the window
+        captured when the question was asked; without it close_window reads it now."""
         cmd = match.command
+        if cmd.action == "close_window":
+            return self._close_window(match, target or self.target(match))
         handler = self._handlers.get(cmd.action)
         if handler is None:
             raise ValueError(f"Azione sconosciuta '{cmd.action}' nel comando '{cmd.id}'")
@@ -239,9 +274,14 @@ class ActionRunner:
         changed = self.system.apply(match.command.params["do"])
         return None if changed else str(match.command.params.get("already") or "")
 
-    def _close_window(self, match: Match) -> None:
+    def _close_window(self, match: Match, target: Target | None) -> str:
         """Level 2: the responder has already asked and heard a yes."""
-        self.ctx.press_combo((VK_MENU, VK_F4))
+        if target is None:
+            return NO_WINDOW
+        log.info("Chiudo «%s» (WM_CLOSE)", target.title)
+        if not self.ctx.close_window(target.handle):
+            return GONE
+        return match.command.reply
 
     def _chat(self, match: Match) -> str | None:
         """params["do"]: open or close; params["already"] when there is nothing to do."""
