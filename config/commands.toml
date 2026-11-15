@@ -122,7 +122,7 @@ id = "close_window"
 phrases = ["chiudi la finestra", "chiudi finestra", "chiudi questa finestra", "chiudi la finestra attiva"]
 action = "close_window"
 level = 2
-confirm = "Chiudo la finestra in primo piano. Confermi?"
+confirm = "Chiudo {window}. Confermi?"
 reply = "Fatto."
 
 # The chat window (the same as `claudio --ui`), opened by the running assistant. Add your own

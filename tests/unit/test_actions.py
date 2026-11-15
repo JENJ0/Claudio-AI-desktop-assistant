@@ -267,6 +267,7 @@ def test_runner_without_context_refuses_closing(matcher) -> None:
         ("*La Luna dista - Blocco note", "Blocco note"),
         ("Windows PowerShell", "Windows PowerShell"),
         ("a.py - Claudio - Visual Studio Code", "Visual Studio Code"),
+        ("Documento - ", "Documento"),
     ],
 )
 def test_target_name(title: str, name: str) -> None:

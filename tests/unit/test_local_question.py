@@ -17,7 +17,7 @@ from claudio.config import ClaudeSettings
 from claudio.cost.pricing import Pricing, load_pricing
 from claudio.memory.store import MemoryStore
 from claudio.memory.voice import MemoryVoice
-from claudio.router.actions import ActionRunner
+from claudio.router.actions import NO_WINDOW, ActionRunner, Target
 from claudio.router.matcher import CommandMatcher
 from claudio.router.responder import LocalResponder
 from claudio.safety.confirmation import ACTION_TTL_S
@@ -38,6 +38,56 @@ def local(matcher: CommandMatcher, rec: Recorder, clock: Monotonic, **hooks: Any
 
 async def say(r: LocalResponder, text: str) -> str:
     return "".join([c async for c in r.respond(text)])
+
+
+# --- the question names the window and the yes closes that one -------------------------
+
+
+async def test_the_close_question_names_the_program(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    assert await say(r, "chiudi la finestra") == "Chiudo Blocco note. Confermi?"
+    assert await say(r, "sì") == "Fatto."
+    assert rec.closed == [7]
+
+
+async def test_the_yes_closes_the_window_of_the_question_not_the_one_in_front_now(
+    matcher: CommandMatcher,
+) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    rec.front = Target(9, "Nuova scheda - Google Chrome")
+    await say(r, "sì")
+    assert rec.closed == [7]
+
+
+async def test_no_window_in_front_means_no_question(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    rec.front = None
+    r = local(matcher, rec, Monotonic())
+    assert await say(r, "chiudi la finestra") == NO_WINDOW
+    assert not r.awaiting and rec.closed == []
+
+
+async def test_a_window_closed_by_hand_meanwhile_is_said(matcher: CommandMatcher) -> None:
+    rec = Recorder()
+    rec.close = lambda handle: False  # type: ignore[method-assign]
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    assert await say(r, "sì") == "La finestra non c'è più."
+
+
+async def test_the_question_asked_again_by_name_keeps_the_first_window(
+    matcher: CommandMatcher,
+) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    rec.front = Target(9, "Nuova scheda - Google Chrome")
+    assert await say(r, "Claudio, chiudi la finestra") == "Chiudo Blocco note. Confermi?"
+    await say(r, "sì")
+    assert rec.closed == [7]
 
 
 # --- rule 1: the question waits, like Claude's ------------------------------------------

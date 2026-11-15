@@ -15,6 +15,7 @@ import enum
 import re
 from dataclasses import dataclass
 
+from claudio.router.actions import Target
 from claudio.router.matcher import Match
 from claudio.router.normalizer import GREETINGS, is_wake_word, normalize, strip_wake_words
 
@@ -25,6 +26,7 @@ ACTION_TTL_S = 60.0  # a question waits this long for its yes, Claude's and the 
 
 # Said when a command does not carry its own question (`confirm` in commands.toml).
 ASK_LEVEL_2 = "Confermi?"
+WINDOW_IN_FRONT = "la finestra in primo piano"  # `{window}` when no window was captured
 ASK_LEVEL_3 = "Per procedere dì: confermo."  # short (JenJo, 23/10): the summary comes before
 CANCELLED = "Va bene, non lo faccio."
 NOT_UNDERSTOOD = "Non ho capito: non lo faccio."
@@ -137,16 +139,18 @@ class Pending:
     asked_again: bool = False  # the answer was not heard once: the second question is the last
     heard: bool = True  # False: a phrase cut the question before its last sentence played
     said_unheard: bool = False  # the unheard question was already said again once
+    target: Target | None = None  # the window the question named: the yes closes this one
 
     @property
     def level(self) -> int:
         return self.match.command.level
 
 
-def question(match: Match) -> str:
+def question(match: Match, target: Target | None = None) -> str:
     """What CLAUDIO asks before running `match`: the command's own `confirm` text (for level 3,
-    the summary of what will happen), else the generic one of its level."""
+    the summary of what will happen), else the generic one of its level. `{window}` in it
+    becomes the program of `target`."""
     cmd = match.command
     if cmd.confirm:
-        return cmd.confirm
+        return cmd.confirm.replace("{window}", target.name if target else WINDOW_IN_FRONT)
     return ASK_LEVEL_3 if cmd.level >= LEVEL_EXPLICIT else ASK_LEVEL_2

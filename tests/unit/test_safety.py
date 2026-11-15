@@ -293,7 +293,7 @@ async def say(r: LocalResponder, text: str) -> str:
 async def test_level_2_asks_then_runs_on_yes(matcher: CommandMatcher) -> None:
     rec = Recorder()
     r = responder(matcher, rec)
-    assert await say(r, "chiudi la finestra") == "Chiudo la finestra in primo piano. Confermi?"
+    assert await say(r, "chiudi la finestra") == "Chiudo Blocco note. Confermi?"
     assert r.awaiting and rec.closed == []
     assert r.last_route["route"] == "confirm"
     assert await say(r, "sì") == "Fatto."
@@ -396,7 +396,7 @@ async def test_the_answer_needs_no_wake_word(fake_vad, vad_settings, make_frames
         fake_vad, vad_settings, matcher, ["chiudi la finestra", "sì"]
     )
     await feed(assistant, speaker, make_frames, answer=True)
-    assert speaker.spoken == ["Chiudo la finestra in primo piano. Confermi?", "Fatto."]
+    assert speaker.spoken == ["Chiudo Blocco note. Confermi?", "Fatto."]
     assert speaker.beeps == ["wake", "wake"]  # the second beep: "I'm listening for the answer"
     assert rec.closed == [7]
     rows = assistant.history

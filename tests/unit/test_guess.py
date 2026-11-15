@@ -33,7 +33,7 @@ from claudio.intake import (
     verdict,
 )
 from claudio.metrics import Interaction
-from claudio.router.actions import MEDIA_KEYS, ActionRunner
+from claudio.router.actions import MEDIA_KEYS, ActionRunner, Target
 from claudio.router.matcher import Command, CommandMatcher, Near, load_commands
 from claudio.router.responder import LocalResponder
 from claudio.wakeword.verifier import after_clipped_name
@@ -452,6 +452,14 @@ async def test_unsure_guess_asks_and_a_yes_needs_no_second_question(
     assert recovery is not None and recovery.verdict is Verdict.ASK
     assert await say(r, "sì, grazie") == "Fatto."  # no "Confermi?" after "Hai detto"
     assert rec.closed == [7]
+
+
+async def test_a_confirmed_guess_reads_the_window_when_it_runs(matcher: CommandMatcher) -> None:
+    r, _, rec = responder(matcher, Guess("chiudi la finestra", 0.6, "close_window"))
+    await r.guess(Doubt("Chiudi la fenestra.", "not_a_request"))
+    rec.front = Target(9, "Nuova scheda - Google Chrome")
+    assert await say(r, "sì, grazie") == "Fatto."
+    assert rec.closed == [9]
 
 
 async def test_a_yes_with_more_words_after_it_answers_the_guess(matcher: CommandMatcher) -> None:

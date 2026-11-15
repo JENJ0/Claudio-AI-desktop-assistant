@@ -28,7 +28,7 @@ from claudio.intake import (
     asks_something,
     verdict,
 )
-from claudio.router.actions import ActionRunner
+from claudio.router.actions import NO_WINDOW, ActionRunner, Target
 from claudio.router.matcher import Command, CommandMatcher, Match, Near
 from claudio.router.normalizer import (
     after_wake_word,
@@ -388,7 +388,7 @@ class LocalResponder:
         asked = (
             self._ask_again(pending.match, pending.level)
             if pending.asked_again
-            else question(pending.match)
+            else question(pending.match, pending.target)
         )
         if not said_in(asked, " ".join(played)):
             self._pending = replace(pending, heard=False)
@@ -541,15 +541,21 @@ class LocalResponder:
         if match.command.level > LEVEL_SAFE and not (
             confirmed and match.command.level <= LEVEL_CONFIRM
         ):
-            self._pending = Pending(match, self.clock())
+            target = self.actions.target(match)
+            if target is None and match.command.action == "close_window":
+                log.info("Niente da chiudere: nessuna finestra in primo piano")
+                yield NO_WINDOW
+                return
+            self._pending = Pending(match, self.clock(), target=target)
             self.last_route.update(route="confirm", level=match.command.level)
             log.info(
-                "Conferma richiesta (livello %d): %s",
+                "Conferma richiesta (livello %d): %s%s",
                 match.command.level,
                 match.command.id,
+                f" «{target.title}»" if target else "",
                 extra={"route": "confirm", "level": match.command.level},
             )
-            yield question(match)
+            yield question(match, target)
             return
         async for chunk in self._execute(match):
             yield chunk
@@ -625,7 +631,7 @@ class LocalResponder:
                 "asked_unheard": True,
             }
             log.info("Domanda non sentita: la ripeto (%s)", match.command.id)
-            yield question(match)
+            yield question(match, pending.target)
             return
         if unheard and answer is Answer.YES:
             answer = Answer.UNCLEAR  # nobody heard the question, even said again: never a yes
@@ -648,7 +654,7 @@ class LocalResponder:
         }
         if answer is Answer.YES:
             log.info("Conferma data (livello %d): eseguo %s", level, match.command.id)
-            async for chunk in self._execute(match):
+            async for chunk in self._execute(match, pending.target):
                 yield chunk
             return
         if answer is Answer.NO:
@@ -687,7 +693,7 @@ class LocalResponder:
                 "asked_again_by_name": True,
             }
             log.info("Il nome sopra la domanda: stesso comando, chiedo di nuovo (%s)", what)
-            yield question(waiting.match)
+            yield question(waiting.match, waiting.target)
             return
         log.info("Il nome sopra la domanda: %s annullato", what)
         if what == "claude" and self.fallback_cancel is not None:
@@ -713,9 +719,9 @@ class LocalResponder:
         ask = ASK_AGAIN_EXPLICIT if level >= LEVEL_EXPLICIT else ASK_AGAIN
         return ask.format(what=what)
 
-    async def _execute(self, match: Match) -> AsyncIterator[str]:
+    async def _execute(self, match: Match, target: Target | None = None) -> AsyncIterator[str]:
         try:
-            reply = self.actions.execute(match)
+            reply = self.actions.execute(match, target)
         except Exception:
             log.exception("Errore eseguendo %s", match.command.id)
             self.last_route["error"] = True

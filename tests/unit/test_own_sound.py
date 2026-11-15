@@ -237,7 +237,7 @@ async def test_the_answer_after_the_tail_is_heard(fake_vad, vad_settings, matche
             yield f
 
     await play(assistant, steps())
-    assert speaker.spoken == ["Chiudo la finestra in primo piano. Confermi?", "Fatto."]
+    assert speaker.spoken == ["Chiudo Blocco note. Confermi?", "Fatto."]
     assert rec.closed == [7]
     assert stt.heard == ["chiudi la finestra", "sì"]
 

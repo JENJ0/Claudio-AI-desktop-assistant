@@ -144,8 +144,10 @@ class Target:
 
     @property
     def name(self) -> str:
-        """The app part of the title: no leading `*`, nothing before the last " - "."""
-        return self.title.lstrip("* ").rsplit(" - ", 1)[-1].strip()
+        """The app part of the title: no leading `*`, nothing before the last " - ".
+        A title ending in " - " has no app part: the whole title is the name."""
+        title = self.title.lstrip("* ")
+        return title.rsplit(" - ", 1)[-1].strip() or title.strip(" -")
 
 
 @dataclass
