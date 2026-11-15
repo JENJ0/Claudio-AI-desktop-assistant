@@ -2,11 +2,13 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+import win32gui
 
 from claudio.router import actions
 from claudio.router.actions import (
     KNOWN_FOLDERS,
     NO_WINDOW,
+    WM_CLOSE,
     ActionContext,
     ActionRunner,
     Target,
@@ -268,6 +270,7 @@ def test_runner_without_context_refuses_closing(matcher) -> None:
         ("Windows PowerShell", "Windows PowerShell"),
         ("a.py - Claudio - Visual Studio Code", "Visual Studio Code"),
         ("Documento - ", "Documento"),
+        ("*Appunti", "Appunti"),
     ],
 )
 def test_target_name(title: str, name: str) -> None:
@@ -318,3 +321,86 @@ def test_real_context_wires_front_window_and_close(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(actions, "_close_handle", lambda h: closed.append(h) is None)
     ctx = ActionContext.real()
     assert ctx.front_window() == Target(3, "t") and ctx.close_window(3) and closed == [3]
+
+
+@pytest.fixture
+def post_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, int, int]]:
+    posted: list[tuple[int, int, int, int]] = []
+    monkeypatch.setattr(win32gui, "PostMessage", lambda *a: posted.append(a))
+    return posted
+
+
+def test_close_handle_of_a_gone_window_posts_nothing(
+    monkeypatch: pytest.MonkeyPatch, post_log: list[tuple[int, int, int, int]]
+) -> None:
+    monkeypatch.setattr(win32gui, "IsWindow", lambda handle: False)
+    assert _close_handle(7) is False
+    assert post_log == []
+
+
+def test_close_handle_posts_wm_close_to_a_live_window(
+    monkeypatch: pytest.MonkeyPatch, post_log: list[tuple[int, int, int, int]]
+) -> None:
+    monkeypatch.setattr(win32gui, "IsWindow", lambda handle: True)
+    assert _close_handle(7) is True
+    assert post_log == [(7, WM_CLOSE, 0, 0)]
+
+
+@pytest.mark.parametrize(("handle", "title"), [(0, ""), (5, "")])
+def test_front_window_without_a_title_is_no_window(
+    monkeypatch: pytest.MonkeyPatch, handle: int, title: str
+) -> None:
+    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: handle)
+    monkeypatch.setattr(win32gui, "GetWindowText", lambda h: title)
+    assert actions._front_window() is None
+
+
+def test_front_window_reads_handle_and_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: 5)
+    monkeypatch.setattr(win32gui, "GetWindowText", lambda h: "*x - Blocco note")
+    monkeypatch.setattr(win32gui, "GetClassName", lambda h: "Notepad")
+    assert actions._front_window() == Target(5, "*x - Blocco note")
+
+
+@pytest.mark.parametrize(
+    "window_class", ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+)
+def test_front_window_of_the_desktop_or_taskbar_is_no_window(
+    monkeypatch: pytest.MonkeyPatch, window_class: str
+) -> None:
+    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: 5)
+    monkeypatch.setattr(win32gui, "GetWindowText", lambda h: "Program Manager")
+    monkeypatch.setattr(win32gui, "GetClassName", lambda h: window_class)
+    assert actions._front_window() is None
+
+
+def test_front_window_with_a_title_without_a_name_is_no_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(win32gui, "GetForegroundWindow", lambda: 5)
+    monkeypatch.setattr(win32gui, "GetWindowText", lambda h: "* - ")
+    monkeypatch.setattr(win32gui, "GetClassName", lambda h: "Notepad")
+    assert actions._front_window() is None
+
+
+def test_close_logs_each_outcome(matcher, rec, caplog: pytest.LogCaptureFixture) -> None:
+    match = matcher.match("chiudi la finestra")
+    assert match is not None
+    ctx = rec.ctx()
+    runner = ActionRunner(ctx)
+    with caplog.at_level("INFO", logger=actions.log.name):
+        runner.execute(match, Target(7, "x - Blocco note"))
+        ctx.close_window = lambda handle: False  # the window is gone
+        runner.execute(match, Target(7, "x - Blocco note"))
+        rec.front = None  # no window in front
+        runner.execute(match, None)
+    messages = [r.getMessage() for r in caplog.records]
+    assert messages == [
+        "Chiusa «x - Blocco note» (WM_CLOSE)",
+        "Azione eseguita: close_window",
+        "Finestra «x - Blocco note» non più aperta: niente da chiudere",
+        "Azione eseguita: close_window",
+        "Nessuna finestra da chiudere",
+        "Azione eseguita: close_window",
+    ]
+    assert [r.closed for r in caplog.records if hasattr(r, "closed")] == [True, False, False]

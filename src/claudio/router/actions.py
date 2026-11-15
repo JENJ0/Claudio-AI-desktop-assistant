@@ -37,6 +37,8 @@ MEDIA_KEYS = {
 WM_CLOSE = 0x0010
 NO_WINDOW = "Non vedo una finestra da chiudere."
 GONE = "La finestra non c'è più."
+# Desktop and taskbar are not windows to close (Progman answers WM_CLOSE with the shutdown dialog).
+SHELL_CLASSES = frozenset({"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"})
 APPS: dict[str, list[str]] = {
     # "start" resolves Chrome through its App Paths registration.
     "chrome": ["cmd", "/c", "start", "", "chrome"],
@@ -118,7 +120,11 @@ def _front_window() -> Target | None:
 
     handle = win32gui.GetForegroundWindow()
     title = win32gui.GetWindowText(handle) if handle else ""
-    return Target(handle, title) if title else None
+    if not title or win32gui.GetClassName(handle) in SHELL_CLASSES:
+        return None
+    target = Target(handle, title)
+    # a title of only `*`, spaces or `-` has no name to say
+    return target if target.name.strip(" -") else None
 
 
 def _close_handle(handle: int) -> bool:
@@ -239,7 +245,18 @@ class ActionRunner:
         captured when the question was asked; without it close_window reads it now."""
         cmd = match.command
         if cmd.action == "close_window":
-            return self._close_window(match, target or self.target(match))
+            text, closed = self._close_window(match, target or self.target(match))
+            log.info(
+                "Azione eseguita: %s",
+                cmd.id,
+                extra={
+                    "action": cmd.action,
+                    "command": cmd.id,
+                    "score": match.score,
+                    "closed": closed,
+                },
+            )
+            return text
         handler = self._handlers.get(cmd.action)
         if handler is None:
             raise ValueError(f"Azione sconosciuta '{cmd.action}' nel comando '{cmd.id}'")
@@ -276,14 +293,17 @@ class ActionRunner:
         changed = self.system.apply(match.command.params["do"])
         return None if changed else str(match.command.params.get("already") or "")
 
-    def _close_window(self, match: Match, target: Target | None) -> str:
-        """Level 2: the responder has already asked and heard a yes."""
+    def _close_window(self, match: Match, target: Target | None) -> tuple[str, bool]:
+        """Level 2: the responder has already asked and heard a yes. Returns the text to
+        speak and whether WM_CLOSE was sent."""
         if target is None:
-            return NO_WINDOW
-        log.info("Chiudo «%s» (WM_CLOSE)", target.title)
+            log.info("Nessuna finestra da chiudere")
+            return NO_WINDOW, False
         if not self.ctx.close_window(target.handle):
-            return GONE
-        return match.command.reply
+            log.info("Finestra «%s» non più aperta: niente da chiudere", target.title)
+            return GONE, False
+        log.info("Chiusa «%s» (WM_CLOSE)", target.title)
+        return match.command.reply, True
 
     def _chat(self, match: Match) -> str | None:
         """params["do"]: open or close; params["already"] when there is nothing to do."""

@@ -484,3 +484,17 @@ async def test_the_row_keeps_the_name_cancel_when_words_follow(matcher: CommandM
     await say(r, "chiudi la finestra")
     await say(r, "Claudio, che ore sono")
     assert r.last_route["command"] == "tell_time" and r.last_route["cancelled_by_name"] is True
+
+
+async def test_the_question_said_again_unheard_names_the_same_window(
+    matcher: CommandMatcher,
+) -> None:
+    rec = Recorder()
+    r = local(matcher, rec, Monotonic())
+    await say(r, "chiudi la finestra")
+    r.reply_cut([])  # nothing of the question was played
+    rec.front = Target(9, "Nuova scheda - Google Chrome")
+    assert await say(r, "sì") == "Chiudo Blocco note. Confermi?"  # said again, same window
+    assert rec.closed == []
+    assert await say(r, "sì") == "Fatto."
+    assert rec.closed == [7]
